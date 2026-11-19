@@ -1,7 +1,5 @@
-// The room: the connection's state, everyone else's edits as they land, the page rendered again when it must be, and
-// the events on the document's socket.
+// The room: the connection's state, and the events on the document's socket.
 
-import { Transaction, type ChangeSet } from "@codemirror/state";
 import type { RoomStatus, SocketEvent } from "../../libs/text/ui/collab";
 import type { Hello } from "../../document/api/api";
 import type { DocName } from "../../document/model/names";
@@ -27,15 +25,6 @@ export function mountRoom(shell: Shell) {
     status = now;
     // (Down, it says nothing: a note shows only for edits that are not on the server yet. libs/text/ui/unsaved.ts)
     live((l) => l.connection("room", now, now == "gone" ? DELETED_NOTE : null));
-  }
-
-  /**
-   * Someone else's edit (a person, an agent, the disk), against the text as it is: into the source view, if it's open,
-   * out of its undo history. The page's editor has a replica of its own, and takes it there.
-   */
-  function applyRemote(changes: ChangeSet) {
-    if (shell.sourceView) shell.sourceView.dispatch({ changes, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
-    shell.people.queuePeers();
   }
 
   // Your agent's events and its requests to look at the page come to your tabs only, on the document's socket (as
@@ -106,7 +95,6 @@ export function mountRoom(shell: Shell) {
   }
   return {
     connectionChanged,
-    applyRemote,
     socketEvent,
     get connected() {
       return status == "up";

@@ -441,7 +441,6 @@ journey("a deck in the editor", () => {
   };
   /** The page's editor runs. */
   const runs = () => ed.frame<boolean>(`${F}.documentElement.hasAttribute("data-erga-editing")`);
-  const shell = (cls: string) => ed.eval<boolean>(`document.body.classList.contains(${JSON.stringify(cls)})`);
   const toast = () => ed.page.evaluate(() => document.getElementById("toast")?.textContent ?? "");
 
   test("the host refuses the edit key: an alert says so, the shell asks again, the editor starts and the alert goes", async ({ tab }) => {
@@ -462,20 +461,17 @@ journey("a deck in the editor", () => {
     tab.strict = true;
   });
 
-  test("⌘⇧P, then full screen: the page's editor stays stopped, and the arrows step the deck; out of full screen it runs again", async () => {
-    await ed.press("ControlOrMeta+Shift+p");
-    await soon(() => shell("source")).toBe(true);
+  test("full screen: the page's editor stops, and the arrows step the deck; out of full screen it runs again", async () => {
     await watch();
     await ed.page.locator("#btn-full").click();
     await soon(() => ed.eval<boolean>(`document.documentElement.classList.contains("erga-full")`)).toBe(true);
-    await soon(() => shell("source")).toBe(false);
-    expect(await said()).not.toContain("edit");
+    expect(await said()).toEqual(["view"]);
     await soon(runs).toBe(false);
     await ed.press("ArrowRight");
     await soon(() => ed.eval<string>(`location.hash`)).toBe("#2");
     await ed.page.evaluate(() => document.exitFullscreen());
     await soon(runs).toBe(true);
-    expect(await said()).toEqual(["edit"]);
+    expect(await said()).toEqual(["view", "edit"]);
   });
 
   test("at slide 3, a reload of the tab opens the editor at slide 3; the tab's address says #3", async ({ tab }) => {

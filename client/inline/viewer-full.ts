@@ -22,7 +22,7 @@ export default function viewerFull(): void {
   document.addEventListener("keydown", (e) => {
     const t = e.target as HTMLElement | null;
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.key != "ArrowLeft" && e.key != "ArrowRight")) return;
-    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "") || t.closest?.(".cm-editor"))) return;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""))) return;
     ergaFrames.send({ type: "erga-arrow", key: e.key });
   });
   if (!(d.fullscreenEnabled || d.webkitFullscreenEnabled)) return;

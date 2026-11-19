@@ -466,15 +466,6 @@ export class Participants<S extends TabSocket = TabSocket> {
     ));
   }
 
-  /** Whether a user in person has the file open, their caret in it (the page's editor, or the source view). */
-  someoneIn(path: string): boolean {
-    for (const state of this.room.awareness.getStates().values()) {
-      const s = state as { user?: { kind?: string }; cursor?: { path?: string } | null };
-      if (s.user?.kind == "person" && s.cursor?.path == path) return true;
-    }
-    return false;
-  }
-
   /** Whether any participant is in the middle of its work on the server. */
   working(): boolean {
     for (const e of this.all.values()) if (working(e.work)) return true;

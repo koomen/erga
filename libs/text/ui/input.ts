@@ -321,7 +321,6 @@ export abstract class EditorInput extends EditorClipboard {
   }
 
   protected mousedown(e: MouseEvent): void {
-    if (e.button == 0) this.pointerSeq++;
     // A click on the text after Escape (leaveText), or after the text lost the focus: the page's text is editable again,
     // before the browser puts the caret.
     if ((this.leftText || !this.host?.hasAttribute("contenteditable")) && e.button == 0 && this.ours(e)) {
@@ -469,8 +468,8 @@ export abstract class EditorInput extends EditorClipboard {
   }
 
   /**
-   * Holds a key or input on the page while the shell has the document (see hold), or while the page is about to load
-   * again (render: the page that comes applies them, takeHeld); returns whether it did.
+   * Holds a key or input on the page while earlier ones wait for the caller (see handOver), or while the page is about
+   * to load again (render: the page that comes applies them, takeHeld); returns whether it did.
    */
   protected holdKey(e: KeyboardEvent | InputEvent, h: HeldInput): boolean {
     if (!(this.holding || (this.rendering && this.doc)) || e.isComposing || !this.ours(e)) return false;
@@ -487,16 +486,10 @@ export abstract class EditorInput extends EditorClipboard {
     while (this.held.length && !this.holding && !this.rendering) this.replay(this.held.shift()!);
   }
 
-  /**
-   * While the shell has the document (the source view), the page holds its
-   * keys; handed back (after setState), it applies them. The page shows
-   * again a moment before the shell's message comes, and a key typed then
-   * isn't lost.
-   */
-  hold(on: boolean): void {
-    this.holding = on;
-    if (on) this.heldPointer = this.pointerSeq;
-    else this.release();
+  /** The keys held across the page's reload (the config's `held`) go in now: the caller says when the page is ready for them. */
+  handOver(): void {
+    this.holding = false;
+    this.release();
   }
 
   /** The keys held while the page was about to load again (holdKey), for the page that comes; none are left here. */

@@ -340,66 +340,6 @@ journey("a deck that changes on disk and by an agent while the person types", ()
     await ed.page.click("#agent-send.stop");
     await until(async () => !(await working(ed)), 10_000, "the agent stops");
   });
-
-  test("the source view types HTML as code: a tag brings its closing tag, Enter indents, and names and comments have their colors; ⌘⇧P goes back to a page that edits", async () => {
-    await ed.press("ControlOrMeta+Shift+p");
-    await expect
-      .poll(() => ed.eval<string | null>(`document.querySelector("#source .cm-content")?.getAttribute("contenteditable") ?? null`))
-      .toBe("true");
-    await ed.settle();
-    // It shows the file, with the edits from the disk and from the agent.
-    expect(await ed.source()).toMatch(/the disk edits[\s\S]*<h1>Third slide one two three now!\?!<\/h1>/);
-    const end = async () => {
-      const src = await ed.source();
-      return src.slice(src.indexOf("</html>\n") + 8);
-    };
-    await ed.press("ControlOrMeta+End");
-    await ed.type("<section>");
-    await expect.poll(end).toBe("<section></section>");
-    await ed.press("Enter");
-    await ed.type("<p>hi");
-    await expect.poll(end).toBe("<section>\n  <p>hi</p>\n</section>");
-    await ed.press("End");
-    await ed.press("Enter");
-    await ed.type("<ul>");
-    await ed.press("Enter");
-    await expect.poll(end).toBe("<section>\n  <p>hi</p>\n  <ul>\n    \n  </ul>\n</section>");
-    // "</" closes the innermost open element.
-    await ed.type("<li>x");
-    for (let i = 0; i < 5; i++) await ed.press("ArrowRight");
-    for (let i = 0; i < 5; i++) await ed.press("Backspace");
-    await ed.type("</");
-    await expect.poll(end).toBe("<section>\n  <p>hi</p>\n  <ul>\n    <li>x</li>\n  </ul>\n</section>");
-    await ed.press("ControlOrMeta+End");
-    await ed.type("\n<!-- a note -->");
-    await expect.poll(end).toBe("<section>\n  <p>hi</p>\n  <ul>\n    <li>x</li>\n  </ul>\n</section>\n<!-- a note -->");
-    // The colors: a tag's brackets and a comment pale, names and values darker than the text, a comment in italics.
-    const look = (text: string) =>
-      ed.eval<string[]>(
-        `(() => { const s = [...document.querySelectorAll("#source .cm-line span")].find((s) => s.textContent == ${JSON.stringify(text)}); const c = s && getComputedStyle(s); return c ? [c.color, c.fontStyle] : []; })()`
-      );
-    const text = await ed.eval<string>(`getComputedStyle(document.querySelector("#source .cm-content")).color`);
-    const [bracket] = await look("<"),
-      [name] = await look("html"),
-      [value] = await look('"en"');
-    expect(new Set([text, bracket, name]).size).toBe(3);
-    expect(value).toBe(name);
-    expect(await look("<!-- a note -->")).toEqual([bracket, "italic"]);
-
-    // ⌘⇧P again: the page, with the new section, and it edits.
-    await ed.press("ControlOrMeta+Shift+p");
-    await expect
-      .poll(
-        async () =>
-          !(await ed.eval<boolean>(`document.body.classList.contains("source")`)) &&
-          (await ed.frame<boolean>(`!!${F}.querySelector("section li[data-erga-text]")`))
-      )
-      .toBe(true);
-    // A click right away puts the caret where it lands: the editor doesn't move it back afterwards.
-    await ed.clickEnd("section li");
-    await ed.type("!");
-    await expect.poll(() => ed.textOf("section li")).toBe("x!");
-  });
 });
 
 journey("files dropped and pasted on a page in a folder", () => {

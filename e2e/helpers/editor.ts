@@ -193,7 +193,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       await settle(page);
       await until(
         async () =>
-          !(await page.evaluate(`document.body.classList.contains("erga-editing") && !document.body.classList.contains("source")`)) ||
+          !(await page.evaluate(`document.body.classList.contains("erga-editing")`)) ||
           (await ed.frame<boolean>("!!window.ergaFrame?.page && !ergaFrame.reloading").catch(() => false)),
         10_000,
         "the page's editor is up"
@@ -377,10 +377,9 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     toast: () => page.evaluate(() => { const t = document.getElementById("toast")!; return { text: t.textContent ?? "", shown: t.classList.contains("show") }; }),
     /** The editor's selection, and the text it covers. */
     async selection(): Promise<{ from: number; to: number; head: number; text: string }> {
-      const of = (s: string) =>
-        `(() => { const st = ${s}, m = st.selection.main; return { from: m.from, to: m.to, head: m.head, text: st.doc.sliceString(m.from, m.to) }; })()`;
-      if (await page.evaluate(`document.body.classList.contains("source")`)) return page.evaluate(of("ergaPage.state"));
-      return ed.frame(of("ergaFrame.page.state"));
+      return ed.frame(
+        `(() => { const st = ergaFrame.page.state, m = st.selection.main; return { from: m.from, to: m.to, head: m.head, text: st.doc.sliceString(m.from, m.to) }; })()`
+      );
     },
     /** The page as a person sees it, as text (visible.ts): markers, indents, the caret. */
     visible: () => ed.frame<string>(VISIBLE),

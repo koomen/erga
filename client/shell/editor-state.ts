@@ -1,15 +1,12 @@
 // The editor in the page, as the shell decides it: one state, and `step`, the one function that says what the page is
 // told (edit, with a key, or view) and when to ask the host for an edit key. The page's editor runs only while editing,
-// on the page itself (not its source), out of full screen (there the page's own keys work: a deck's arrows). It opens its
+// out of full screen (there the page's own keys work: a deck's arrows). It opens its
 // socket with an edit key (server/documents/edit-key.ts), which the shell asks for, and again before it ends.
 // No IO here: client/shell/editor.ts does what `step` returns.
 //
 // Trap: the frame has its own history. Back after a link in the frame loads the frame's old address again, with its
 // `?erga-edit` if the editor was on then, and that page asks for the editor by itself. Only this state decides
 // "editing"; the frame's address never does.
-
-/** The page itself, or the file's source (its HTML). */
-export type Mode = "text" | "html";
 
 /** A key the host gave, and when it ends (ms since the epoch). */
 export interface Held {
@@ -36,8 +33,6 @@ export type Word = { mode: "view" } | { mode: "edit"; key: string };
 export interface EditorState {
   /** The editor's controls are up (the pencil; the eye ends it). */
   editing: boolean;
-  /** The page itself, or its source. */
-  view: Mode;
   /** The page is full screen. */
   full: boolean;
   key: Key;
@@ -47,7 +42,6 @@ export interface EditorState {
 
 export type EditorEvent =
   | { type: "editing"; on: boolean }
-  | { type: "view"; view: Mode }
   | { type: "full"; on: boolean }
   /** The host gave a key. */
   | { type: "key"; held: Held }
@@ -81,14 +75,13 @@ export const RENEW_MS = 5 * 60_000,
 
 export const initial = (editing: boolean, full: boolean, held: Held | null): EditorState => ({
   editing,
-  view: "text",
   full,
   key: { status: "idle", held, noted: false },
   told: { mode: "view" },
 });
 
 /** The page's editor should run. */
-export const runs = (s: EditorState) => s.editing && s.view == "text" && !s.full;
+export const runs = (s: EditorState) => s.editing && !s.full;
 
 const usable = (held: Held | null, now: number) => !!held && held.expires > now;
 
@@ -107,9 +100,6 @@ export function step(s: EditorState, e: EditorEvent, now: number): { state: Edit
   switch (e.type) {
     case "editing":
       s = { ...s, editing: e.on };
-      break;
-    case "view":
-      s = { ...s, view: e.view };
       break;
     case "full":
       s = { ...s, full: e.on };

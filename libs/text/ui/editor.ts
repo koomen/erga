@@ -1,6 +1,6 @@
 // The page editor: the page itself is the editing surface. The page's HTML
-// source is the model, an EditorState with the same change sets and undo
-// history as the source view. The editor runs in the page's own window
+// source is the model, an EditorState with its change sets and undo
+// history. The editor runs in the page's own window
 // (frame.ts), which the pages origin served from the same text with its
 // manuscript elements marked (shared/page-html.ts); they're found by the
 // deterministic analysis in manuscript.ts, which gives every text node a source range.
@@ -23,9 +23,7 @@
 // clipboard.ts (paste and copy) and input.ts (keys, input, the pointer). The rules that make each key's change to the
 // source are the library's API (libs/text/api/).
 
-import type { ChangeSet, EditorState } from "@codemirror/state";
-import * as M from "../../../shared/manuscript";
-import { changesBetween } from "../../../document/model/merge";
+import type { ChangeSet } from "@codemirror/state";
 import type { HeldInput, LinkEdit, LinkInfo, TypingAgent, PageEditorConfig, PageUpdate, Peer } from "./types";
 import type { InlineStyle } from "../api/source";
 import { noHistory } from "./core";
@@ -37,7 +35,7 @@ export class PageEditor extends EditorInput {
   constructor(config: PageEditorConfig) {
     super(config);
     this.held = [...(config.held ?? [])];
-    // (They wait for the page to have the focus: the caller hands them over, hold(false).)
+    // (They wait for the page to have the focus: the caller hands them over, handOver.)
     if (this.held.length) this.holding = true;
     if (config.onUpdate) this.listeners.push(config.onUpdate);
     this.render();
@@ -78,34 +76,6 @@ export class PageEditor extends EditorInput {
     if (this.staleSince == null && this.unshown) this.staleSince = oldSrc;
     // The view stays where the reader put it: a change off screen is not followed (reveal finds a peer on request).
     if (agent) this.playTyping(changes, agent);
-    this.paintMarks();
-  }
-
-  /**
-   * Adopts a state edited elsewhere (the source view). Edits to the text
-   * blocks only are patched in, so the page stays as it is and takes a click
-   * or a key at once (a render replaces the page, and loses any meanwhile);
-   * anything else that patching can't show (a script, say) makes the page afresh: it loads again.
-   */
-  setState(state: EditorState): void {
-    if (state == this.state) return;
-    const oldSrc = this.src, oldUnits = this.units, src = state.doc.toString();
-    const changes = src != oldSrc ? changesBetween(oldSrc, src) : null;
-    // A click on the page after it was handed over (it shows again before the shell's message comes) put the caret: it stands.
-    const clicked = this.holding && this.pointerSeq != this.heldPointer && this.doc && !this.rendering ? this.readSelection() : null;
-    this.state = clicked ? state.update({ selection: changes ? clicked.map(changes) : clicked, annotations: noHistory() }).state : state;
-    this.srcOf = { doc: this.state.doc, src };
-    this.typing = [];
-    if (!this.doc || this.rendering) { this.render(); return; }
-    if (changes) this.keepView(() => this.applyChanges({ changes }, oldUnits, oldSrc), changes);
-    if (this.unshown) this.render();
-    if (this.rendering) return; // Patching couldn't show it: the render does.
-    const head = this.state.selection.main.head;
-    const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
-    if (first && !M.unitAt(this.units, head)) this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
-    if (this.hasFocus) this.syncDOMSelection(true);
-    if (changes) this.changed();
-    this.notify({ docChanged: !!changes, selectionSet: true, rendered: false, changes: null, remote: false });
     this.paintMarks();
   }
 }

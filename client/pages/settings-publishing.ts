@@ -50,8 +50,8 @@ export const PUBLISHING_CSS = `/* Publishing: "Publish to" and its menu, the hea
 .ds-confirm { margin: 10px 0 0; padding: 10px 12px; border-radius: 9px; background: #fff7e6; border: 1px solid #f2dfb4; }
 .ds-confirm p { margin: 0 0 8px; font-size: 12.5px; line-height: 1.45; color: #6b4e12; }
 .ds-confirm-acts { display: flex; justify-content: flex-end; gap: 8px; }
-html.page-dark body:not(.source) .ds-confirm { background: color-mix(in srgb, #d9a441 14%, transparent); border-color: color-mix(in srgb, #d9a441 35%, transparent); }
-html.page-dark body:not(.source) .ds-confirm p { color: #ecd9a8; }
+html.page-dark body .ds-confirm { background: color-mix(in srgb, #d9a441 14%, transparent); border-color: color-mix(in srgb, #d9a441 35%, transparent); }
+html.page-dark body .ds-confirm p { color: #ecd9a8; }
 .ds-publish { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--rule); }
 .ds-publish > svg { flex: none; align-self: flex-start; margin-top: 1px; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ds-pub-text { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); }

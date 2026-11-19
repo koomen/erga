@@ -535,7 +535,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
           // (The viewer stops its own reloads of the page: this shows each change in place. client/inline/viewer-live.ts.)
           if (m.comment) window.parent.postMessage({ type: "erga-commenting" }, SHELL);
           // (The keys held meanwhile go in now, whether or not it has the focus yet.)
-          page.hold(false);
+          page.handOver();
           focus = false;
         });
       controls?.queue();

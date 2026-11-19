@@ -14,14 +14,7 @@ export default function viewerBars(): void {
   });
   // Print (⌘P; Ctrl+P off a Mac): the page in the frame prints itself, whole and without Erga's bars (reader.ts).
   addEventListener("keydown", (e) => {
-    if (
-      !(isMac ? e.metaKey : e.ctrlKey) ||
-      e.shiftKey ||
-      e.altKey ||
-      e.key.toLowerCase() != "p" ||
-      document.body.classList.contains("source")
-    )
-      return;
+    if (!(isMac ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() != "p") return;
     e.preventDefault();
     ergaFrames.send({ type: "erga-print" });
   });

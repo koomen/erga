@@ -12,7 +12,7 @@ export function editorContext(shell: Shell): string {
 function viewContext(shell: Shell): string {
   const scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   const w = shell.frame.clientWidth, h = shell.frame.clientHeight;
-  return `${w && h ? `Their window shows the page at ${w}×${h} CSS pixels` : "Their window shows the source, not the page"}, in ${scheme} mode.`;
+  return `Their window shows the page${w && h ? ` at ${w}×${h} CSS pixels` : ""}, in ${scheme} mode.`;
 }
 function caretContext(shell: Shell): string {
   const s = shell.currentState();

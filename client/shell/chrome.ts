@@ -36,7 +36,7 @@ export function mountChrome(shell: Shell) {
 
   // The on-screen keyboard. Where the browser lays it over the page instead
   // of resizing the window (Safari), --kb is its height, and the page, the
-  // source view, the cards and the agent stop above it. Zoomed
+  // cards and the agent stop above it. Zoomed
   // in, the visual viewport is small for another reason: none of it is keyboard.
   const vv = window.visualViewport;
   if (vv) {

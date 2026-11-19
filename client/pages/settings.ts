@@ -100,7 +100,7 @@ const CSS = `
 .ds :is(.ds-btn, .ds-select)[data-tip]::after { left: auto; right: 0; }
 @media (hover: hover) { .ds [data-tip]:hover::after { opacity: 1; } }
 .ds-error { margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; color: #b42318; background: color-mix(in srgb, #d0453a 10%, transparent); }
-html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
+html.page-dark body .ds-error { color: #ff9d94; }
 .ds-desc-none { color: var(--chrome); font-style: italic; }
 .ds-restored { margin: 0 0 6px; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; background: var(--code-bg); color: var(--fg); }
 .ds-restored[hidden] { display: none; }
@@ -124,7 +124,7 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-tags { display: flex; gap: 4px; }
 .ds-tag { font: 600 10.5px/1 var(--font-text); padding: 3px 6px; border-radius: 999px; color: var(--soft); background: var(--code-bg); white-space: nowrap; }
 .ds-tag.live { color: #1f7a45; background: #e5f4ea; }
-html.page-dark body:not(.source) .ds-tag.live { color: #7fd6a0; background: color-mix(in srgb, #2f9e5b 22%, transparent); }
+html.page-dark body .ds-tag.live { color: #7fd6a0; background: color-mix(in srgb, #2f9e5b 22%, transparent); }
 .ds-list li.ds-gap { display: block; padding: 3px 0 3px 42px; font-size: 11.5px; color: var(--chrome); }
 .ds-foot { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; font-size: 11.5px; color: var(--chrome); }
 .ds-skel { height: 12px; border-radius: 6px; background: var(--code-bg); margin: 10px 0; animation: ds-pulse 1.1s ease-in-out infinite alternate; }

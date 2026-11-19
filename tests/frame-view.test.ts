@@ -1,6 +1,7 @@
-// The frame's build has an inert stand-in for @codemirror/view (libs/text/ui/frame-view.ts,
-// client/build.ts FRAME_VIEW): the frame keeps an EditorState and never a view. This
-// checks that the frame's bundle has none of the real view's code, and that what the
+// The frame's build has an inert stand-in for @codemirror/view and @lezer/common
+// (libs/text/ui/frame-view.ts, client/build.ts FRAME_VIEW): the frame keeps an EditorState
+// and never a view or a syntax tree. This checks that the frame's bundle has none of the
+// real view's code or the parser's, and that what the
 // frame does with CodeMirror (a state with its history: edits, undo and redo; the state
 // handed to the shell as JSON and back) works the same over the stand-in.
 
@@ -13,7 +14,7 @@ import * as standIn from "../libs/text/ui/frame-view.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 
-test("the page's bundles (the editor, the page tools) have nothing of @codemirror/view but the stand-in", async () => {
+test("the page's bundles (the editor, the page tools) have nothing of @codemirror/view or @lezer/common but the stand-in", async () => {
   const outdir = mkdtempSync(join(tmpdir(), "erga-frame-"));
   try {
     const built = await Bun.build({
@@ -28,7 +29,7 @@ test("the page's bundles (the editor, the page tools) have nothing of @codemirro
     expect(built.success).toBe(true);
     const meta = (built as unknown as { metafile: { inputs: Record<string, unknown>; outputs: Record<string, { inputs: Record<string, unknown>; entryPoint?: string }> } }).metafile;
     const all = Object.keys(meta.inputs);
-    expect(all.filter((p) => p.includes("@codemirror/view"))).toEqual([]);
+    expect(all.filter((p) => p.includes("@codemirror/view") || p.includes("@lezer/common"))).toEqual([]);
     expect(all.some((p) => p.endsWith("libs/text/ui/frame-view.ts"))).toBe(true);
   } finally {
     rmSync(outdir, { recursive: true, force: true });
@@ -38,6 +39,7 @@ test("the page's bundles (the editor, the page tools) have nothing of @codemirro
 test("the frame's CodeMirror work, over the stand-in: edits, undo and redo, its state as JSON", async () => {
   // (A factory that returns the module as it is: one that imports it hangs when another test loaded the view first.)
   mock.module("@codemirror/view", () => standIn);
+  mock.module("@lezer/common", () => standIn);
   const { EditorState, Transaction } = await import("@codemirror/state");
   const { history, historyField, undo, redo, isolateHistory } = await import("@codemirror/commands");
 

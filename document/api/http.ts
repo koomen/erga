@@ -289,7 +289,6 @@ export function makeHttp(opts: HostOptions) {
       lastTurn: () => participants.lastTurn(p),
       files: filesAccess(p),
       sandbox: opts.sandbox,
-      someoneIn: (path) => participants.someoneIn(path),
       during: (call, run) => participants.during(p, { ...call, turn: user.turn ?? null }, run),
     };
   };

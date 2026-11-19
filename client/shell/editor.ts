@@ -1,4 +1,4 @@
-// The editor in the page, run as editor-state.ts decides: this sends it what happens (editing, the view, full screen,
+// The editor in the page, run as editor-state.ts decides: this sends it what happens (editing, full screen,
 // the edit key's answers, time), and does what it returns: tells the page, asks the host for a key, says so in a note
 // when the editor can't start. The key is kept in this tab (sessionStorage): the editor starts with it after a reload,
 // offline too.

@@ -30,19 +30,18 @@ html :is(.erga-new-menu, .erga-tree-card), .erga-bar .erga-account-menu {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), var(--glass-shadow);
 }
 html .erga-new-menu { --nm-ring: rgba(0, 0, 0, 0.08); }
-/* (In the editor's source view, its own colours: client/styles/glass.css.) */
-html.page-dark body:not(.source) :is(.erga-bar, .erga-new-menu, .erga-account-menu, .erga-tree-card) {
+html.page-dark body :is(.erga-bar, .erga-new-menu, .erga-account-menu, .erga-tree-card) {
   border-color: rgba(255, 255, 255, 0.12); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
-html.page-dark body:not(.source) .erga-bar { background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 55%), color-mix(in srgb, var(--glass-pg) 70%, transparent); }
-html.page-dark body:not(.source) :is(.erga-new-menu, .erga-bar .erga-account-menu, .erga-tree-card) { background: color-mix(in srgb, #1c1c1f 92%, transparent); }
-html.page-dark body:not(.source) .erga-new-menu { --nm-ring: rgba(255, 255, 255, 0.1); }
+html.page-dark body .erga-bar { background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 55%), color-mix(in srgb, var(--glass-pg) 70%, transparent); }
+html.page-dark body :is(.erga-new-menu, .erga-bar .erga-account-menu, .erga-tree-card) { background: color-mix(in srgb, #1c1c1f 92%, transparent); }
+html.page-dark body .erga-new-menu { --nm-ring: rgba(255, 255, 255, 0.1); }
 
 /* The controls' tones on the page's colour: dark text on a light page, light on a dark one. */
-html.page-light body:not(.source) :is(.erga-bar, .chrome) {
+html.page-light body :is(.erga-bar, .chrome) {
   --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46; --caret: #3b7cf0;
 }
-html.page-dark body:not(.source) :is(.erga-bar, .chrome) {
+html.page-dark body :is(.erga-bar, .chrome) {
   --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2; --caret: #6aa1ff;
 }
 

@@ -72,13 +72,13 @@ export const HEADERS = `${ASSET_PREFIX}*
 `;
 
 /**
- * The frame's build: @codemirror/view as an inert stand-in (libs/text/ui/frame-view.ts). The frame has no CodeMirror view
- * (bridge.ts), but CodeMirror's language, history and Markdown modules import the view's for their view parts.
+ * The frame's build: @codemirror/view and @lezer/common as an inert stand-in (libs/text/ui/frame-view.ts). The frame has
+ * no CodeMirror view and no syntax tree (bridge.ts), but CodeMirror's history and language modules import both.
  */
 export const FRAME_VIEW: import("bun").BunPlugin = {
   name: "erga:frame-view",
   setup(b) {
-    b.onResolve({ filter: /^@codemirror\/view$/ }, () => ({ path: join(ROOT, "libs/text/ui/frame-view.ts") }));
+    b.onResolve({ filter: /^(@codemirror\/view|@lezer\/common)$/ }, () => ({ path: join(ROOT, "libs/text/ui/frame-view.ts") }));
   },
 };
 
@@ -169,7 +169,7 @@ async function build(): Promise<void> {
   // The scripts, in two builds. The frame's alone: it runs on each document's own origin, and the browser keeps what a
   // document's frame loads apart from what the shell loads (Chrome's cache is keyed by the frame's site too), so a chunk
   // shared with the shell would be fetched twice anyway; and alone, it has only what the frame uses of each module (with
-  // the shell, it would have what either uses: the source view's languages). Then the rest, together: what two of them
+  // the shell, it would have what either uses). Then the rest, together: what two of them
   // share is one chunk. In both, what a script imports later (import()) is a chunk of its own.
   const files: Record<string, string> = {};
   const imports = new Map<string, { path: string; kind: string }[]>();

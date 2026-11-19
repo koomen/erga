@@ -4,7 +4,6 @@
   --bg: #ffffff;
   --fg: #1c1c1f;            /* body text */
   --fg-strong: #0d0d0f;     /* headings, bold */
-  --mark: #b4b4bb;          /* faded syntax in the source view */
   --list-mark: #8e8e96;     /* list bullets are syntax too, but you navigate by them */
   --soft: #6b6b73;          /* quotes, link text, URLs */
   --chrome: #a1a1a9;        /* resting colour of controls */
@@ -34,7 +33,6 @@
   --bg: #18181b;
   --fg: #cacad2;
   --fg-strong: #ececf1;
-  --mark: #55555e;
   --list-mark: #6c6c75;
   --soft: #8f8f99;
   --chrome: #5f5f68;
@@ -54,7 +52,6 @@
     --bg: #18181b;
     --fg: #cacad2;
     --fg-strong: #ececf1;
-    --mark: #55555e;
     --list-mark: #6c6c75;
     --soft: #8f8f99;
     --chrome: #5f5f68;
@@ -598,7 +595,7 @@ body:not(.agent-open) .agent-resize { display: none; }
   box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07), var(--glass-edge), var(--glass-shadow);
   transition: width var(--agent-ms) var(--agent-ease), height var(--agent-ms) var(--agent-ease), border-radius var(--agent-ms) var(--agent-ease);
 }
-html.page-dark body:not(.source) .agent-glass {
+html.page-dark body .agent .agent-glass {
   background: linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 90px), color-mix(in srgb, var(--glass-pg) 70%, transparent);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
@@ -629,6 +626,6 @@ body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opaci
 .agent .agent-compose { border-top: 0; }
 .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.6); border-color: rgba(0, 0, 0, 0.08); }
 .agent .msg-user { background: rgba(0, 0, 0, 0.045); }
-html.page-dark body:not(.source) .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); }
-html.page-dark body:not(.source) .agent .msg-user { background: rgba(255, 255, 255, 0.08); }
+html.page-dark body .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); }
+html.page-dark body .agent .msg-user { background: rgba(255, 255, 255, 0.08); }
 body.no-motion, body.no-motion * { transition: none !important; }

@@ -1,8 +1,8 @@
 // The page editor's shell: the controls around the document's page while editing, and its one word to the editor in
 // the page (edit, with the edit key, or view: page-frame.ts). The editor is the page's own (libs/text/ui/frame.ts): it
-// joins the document's room itself. The shell joins it too, for what it shows: who's here, the source view (⌘⇧P, with
-// its own undo history), the pages and the name, and your agent's events (your agent runs in its own object; its
-// conversation is yours alone, and its edits arrive through the room like anyone's).
+// joins the document's room itself. The shell joins it too, for what it shows: who's here, the pages and the name, and
+// your agent's events (your agent runs in its own object; its conversation is yours alone, and its edits arrive through
+// the room like anyone's).
 //
 // This file loads the document and wires the shell's parts (client/shell/), which share one object (shell.ts).
 
@@ -12,7 +12,7 @@ import { mountPageFrame } from "./page-frame";
 import { mountCommentBox } from "../common/comment-box";
 import { isMac, type Keys } from "../common/app-keys";
 import { describeProblem } from "./problems";
-import { colorFor, files, roomInfo, type Author } from "../../document/model/content";
+import { colorFor, files, type Author } from "../../document/model/content";
 import type { Attachment } from "../../shared/attach";
 import { isPage, pageUrl } from "../../document/model/pages";
 import { live } from "../live/client";
@@ -32,7 +32,6 @@ import { mountToast } from "./toast";
 import { mountAlerts } from "./alerts";
 import { mountUploads } from "./uploads";
 import { ms } from "../../libs/text/ui/timescale";
-import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { awaitHello } from "./opening";
 import { editorContext } from "./agent-context";
@@ -53,14 +52,11 @@ declare global {
 interface EditorKept {
   /** The page it was on: the rest applies only to the same one. */
   path: string;
-  mode: "text" | "html";
   pages: boolean;
   settings: boolean;
   help: boolean;
   /** Files attached to the agent's next message. */
   files: Attachment[];
-  /** Everything the tab held of the room (Collab.held: the source view's edits), merged after the reload in case one hadn't reached it. */
-  held?: { epoch: string; update: string };
 }
 /**
  * The editor's look, kept across a reload for the document's page to open with from its first frame (server/pages/viewer.ts,
@@ -82,8 +78,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
 
   /** The parts of the shell, and what they share: filled in below, as each is ready. */
   const shell = {
-    sourceView: null,
-    source: null,
     docSettings: null,
     docName: null,
     pages: 1,
@@ -132,8 +126,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     // (Kept in this browser, as this person: the document opens from it with no connection.)
     keep: `${BASE}${as}`,
     onEvent: (msg) => { if (started) shell.room.socketEvent(msg); else pending.push(msg); },
-    onRemote: (changes, author) => {
-      shell.room.applyRemote(changes);
+    onRemote: (_changes, author) => {
       // This person's own edit, made on the page (its editor has a replica of its own): the controls fade, as for typing.
       if (started && author?.kind == "person" && author.user == shell.me.user) shell.chrome.hideChrome();
     },
@@ -254,7 +247,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   const api = (path: string) => `${BASE}${path}${as}`;
 
   // Into the room as who this tab is, and the document's text (on its way already, or here). Its presence is the page
-  // editor's (frame.ts: its own replica), or the source view's while that's open (views.ts).
+  // editor's (frame.ts: its own replica).
   collab.join(me, firstPage, null);
   try {
     await collab.ready();
@@ -266,15 +259,10 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     return;
   }
   document.title = document.documentElement.dataset.pageTitle || (info.docName?.title ?? shell.pagePath);
-  // Someone edits the source (the lock: document/room/room.ts): the source view gives way to the page, which says so and is
-  // read-only meanwhile (libs/text/ui/frame.ts).
-  roomInfo(collab.doc).observe(() => {
-    if (roomInfo(collab.doc).get("lock") && shell.editor.state.view != "text") shell.views.setMode("text");
-  });
 
   /**
-   * The caret in the text, and the text: the source view's while it has them, else the page's: its editor's presence in
-   * the room says where it is (it carries this tab's mark, `tab`).
+   * The text and the caret in it as a state, made afresh (the text whole: for the agent's look, not for each key). The
+   * caret is the page's: its editor's presence in the room says where it is (it carries this tab's mark, `tab`).
    */
   const tab = Math.random().toString(36).slice(2, 10);
   const pageSelection = () => {
@@ -282,8 +270,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     const at = mine && collab.positions(mine);
     return at ? EditorSelection.single(at.anchor, at.head ?? at.anchor) : EditorSelection.single(0);
   };
-  const currentSelection = () => (shell.sourceView ? shell.sourceView.state.selection : pageSelection());
-  const currentState = () => shell.sourceView?.state ?? EditorState.create({ doc: collab.current(), selection: currentSelection() });
+  const currentState = () => EditorState.create({ doc: collab.current(), selection: pageSelection() });
   Object.assign(shell, {
     collab,
     me,
@@ -294,7 +281,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     goTo,
     openPage,
     swapPage,
-    currentSelection,
     currentState,
   });
   // (Asked each time: a load of the page again puts a new frame in its place, client/inline/viewer-frames.ts.)
@@ -416,7 +402,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     shell.toast.flash(`Zoom ${Math.round((e as CustomEvent<{ level: number }>).detail.level * 100)}%`)
   );
 
-  shell.views = mountViews(shell);
   shell.requests = mountPageRequests(shell);
   // Your agent (server/pages/agent.ts: the page has it, viewing and editing): here, where it sits around the page, and how wide.
   mountLayout($("agent"), $("agent").querySelector<HTMLElement>(".agent-head")!);
@@ -429,10 +414,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     if (!editing()) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
-    if (mod && e.shiftKey && key == "p") {
-      shell.views.toggleSource();
-      return true;
-    }
     // (In the shell itself, the agent's own script hears ⌘J: client/inline/agent-toggle.ts.)
     if (fromPage && mod && !e.shiftKey && key == "j") {
       window.ergaAgent?.show(!window.ergaAgent.open());
@@ -466,8 +447,8 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
       // (Its box had the focus: the caret goes back to the text.)
       else if (!$("sharing").hidden) {
         shell.sharing.toggleSharing(false);
-        if (shell.editor.state.view == "text") page.focus();
-      } else if (shell.editor.state.view != "text") shell.views.setMode("text");
+        page.focus();
+      }
       // Nothing else to close: the controls fade (in the page, the editor takes the focus off the text itself).
       else shell.chrome.hideChrome();
       return true;
@@ -486,13 +467,9 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     true
   );
 
-  // Full screen (client/inline/viewer-full.ts) is for showing the page, not editing it: the page, not its source, and the
-  // editor in it stops, so the page's own keys work (a deck's arrows); it starts again after.
-  addEventListener("erga-full", (e) => {
-    const on = (e as CustomEvent<{ on: boolean }>).detail.on;
-    if (on && shell.editor.state.view != "text") shell.views.setMode("text");
-    shell.editor.send({ type: "full", on });
-  });
+  // Full screen (client/inline/viewer-full.ts) is for showing the page, not editing it: the editor in it stops, so the
+  // page's own keys work (a deck's arrows); it starts again after.
+  addEventListener("erga-full", (e) => shell.editor.send({ type: "full", on: (e as CustomEvent<{ on: boolean }>).detail.on }));
 
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
   // The controls act as the press starts (client/common/fast-click.ts): the top bar's, the title, the agent's open and
@@ -516,7 +493,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
       page.focus();
       return;
     }
-    if (shell.editor.state.view != "text") shell.views.setMode("text");
     shell.chrome.closeCards();
     shell.chrome.toggleQuick(false);
     shell.chrome.showChrome();
@@ -527,7 +503,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
 
   // The page reloads by itself for a new release of the editor, once the room has this tab's edits,
   // never while you drag or compose, and comes back as it was: the page and its caret, where it was
-  // scrolled to, the view (page or source), the cards that were open, the files attached to the next message.
+  // scrolled to, the cards that were open, the files attached to the next message.
   // (The agent's draft, the pane and its layout are kept in this browser anyway.) A reload by hand comes back
   // the same way, and so does the editor's look: the document's page opens with it from its first frame,
   // before this script has loaded.
@@ -538,17 +514,15 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
       "editor",
       (): EditorKept => ({
         path: shell.pagePath,
-        mode: shell.editor.state.view,
         pages: !$("pages").hidden,
         settings: !!shell.docSettings?.isOpen(),
         help: !$("help").hidden,
         files: agentPanel()?.files.files ?? [],
-        held: collab.held() ?? undefined,
       }),
       { everyReload: true }
     );
     l.keep("shell", (): ShellKept | null => {
-        if (!editing() || shell.editor.state.view != "text") return null;
+        if (!editing()) return null;
       const root = document.documentElement;
       return {
         width: innerWidth, height: innerHeight,
@@ -561,9 +535,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     l.check("the editor started");
   });
   if (back && back.path == shell.pagePath) {
-    // Any edit that hadn't reached the room before the reload goes now (merged: nothing changes if it had).
-    collab.merge(back.held);
-    if (back.mode && back.mode != "text") shell.views.setMode(back.mode);
     if (back.pages) requestAnimationFrame(() => shell.naming.togglePages(true));
     if (back.settings) void shell.chrome.loadSettings().then((s) => s?.toggle(true));
     if (back.help) shell.chrome.toggleHelp(true);
@@ -584,13 +555,8 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     swaps = swaps.then(() => swapTo(path, push)).catch((e) => { console.error(e); location.assign(addressOf(path)); });
     return true;
   }
-  async function swapTo(path: string, push: boolean) {
+  function swapTo(path: string, push: boolean) {
     if (path == shell.pagePath) return;
-    // The page's source view gives the text back to the page first (the new page opens on the page itself).
-    if (shell.editor.state.view != "text") {
-      shell.views.setMode("text");
-      await shell.views.switched();
-    }
     const text = collab.setPath(path);
     if (text == null) { goTo(addressOf(path)); return; }
     page.load(path);
@@ -604,8 +570,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     window.ergaShowPage(path);
     shell.naming.tree()?.setCurrent(path);
     shell.naming.viewHref(shell.docName!.address);
-    shell.people.queueCursor();
-    shell.people.queuePeers();
   }
   // Each entry in the history says which page it is (the pencil's and the viewer's say it as they're made:
   // viewer-edit-boot.ts, viewer-nav.ts). Viewing, the viewer follows Back and Forward alone.
@@ -627,7 +591,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   window.ergaPage = {
     page,
     collab,
-    toggleSource: shell.views.toggleSource,
     agentContext: () => editorContext(shell),
     setEditing,
     get pagePath() {

@@ -24,7 +24,7 @@ Five rules make it exact and fast:
    element. Typing changes one text node. Enter, Tab and a join change one
    list or one parent element.
 3. **One general path for every other change** (undo, redo, an agent, a merge
-   from another tab, the source view): "map and reconcile" (section 5). The
+   from another tab): "map and reconcile" (section 5). The
    same path is the fallback for the fast path, so there is no second guess.
 4. **Ownership.** The editor keeps exact only what it drew from the HTML.
    Nodes that it did not draw (an extension's element, the page script's
@@ -444,7 +444,7 @@ CodeMirror mapping applied to tree nodes. Nothing is guessed from similar
 shapes.
 
 **What uses it:** undo and redo (the inverse `ChangeSet`), an agent's edit, a
-merge from another tab, an edit on disk, the source view, one of the page's own
+merge from another tab, an edit on disk, one of the page's own
 edits (`ergaEditor.call`), paste, and a structural key that has no step of its own
 (section 5.1). The fixes for class A come from this: redo no longer reloads,
 an extension's `<div>` no longer stops a morph, the `- [ ] ` change to the

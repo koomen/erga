@@ -341,7 +341,6 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
       "Undo / redo: ⌘Z / ⌘⇧Z",
       "Leave text: Esc",
       "Open or close the editor: ⌘⇧E",
-      "Page / source: ⌘⇧P",
       "Agent: ⌘J",
       "Go to a document or page: ⌘K",
       "Zoom: ⌘+ ⌘− ⌘0",

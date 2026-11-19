@@ -22,8 +22,9 @@ import type * as C from "../../libs/text/api/clipboard";
 // (The editor's globals, for the type check: frame.ts declares them.)
 import type {} from "../../libs/text/ui/frame";
 
-// The frame's build has a stand-in for @codemirror/view (client/build.ts FRAME_VIEW); so does this.
+// The frame's build has a stand-in for @codemirror/view and @lezer/common (client/build.ts FRAME_VIEW); so does this.
 mock.module("@codemirror/view", () => standIn);
+mock.module("@lezer/common", () => standIn);
 lend();
 const { history } = await import("@codemirror/commands");
 const { EditorInput } = await import("../../libs/text/ui/input");

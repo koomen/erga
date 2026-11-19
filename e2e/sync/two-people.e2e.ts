@@ -175,31 +175,6 @@ journey("two people on one page", () => {
     expect(await b.seenMarks()).toEqual([]);
   });
 
-  test("the source view follows the other person's typing and shows their caret; back on the page, the caret is drawn again", async () => {
-    const sourceOpen = () => b.eval<boolean>(`document.body.classList.contains("source")`);
-    await b.press("ControlOrMeta+Shift+p");
-    await until(sourceOpen, 5000, "Bo's source view opens");
-    await a.type("!");
-    await until(
-      async () => (await b.eval<string>(`document.querySelector("#source .cm-content").textContent`)).includes("Long notes (draft)!"),
-      5000,
-      "Bo's source view has Ada's typing"
-    );
-    await until(
-      async () =>
-        (await b.eval<string>(`[...document.querySelectorAll("#source .cm-peer-name")].map((e) => e.textContent).join("|")`)) == "Ada",
-      5000,
-      "and her caret"
-    );
-    await b.press("ControlOrMeta+Shift+p");
-    await until(
-      async () => !(await sourceOpen()) && (await peerNames(b)) == "Ada" && (await peerCaretIn(b, "h1")),
-      5000,
-      "back on the page, her caret is drawn again"
-    );
-    await b.settle();
-  });
-
   test("both type at once in nearby paragraphs, with Enter: both pages show all the text", async () => {
     await caretAtEnd(a, "#p0");
     await caretAtEnd(b, "#p1");

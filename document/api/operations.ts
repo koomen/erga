@@ -94,8 +94,6 @@ export interface Reach {
   files: FilesAccess;
   /** Runs a page's own API (page-api.ts). */
   sandbox: Sandbox;
-  /** Whether a user in person has the file open, their caret in it. */
-  someoneIn(path: string): boolean;
   /** Runs the call as one of the participant's work (participants.ts, during): its presence, the lock, its turn. */
   during<A>(call: { activity: string; changes: boolean; lock: boolean }, run: () => Promise<A>): Promise<A>;
 }
@@ -493,12 +491,11 @@ export async function runOperation(c: Reach, name: string, args: unknown): Promi
   }
   const path = pathOf(params);
   // An edit to the source locks the document for this participant's run of them: no one else's edit lands meanwhile,
-  // and the tabs show the page read-only (room.ts). Only an edit of a page that's there, or of a file that someone
-  // has open in the source view: a new file, or a stylesheet nobody has open, can't be in anyone's typing. (A glob's
-  // edit may reach any page. A page's own edit is one change: it takes no lock.)
+  // and the tabs show the page read-only (room.ts). Only an edit of a page that's there: a new file, or a stylesheet,
+  // can't be in anyone's typing. (A glob's edit may reach any page. A page's own edit is one change: it takes no lock.)
   const clean = path != null ? cleanPath(path) : null;
   const page = !!clean && (/[*?{]/.test(clean) || (/\.html?$/i.test(clean) && c.ws.isText(clean)));
-  const lock = !!op.changes && name != "call_edit" && (page || (!!clean && c.someoneIn(clean)));
+  const lock = !!op.changes && name != "call_edit" && page;
   return c.during({ activity: `${op.activity}${path ? ` ${path}` : ""}`, changes: !!op.changes, lock }, () => op.run(c, params));
 }
 

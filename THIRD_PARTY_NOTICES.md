@@ -19,7 +19,7 @@ The direct dependencies (`package.json`), and their licenses:
 
 | Package | License | Shipped |
 | --- | --- | --- |
-| `@codemirror/commands`, `@codemirror/state`, `@codemirror/view` | MIT | yes |
+| `@codemirror/commands`, `@codemirror/state` | MIT | yes |
 | `effect`, `@effect/ai-anthropic` | MIT | yes |
 | `@earendil-works/pi-ai` (with `openai` and `@google/genai`, Apache 2.0, which it bundles) | MIT | yes |
 | `yjs` | MIT | yes |

@@ -74,11 +74,8 @@ export abstract class EditorCore {
   protected leftText = false;
   /** Keys and input held while the editor couldn't take them, oldest first (see release). */
   protected held: HeldInput[] = [];
-  /** Set while the shell has the document (see hold). */
+  /** Set while the keys held across the page's reload wait for the caller (see handOver). */
   protected holding = false;
-  /** Counts clicks on the page, to tell one made while holding (see setState). */
-  protected pointerSeq = 0;
-  protected heldPointer = 0;
 
   /**
    * The source as a string. A full copy of a large document on every key

@@ -257,7 +257,7 @@ export const pageInter = (html: string) => /@font-face\s*\{[^}]*font-family:\s*(
  * quick-open).
  */
 export const SHADOW_BARS = inlineStyle("bars")
-  .replace(/html\.(page-[a-z]+) body:not\(\.source\)/g, ":host(.$1)")
+  .replace(/html\.(page-[a-z]+) body(?= )/g, ":host(.$1)")
   .replace(/html\.(page-[a-z]+)/g, ":host(.$1)")
   .replace(/\bhtml /g, ":host ")
   .replace(/:root/g, ":host")

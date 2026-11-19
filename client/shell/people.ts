@@ -1,4 +1,4 @@
-// Presence: everyone's carets, the avatars of who's here, and your own avatar's account menu.
+// Presence: the avatars of who's here, and your own avatar's account menu. (The page's editor draws everyone's carets.)
 
 import type { Presence } from "../../libs/text/ui/collab";
 import { $, type Shell } from "./shell";
@@ -7,39 +7,9 @@ import { quickLink } from "../common/quick-search";
 
 export function mountPeople(shell: Shell) {
 
-  // Everyone's caret in the source view (the page's editor draws them on the page), with their name;
-  // an agent's, dashed, while it works. The avatars at the
-  // top say who's here and what each agent is doing. A person with several
+  // The avatars at the top say who's here and what each agent is doing. A person with several
   // tabs open is shown by the one they used last, and your own other tabs
   // not at all (Collab.shown).
-  function presenceChanged() {
-    renderPeople();
-    queuePeers();
-  }
-  let peersQueued = false;
-  function queuePeers() {
-    if (peersQueued) return;
-    peersQueued = true;
-    requestAnimationFrame(() => { peersQueued = false; paintPeers(); });
-  }
-  function paintPeers() {
-    if (shell.sourceView && shell.source) shell.sourceView.dispatch({ effects: shell.source.setPeers.of(shell.collab.peers()) });
-  }
-  // This tab's caret in the source view, for everyone else (on the page, the page's editor shows its own). It stays
-  // where you left it when you switch away, as a caret on paper would (but with another of your tabs in use since, that
-  // one's caret is shown instead).
-  let cursorQueued = false;
-  function queueCursor() {
-    if (cursorQueued) return;
-    cursorQueued = true;
-    requestAnimationFrame(() => {
-      cursorQueued = false;
-      if (!shell.sourceView) return;
-      const sel = shell.sourceView.state.selection.main;
-      shell.collab.setCursor(sel.anchor, sel.head);
-    });
-  }
-
   // The others' stack (client/styles/editor.css, .people): its faces' size and overlap, and how many show at rest.
   // (On a phone, two: the breadcrumbs need the room.)
   const FACE = 26,
@@ -90,7 +60,7 @@ export function mountPeople(shell: Shell) {
       b.dataset.name = p.user.name;
       b.dataset.tip = p.client == -1 ? `You (${shell.me.name})` : here ? p.user.name : `${p.user.name} (not here)`;
       if (p.client == -1) accountButton(b);
-      else if (here) revealOnClick(b, p, " (not in the text yet)");
+      else if (here) sayNoCaret(b, p, " (not in the text yet)");
       else b.setAttribute("aria-disabled", "true");
       b.setAttribute("aria-label", b.dataset.tip);
       wrap.append(b);
@@ -102,7 +72,7 @@ export function mountPeople(shell: Shell) {
         badge.style.setProperty("--c", a.user.color);
         badge.innerHTML = `<span aria-hidden="true">✦</span>`;
         badge.dataset.tip = `${a.user.name}: ${a.busy ? a.activity ?? "working" : "idle"}`;
-        revealOnClick(badge, a, " (hasn't edited yet)");
+        sayNoCaret(badge, a, " (hasn't edited yet)");
         badge.setAttribute("aria-label", badge.dataset.tip);
         wrap.append(badge);
       }
@@ -184,21 +154,15 @@ export function mountPeople(shell: Shell) {
     set("account-feedback", shell.me.user.startsWith("test-") ? undefined : accountLinks!.feedback);
     set("account-out", accountLinks!.signOut);
   }
-  /** Clicking a participant scrolls the source view to their caret (the page's editor shows theirs where it is). */
-  function revealOnClick(b: HTMLElement, p: Presence, none: string) {
-    const at = shell.collab.positions(p);
-    if (at && shell.sourceView)
-      b.addEventListener("click", () => shell.sourceView?.dispatch({ selection: { anchor: at.head ?? at.anchor }, scrollIntoView: true }));
-    else if (!at) {
-      b.setAttribute("aria-disabled", "true");
-      b.dataset.tip += none;
-    }
+  /** A participant with no caret in this page's text says so (the page's editor shows the others' where they are). */
+  function sayNoCaret(b: HTMLElement, p: Presence, none: string) {
+    if (shell.collab.positions(p)) return;
+    b.setAttribute("aria-disabled", "true");
+    b.dataset.tip += none;
   }
   return {
     accountLinks,
-    presenceChanged,
-    queuePeers,
-    queueCursor,
+    presenceChanged: renderPeople,
     stackPeople,
     toggleAccount,
     get accountBtn() {

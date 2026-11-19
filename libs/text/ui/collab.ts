@@ -453,11 +453,6 @@ export class Collab {
     }
   }
 
-  /** Takes its presence out of the room; the replica itself stays in it. */
-  leave(): void {
-    this.awareness.setLocalState(null);
-  }
-
   private connect(early?: EarlySocket): void {
     const adopted = !!early && early.readyState < WebSocket.CLOSING && !this.epoch;
     const ws: EarlySocket = adopted ? early! : new WebSocket(this.url());

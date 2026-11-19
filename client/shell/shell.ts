@@ -2,8 +2,7 @@
 // is, the document and the page it edits, the page editor, and each part's own calls. A part reads what another
 // part keeps through here at the moment it needs it, so the parts can mount in any order the page allows.
 
-import type { EditorSelection, EditorState } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
+import type { EditorState } from "@codemirror/state";
 import type { PageFrame } from "./page-frame";
 import type { Editor } from "./editor";
 import type { Collab } from "../../libs/text/ui/collab";
@@ -19,7 +18,6 @@ import type { Sharing } from "./sharing";
 import type { Toast } from "./toast";
 import type { Alerts } from "./alerts";
 import type { Uploads } from "./uploads";
-import type { Views } from "./views";
 import type { PageRequests } from "./page-requests";
 
 /**
@@ -60,14 +58,11 @@ export interface Shell {
   readonly pagePath: string;
   page: PageFrame;
   /**
-   * Editing or viewing, the page or its source, full screen, the edit key: what the page's editor does (editor-state.ts).
+   * Editing or viewing, full screen, the edit key: what the page's editor does (editor-state.ts).
    * The page this runs in is the document's page, viewing or editing: the shell runs either way once loaded, its
    * controls shown only while editing (main.ts, setEditing).
    */
   editor: Editor;
-  sourceView: EditorView | null;
-  /** The source view's code, once loaded. */
-  source: typeof import("./source-view") | null;
   /** The document's settings, once the gear has loaded them (Chrome.loadSettings). */
   docSettings: Settings | null;
 
@@ -75,8 +70,6 @@ export interface Shell {
   goTo: (url: string, replace?: boolean) => void;
   openPage: (path: string) => void;
   swapPage: (path: string, push?: boolean) => boolean;
-  /** The caret in the text (the source view's, else the page's). */
-  currentSelection: () => EditorSelection;
   /** The text and the caret as a state, made afresh: the text whole (for the agent's look, not for each key). */
   currentState: () => EditorState;
 
@@ -88,6 +81,5 @@ export interface Shell {
   toast: Toast;
   alerts: Alerts;
   uploads: Uploads;
-  views: Views;
   requests: PageRequests;
 }
