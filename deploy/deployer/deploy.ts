@@ -4,8 +4,8 @@
 // database, addresses, secrets) is there before: setup makes it (deploy/pipeline/, deploy/aws/setup.ts).
 //
 // It is the thin owner of the job's state machine (job.ts): it does each effect through the ports, and gives the answer
-// back as an event. The ports: the cloud's API (Cloudflare's client, or AWS's four calls) and the log. The time is
-// Effect's Clock: the caller gives another one (a test's).
+// back as an event. The ports: the cloud's API (Cloudflare's client, or AWS's four calls), who says that the commit is
+// on the spec's branch, and the log. The time is Effect's Clock: the caller gives another one (a test's).
 //
 // Trap: nothing in this folder imports another file of Erga's (tests/imports.test.ts), and nothing here reads a file,
 // an environment or a credential: what a deploy may touch is what its caller gives it.
@@ -19,13 +19,18 @@ import { type Event, type Job, type Step, step } from "./job";
 import type { Release } from "./release-format";
 import type { Spec } from "./spec";
 
-/** What a deploy reads of an instance's spec: where it is, and its plain settings. Never its repository, never a secret's name. */
-type Read = Pick<Spec, "target" | "settings">;
+/** What a deploy reads of an instance's spec: the branch whose commits it runs, where it is, and its plain settings. Never a secret's name. */
+type Read = Pick<Spec, "repo" | "branch" | "target" | "settings">;
 
-/** What a deploy acts through: the API of the target's cloud, and the job's log. */
+/** What a deploy acts through: the API of the target's cloud, who knows the branch's commits, and the job's log. */
 export interface Ports {
   cloudflare?: Cloudflare;
   aws?: AwsApi;
+  /**
+   * Whether the release (its version: the commit) is a commit of the spec's branch. The deployer in the cloud asks
+   * GitHub (github.ts); a machine asks its own clone. A failure is no answer: the deploy fails with it, and refuses nothing.
+   */
+  onBranch: (version: string) => Effect.Effect<boolean, DeployError>;
   log: (line: string) => void;
 }
 
@@ -61,14 +66,18 @@ function driverOf(spec: Read, release: Release, ports: Ports): Driver | string {
 }
 
 /**
- * Deploys `release` to the instance of `spec`: each code step in order, each said in the log. A release that is up but
- * not healthy goes back to what the instance ran before, and the deploy fails with that. It takes no lock and checks no
- * commit: its caller does.
+ * Deploys `release` to the instance of `spec`: each code step in order, each said in the log. A release whose commit
+ * is not on the spec's branch is refused before any step. A release that is up but not healthy goes back to what the
+ * instance ran before, and the deploy fails with that. It takes no lock: its caller does.
  */
 export const deploy = (spec: Read, release: Release, ports: Ports): Effect.Effect<void, DeployError> =>
   Effect.gen(function* () {
     const driver = driverOf(spec, release, ports);
     if (typeof driver == "string") return yield* new DeployError({ message: driver });
+    if (!(yield* ports.onBranch(release.version)))
+      return yield* new DeployError({
+        message: `Release ${release.version} is not a commit of ${spec.branch} on ${spec.repo}: the instance deploys only a commit of that branch.`,
+      });
     let job: Job = { at: "new" };
     let event: Event | null = { type: "start", steps: driver.steps.map(({ id, title }) => ({ id, title })) };
     while (event) {

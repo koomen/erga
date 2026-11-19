@@ -97,10 +97,17 @@ export async function deployedReleases(e: AwsEntry): Promise<string[]> {
 
 /**
  * Deploys `release` to the instance: the deployer's steps (into its bucket, then onto its machine), with the AWS CLI
- * as their AWS. `first`: SQL the machine runs once the release answers (setup's first admin). If the release doesn't
+ * as their AWS. `onBranch`: whether the branch that the instance tracks has the release's commit, as the caller's
+ * clone knows it. `first`: SQL the machine runs once the release answers (setup's first admin). If the release doesn't
  * answer, the release before it goes back on.
  */
-export async function deployToAws(e: AwsEntry, release: Release, log: (line: string) => void, first?: string): Promise<void> {
+export async function deployToAws(
+  e: AwsEntry,
+  release: Release,
+  log: (line: string) => void,
+  onBranch: (version: string) => boolean,
+  first?: string
+): Promise<void> {
   const aws = awsOf(e);
   const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
   const api: AwsApi = {
@@ -111,7 +118,9 @@ export async function deployToAws(e: AwsEntry, release: Release, log: (line: str
       tried(() => onMachine(aws, e.aws.machine, deployScript({ ...where, version, ...(version == release.version ? { first } : {}) }))),
     setLive: (version) => tried(() => putLive(aws, e.aws.stack, version)),
   };
-  await Effect.runPromise(deploy({ target: { kind: "aws", ...e.aws }, settings: e.vars }, release, { aws: api, log })).catch((err) => {
+  const spec = { repo: e.repo, branch: e.branch, target: { kind: "aws" as const, ...e.aws }, settings: e.vars };
+  const ports = { aws: api, onBranch: (version: string) => Effect.sync(() => onBranch(version)), log };
+  await Effect.runPromise(deploy(spec, release, ports)).catch((err) => {
     throw new Error((err as Error).message);
   });
 }

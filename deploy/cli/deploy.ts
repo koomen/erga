@@ -229,12 +229,16 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const clone = o.clone ?? ROOT;
   try {
     let sha: string;
+    // Whether the branch that the instance tracks has a commit, as this clone knows it: here, and the deployer's port.
+    // (Under the mock: this checkout's commit, whatever its branch.)
+    let onBranch = (_commit: string) => true;
     if (mocked() && !o.clone) sha = commitOf(o.commit ?? "HEAD", clone);
     else {
       // The branch it tracks, as its repository has it now: its head deploys, or a commit that the branch has.
       const head = trackedHead(clone, entry);
+      onBranch = (commit) => isAncestor(clone, commit, head);
       sha = o.commit ? commitOf(o.commit, clone) : head;
-      if (!isAncestor(clone, sha, head))
+      if (!onBranch(sha))
         throw new Error(
           `${sha.slice(0, 12)} is not a commit of ${entry.branch} on ${entry.repo} (its head: ${head.slice(0, 12)}). ${o.host} deploys only a commit of the branch it tracks. To track another: bun erga track ${o.host} --branch <branch>`
         );
@@ -277,7 +281,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       const release = keepLast(await built(sha), { dir: o.dir, host: o.host, serving }, log);
       log("Deploy to the machine...");
       // The machine's own script waits until the release answers its health check, healthy, on the loopback.
-      await deployToAws(aws, release, log, o.first);
+      await deployToAws(aws, release, log, onBranch, o.first);
       log("Deploy to the machine: done");
       log(`Deployed ${sha.slice(0, 12)} to ${entryOrigin(aws)}: healthy.`);
     } else {

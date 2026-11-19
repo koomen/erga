@@ -225,7 +225,8 @@ export async function deployOnAws(unit: AwsUnit, update = false): Promise<AwsRun
         hash: async () => hashOf((await release()).version, entry().vars, rows(0)),
         deploy: async () => {
           const r = await release();
-          await deployToAws(entry(), r, log, rows());
+          // (The suite deploys this checkout's build, whatever its branch.)
+          await deployToAws(entry(), r, log, () => true, rows());
           if (run.outputs!.GateKey)
             run.gateKey = (
               await awsCli(whereOf(a))<{ SecretString: string }>("secretsmanager", "get-secret-value", "--secret-id", run.outputs!.GateKey)
