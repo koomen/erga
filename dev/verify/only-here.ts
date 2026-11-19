@@ -88,7 +88,7 @@ export function onlyHereTemplate(name: string, a: { v4: string | null; v6: strin
             },
             {
               // The gate's Lambda asks the distribution again, from AWS's addresses, for /oauth/token with its body
-              // in x-erga-form (gate/mounts/lambda.ts). Only that request: an open path of the gate's in each deploy.
+              // in x-erga-form (gate/mounts/lambda.ts): /oauth/token and /oauth/register, open paths of the gate's in each deploy.
               Name: "the-gate-lambda",
               Priority: 1,
               Action: { Allow: {} },
@@ -98,8 +98,8 @@ export function onlyHereTemplate(name: string, a: { v4: string | null; v6: strin
                     {
                       ByteMatchStatement: {
                         FieldToMatch: { UriPath: {} },
-                        PositionalConstraint: "EXACTLY",
-                        SearchString: "/oauth/token",
+                        PositionalConstraint: "STARTS_WITH",
+                        SearchString: "/oauth/",
                         TextTransformations: [{ Priority: 0, Type: "NONE" }],
                       },
                     },

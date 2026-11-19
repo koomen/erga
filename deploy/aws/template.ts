@@ -322,6 +322,7 @@ function distribution(s: AwsShape, which: "App" | "Pages", gate: boolean): Json 
                 ...(app
                   ? [
                       { PathPattern: "/oauth/token", ...gated("agents", { own: true, lambda: true, body: true }) },
+                      { PathPattern: "/oauth/register", ...gated("agents", { own: true, lambda: true, body: true }) },
                       { PathPattern: "/.well-known/oauth-*", ...gated("agents", { own: true }) },
                     ]
                   : []),

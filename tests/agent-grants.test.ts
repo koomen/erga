@@ -301,8 +301,8 @@ test("MCP's sign-in: the 401 names the gate's metadata; the person approves on E
   );
   const meta = (await (await s.fetch("/.well-known/oauth-authorization-server")).json()) as Record<string, unknown>;
   expect(meta).toMatchObject({ authorization_endpoint: `${ROOT}/oauth/authorize`, token_endpoint: `${ROOT}/oauth/token` });
-  expect(meta.registration_endpoint).toBeUndefined();
-  expect((await s.fetch("/oauth/register", { method: "POST" })).status).toBe(404);
+  expect(meta.registration_endpoint).toBe(`${ROOT}/oauth/register`);
+  expect((await s.fetch("/oauth/register", { method: "POST" })).status).toBe(400);
 
   // Signed out, the browser goes to sign in first, and comes back.
   const ask = await request({ state: "st-1" });
@@ -315,7 +315,7 @@ test("MCP's sign-in: the 401 names the gate's metadata; the person approves on E
   const page = await s.fetch(ask.at, { headers: { ...PAGE, Cookie: cookie } });
   expect(page.status).toBe(200);
   const html = await page.text();
-  expect(html).toContain("<b>claude-code</b> wants to act for you");
+  expect(html).toContain("<b>claude code</b> wants to act for you");
   expect(html).toContain("the app, on this computer");
   // Someone who is no admin is not offered admin power.
   expect(html).not.toContain('name="scope" value="admin"');
@@ -348,7 +348,7 @@ test("MCP's sign-in: the 401 names the gate's metadata; the person approves on E
   // The token signs the app in as the person, with documents only (they are no admin, whatever the form said).
   const me = await tool(s, got.access_token, "documents", { op: "whoami" });
   expect(me.status).toBe(200);
-  expect(me.data.token).toMatchObject({ label: "claude-code", scope: "documents" });
+  expect(me.data.token).toMatchObject({ label: "claude code", scope: "documents" });
   expect((await mcp(s, got.access_token, { jsonrpc: "2.0", id: 1, method: "ping" })).status).toBe(200);
   // The refresh grant gives a new token for the same grant.
   const again = (await (

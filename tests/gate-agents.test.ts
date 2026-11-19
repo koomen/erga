@@ -30,21 +30,70 @@ describe("MCP's authorization server", () => {
   const authorize = async (c: Config, more = "") =>
     `https://erga.example.com/oauth/authorize?response_type=code&client_id=claude-code&redirect_uri=${encodeURIComponent("http://localhost:8123/callback")}&state=st-1&code_challenge=${await port.sha256(VERIFIER)}&code_challenge_method=S256${more}`;
 
-  test("the metadata is fixed JSON, open, and names no registration", async () => {
+  test("the metadata is fixed JSON, open, and names the registration endpoint", async () => {
     const server = responded(await gate(req("https://erga.example.com/.well-known/oauth-authorization-server"), sso, port));
     expect(server.status).toBe(200);
     const body = JSON.parse(server.body);
     expect(body).toMatchObject({
       issuer: "https://erga.example.com",
       token_endpoint: "https://erga.example.com/oauth/token",
+      registration_endpoint: "https://erga.example.com/oauth/register",
       grant_types_supported: ["authorization_code", "refresh_token"],
     });
-    expect(body.registration_endpoint).toBeUndefined();
     for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"])
       expect(JSON.parse(responded(await gate(req(`https://erga.example.com${path}`), sso, port)).body).resource).toBe(
         "https://erga.example.com/mcp"
       );
-    expect(responded(await gate(req("https://erga.example.com/oauth/register", { method: "POST" }), sso, port)).status).toBe(401);
+  });
+
+  test("register: open, keeps nothing, takes this computer's redirects only, and names the client by the app", async () => {
+    const at = "https://erga.example.com/oauth/register";
+    const asks = (form: unknown, id = "req-1") =>
+      gate(req(at, { method: "POST", form: typeof form == "string" ? form : JSON.stringify(form), id }), sso, port);
+    // No body yet: the mount reads it, and asks again (on AWS, the Lambda; its header starts with "&").
+    expect(await gate(req(at, { method: "POST" }), sso, port)).toEqual({ do: "body" });
+    const ok = responded(
+      await asks(`&${JSON.stringify({ client_name: "Claude Code", redirect_uris: ["http://localhost:51234/callback"] })}`)
+    );
+    expect(ok.status).toBe(201);
+    const made = JSON.parse(ok.body);
+    expect(made).toMatchObject({
+      client_name: "Claude Code",
+      redirect_uris: ["http://localhost:51234/callback"],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+    });
+    expect(made.client_id).toMatch(/^Claude-Code\.[a-z0-9]{6}$/);
+    // Another request: another client ID; no name: "app".
+    const other = JSON.parse(responded(await asks({ redirect_uris: ["http://127.0.0.1:9/cb"] }, "req-2")).body).client_id;
+    expect(other).toMatch(/^app\.[a-z0-9]{6}$/);
+    expect(other).not.toBe(made.client_id);
+    // A name with anything in it: a safe, short label.
+    expect(
+      JSON.parse(responded(await asks({ client_name: '<script>é&"x"</script>'.repeat(9), redirect_uris: ["http://[::1]/"] })).body)
+        .client_id
+    ).toMatch(/^[A-Za-z0-9-]{1,40}\.[a-z0-9]{6}$/);
+    // Refused: another site's redirect, none, too many, a fragment, a secret, and a body that isn't JSON.
+    for (const bad of [
+      { redirect_uris: ["https://elsewhere.example/callback"] },
+      { redirect_uris: ["http://localhost.evil.example/cb"] },
+      { redirect_uris: [] },
+      { redirect_uris: Array(11).fill("http://localhost/cb") },
+      { redirect_uris: ["http://localhost/cb#x"] },
+      { redirect_uris: ["http://localhost/cb"], token_endpoint_auth_method: "client_secret_basic" },
+      "not json",
+    ])
+      expect(responded(await asks(bad)).status).toBe(400);
+    // A deploy's own redirects (a hosted app's) count too.
+    expect(
+      responded(
+        await gate(
+          req(at, { method: "POST", form: JSON.stringify({ redirect_uris: ["https://app.example/cb"] }) }),
+          { ...sso, redirects: ["https://app.example/cb"] },
+          port
+        )
+      ).status
+    ).toBe(201);
   });
 
   test("authorize needs the shell cookie: without one a page goes to sign in; with one it goes on to Erga's approval", async () => {

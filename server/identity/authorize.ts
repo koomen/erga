@@ -10,11 +10,13 @@
 //                               Deny: the answer asks the gate to say so to the app ("deny")
 //
 // The app trades the code at the gate for a token of one hour and a refresh grant; every request with the token reads
-// the grant's row (admit.ts), so Revoke in Settings stops the app at once. An app has no registration: it names itself
-// (client_id), and the name is only a label on the page and in Settings.
+// the grant's row (admit.ts), so Revoke in Settings stops the app at once. An app registers at the gate and keeps
+// nothing there (gate/core.ts, register): its client ID carries its name, which is only a label on the page and in
+// Settings (clientLabel).
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { clientLabel } from "../../gate/core.ts";
 import { esc } from "../../shared/html.ts";
 import { call, ctx, Field, form, html, NO_STORE, type Route, text } from "../http.ts";
 import { appPage, inlineStyle, pageBars, signInFirst } from "../pages/index.ts";
@@ -44,7 +46,7 @@ export const authorize: Route = Effect.gen(function* () {
   const who = yield* makerOf;
   if (!who) return text("Only a user, signed in as themselves, can let an app act for them.", 403);
   const admin = yield* call(() => platform.directory.users.isAdmin(session.login));
-  const label = url.searchParams.get("client_id") ?? "";
+  const label = clientLabel(url.searchParams.get("client_id") ?? "");
   if (post) {
     const f = yield* form(ApproveForm).pipe(Effect.orDie);
     const done = (line: string) =>

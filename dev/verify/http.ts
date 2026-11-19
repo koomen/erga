@@ -169,6 +169,7 @@ const MORE = [
     "/_edge/sign-out",
     "/_edge/x",
     "/oauth/token",
+    "/oauth/register",
     "/oauth/authorize",
   ].flatMap((path) => ["GET", "POST", "OPTIONS"].map((method) => ({ method, path }))),
   ...[

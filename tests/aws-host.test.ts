@@ -185,6 +185,7 @@ test("the gate in front: its four functions on both distributions, and the key t
     "*": { request: "GateRequest", response: "GateResponse", lambda: null },
     "/_edge/*": { request: "GateEdge", response: "GateResponse", lambda: "origin-request" },
     "/oauth/token": { request: "GateAgents", response: "GateResponse", lambda: "origin-request with the body" },
+    "/oauth/register": { request: "GateAgents", response: "GateResponse", lambda: "origin-request with the body" },
     "/.well-known/oauth-*": { request: "GateAgents", response: "GateResponse", lambda: null },
   });
   // The pages' distribution (each document's host, and the accept host): no callback and no token endpoint there.
@@ -194,7 +195,7 @@ test("the gate in front: its four functions on both distributions, and the key t
   });
   // No cache keeps one of the gate's own answers; Erga's answers are the origin's to decide, as without the gate.
   const app = r.AppDistribution.Properties.DistributionConfig;
-  expect(app.CacheBehaviors.map((b: Behavior) => b.CachePolicyId)).toEqual(Array(3).fill("4135ea2d-6df8-44a3-9df3-4b5a84be39ad"));
+  expect(app.CacheBehaviors.map((b: Behavior) => b.CachePolicyId)).toEqual(Array(4).fill("4135ea2d-6df8-44a3-9df3-4b5a84be39ad"));
   expect(app.DefaultCacheBehavior.CachePolicyId).toEqual({ Ref: "CachePolicy" });
   expect(app.CacheBehaviors[0].LambdaFunctionAssociations[0].LambdaFunctionARN).toEqual({ Ref: "EdgeVersion" });
   // The key that proves the gate to Erga: AWS makes it; both distributions send it with each request to the machine,

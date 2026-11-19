@@ -52,8 +52,9 @@
 // What answers a request with no proof, where not everyone may come in: only these. Anything else is a 401 or a 404,
 // and nothing else goes on to Erga.
 //
-//   the agents' metadata, /oauth/token    an agent's app has no proof before its token. The token endpoint gives one
-//                                         only for a code with its PKCE verifier, or for a refresh grant.
+//   the agents' metadata, /oauth/token,   an agent's app has no proof before its token. The token endpoint gives one
+//   /oauth/register                       only for a code with its PKCE verifier, or for a refresh grant; register
+//                                         keeps nothing, and takes only redirects that authorize takes anyway.
 //   /_edge/sign-in, /_edge/callback       where a proof is made. The callback counts only with the browser's state.
 //   a document's page (other site)        a page that goes on to the vouch, and a nonce: nothing of the document.
 //   accept.<content>/_edge/accept         its proof is the ticket, with the browser's nonce.
@@ -159,12 +160,12 @@ export type Answer =
   | { do: "forward"; caller: Caller; cookies: string[] }
   /** The callback: the mount trades the code at the issuer, then calls `signedIn`. `x`: what `signIn`'s caller put. */
   | { do: "exchange"; idp: string; code: string; verifier: string; redirect: string; next: string; x: string }
-  /** /oauth/token: the mount copies the body into x-erga-form, and asks again. */
+  /** /oauth/token and /oauth/register: the mount copies the body into x-erga-form, and asks again. */
   | { do: "body" };
 
 /** The header Erga hears the caller in; a mount always writes it. */
 export const CALLER = "x-erga-caller";
-/** The header /oauth/token's body comes in. */
+/** The header /oauth/token's and /oauth/register's body comes in. */
 export const FORM = "x-erga-form";
 /** The header Erga's answer asks the gate in (`after`); a mount always removes it. */
 export const ASK = "x-erga-gate";
@@ -605,8 +606,73 @@ function asked(q: Req, c: Config) {
  */
 export async function agents(q: Req, c: Config, p: Port): Promise<Answer | null> {
   if (!c.oauth || q.host != c.shell) return null;
-  return q.path == "/oauth/token" ? token(q, c, p, Math.floor(q.now / 1000)) : metadata(q, c);
+  const now = Math.floor(q.now / 1000);
+  if (q.path == "/oauth/token") return token(q, c, p, now);
+  if (q.path == "/oauth/register") return register(q, c, p, now);
+  return metadata(q, c);
 }
+
+/**
+ * POST /oauth/register (its body in x-erga-form): an agent's app registers itself (OAuth Dynamic Client Registration,
+ * RFC 7591), as MCP's clients expect when a server names no client of theirs (Claude Code asks no --client-id then).
+ * Nothing is kept: the answer is a client ID made here, and the redirects the app asked for, if each is one that
+ * `asked` takes anyway (this computer's, or the deploy's list). A client ID proves nothing, as before: authorize
+ * checks the redirect again, the code binds it with the client and the PKCE challenge. The client ID carries the app's
+ * own name (client_name, readable: "Claude-Code.x1y2z3"), the label of its approval page and its grant in Settings.
+ */
+async function register(q: Req, c: Config, p: Port, now: number): Promise<Answer> {
+  const cors = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "POST",
+  };
+  if (q.method == "OPTIONS") return respond(204, "", cors);
+  if (q.method != "POST") return respond(405, "POST only");
+  const body = q.headers[FORM];
+  if (body == null) return { do: "body" };
+  const bad = (error_description: string) => json(400, { error: "invalid_client_metadata", error_description });
+  let m: { redirect_uris?: unknown; client_name?: unknown; token_endpoint_auth_method?: unknown } | null = null;
+  try {
+    // (A mount may start the header with "&", which keeps it from being empty: gate/mounts/lambda.ts.)
+    m = JSON.parse(body.replace(/^&/, ""));
+  } catch {}
+  const uris = m && Array.isArray(m.redirect_uris) ? m.redirect_uris : null;
+  if (!uris || !uris.length || uris.length > 10) return bad("redirect_uris: one to ten addresses");
+  for (const u of uris)
+    if (typeof u != "string" || u.length > 500 || u.includes("#") || !(LOOPBACK.test(u) || !!c.redirects?.includes(u)))
+      return json(400, { error: "invalid_redirect_uri", error_description: "Only this computer's addresses (http://localhost)." });
+  if (m!.token_endpoint_auth_method != null && m!.token_endpoint_auth_method != "none")
+    return bad("token_endpoint_auth_method: none only (a public client)");
+  const name = typeof m!.client_name == "string" ? m!.client_name : "";
+  // (The app's name, before any part in brackets: Claude Code names itself "Claude Code (<the server's name>)".)
+  const label =
+    name
+      .replace(/\s*\(.*$/, "")
+      .normalize("NFKD")
+      .replace(/[^A-Za-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "app";
+  const tail = (await p.hmac(c.key, `client.${q.id}`))
+    .replace(/[^A-Za-z0-9]/g, "")
+    .slice(0, 6)
+    .toLowerCase();
+  return json(201, {
+    client_id: `${label}.${tail}`,
+    client_id_issued_at: now,
+    ...(name ? { client_name: name.slice(0, 100) } : {}),
+    redirect_uris: uris,
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  });
+}
+
+/** A client ID as a person reads it: the app's name that it carries (register), with no random tail or dashes. */
+export const clientLabel = (clientId: string) =>
+  clientId
+    .replace(/\.[a-z0-9]{6}$/, "")
+    .replace(/-/g, " ")
+    .slice(0, 80);
 
 /** The metadata an agent's app reads before it has a token: fixed JSON. */
 function metadata(q: Req, c: Config): Answer | null {
@@ -625,6 +691,7 @@ function metadata(q: Req, c: Config): Answer | null {
         issuer: origin,
         authorization_endpoint: `${origin}/oauth/authorize`,
         token_endpoint: `${origin}/oauth/token`,
+        registration_endpoint: `${origin}/oauth/register`,
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
         token_endpoint_auth_methods_supported: ["none"],

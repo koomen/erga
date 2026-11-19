@@ -1,13 +1,13 @@
 // The gate's Lambda@Edge function (SSO on AWS): the two things a CloudFront Function can't do, and nothing else. It
 // holds no edge key, signs nothing and decides nothing: the CloudFront Function (cloudfront.ts) does, before it and
-// after it. It is the origin request of two behaviors (/_edge/*, where only the callback comes this far, and
-// /oauth/token):
+// after it. It is the origin request of three behaviors (/_edge/*, where only the callback comes this far,
+// /oauth/token, and /oauth/register):
 //
 //   /_edge/callback   one HTTPS call: the code, traded at the issuer's token endpoint with this server's client
 //                     secret, for who signed in. Its answer carries that in x-erga-identity, which the viewer-response
 //                     function reads, checks against the sign-in's state, and signs.
-//   /oauth/token      the POST's body, sent again to the same address in the header x-erga-form, where the function
-//                     decides; the function's answer goes back as it is (its status, its body, and the headers the
+//   /oauth/token,     the POST's body, sent again to the same address in the header x-erga-form, where the function
+//   /oauth/register   decides; the function's answer goes back as it is (its status, its body, and the headers the
 //                     core set: CORS's among them).
 //
 // Trap: the header's value is never empty (`FORM_START`). The function sends a POST with no such header here, for
@@ -79,13 +79,13 @@ export async function handler(
 ): Promise<LambdaResponse> {
   const request = event.Records[0].cf.request;
   const ask = o.fetch ?? fetch;
-  if (request.uri == "/oauth/token") {
+  if (request.uri == "/oauth/token" || request.uri == "/oauth/register") {
     const body = request.body
       ? request.body.encoding == "base64"
         ? Buffer.from(request.body.data, "base64").toString()
         : request.body.data
       : "";
-    const answer = await ask(`https://${GATE_LAMBDA.shell}/oauth/token`, {
+    const answer = await ask(`https://${GATE_LAMBDA.shell}${request.uri}`, {
       method: "POST",
       headers: { "x-erga-form": FORM_START + body.slice(0, 8192) },
     });

@@ -97,7 +97,7 @@ export function readCaller(request: Request, port: Port): Caller {
   }
 }
 
-/** The most of /oauth/token's body that the gate reads. */
+/** The most of /oauth/token's or /oauth/register's body that the gate reads. */
 const FORM_MAX = 8192;
 
 /** The gate's answer to a request, or Erga's behind it. */
@@ -106,7 +106,9 @@ export async function handle(request: Request, m: Mount): Promise<Response> {
   const q = await reqOf(request, m);
   let a = await gate(q, c, m.port);
   if (a.do == "body") {
-    const body = /^application\/x-www-form-urlencoded\b/i.test(request.headers.get("content-type") ?? "") ? await request.text() : "";
+    // The token endpoint takes a form, registration JSON (RFC 7591): any other body is none.
+    const type = request.headers.get("content-type") ?? "";
+    const body = /^application\/(x-www-form-urlencoded|json)\b/i.test(type) ? await request.text() : "";
     q.headers[FORM] = body.length > FORM_MAX ? "" : body;
     a = await gate(q, c, m.port);
   }

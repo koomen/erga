@@ -139,7 +139,7 @@ test("behind the gate: one sign-in, then documents open on both sites; an agent 
   const verifier = b64(crypto.getRandomValues(new Uint8Array(32)).join(""));
   const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))).toString("base64url");
   const ask = `${ORIGIN}/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: "claude-code", redirect_uri: APP, code_challenge: challenge, code_challenge_method: "S256", state: "s-1" })}`;
-  expect(await (await b.go(ask)).text()).toContain("<b>claude-code</b> wants to act for you");
+  expect(await (await b.go(ask)).text()).toContain("<b>claude code</b> wants to act for you");
   await b.go(ask, { method: "POST", headers: FORM_POST, body: "answer=approve" });
   const back = outside.at(-1)!;
   expect([back.origin + back.pathname, back.searchParams.get("state")]).toEqual([APP, "s-1"]);
@@ -171,7 +171,7 @@ test("behind the gate: one sign-in, then documents open on both sites; an agent 
   const me = JSON.parse(
     ((await (await mcp(got.access_token)).json()) as { result: { content: { text: string }[] } }).result.content[0].text
   );
-  expect(me).toMatchObject({ login: "ada", token: { label: "claude-code", scope: "documents" } });
+  expect(me).toMatchObject({ login: "ada", token: { label: "claude code", scope: "documents" } });
   // The refresh grant gives the next token, for the same grant.
   const next = (await (
     await token({ grant_type: "refresh_token", refresh_token: got.refresh_token, client_id: "claude-code" })

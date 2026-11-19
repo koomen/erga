@@ -451,13 +451,25 @@ export async function agentChecks(run: Run, report: Report, ada: Jar): Promise<v
   const server = await ask(`${shell}/.well-known/oauth-authorization-server`);
   const as = server.status == 200 ? (JSON.parse(server.text) as Record<string, string>) : {};
   report.add(
-    "Agents: the metadata names this server, its authorization and token endpoints, and no registration",
+    "Agents: the metadata names this server, its authorization, token and registration endpoints",
     resource?.status == 200 &&
       JSON.parse(resource.text).resource == `${shell}/mcp` &&
       as.authorization_endpoint == `${shell}/oauth/authorize` &&
       as.token_endpoint == `${shell}/oauth/token` &&
-      !as.registration_endpoint,
+      as.registration_endpoint == `${shell}/oauth/register`,
     `${resource?.status} and ${server.status}: ${server.text.slice(0, 160)}`
+  );
+  // An app registers itself with no proof, for this computer's redirects only, and the gate keeps nothing.
+  const reg = (uris: string[]) =>
+    ask(`${shell}/oauth/register`, {
+      body: JSON.stringify({ client_name: "Verify harness", redirect_uris: uris, token_endpoint_auth_method: "none" }),
+      headers: { "content-type": "application/json" },
+    });
+  const [here, there] = [await reg(["http://127.0.0.1:43117/callback"]), await reg(["https://elsewhere.example/callback"])];
+  report.add(
+    "Agents: an app registers itself for this computer's redirects (a client ID with its name), and not for another site's",
+    here.status == 201 && /^Verify-harness\.[a-z0-9]{6}$/.test(JSON.parse(here.text).client_id ?? "") && there.status == 400,
+    `${here.status}: ${here.text.slice(0, 120)}; another site: ${there.status}`
   );
 
   // The app names itself, and comes back to this computer.

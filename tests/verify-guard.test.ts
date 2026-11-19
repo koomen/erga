@@ -425,7 +425,7 @@ test("only this machine reaches a run's deploy on AWS: a web ACL in front of eac
   expect(acl.DefaultAction).toEqual({ Block: {} });
   expect(acl.Scope).toBe("CLOUDFRONT");
   expect(acl.Rules).toHaveLength(2);
-  expect(JSON.stringify(acl.Rules[1].Statement)).toContain('"SearchString":"/oauth/token"');
+  expect(JSON.stringify(acl.Rules[1].Statement)).toContain('"SearchString":"/oauth/"');
   expect(JSON.stringify(acl.Rules[1].Statement)).toContain('"Name":"x-erga-form"');
   expect(acl.Rules[0].Action).toEqual({ Allow: {} });
   expect(acl.Rules[0].Statement).toEqual({ IPSetReferenceStatement: { Arn: { "Fn::GetAtt": ["Address4", "Arn"] } } });

@@ -124,9 +124,19 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     try {
       const redirect = `http://127.0.0.1:${(app.address() as AddressInfo).port}/callback`;
       const as = await discover(root);
-      // The server registers no app: the app names itself (Claude Code: --client-id).
-      expect(as.registration_endpoint).toBeUndefined();
-      const client = "Claude Code (erga)";
+      // The app registers itself, as MCP's clients do (Claude Code with no flags): the gate keeps nothing, and gives a
+      // client ID that carries the app's name. A redirect that is not on this computer is refused there too.
+      const register = (redirect_uris: string[]) =>
+        fetch(as.registration_endpoint!, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_name: "Claude Code (erga)", redirect_uris, token_endpoint_auth_method: "none" }),
+        });
+      expect((await register(["https://elsewhere.example/callback"])).status).toBe(400);
+      const registered = await register([redirect]);
+      expect(registered.status).toBe(201);
+      const client = ((await registered.json()) as { client_id: string }).client_id;
+      expect(client).toMatch(/^Claude-Code\.[a-z0-9]{6}$/);
       const { verifier, challenge } = await pkce();
       const authorize = `${as.authorization_endpoint}?${new URLSearchParams({ response_type: "code", client_id: client, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256", state: "xyz", resource: `${root}/mcp` })}`;
       // An address that is not on this computer is refused, before any page.
@@ -145,11 +155,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
       // A page where the person grants access has no agent: it can't see or act on the approval.
       expect(await page.locator("#agent, .agent-fab").count()).toBe(0);
       const card = await page.evaluate(() => document.querySelector(".approve")?.textContent ?? "");
-      for (const part of [
-        "Claude Code (erga) wants to act for you: reading and editing your documents.",
-        "the app, on this computer",
-        "30 days",
-      ])
+      for (const part of ["Claude Code wants to act for you: reading and editing your documents.", "the app, on this computer", "30 days"])
         expect(card).toContain(part);
       // Documents only is the default: one click on Approve never gives admin power.
       expect(await page.getByLabel(/Documents only/).isChecked()).toBe(true);
@@ -198,7 +204,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
       ) as { url: string };
       expect((await mcpTool(root, token, "read", { document: made.url, path: "index.html" })).text).toContain("Signed in over MCP");
       // Settings lists it, to revoke (whoami's tokens, the dialog's list).
-      expect((await mcpTool(root, token, "documents", { op: "whoami" })).text).toContain("Claude Code (erga)");
+      expect((await mcpTool(root, token, "documents", { op: "whoami" })).text).toContain("Claude Code");
 
       // A person who isn't an admin sees no choice on the page.
       cookie = await signIn(root, login);

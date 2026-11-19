@@ -38,6 +38,7 @@ export const OPEN = [
   "/.well-known/oauth-protected-resource",
   "/.well-known/oauth-authorization-server",
   "/oauth/token",
+  "/oauth/register",
   "/mcp",
 ];
 
