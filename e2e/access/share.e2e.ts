@@ -13,6 +13,7 @@ import { deployHome } from "../helpers/server";
 import { runTool } from "../helpers/tools";
 import { editorUp, getter, newDoc, sent, share, signedOut, signIn, soon, unique } from "./access";
 import { clickOn } from "../helpers/press";
+import { markOf } from "../helpers/save-mark";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("share")]);
 
@@ -317,8 +318,12 @@ journey("the admin's switch: users can share content publicly", () => {
       window.confirm = () => true;
     });
     expect(await page.isChecked("#public-sharing")).toBe(!on);
+    // (No Save button: the switch saves as it changes, and the save mark says so.)
+    const saved = page.waitForResponse((r) => r.url().includes("/api/tools/set_access"));
     await page.evaluate(() => document.querySelector<HTMLInputElement>("#public-sharing")!.click());
-    await until(async () => (await page.textContent("#public-hint")) == "Saved.", 5000, `public sharing ${on ? "on" : "off"}`);
+    await saved;
+    await until(async () => (await markOf(page)) == "saved", 5000, `public sharing ${on ? "on" : "off"}`);
+    expect(await page.textContent("#public-hint")).toBe("");
   };
 
   test("on: a document shared with anyone with the link opens for people who are not signed in; off: it is closed, but kept", async ({

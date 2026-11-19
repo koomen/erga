@@ -75,7 +75,7 @@ test("the card opens on a click of the red x only, says each reason one time, an
     { t: "press" }
   );
   expect(a.state.open).toBe(true);
-  expect(failures(a.state)).toEqual([WHY]);
+  expect(failures(a.state)).toEqual([{ ...WHY, key: "page" }]);
   expect(markRun(a.state, { t: "close" }).state.open).toBe(false);
   expect(markRun(a.state, { t: "press" }).state.open).toBe(false);
   // The pointer over the mark and off it changes nothing of that.
@@ -130,4 +130,16 @@ test("the save mark's styles animate nothing but the circle while it saves, and 
     .filter((r) => /\b(animation|transition)(-[a-z-]+)?\s*:\s*(?!none\b)\S/.test(r.body))
     .map((r) => `${r.f}: ${r.selector}`);
   expect(moving).toEqual(['client/inline/bars.css: .save-state[data-at="saving"] .save-ring']);
+});
+
+test("Try again is for an error whose source can save again; a page that goes takes its sources with it", () => {
+  const again = { ...WHY, retry: true };
+  const a = markRun(initial, { t: "set", key: "setting:a", at: "error", why: again }, { t: "set", key: "page", at: "error", why: WHY });
+  expect(step(a.state, { t: "retry", key: "setting:a" })).toEqual([a.state, [{ t: "retry", key: "setting:a" }]]);
+  // (The page's edits try again by themselves; a source that saves has nothing to try again.)
+  expect(step(a.state, { t: "retry", key: "page" })[1]).toEqual([]);
+  expect(step(a.state, { t: "retry", key: "setting:b" })[1]).toEqual([]);
+  const b = markRun(a.state, { t: "press" }, { t: "clear" });
+  expect(b.state).toEqual(initial);
+  expect(markRun(b.state, { t: "clear" }).draws).toBe(0);
 });

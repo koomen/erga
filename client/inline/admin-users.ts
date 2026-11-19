@@ -1,8 +1,11 @@
 // The Users page's script (/admin/users, server/admin/users.ts): add a user, change a role, remove one.
-// Each change goes to the server, which checks it (admins only, and never the last admin); the page reloads to show the
-// list as it is now.
+// Each change goes to the server, which checks it (admins only, and never the last admin), and the row shows it as it
+// is now. A role saves as it changes, with no Save button (client/common/autosave.ts): the save mark left of the
+// buttons' bar says how far it is; refused, the role stays as chosen, with the server's reason over the list.
 
 import { runTool, say } from "../common/admin-post";
+import { saveMark } from "../common/admin-save";
+import { autosave } from "../common/autosave";
 import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 
@@ -13,6 +16,7 @@ export interface UsersConfig {
 
 export default function adminUsers(c: UsersConfig): void {
   const { me } = c;
+  const mark = saveMark();
   const hint = document.getElementById("users-hint")!,
     addForm = document.querySelector<HTMLFormElement>("form.add-user")!;
   const field = <T extends HTMLElement = HTMLInputElement>(name: string) => addForm.elements.namedItem(name) as unknown as T;
@@ -54,13 +58,30 @@ export default function adminUsers(c: UsersConfig): void {
       role = li.querySelector<HTMLSelectElement>("select.role")!,
       remove = li.querySelector(".remove")!;
     const whom: Record<string, unknown> = login ? { login } : { person: Number(person) };
-    let was = role.value;
+    const live = li.dataset.live!;
+    mark.set(live, "saved");
+    const auto = autosave({
+      mark,
+      key: live,
+      label: role.getAttribute("aria-label") ?? "Role",
+      row: li,
+      read: () => role.value,
+      saved: role.value,
+      async save(value) {
+        // (A note: the server left the role as it was, and says why.)
+        const answer = await runTool("set_user", { action: "role", ...whom, role: value });
+        if (answer.note) throw new Error(answer.note);
+      },
+      ended(why) {
+        say(hint, why ?? "", !!why);
+        role.toggleAttribute("aria-invalid", !!why);
+        if (!why) void refresh(live);
+      },
+    });
     role.addEventListener("change", () => {
-      const undo = () => {
-        role.value = was;
-      };
-      if (login == me && was == "admin" && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
-      change({ action: "role", ...whom, role: role.value }, "Saving…", undo);
+      if (login == me && auto.saved == "admin" && !confirm("Stop being an admin? You won't see the admin pages any more."))
+        role.value = auto.saved;
+      auto.changed(true);
     });
     remove.addEventListener("click", () => {
       if (

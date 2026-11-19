@@ -12,9 +12,9 @@ import { ROOT } from "./helpers/env";
 import { copyFixture, descendants, startServer, type Server } from "./helpers/server";
 
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
-bun run look --view [--doc ...] [--out <file.png>] [tap:<selector>]...
+bun run look --view [--doc ...] [--out <file.png>] [tap:<selector> | type:<text> | <key> | shows:<selector>]...
                                                             the document as a reader sees it, with no editor
-bun run look --path /documents [--out <file.png>] [tap:<selector>]...
+bun run look --path /documents [--out <file.png>] [tap:<selector> | type:<text> | <key> | shows:<selector>]...
                                                             a page of the server by its path, signed in
 bun run look --ops <host>[/<tab>] [--out <file.png>] [hover:<selector> | tap:<selector>]...
                                                             the ops page (bun erga) of an instance, with made-up facts
@@ -334,8 +334,15 @@ try {
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
     for (const f of page.frames()) await f.evaluate(() => document.fonts.ready.then(() => null)).catch(() => {});
     for (const step of args) {
-      if (!step.startsWith("tap:")) throw new Error(`--view and --path have no step ${step}: tap:<selector>`);
-      await page.click(step.slice(4));
+      // A click on a control; then keys into what has the focus (a field of a settings page), and a wait for a state.
+      const [, verb, rest] = /^(tap|type|shows):([\s\S]*)$/.exec(step) ?? [];
+      if (verb == "tap") await page.click(rest);
+      else if (verb == "type") await page.keyboard.type(rest);
+      else if (verb == "shows")
+        await page
+          .waitForSelector(rest, { state: "attached", timeout: 5000 })
+          .catch(() => console.log(`shows: nothing matched ${rest} in 5 s`));
+      else await page.keyboard.press(step);
       // (What the click opened has come to rest: no animation runs.)
       await page
         .waitForFunction(() => !document.getAnimations().some((a) => a.playState == "running"), null, { timeout: 5_000 })

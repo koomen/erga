@@ -12,6 +12,7 @@ import type { AddressInfo } from "node:net";
 import type { Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { getter, mint, signIn, soon, tool, unique, upload } from "./access";
+import { markOf } from "../helpers/save-mark";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("tokens")]);
 
@@ -442,15 +443,23 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     expect(new URL(page.url()).pathname).toBe("/documents");
   });
 
-  test("the server's keys: a saved key shows its models under it; a box saves as it changes; own keys hide the providers", async () => {
+  test("the server's keys: a pasted key saves by itself, and shows its models under it; a box saves as it changes; own keys hide the providers", async () => {
     await page.goto(`${root}/admin/agents`);
     expect(await page.$(`${row} .models`)).toBeNull();
-    await page.fill("#key-openai", KEY("Zz90"));
-    await page.press("#key-openai", "Enter");
+    // No Save button: the key saves when the paste rests, and its box is empty again (the page keeps no key).
+    expect(await page.locator(`main button:text-matches("^(Save|Replace)$")`).count()).toBe(0);
+    await page.focus("#key-openai");
+    await page.keyboard.insertText(KEY("Zz90"));
+    expect(await markOf(page)).toBe("saving");
     await page.waitForSelector(`${row} .models`);
     expect(await state()).toContain("Key saved · …Zz90");
+    expect(await page.inputValue("#key-openai")).toBe("");
+    await soon(() => markOf(page)).toBe("saved");
+    const unticked = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
     await page.uncheck(box("gpt-6-astra"));
-    await soon(hint).toBe("Saved.");
+    await unticked;
+    await soon(() => markOf(page)).toBe("saved");
+    expect(await hint()).toBe("");
 
     await page.selectOption("#agent-keys", "own");
     await soon(() => page.isHidden("ol.providers")).toBe(true);
@@ -465,7 +474,7 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
   });
 
   // The answer of a save once went to the old row, and the new row said "Saving…" for good.
-  test("a model's box says Saved., or the error, though its row is drawn again as it saves", async () => {
+  test("a model's box saves, or says the error and keeps the person's choice, though its row is drawn again as it saves", async () => {
     const model = "gpt-6-astra";
     // Another admin, in a second tab, saves a new key for the provider while this tab's save is on its way: the row
     // is drawn again before the save's answer comes. `answer`: the server's answer as it is, or an error in its place.
@@ -492,21 +501,27 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
       await finished;
       await handled;
     };
-    // The box is off (the step before). On, with the row drawn again: Saved., and it stays on.
+    // The box is off (the step before). On, with the row drawn again: the gray check, and it stays on.
     await clickWhileRedrawn("Bb02", "real");
-    await soon(hint).toBe("Saved.");
+    await soon(() => markOf(page)).toBe("saved");
+    expect(await hint()).toBe("");
     expect(await page.isChecked(box(model))).toBe(true);
-    // Off, with an error in the answer's place: the row says the error, and the box goes back on.
+    // Off, with an error in the answer's place: the red x, the row says the error, and the box keeps the person's
+    // choice (off). The server still has it on: a page loaded again shows that.
     await clickWhileRedrawn("Cc03", "error");
     await soon(hint).toBe("The server is busy: try again.");
-    expect(await page.isChecked(box(model))).toBe(true);
+    expect(await markOf(page)).toBe("error");
+    expect(await page.isChecked(box(model))).toBe(false);
     await other.close();
     await page.reload();
+    expect(await markOf(page)).toBe("saved");
     expect(await page.inputValue("#agent-keys")).toBe("server");
     expect([await page.isChecked(box(model)), await page.isChecked(box("gpt-6.1-sol"))]).toEqual([true, true]);
-    // A plain click, with nothing else on the way: Saved.
+    // A plain click, with nothing else on the way: saved.
+    const plain = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
     await page.click(box(model));
-    await soon(hint).toBe("Saved.");
+    await plain;
+    await soon(() => markOf(page)).toBe("saved");
     await page.reload();
     expect(await page.isChecked(box(model))).toBe(false);
   });

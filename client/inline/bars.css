@@ -141,6 +141,10 @@ html.page-dark body .erga-bar .save-card { background: color-mix(in srgb, #1c1c1
 .save-card p { margin: 0; }
 .save-card p + .save-title { margin-top: 8px; }
 .save-card .save-title { font-weight: 550; color: var(--fg); }
+.save-card .save-retry { display: block; margin: 6px 0 0; padding: 3px 9px; border: 0.5px solid color-mix(in srgb, var(--chrome) 60%, transparent); border-radius: 7px;
+  background: transparent; color: var(--fg); font: inherit; font-weight: 500; cursor: pointer; }
+.save-card .save-retry:hover { background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+.save-card .save-retry:focus-visible { outline: 2px solid var(--caret, #3b7cf0); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .erga-bar .save-card { transition: none !important; } }
 
 /* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (.quick: the buttons) open

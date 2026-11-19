@@ -10,6 +10,7 @@ import { joinRoom } from "../helpers/room";
 import { runTool } from "../helpers/tools";
 import { editorUp, mint, newDoc, soon, unique } from "./access";
 import { clickOn } from "../helpers/press";
+import { markCard, markOf, marksSeen, watchMark } from "../helpers/save-mark";
 
 // (The scripted model: the agent's pane is on the pages.)
 const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script" } });
@@ -226,8 +227,8 @@ journey("an admin on the admin pages", () => {
     await go("/admin/agents", tokens);
     const limit = async () =>
       (await agent<{ settings: { key: string; value: unknown }[] }>("settings")).settings.find((e) => e.key == "agent_daily_tokens")!.value;
+    // (No Save button: the choice saves as it changes.)
     await page.selectOption(`${tokens} select.mode`, { label: "No limit" });
-    await page.click(`${tokens} .save`);
     await soon(limit).toBe(null);
     await agent("set_setting", { key: "agent_daily_tokens", reset: true });
     await soon(() => page.evaluate((s) => document.querySelector<HTMLSelectElement>(`${s} select.mode`)!.value, tokens)).toBe("after");
@@ -248,6 +249,60 @@ journey("an admin on the admin pages", () => {
     await agent("set_access", { action: "remove", id });
     await soon(rules).not.toContain(org);
     expect(await stayed()).toBe(true);
+  });
+
+  test("a setting saves by itself, with no Save button: the mark is the circle, then the check; a refused value stays in its field, with the red x and Try again", async () => {
+    const row = 'li[data-live="setting:max_file_mb"]',
+      field = `${row} input[name=value]`;
+    await go("/admin/settings", row);
+    const onServer = async () =>
+      (await agent<{ settings: { key: string; value: unknown }[] }>("settings")).settings.find((e) => e.key == "max_file_mb")!.value;
+    expect(await page.locator('main button:text-is("Save")').count()).toBe(0);
+    // The gray check, left of the buttons' bar: it touches the bar's left side.
+    expect(await markOf(page)).toBe("saved");
+    expect(
+      await page.evaluate(() => {
+        const m = document.querySelector("#save-state .save-mark")!.getBoundingClientRect(),
+          bar = document.querySelector(".erga-view-buttons")!.getBoundingClientRect();
+        return m.width > 0 && Math.abs(bar.left - m.right) <= 1;
+      })
+    ).toBe(true);
+    await watchMark(page);
+    // Typed with real keys: the circle at the first key; saved when the typing pauses, with the focus still in the field.
+    await page.click(field);
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type("6");
+    expect(await markOf(page)).toBe("saving");
+    await soon(onServer).toBe(6);
+    await soon(() => markOf(page)).toBe("saved");
+    expect(await marksSeen(page)).toEqual(["saving", "saved"]);
+    expect(await page.evaluate((f) => document.activeElement == document.querySelector(f), field)).toBe(true);
+    // The server refuses the next save. The focus leaves the field: the red x, the reason under the field, and the
+    // person's value still in it; the server keeps the old one.
+    await page.route(
+      "**/api/tools/set_setting*",
+      // (An answer that refuses, with no failed request: the browser logs none.)
+      (route) => route.fulfill({ json: { ok: false, error: "The server is busy: try again." } }),
+      { times: 1 }
+    );
+    await page.keyboard.type("4");
+    await page.keyboard.press("Tab");
+    await soon(() => markOf(page)).toBe("error");
+    expect(await page.inputValue(field)).toBe("64");
+    expect(await page.innerText(`${row} .hint`)).toBe("The server is busy: try again.");
+    expect(await onServer()).toBe(6);
+    // A click on the red x: its card says what failed, in place. Try again saves the value.
+    expect(await markCard(page)).toBeNull();
+    await page.click("#save-state .save-mark");
+    await soon(() => markCard(page)).toBe(
+      "Largest file not saved\n\nThe server is busy: try again. The field keeps your value.\n\nTry again"
+    );
+    await page.click("#save-card .save-retry");
+    await soon(onServer).toBe(64);
+    await soon(() => markOf(page)).toBe("saved");
+    expect(await page.innerText(`${row} .hint`)).toBe("");
+    await agent("set_setting", { key: "max_file_mb", reset: true });
+    await soon(() => page.inputValue(field)).not.toBe("64");
   });
 
   test("the Change log shows each change at the top as it is made", async () => {

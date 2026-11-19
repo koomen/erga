@@ -23,6 +23,7 @@ import {
   where,
 } from "./access";
 import { clickOn } from "../helpers/press";
+import { markOf } from "../helpers/save-mark";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("sign-in")]);
 
@@ -143,8 +144,11 @@ journey("who may sign in, on a server of its own", () => {
     expect(await page.$(waiting)).toBeNull();
     expect(await page.inputValue(ann)).toBe("read");
     // Her role changed on the page: she may write now.
+    // (No Save button: the role saves as it changes, and the save mark says so.)
+    const saved = page.waitForResponse((r) => r.url().includes("/api/tools/set_user"));
     await page.selectOption(ann, "write");
-    await until(async () => (await page.inputValue(ann)) == "write" && !(await hint())?.includes("Saving"), 5000, "the role saved");
+    await saved;
+    await until(async () => (await page.inputValue(ann)) == "write" && (await markOf(page)) == "saved", 5000, "the role saved");
     expect(await makes()).toMatch(new RegExp(`^/ann${id}/`));
   });
 
@@ -195,8 +199,14 @@ journey("who may sign in, on a server of its own", () => {
   test("rules: everybody's select lets a refused person in; a rule removed lets nobody in any more", async () => {
     // Everybody: read, with its select. Bob (a personal account) may come in now.
     await page.goto(`${root}/admin/access?user=tester`);
+    const saved = page.waitForResponse((r) => r.url().includes("/api/tools/set_access"));
     await page.selectOption(`${rule("everybody")} select.access`, "read");
-    await until(async () => (await page.textContent("#rules-hint")) == "Saved.", 5000, "everybody's access saved");
+    await saved;
+    await until(
+      async () => (await markOf(page)) == "saved" && (await page.textContent("#rules-hint")) == "",
+      5000,
+      "everybody's access saved"
+    );
     // The Workspace rule removed: Amy keeps only everybody's read.
     await page.evaluate(() => {
       window.confirm = () => true;
@@ -211,7 +221,7 @@ journey("who may sign in, on a server of its own", () => {
   });
 
   // (Cut list, brought back.) The values are the pretend GitHub's app (dev/vite-plugin.ts), which its live check accepts.
-  test("Save and Clear on the Authentication page show the GitHub card's new state in place, with the message", async () => {
+  test("an app's values typed on the Authentication page save by themselves, and Clear: the GitHub card shows its new state in place, with the message", async () => {
     const CARD = 'section.server[data-provider="github"]';
     await page.goto(`${root}/admin/auth?user=tester`);
     await page.waitForSelector(CARD);
@@ -236,9 +246,13 @@ journey("who may sign in, on a server of its own", () => {
     await page.evaluate(() => {
       (window as unknown as { stayed: boolean }).stayed = true;
     });
+    // No Save button. The Client ID alone waits for the secret (the gray circle); with both, they save when the
+    // typing pauses.
+    expect(await page.locator(`${CARD} button:text-is("Save")`).count()).toBe(0);
     await page.fill(`${CARD} input[name=clientId]`, "Iv1.mockgithubapp0");
-    await page.fill(`${CARD} input[name=secret]`, "mock-github-client-secret");
-    await page.click(`${CARD} button.save`);
+    await page.focus(`${CARD} input[name=secret]`);
+    expect(await markOf(page)).toBe("saving");
+    await page.keyboard.insertText("mock-github-client-secret");
     await soon(card).toEqual({
       state: "working",
       id: "Iv1.mockgithubapp0",

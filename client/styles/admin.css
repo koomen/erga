@@ -66,6 +66,11 @@ main.admin-main code, .mono { font-family: var(--font-mono); font-size: 12.5px; 
 main.admin-main .hint { margin: 6px 0 0; font-size: 12.5px; color: var(--soft); }
 main.admin-main .hint:empty { display: none; }
 main.admin-main .hint.error { color: var(--bad); }
+/* A value that the server refused stays in its field (client/common/autosave.ts): the field's edge says so, and the
+   line under it says why. */
+main.admin-main :is(select, .input)[aria-invalid] { border-color: var(--bad); }
+main.admin-main input[type=checkbox][aria-invalid] { outline: 1.5px solid var(--bad); outline-offset: 2px; }
+main.admin-main .switch input[aria-invalid] + .track { box-shadow: 0 0 0 1.5px var(--bad); }
 
 /* Every control the same height; a select's text where an input's is. */
 main.admin-main :is(select, .input) { box-sizing: border-box; height: 34px; }

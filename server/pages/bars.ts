@@ -57,8 +57,8 @@ const EDITOR_TITLE = `<button type="button" class="nav-title" id="doc-title" ari
  * here, left of the bar, the save mark between them and the bar, and their own avatar's slot, which the editor fills
  * (client/shell/people.ts).
  */
-const buttonsBar = (actions: string, corner: string, editor = false) =>
-  `<div class="erga-view-buttons erga-bar erga-bar-r chrome chrome-top">${editor ? `<div class="people" id="people" aria-label="Who's here"></div>${SAVE_MARK}` : ""}<div class="quick" id="quick"><div class="quick-inner">${actions}</div></div><div class="me-slot">${corner}</div>${editor ? `<div class="me-slot" id="me" aria-label="You"></div>` : ""}</div>`;
+const buttonsBar = (actions: string, corner: string, editor = false, save = editor) =>
+  `<div class="erga-view-buttons erga-bar erga-bar-r chrome chrome-top">${editor ? `<div class="people" id="people" aria-label="Who's here"></div>` : ""}${save ? SAVE_MARK : ""}<div class="quick" id="quick"><div class="quick-inner">${actions}</div></div><div class="me-slot">${corner}</div>${editor ? `<div class="me-slot" id="me" aria-label="You"></div>` : ""}</div>`;
 
 /**
  * The save mark, left of the buttons' bar and touching it, outside its glass: a gray check (saved), a gray circle that
@@ -117,7 +117,8 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
  * The header of the app's own pages (appPage: Documents, Settings, the admin pages, the start page, sign-in, the error
  * pages): erga › each step of `trail` (the last is this page, in a `here` tag: the admin
  * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (`documents` puts
- * another button in its place: Documents itself has Home page there), then who you are. Share with an agent is on every page, before
+ * another button in its place: Documents itself has Home page there), then who you are. `save`: with the save mark left
+ * of the buttons' bar, for a page whose settings save by themselves (the admin pages). Share with an agent is on every page, before
  * Documents (`share`: a page's own, as the admin pages' with its admin token). The account corner goes in `corner`, or where the
  * Worker puts it (ACCOUNT_SLOT: withAccount). Your agent comes with them (server/pages/agent.ts), except where
  * `agent` is false: a page where the person grants access (/tokens/approve), which the agent must not see or act on.
@@ -125,7 +126,7 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
 export function pageBars(
   session: Session | null,
   trail: Crumb[],
-  o: { here?: string; actions?: string; share?: string; documents?: string; corner?: string; agent?: false } = {}
+  o: { here?: string; actions?: string; share?: string; documents?: string; corner?: string; agent?: false; save?: boolean } = {}
 ): string {
   const here = o.here ?? "span";
   const steps = trail
@@ -137,7 +138,7 @@ export function pageBars(
   const mine = !!session && !session.agent;
   const at = (path: string) => link(path, session);
   const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.documents ?? documentsButton(at("/documents"))) : ""}`;
-  return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.agent === false ? "" : agentPanel(session)}`;
+  return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT, false, !!o.save)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.agent === false ? "" : agentPanel(session)}`;
 }
 
 /**

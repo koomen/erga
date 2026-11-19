@@ -1,35 +1,48 @@
 // The Access page's script (/admin/access, server/admin/access.ts): whether users can share content publicly, and the
-// group rules: add one, change its access, remove one.
+// group rules: add one, change its access, remove one. The switch and a rule's access save as they change, with no Save
+// button (client/common/autosave.ts): the save mark left of the buttons' bar says how far it is; refused, the value
+// stays, with the server's reason under it.
 
 import { runTool, say } from "../common/admin-post";
+import { saveMark } from "../common/admin-save";
+import { autosave } from "../common/autosave";
 import { liveList, refresh } from "../common/live-rows";
 
 export default function adminAccess(): void {
+  const mark = saveMark();
   const publicHint = document.getElementById("public-hint")!;
   /** The switch for sharing publicly (its row comes again when it changes elsewhere). */
-  const wirePublic = (publicBox: HTMLInputElement) =>
-    publicBox.addEventListener("change", async () => {
-    if (
-      publicBox.checked &&
-      !confirm(
-        "Let users share content publicly? Documents already shared with anyone with the link will open for people who aren't signed in too."
-      )
-    ) {
-      publicBox.checked = false;
-      return;
-    }
+  const wirePublic = (publicBox: HTMLInputElement) => {
     const state = publicBox.closest("li")?.querySelector(".state");
-    if (state) state.textContent = publicBox.checked ? "On" : "Off";
-    say(publicHint, "Saving…");
-    try {
-      await runTool("set_access", { action: "public", on: publicBox.checked });
-      say(publicHint, "Saved.");
-    } catch (err) {
-      publicBox.checked = !publicBox.checked;
+    const shown = () => {
       if (state) state.textContent = publicBox.checked ? "On" : "Off";
-      say(publicHint, (err as Error).message, true);
-    }
-  });
+    };
+    mark.set("access:public", "saved");
+    const auto = autosave({
+      mark,
+      key: "access:public",
+      label: "Public sharing",
+      read: () => String(publicBox.checked),
+      saved: String(publicBox.checked),
+      save: (value) => runTool("set_access", { action: "public", on: value == "true" }),
+      ended(why) {
+        say(publicHint, why ?? "", !!why);
+        publicBox.toggleAttribute("aria-invalid", !!why);
+      },
+    });
+    publicBox.addEventListener("change", () => {
+      if (
+        publicBox.checked &&
+        auto.saved == "false" &&
+        !confirm(
+          "Let users share content publicly? Documents already shared with anyone with the link will open for people who aren't signed in too."
+        )
+      )
+        publicBox.checked = false;
+      shown();
+      auto.changed(true);
+    });
+  };
   const rulesHint = document.getElementById("rules-hint")!,
     // There only where the server's sign-in gives groups.
     ruleForm = document.querySelector<HTMLFormElement>("form.add-rule");
@@ -58,19 +71,23 @@ export default function adminAccess(): void {
   });
   /** A rule's row: its access, and Remove. */
   function wire(li: HTMLElement) {
-    const select = li.querySelector<HTMLSelectElement>("select.access")!;
-    let was = select.value;
-    select.addEventListener("change", async () => {
-      say(rulesHint, "Saving…");
-      try {
-        await runTool("set_access", { action: "change", id: Number(li.dataset.id), access: select.value });
-        was = select.value;
-        say(rulesHint, "Saved.");
-      } catch (err) {
-        select.value = was;
-        say(rulesHint, (err as Error).message, true);
-      }
+    const select = li.querySelector<HTMLSelectElement>("select.access")!,
+      live = li.dataset.live!;
+    mark.set(live, "saved");
+    const auto = autosave({
+      mark,
+      key: live,
+      label: select.getAttribute("aria-label") ?? "Access",
+      row: li,
+      read: () => select.value,
+      saved: select.value,
+      save: (value) => runTool("set_access", { action: "change", id: Number(li.dataset.id), access: value }),
+      ended(why) {
+        say(rulesHint, why ?? "", !!why);
+        select.toggleAttribute("aria-invalid", !!why);
+      },
     });
+    select.addEventListener("change", () => auto.changed(true));
     li.querySelector(".remove-rule")?.addEventListener("click", async () => {
       if (!confirm("Remove this rule? The people only it lets in can't sign in any more.")) return;
       try {

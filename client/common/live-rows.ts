@@ -96,6 +96,15 @@ export function refresh(...keys: string[]): Promise<void> {
   return ask();
 }
 
+/**
+ * The page's own change, saved while the person may still type in its field (a field that saves by itself): these rows
+ * as they are now, as a change heard from the server. A row with the focus in its field waits until the focus leaves it.
+ */
+export function changed(...keys: string[]): Promise<void> {
+  for (const k of keys) if (listOf(k)) pending.add(k);
+  return ask();
+}
+
 /** Whether `el` shows rows of `key`'s kind. */
 const shows = (el: HTMLElement, key: string) => (el.dataset.liveKind ?? "").split(" ").includes(key.slice(0, key.indexOf(":")));
 
@@ -179,12 +188,14 @@ const ahead = (el: HTMLElement, r: HTMLElement, s: number | string) => {
 
 /**
  * Puts `key`'s row in `el` as it is now, in its place; null takes it out. False: not now (someone is typing in it, and
- * it isn't the page's own change; or someone presses a row of the list).
+ * it isn't the page's own change; its field holds a value that is not saved; or someone presses a row of the list).
  */
 function put(el: HTMLElement, o: LiveList, key: string, row: Row): boolean {
   // (A press on the list: its rows stay as they are until the release, or the click would be lost. pressed.ts.)
   if (pressedIn(el)) return false;
   const old = el.querySelector<HTMLElement>(`:scope > [data-live="${CSS.escape(key)}"]`);
+  // (A field of the row holds a value that the server does not have yet, or refused: client/common/autosave.ts.)
+  if (old?.hasAttribute("data-unsaved")) return false;
   if (old && typing(old) && !own.has(key)) return false;
   own.delete(key);
   if (!row) {

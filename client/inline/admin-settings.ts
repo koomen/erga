@@ -1,9 +1,12 @@
-// The Settings page's script (/admin, server/admin/settings.ts): a switch or a choice saves as soon as it changes; for
-// the rest, Save lights up once the value differs from what's saved. Each is checked by the server, which says what's
-// wrong.
+// The Settings page's script (/admin, server/admin/settings.ts): each setting saves by itself, with no Save button
+// (client/common/autosave.ts): a switch or a choice as soon as it changes, a typed value when the typing pauses or the
+// focus leaves its field. The save mark left of the buttons' bar says how far it is. The server checks each value: a
+// refused one stays in its field, with the server's reason under it and the mark's red x, until it changes.
 
 import { runTool, say } from "../common/admin-post";
-import { liveList, refresh } from "../common/live-rows";
+import { saveMark } from "../common/admin-save";
+import { autosave } from "../common/autosave";
+import { changed as changedRow, liveList, refresh } from "../common/live-rows";
 import times from "./times";
 import { esc } from "../../shared/html";
 
@@ -14,18 +17,22 @@ export interface SettingsConfig {
 
 export default function adminSettings(c: SettingsConfig): void {
   const chipHtml = c.chip;
-  /** A setting's row: its control, Save and Reset. */
+  const mark = saveMark();
+  /** A setting's row: its control, which saves by itself, and Reset. */
   function wire(li: HTMLElement) {
     const form = li.querySelector("form")!,
       input = form.elements.namedItem("value") as HTMLInputElement,
       mode = li.querySelector<HTMLSelectElement>("select.mode"),
-      save = li.querySelector<HTMLButtonElement>(".save"),
       reset = li.querySelector(".reset"),
-      hint = li.querySelector(".hint")!;
+      hint = li.querySelector(".hint")!,
+      key = li.dataset.key!,
+      live = li.dataset.live!,
+      label = li.querySelector(".key")!.textContent!.trim();
+    // (The row as the server has it now: what an older row of this key was saving, or failed to save, counts no more.)
+    mark.set(live, "saved");
     if (input.disabled) return;
     const instant = li.dataset.control == "switch" || li.dataset.control == "choice";
     const state = () => (mode ? mode.value + ":" : "") + (input.type == "checkbox" ? input.checked : input.value);
-    const was = state();
     const asJson = () => {
       const kind = input.dataset.kind,
         v = input.value.trim();
@@ -41,54 +48,47 @@ export default function adminSettings(c: SettingsConfig): void {
           : v;
     };
     /** The row's hint: this one's, or the one of the row that took its place meanwhile (live-rows: a change heard). */
-    const hintNow = () => (li.isConnected ? hint : (document.querySelector(`[data-live="${CSS.escape(li.dataset.live!)}"] .hint`) ?? hint));
-    /** Sends the value shown; true once the server has it. */
-    const submit = async (): Promise<boolean> => {
-      say(hint, "Saving…");
-      try {
-        const key = li.dataset.key!;
+    const hintNow = () => (li.isConnected ? hint : (document.querySelector(`[data-live="${CSS.escape(live)}"] .hint`) ?? hint));
+    const shown = () => {
+      if (input.type == "checkbox") li.querySelector(".state")!.textContent = input.checked ? "On" : "Off";
+    };
+    /** How the last save ended: the reason under the field, or none; saved, the row as the server has it now. */
+    const ended = (why: string | null) => {
+      say(hintNow(), why ?? "", !!why);
+      input.toggleAttribute("aria-invalid", !!why);
+      // (A row with the focus in its field waits until the focus leaves it: the person types on.)
+      if (!why) void changedRow(live);
+    };
+    const auto = autosave({
+      mark,
+      key: live,
+      label,
+      row: li,
+      read: state,
+      saved: state(),
+      // (A number's field that is empty, or out of its range, for a moment: it waits for the focus to leave.)
+      ready: () => form.checkValidity(),
+      async save() {
         let value: unknown;
         try {
           value = JSON.parse(asJson());
         } catch {
-          throw new Error(`${key} needs a value as JSON (a number, true or false, "text" in quotes...).`);
+          throw new Error(
+            input.type == "number" ? "Type a number." : 'Type a value as JSON (a number, true or false, "text" in quotes...).'
+          );
         }
         await runTool("set_setting", { key, value });
-        say(hintNow(), "Saved.");
-        return true;
-      } catch (err) {
-        say(hintNow(), (err as Error).message, true);
-        return false;
-      }
-    };
-    const shown = () => {
-      if (input.type == "checkbox") li.querySelector(".state")!.textContent = input.checked ? "On" : "Off";
-    };
-    // A switch or a choice: one save at a time. A change during a save sends the newest value after it, so the server
-    // ends with the last one shown; a refused one puts back the value the server has.
-    let saved = was,
-      saving = false;
-    const sync = async () => {
-      if (saving || state() == saved) return;
-      saving = true;
-      const sent = state();
-      if (await submit()) saved = sent;
-      else if (input.type == "checkbox") {
-        input.checked = saved == "true";
-        shown();
-      }
-      saving = false;
-      if (state() != saved) return sync();
-      refresh(li.dataset.live!);
-    };
+      },
+      ended,
+    });
     const dirty = () => {
       shown();
-      if (instant) return void sync();
-      save!.disabled = state() == was;
-      say(hint, "");
+      auto.changed(instant);
     };
     input.addEventListener("input", dirty);
-    input.addEventListener("change", dirty);
+    // (The focus left the field, or Enter in it; a users setting's chips changed: at once.)
+    input.addEventListener("change", () => auto.changed(true));
+    input.addEventListener("blur", () => auto.changed(true));
     // A users setting: a chip for each user; picking one from the box adds it, × takes it out.
     const pick = li.querySelector<HTMLInputElement>("input.pick");
     if (pick) {
@@ -134,25 +134,26 @@ export default function adminSettings(c: SettingsConfig): void {
       amount.hidden = mode.value == "never";
       input.required = !amount.hidden;
       if (!amount.hidden) input.focus();
-      dirty();
+      auto.changed(true);
     });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      if (!instant)
-        void submit().then((ok) => {
-          if (ok) void refresh(li.dataset.live!);
-        });
+      auto.changed(true);
     });
-    reset?.addEventListener("click", async () => {
-      say(hint, "Saving…");
+    const toDefault = async () => {
+      mark.set(live, "saving");
       try {
-        await runTool("set_setting", { key: li.dataset.key!, reset: true });
-        say(hint, "Saved.");
-        refresh(li.dataset.live!);
+        await runTool("set_setting", { key, reset: true });
+        mark.set(live, "saved");
+        ended(null);
+        void refresh(live);
       } catch (err) {
-        say(hint, (err as Error).message, true);
+        const why = (err as Error).message;
+        say(hintNow(), why, true);
+        mark.set(live, "error", { title: `${label} not reset`, detail: why }, toDefault);
       }
-    });
+    };
+    reset?.addEventListener("click", toDefault);
   }
   const list = document.querySelector<HTMLElement>("ol[data-live-kind=setting]")!;
   for (const li of list.querySelectorAll<HTMLElement>(":scope > li.setting")) wire(li);

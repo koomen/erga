@@ -1,5 +1,6 @@
 // /admin/settings, the Settings page: each of the server's settings, with the control it's set with
-// (client/inline/admin-settings.ts saves it), the Sites row (the document published to each domain), under them pages'
+// (client/inline/admin-settings.ts saves it as it changes: there is no Save button, and the save mark left of the
+// buttons' bar says how far it is), the Sites row (the document published to each domain), under them pages'
 // models today (./page-llm.ts), and last the secrets only the deploy sets. The agents' settings are on the Agents page
 // (./agents.ts), which draws its setting rows with settingRow too.
 
@@ -64,7 +65,7 @@ function valueInput(e: ConfigEntry, never: boolean): string {
 const unitOf = (key: string) =>
   ({ hours: "hours", mb: "MB", gb: "GB", usd: "US$", tokens: "tokens" })[key.slice(key.lastIndexOf("_") + 1)] ?? "";
 
-/** How a setting is set: "switch" and "choice" save as soon as they change; the rest have Save. */
+/** How a setting is set: "switch" and "choice" save as soon as they change; the rest when the typing pauses, or the focus leaves. */
 function controlOf(e: ConfigEntry): "switch" | "choice" | "users" | "typed" {
   if (e.kind == "users") return "users";
   if (typeof e.default == "boolean" || (e.choices?.length == 2 && e.choices.includes("off") && e.choices.includes("on"))) return "switch";
@@ -90,8 +91,6 @@ export function settingRow(e: ConfigEntry, never: boolean, place: number): strin
     e.source == "set"
       ? `<p class="set"><span title="${esc(def)}">${e.updated != null ? `Set ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}` : "Set"}</span>${reset}</p>`
       : "";
-  // Save for what's typed in.
-  const buttons = e.locked || control == "switch" || control == "choice" ? "" : `<button class="pill save" disabled>Save</button>`;
   return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}" data-live="setting:${esc(e.key)}" data-sort="${place}">
     <div class="about">
       <div class="head"><label class="key" for="set-${esc(e.key)}" title="${esc(e.key)}">${esc(e.label ?? e.key)}</label>${meta ? `<span class="meta">${meta}</span>` : ""}</div>
@@ -101,7 +100,6 @@ export function settingRow(e: ConfigEntry, never: boolean, place: number): strin
     <form class="value">
       <input type="hidden" name="key" value="${esc(e.key)}">
       ${valueInput(e, never)}
-      ${buttons}
     </form>
     <p class="hint" role="status"></p>
   </li>`;

@@ -1,10 +1,16 @@
-// The Authentication page's script (/admin/auth, server/admin/auth.ts): each provider's switch, and each app's Save,
-// Discard and Clear.
+// The Authentication page's script (/admin/auth, server/admin/auth.ts): each provider's switch, and each app's values,
+// Discard and Clear. The switch and the values save by themselves, with no Save button (client/common/autosave.ts): the
+// switch at once; an app's Client ID and secret together, once both are there, when the typing pauses or the focus
+// leaves the form. The save mark left of the buttons' bar says how far it is; refused, the value stays, with the
+// server's reason under it.
 
 import { post, reload, runTool, say } from "../common/admin-post";
+import { saveMark } from "../common/admin-save";
+import { autosave } from "../common/autosave";
 import { liveList, refresh } from "../common/live-rows";
 
 export default function adminAuth(): void {
+  const mark = saveMark();
   // A change shows both providers' sections as they are now (each says whether the other is on), and its message under
   // the provider's card.
   const changed = async (provider: string, text: string) => {
@@ -37,19 +43,27 @@ export default function adminAuth(): void {
   /** A provider's section: its switch, and its card's buttons. */
   function wire(section: HTMLElement) {
     // The switch, in the section's header: on or off, with the server's rules (it says why it refuses, in place).
-    const box = section.querySelector<HTMLInputElement>(":scope > header input[data-provider]")!;
-    box.addEventListener("change", async () => {
-      const hint = box.closest("section.provider")!.querySelector(".provider-hint")!;
-      say(hint, "Saving…");
-      try {
-        await runTool("set_sign_in", { provider: box.dataset.provider!, action: box.checked ? "on" : "off" });
-        say(hint, "");
-        refresh("auth:github", "auth:google");
-      } catch (err) {
-        box.checked = !box.checked;
-        say(hint, (err as Error).message, true);
-      }
+    const box = section.querySelector<HTMLInputElement>(":scope > header input[data-provider]")!,
+      key = `${section.dataset.live}:on`;
+    // (The section as the server has it now: what an older one was saving counts no more.)
+    mark.set(key, "saved");
+    const on = autosave({
+      mark,
+      key,
+      label: box.getAttribute("aria-label") ?? "Sign-in",
+      row: section,
+      read: () => String(box.checked),
+      saved: String(box.checked),
+      save: (value) => runTool("set_sign_in", { provider: box.dataset.provider!, action: value == "true" ? "on" : "off" }),
+      ended(why) {
+        // (The hint of the section on the page now: a change heard meanwhile may have drawn it again.)
+        const hint = document.querySelector(`section.provider[data-live="${section.dataset.live}"] .provider-hint`);
+        if (hint) say(hint, why ?? "", !!why);
+        box.toggleAttribute("aria-invalid", !!why);
+        if (!why) void refresh("auth:github", "auth:google");
+      },
     });
+    box.addEventListener("change", () => on.changed(true));
     for (const card of section.querySelectorAll<HTMLElement>("section.server")) wireCard(card);
   }
   function wireCard(card: HTMLElement) {
@@ -66,17 +80,46 @@ export default function adminAuth(): void {
         } catch {}
       });
     const form = card.querySelector<HTMLFormElement>("form.configure");
-    const value = (name: string) => (form!.elements.namedItem(name) as HTMLInputElement).value;
-    form?.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      say(hint, "Checking the values…");
-      try {
-        const { result } = await post(form.action, { do: "save", provider, clientId: value("clientId"), secret: value("secret") });
-        await changed(provider, result.message);
-      } catch (err) {
-        say(hint, (err as Error).message, true);
-      }
-    });
+    const appKey = `auth:${provider}:app`;
+    mark.set(appKey, "saved");
+    if (form) {
+      const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement).value.trim();
+      /** What the server said of the values it took. */
+      let message = "";
+      const app = autosave({
+        mark,
+        key: appKey,
+        label: `The ${provider == "github" ? "GitHub" : "Google"} app's values`,
+        row: card.closest<HTMLElement>("section.provider")!,
+        // (Both values as one: a line break is in neither.)
+        read: () => (value("clientId") || value("secret") ? `${value("clientId")}\n${value("secret")}` : ""),
+        saved: "",
+        // (One value alone waits for the other, until the focus leaves the form.)
+        ready: () => !!value("clientId") && !!value("secret"),
+        async save() {
+          message = (await post(form.action, { do: "save", provider, clientId: value("clientId"), secret: value("secret") })).result
+            .message;
+        },
+        ended(why) {
+          say(hint, why ?? "", !!why);
+          for (const name of ["clientId", "secret"])
+            (form.elements.namedItem(name) as HTMLInputElement).toggleAttribute("aria-invalid", !!why);
+          // Saved: the card again, as the server has it (its form empty: the page keeps no secret), with what the server said.
+          if (!why && value("clientId")) {
+            app.stop();
+            void changed(provider, message);
+          }
+        },
+      });
+      form.addEventListener("input", () => app.changed(false));
+      form.addEventListener("focusout", (e) => {
+        if (!form.contains(e.relatedTarget as Node | null)) app.changed(true);
+      });
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        app.changed(true);
+      });
+    }
     card.querySelector("button.discard")?.addEventListener("click", async () => {
       if (!confirm("Discard the new values? Sign-in keeps the values in use.")) return;
       try {

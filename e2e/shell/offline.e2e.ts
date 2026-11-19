@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, goto, journey, servers, test, until, type Tab } from "../helpers/fixtures";
+import { markCard, markOf, marksSeen, watchMark } from "../helpers/save-mark";
 import { idOf, runTool } from "../helpers/tools";
 import { GRACE_MS } from "../../libs/text/ui/unsaved";
 import { act, openCard } from "../documents/tree-rows";
@@ -81,24 +82,9 @@ function withoutOffline(tab: Tab) {
   tab.errors.splice(0, tab.errors.length, ...left);
 }
 
-/**
- * The save mark, left of the buttons' bar (client/common/save-mark.ts): "saved" (the gray check), "saving" (the gray
- * circle) or "error" (the red x: edits that are not on the server yet, libs/text/ui/unsaved.ts); null: none.
- */
-const mark = (ed: Editor) => ed.eval<string | null>(`document.getElementById("save-state")?.dataset.at ?? null`).catch(() => null);
-/** The mark's card, as a person sees it: its words while it shows, else null. */
-const card = (ed: Editor) =>
-  ed.eval<string | null>(`(() => {
-    const c = document.getElementById("save-card");
-    return getComputedStyle(c).visibility == "visible" ? c.innerText : null;
-  })()`);
-
-/** From now on, in `window.__marks`: each state the mark showed, in turn, also for a moment. */
-const watchMark = (ed: Editor) =>
-  ed.eval(`(() => {
-    const save = document.getElementById("save-state"), seen = (window.__marks = []);
-    new MutationObserver(() => seen.push(save.dataset.at)).observe(save, { attributes: true, attributeFilter: ["data-at"] });
-  })()`);
+/** The save mark (e2e/helpers/save-mark.ts): edits that are not on the server yet are its red x (libs/text/ui/unsaved.ts). */
+const mark = (ed: Editor) => markOf(ed.page);
+const card = (ed: Editor) => markCard(ed.page);
 
 journey("offline, and back; then sign-out", () => {
   const docTitle = () => ed.eval<string>(`document.getElementById("doc-title-text").textContent`);
@@ -121,14 +107,14 @@ journey("offline, and back; then sign-out", () => {
       })()`)
     ).toBe(true);
     await ed.clickEnd("main p");
-    await watchMark(ed);
+    await watchMark(ed.page);
     // A person's keys, for longer than GRACE_MS: the first edit's wait ends while a later edit is on its way.
     const text = " Two loaves of bread, oats, honey and tea. Milk.";
     expect(text.length * KEY_MS).toBeGreaterThan(GRACE_MS + 200);
     await ed.page.keyboard.type(text, { delay: KEY_MS });
     await until(() => ed.disk().includes(`${text}</p>`), DISK_MS, "the first edit on disk");
     await soon(() => mark(ed)).toBe("saved");
-    const seen = await ed.eval<string[]>(`window.__marks`);
+    const seen = await marksSeen(ed.page);
     expect(seen[0]).toBe("saving");
     expect(seen).not.toContain("error");
   });

@@ -89,8 +89,9 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     // 5.5's output tokens cost ($0.50 for a million).
     const to = (Math.floor(cost * 100 + 1e-6) + 1) / 100;
     const tokens = Math.ceil((to - cost) * 2_000_000 - 1e-6) + (cost > 0 ? 1 : 0);
+    // (No Save button: the value saves as the focus leaves its field.)
     await limit.locator("input[name=value]").fill(String(to));
-    await limit.locator(".save").click();
+    await limit.locator("input[name=value]").blur();
     await expect.poll(() => setting(s, "page_llm_daily_usd")).toBe(to);
     // One call that uses all of it; the next gets "limit".
     expect(await ask(page, `@script [{"text": "One.", "tokens": ${tokens}}]`)).toEqual({ text: "One." });
@@ -126,7 +127,7 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     });
     // 0: pages' models are off.
     await limit.locator("input[name=value]").fill("0");
-    await limit.locator(".save").click();
+    await limit.locator("input[name=value]").blur();
     await expect.poll(() => setting(s, "page_llm_daily_usd")).toBe(0);
     await admin.reload(); // page load 4
     expect(await usage(admin)).toContain("Pages' models are off");
