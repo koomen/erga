@@ -52,6 +52,10 @@ export function describeProblem(raw: RawProblem, base: string, origin: string): 
     };
   }
   if (/^Script error\.?$/.test(raw.message) && !raw.file) return null; // cross-origin, nothing to go on
+  // The browser's notice that a ResizeObserver's answer changed sizes again in the same frame (a page that lays itself
+  // out to its width, as its window gets another size: the zoom, the agent's panel). It hears them on the next frame: no
+  // fault of the page's script.
+  if (/^ResizeObserver loop/.test(raw.message)) return null;
   if (isOwnError(raw)) return null;
   const where = raw.file && !/srcdoc/.test(raw.file) ? ` (${local(raw.file)}${raw.line ? `, line ${raw.line}` : ""})` : raw.line ? ` (the page's inline script, line ${raw.line})` : "";
   return {

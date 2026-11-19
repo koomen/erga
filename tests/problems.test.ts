@@ -51,3 +51,8 @@ test("an error in Erga's own code is not the page's problem: no message, no fix 
   expect(isOwnError(called)).toBe(false);
   expect(describeProblem(called, BASE, ORIGIN)?.detail).toMatch(/the page's own error/);
 });
+
+test("the browser's ResizeObserver loop notice is not the page's problem", () => {
+  for (const message of ["ResizeObserver loop completed with undelivered notifications.", "ResizeObserver loop limit exceeded"])
+    expect(describeProblem({ kind: "script", message, file: `${ORIGIN}${BASE}index.html`, line: 0 }, BASE, ORIGIN)).toBeNull();
+});
