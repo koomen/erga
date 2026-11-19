@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { failures, initial, markOf, step, type Event, type State } from "../client/common/save-mark.ts";
+import { FADE_MS, failures, HOLD_MS, initial, markOf, REST_MS, step, type Event, type State } from "../client/common/save-mark.ts";
 import { unsavedStart, unsavedStep, type Unsaved, type UnsavedEffect, type UnsavedEvent } from "../libs/text/ui/unsaved.ts";
 
 const EDIT: UnsavedEvent = { t: "edit" },
@@ -57,9 +57,9 @@ test("the mark shows the worst of its sources: saved only when each one is", () 
   expect(markOf(a.state)).toBe("error");
   const b = markRun(a.state, { t: "set", key: "shell", at: "saved" });
   expect(markOf(b.state)).toBe("saving");
-  const c = markRun(b.state, { t: "set", key: "page", at: "saved" }, { t: "held", n: 1 });
+  const c = markRun(b.state, { t: "set", key: "page", at: "saved" }, { t: "waited", n: 1 });
   expect(markOf(c.state)).toBe("saved");
-  expect(c.state).toEqual({ ...initial, n: 1 });
+  expect(c.state).toEqual({ ...initial, shown: "saved", n: 2 });
   // The same state again draws nothing.
   expect(markRun(c.state, { t: "set", key: "page", at: "saved" }).draws).toBe(0);
   expect(markRun(a.state, { t: "set", key: "page", at: "saving" }).draws).toBe(0);
@@ -84,7 +84,7 @@ test("the card opens on a click of the red x only, says each reason one time, an
   // One source saved: the other's error keeps the card. Both saved: it closes.
   const b = markRun(a.state, { t: "set", key: "page", at: "saved" });
   expect(b.state.open).toBe(true);
-  expect(markRun(b.state, { t: "set", key: "shell", at: "saved" }).state).toEqual(initial);
+  expect(markRun(b.state, { t: "set", key: "shell", at: "saved" }).state).toEqual({ ...initial, shown: "saved", n: 1 });
 });
 
 test("the circle holds a moment after the last save, so that it turns on while a person types; an error and its end show at once", () => {
@@ -93,23 +93,53 @@ test("the circle holds a moment after the last save, so that it turns on while a
   // A key saved: the mark still shows the circle, and the hold runs.
   expect(step({ ...initial, sources: [{ key: "page", at: "saving" }], shown: "saving" }, SAVED)).toEqual([
     { ...initial, shown: "saving", n: 1 },
-    [{ t: "hold", n: 1 }],
+    [{ t: "wait", n: 1, ms: HOLD_MS }],
   ]);
   // The next key before the hold's end: the circle stays, and the end of that hold counts for nothing.
-  const typing = markRun(initial, SAVING, SAVED, SAVING, { t: "held", n: 1 });
+  const typing = markRun(initial, SAVING, SAVED, SAVING, { t: "waited", n: 1 });
   expect(typing.state.shown).toBe("saving");
   const rests = markRun(typing.state, SAVED);
   expect(rests.state).toMatchObject({ shown: "saving", n: 2 });
-  expect(markRun(rests.state, { t: "held", n: 1 }).state.shown).toBe("saving");
-  expect(markRun(rests.state, { t: "held", n: 2 }).state.shown).toBe("saved");
+  expect(markRun(rests.state, { t: "waited", n: 1 }).state.shown).toBe("saving");
+  expect(markRun(rests.state, { t: "waited", n: 2 }).state.shown).toBe("saved");
   // An error shows at once, also in a hold; saved after an error shows at once.
   const failed = markRun(rests.state, { t: "set", key: "page", at: "error", why: WHY });
   expect(failed.state.shown).toBe("error");
   expect(markRun(failed.state, SAVED).state.shown).toBe("saved");
 });
 
+test("the check fades a few seconds after the save and is gone, as before the first save; the next save or failure shows at once", () => {
+  const SAVING: Event = { t: "set", key: "page", at: "saving" },
+    SAVED: Event = { t: "set", key: "page", at: "saved" },
+    FAILED: Event = { t: "set", key: "page", at: "error", why: WHY };
+  // Before the first save there is no mark, and a source that says "saved" brings none.
+  expect(initial.shown).toBe("gone");
+  expect(step(initial, SAVED)).toEqual([initial, []]);
+  // The check comes after the hold, and stays REST_MS; then it fades for FADE_MS; then the mark is gone.
+  const saved = markRun(initial, SAVING, SAVED);
+  const check = step(saved.state, { t: "waited", n: 1 });
+  expect(check).toEqual([{ ...initial, shown: "saved", n: 2 }, [{ t: "draw" }, { t: "wait", n: 2, ms: REST_MS }]]);
+  const fades = step(check[0], { t: "waited", n: 2 });
+  expect(fades).toEqual([{ ...initial, shown: "fading", n: 3 }, [{ t: "draw" }, { t: "wait", n: 3, ms: FADE_MS }]]);
+  // (Gone, the mark hears no pointer: the pointer is not over it.)
+  expect(step({ ...fades[0], over: true }, { t: "waited", n: 3 })).toEqual([{ ...initial, n: 3 }, [{ t: "draw" }]]);
+  // The end of an older wait counts for nothing.
+  expect(step(fades[0], { t: "waited", n: 2 })).toEqual([fades[0], []]);
+  // A save shows the circle at once: over the check, in the fade, and with no mark. The old wait's end changes nothing.
+  for (const from of [check[0], fades[0], { ...initial, n: 3 }]) {
+    const again = step(from, SAVING);
+    expect(again).toEqual([{ ...from, sources: [{ key: "page", at: "saving" }], shown: "saving" }, [{ t: "draw" }]]);
+    expect(step(again[0], { t: "waited", n: from.n })).toEqual([again[0], []]);
+    expect(markRun(from, FAILED).state.shown).toBe("error");
+  }
+  // The check after the red x fades as any other; the red x itself stays.
+  const failed = markRun(initial, FAILED);
+  expect(step(failed.state, { t: "waited", n: 0 })).toEqual([failed.state, []]);
+  expect(step(failed.state, SAVED)[1]).toEqual([{ t: "draw" }, { t: "wait", n: 1, ms: REST_MS }]);
+});
+
 // (The trap at the top of client/inline/bars.css.)
-test("the save mark's styles animate nothing but the circle while it saves, and fade nothing", () => {
+test("the save mark's styles animate only the circle while it saves and the check's fade, and after the fade the mark is off the page", () => {
   const root = join(import.meta.dir, "..");
   const sheets = ["client/inline/bars.css", "client/inline/viewer.css", "client/style.css", "client/styles/editor.css"];
   const rules = sheets.flatMap((f) =>
@@ -129,7 +159,12 @@ test("the save mark's styles animate nothing but the circle while it saves, and 
   const moving = mark
     .filter((r) => /\b(animation|transition)(-[a-z-]+)?\s*:\s*(?!none\b)\S/.test(r.body))
     .map((r) => `${r.f}: ${r.selector}`);
-  expect(moving).toEqual(['client/inline/bars.css: .save-state[data-at="saving"] .save-ring']);
+  expect(moving).toEqual([
+    "client/inline/bars.css: .save-state.fading .save-mark",
+    'client/inline/bars.css: .save-state[data-at="saving"] .save-ring',
+  ]);
+  // No animation stays on a mark that rests: the fade's rule is gone with .fading, and .gone takes the mark off the page.
+  expect(mark.find((r) => r.selector == ".save-state.gone .save-mark")?.body).toMatch(/\bdisplay:\s*none\b/);
 });
 
 test("Try again is for an error whose source can save again; a page that goes takes its sources with it", () => {

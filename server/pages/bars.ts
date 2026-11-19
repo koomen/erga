@@ -61,11 +61,12 @@ const buttonsBar = (actions: string, corner: string, editor = false, save = edit
   `<div class="erga-view-buttons erga-bar erga-bar-r chrome chrome-top">${editor ? `<div class="people" id="people" aria-label="Who's here"></div>` : ""}${save ? SAVE_MARK : ""}<div class="quick" id="quick"><div class="quick-inner">${actions}</div></div><div class="me-slot">${corner}</div>${editor ? `<div class="me-slot" id="me" aria-label="You"></div>` : ""}</div>`;
 
 /**
- * The save mark, left of the buttons' bar and touching it, outside its glass: a gray check (saved), a gray circle that
- * turns (saving; three dots where the person asked for no motion) or a red x (not saved), and the card that says what
- * failed (client/common/save-mark.ts draws it; its look: client/inline/bars.css).
+ * The save mark, left of the buttons' bar and touching it, outside its glass: a gray circle that turns (saving; three
+ * dots where the person asked for no motion), a gray check (saved) that fades away after a few seconds, or a red x (not
+ * saved), and the card that says what failed (client/common/save-mark.ts draws it; its look: client/inline/bars.css).
+ * Gone until the first save.
  */
-const SAVE_MARK = `<div class="save-state" id="save-state" data-at="saved"><button type="button" class="save-mark" aria-label="Saved" aria-expanded="false" aria-controls="save-card"><svg viewBox="0 0 16 16" aria-hidden="true"><path class="save-check" d="m3.5 8.5 3 3 6-7"/><g class="save-ring"><circle class="save-track" cx="8" cy="8" r="5"/><path d="M8 3a5 5 0 0 1 5 5"/></g><g class="save-dots"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></g><path class="save-x" d="m4.25 4.25 7.5 7.5m0-7.5-7.5 7.5"/></svg></button><div class="save-card" id="save-card" role="status"></div></div>`;
+const SAVE_MARK = `<div class="save-state gone" id="save-state" data-at="saved"><button type="button" class="save-mark" aria-label="Saved" aria-expanded="false" aria-controls="save-card"><svg viewBox="0 0 16 16" aria-hidden="true"><path class="save-check" d="m3.5 8.5 3 3 6-7"/><g class="save-ring"><circle class="save-track" cx="8" cy="8" r="5"/><path d="M8 3a5 5 0 0 1 5 5"/></g><g class="save-dots"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></g><path class="save-x" d="m4.25 4.25 7.5 7.5m0-7.5-7.5 7.5"/></svg></button><div class="save-card" id="save-card" role="status"></div></div>`;
 
 /** The document's zoom, while it isn't 100%: its level, which opens the zoom's menu (client/inline/viewer-zoom.ts). */
 const ZOOM_BUTTON = `<button type="button" class="erga-view-button icon-btn zoom-btn" id="btn-zoom" aria-haspopup="menu" aria-controls="zoom-menu" aria-expanded="false" hidden></button>`;

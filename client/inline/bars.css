@@ -8,10 +8,11 @@
    blur. The agent takes the same glass (client/style.css), and the editor's cards (client/styles/glass.css).
 
    Trap: the save mark (.save-state, .save-mark and its picture) gets no animation and no transition, but the circle's
-   turn while it saves. With a fade-in of the mark as the editor starts, and the circle's animation there but paused, the browser at
-   times stopped giving the pointer to the document's page after a reload at a phone's width: every move went to the
-   viewer, for good (e2e/shell/panels.e2e.ts failed in 1 whole run of 4; without them, in 0 of 8). The cause in the
-   browser is not known. tests/unsaved.test.ts holds this. */
+   turn while it saves and the check's fade (.fading), and none of them stays: after the fade the mark is off the page
+   (.gone: display none), as it is before the first save. With a fade-in of the mark as the editor starts, and the
+   circle's animation there but paused, the browser at times stopped giving the pointer to the document's page after a
+   reload at a phone's width: every move went to the viewer, for good (e2e/shell/panels.e2e.ts failed in 1 whole run of
+   4; without them, in 0 of 8). The cause in the browser is not known. tests/unsaved.test.ts holds this. */
 :root {
   /* The bars' bottom edge, from the window's top: a sticky header on a page that scrolls under the bars sticks here. */
   --bars-top: max(8px, env(safe-area-inset-top)); --bars-height: 42px; --bars-bottom: calc(var(--bars-top) + var(--bars-height));
@@ -101,12 +102,18 @@ button.erga-view-button { margin: 0; padding: 0; border: 0; background-color: tr
 .me-slot:empty { display: none; }
 
 /* The save mark (server/pages/bars.ts, SAVE_MARK; client/common/save-mark.ts), left of the buttons' bar and touching it,
-   in its band, outside its glass: a gray check (saved), a gray circle (saving), a red x (not saved). The circle turns
-   while something saves: a faint ring, and a quarter of it that goes round. The check comes back a moment after the last
+   in its band, outside its glass: a gray circle (saving), a gray check (saved), a red x (not saved). The circle turns
+   while something saves: a faint ring, and a quarter of it that goes round. The check comes a moment after the last
    save (the mark's state holds the circle: client/common/save-mark.ts, HOLD_MS), so the circle turns on while a person
-   types. Where the person asked for no motion (prefers-reduced-motion), three dots stand still in the circle's place. A hover (.over) says which it is; on the red x, a hover
+   types. A few seconds later the check fades away (.fading), and then the mark is off the page (.gone) until the next
+   save: its place stays, so nothing beside it moves. Where the person asked for no motion, the check goes with no fade. Where the person asked for no motion (prefers-reduced-motion), three dots stand still in the circle's place. A hover (.over) says which it is; on the red x, a hover
    or a click (.open) opens the card that says what failed. */
-.save-state { --bad: #d92d20; position: absolute; right: 100%; top: 0; bottom: 0; display: flex; align-items: center; }
+.save-state { --bad: #d92d20; position: absolute; right: 100%; top: 0; bottom: 0; width: 24px; display: flex; align-items: center; }
+.save-state.gone { pointer-events: none; }
+.save-state.gone .save-mark { display: none; }
+.save-state.fading .save-mark { animation: erga-save-fade 400ms ease-out forwards; }
+@keyframes erga-save-fade { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .save-state.fading .save-mark { animation: none; display: none; } }
 html.page-dark body .save-state { --bad: #ff6b5e; }
 .save-mark { position: relative; display: grid; place-items: center; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 7px;
   background: transparent; color: var(--chrome); font: inherit; cursor: default; }

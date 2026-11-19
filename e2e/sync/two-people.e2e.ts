@@ -310,10 +310,10 @@ journey("two people on one page", () => {
   test("the others stack left of the buttons' bar, not in it; a hover spreads them, and a hover on one shows its name", async () => {
     const rest = await atRest(a, 2);
     expect(rest.inBar, "no face is in the buttons' bar").toBe(false);
-    // Left of the bar, in its band, centred on it: the save mark touches the bar's left side, and the stack's right edge
-    // is 4 to 14px from the mark.
+    // Left of the bar, in its band, centred on it: the save mark's place (with no edit to save, it has no mark) touches
+    // the bar's left side, and the stack's right edge is 4 to 14px from it.
     const mark = await a.page.evaluate(() => {
-      const r = document.querySelector("#save-state .save-mark")!.getBoundingClientRect();
+      const r = document.querySelector("#save-state")!.getBoundingClientRect();
       return { l: r.left, r: r.right };
     });
     expect(Math.abs(rest.bar.l - mark.r)).toBeLessThanOrEqual(1);

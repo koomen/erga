@@ -10,7 +10,7 @@ import { joinRoom } from "../helpers/room";
 import { runTool } from "../helpers/tools";
 import { editorUp, mint, newDoc, soon, unique } from "./access";
 import { clickOn } from "../helpers/press";
-import { markCard, markOf, marksSeen, watchMark } from "../helpers/save-mark";
+import { markCard, markOf, marksSeen, markThere, watchMark } from "../helpers/save-mark";
 
 // (The scripted model: the agent's pane is on the pages.)
 const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script" } });
@@ -269,15 +269,9 @@ journey("an admin on the admin pages", () => {
     const onServer = async () =>
       (await agent<{ settings: { key: string; value: unknown }[] }>("settings")).settings.find((e) => e.key == "max_file_mb")!.value;
     expect(await page.locator('main button:text-is("Save")').count()).toBe(0);
-    // The gray check, left of the buttons' bar: it touches the bar's left side.
+    // Before a change there is no mark.
     expect(await markOf(page)).toBe("saved");
-    expect(
-      await page.evaluate(() => {
-        const m = document.querySelector("#save-state .save-mark")!.getBoundingClientRect(),
-          bar = document.querySelector(".erga-view-buttons")!.getBoundingClientRect();
-        return m.width > 0 && Math.abs(bar.left - m.right) <= 1;
-      })
-    ).toBe(true);
+    expect(await markThere(page)).toBe(false);
     await watchMark(page);
     // Typed with real keys: the circle at the first key; saved when the typing pauses, with the focus still in the field.
     await page.click(field);
@@ -299,6 +293,14 @@ journey("an admin on the admin pages", () => {
     await page.keyboard.type("4");
     await page.keyboard.press("Tab");
     await soon(() => markOf(page)).toBe("error");
+    // The mark is left of the buttons' bar: it touches the bar's left side.
+    expect(
+      await page.evaluate(() => {
+        const m = document.querySelector("#save-state .save-mark")!.getBoundingClientRect(),
+          bar = document.querySelector(".erga-view-buttons")!.getBoundingClientRect();
+        return m.width > 0 && Math.abs(bar.left - m.right) <= 1;
+      })
+    ).toBe(true);
     expect(await page.inputValue(field)).toBe("64");
     expect(await page.innerText(`${row} .hint`)).toBe("The server is busy: try again.");
     expect(await onServer()).toBe(6);

@@ -26,6 +26,8 @@ then saves a screenshot and prints the page as a person sees it: "|" is the care
   --out     where the screenshot goes (default: a new folder in .e2e/shots/ of this checkout)
   --width   the window's width in px (default 1100; a phone: 390), and --height (default 800)
   --dark    the browser asks for dark pages (prefers-color-scheme: dark)
+  --real    the editor's timed behaviour at a person's speed (default: ten times faster, as in the journeys):
+            the save mark's check stays its 3 s
   --source  print the page's body as HTML too
   --latency a network's delay between the tab and the room, each way: 120, or a range 60-180 (ms);
             a server left running with --keep has the delay it started with
@@ -118,6 +120,7 @@ const latency = option("--latency");
 const keep = flag("--keep"),
   source = flag("--source"),
   dark = flag("--dark"),
+  real = flag("--real"),
   view = flag("--view");
 const pathArg = option("--path");
 const opsArg = option("--ops");
@@ -363,7 +366,8 @@ try {
       }
     } as typeof WebSocket;
   });
-  let ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
+  const speed = real ? { timescale: 1 } : {};
+  let ed = await openEditor(tab, server, docArg, { ...speed, file: isDir ? undefined : basename(path) });
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
   /** The editor's own bar on the page is at rest: drawn (in the frame after a change), and its fade done. */
@@ -387,7 +391,7 @@ try {
     else if (verb == "open") {
       const agentOpen = () => page.evaluate(() => document.body.classList.contains("agent-open"));
       const was = await agentOpen();
-      ed = await openEditor(tab, server, rest, rest == docArg && !isDir ? { file: basename(path) } : {});
+      ed = await openEditor(tab, server, rest, { ...speed, ...(rest == docArg && !isDir ? { file: basename(path) } : {}) });
       // The agent's panel as it was (a phone's closes on each page), once it has read its thread.
       if (was && !(await agentOpen())) await page.click("#agent-fab");
       if (was) await page.waitForFunction(() => document.getElementById("agent-model")!.textContent, null, { timeout: 10_000 });

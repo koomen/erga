@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, goto, journey, servers, test, until, type Tab } from "../helpers/fixtures";
-import { markCard, markOf, marksSeen, watchMark } from "../helpers/save-mark";
+import { markCard, markOf, marksSeen, marksShown, markThere, watchMark } from "../helpers/save-mark";
 import { idOf, runTool } from "../helpers/tools";
 import { GRACE_MS } from "../../libs/text/ui/unsaved";
 import { act, openCard } from "../documents/tree-rows";
@@ -98,14 +98,9 @@ journey("offline, and back; then sign-out", () => {
     await watchSockets(tab.page);
     ed = await openEditor(tab, s, "multi");
     await workersIn(ed);
-    // Before any edit: the gray check, left of the buttons' bar: it touches the bar's left side, outside it.
+    // Before any edit: all is saved, and there is no mark.
     expect(await mark(ed)).toBe("saved");
-    expect(
-      await ed.eval<boolean>(`(() => {
-        const m = document.querySelector("#save-state .save-mark").getBoundingClientRect(), bar = document.querySelector(".erga-view-buttons").getBoundingClientRect();
-        return m.width > 0 && Math.abs(bar.left - m.right) <= 1 && m.top > bar.top && m.bottom < bar.bottom;
-      })()`)
-    ).toBe(true);
+    expect(await markThere(ed.page)).toBe(false);
     await ed.clickEnd("main p");
     await watchMark(ed.page);
     // A person's keys, for longer than GRACE_MS: the first edit's wait ends while a later edit is on its way.
@@ -148,9 +143,13 @@ journey("offline, and back; then sign-out", () => {
 
   test("offline: type on, see the red x, reload, type more; nothing reaches the server", async ({ tab }) => {
     await goOffline(ed);
-    // Offline with no edit: still the check.
+    // Offline with no edit: still saved. The check of the last save stayed for a moment and faded away: there is no mark.
     await ed.settle();
     expect(await mark(ed)).toBe("saved");
+    await soon(() => markThere(ed.page)).toBe(false);
+    expect((await marksShown(ed.page)).slice(-3)).toEqual(["saved", "saved, fading", "saved, gone"]);
+    // (No animation stays on it: the trap at the top of client/inline/bars.css.)
+    expect(await ed.eval<number>(`document.getElementById("save-state").getAnimations({ subtree: true }).length`)).toBe(0);
     // The document's title, set offline, is an edit too: it shows at once, and the mark is the circle.
     await openCard(ed.page);
     await act(ed.page, "index.html", "rename");
@@ -158,12 +157,20 @@ journey("offline, and back; then sign-out", () => {
     await ed.page.keyboard.type("Field notes");
     await ed.page.keyboard.press("Enter");
     await soon(docTitle).toBe("Field notes");
-    // (The circle turns while it saves: a person sees that something happens.)
+    // (The mark is back at once, and its circle turns while it saves: a person sees that something happens.)
     expect(await mark(ed)).toBe("saving");
+    expect(await markThere(ed.page)).toBe(true);
     expect(await ed.eval<string>(`document.querySelector("#save-state .save-ring").getAnimations()[0].playState`)).toBe("running");
     await ed.clickEnd("main p");
     await ed.type(" Eggs.");
     await soon(() => mark(ed), 10_000).toBe("error");
+    // The mark is left of the buttons' bar: it touches the bar's left side, outside it.
+    expect(
+      await ed.eval<boolean>(`(() => {
+        const m = document.querySelector("#save-state .save-mark").getBoundingClientRect(), bar = document.querySelector(".erga-view-buttons").getBoundingClientRect();
+        return m.width > 0 && Math.abs(bar.left - m.right) <= 1 && m.top > bar.top && m.bottom < bar.bottom;
+      })()`)
+    ).toBe(true);
     // The red x alone raises no alert, and shows no card. A click on it opens its card, which says what failed (the
     // title, then the edits) and that Erga tries again; a press on the page closes it, and so does Escape, with the
     // caret in the page: the red x stays.
