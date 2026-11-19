@@ -9,11 +9,12 @@
 import * as Effect from "effect/Effect";
 import type { AwsEntry, AwsFacts } from "../cli/config";
 import type { AwsApi } from "../deployer/aws";
-import { tried } from "../deployer/cloudflare-api";
+import { DeployError, tried } from "../deployer/cloudflare-api";
 import { deploy } from "../deployer/deploy";
+import { NoTable, type Sql } from "../deployer/instance";
 import type { Release } from "../deployer/release-format";
 import { type Aws, awsCli } from "./cli";
-import { CHROME_DEVTOOLS, deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease } from "./machine";
+import { CHROME_DEVTOOLS, deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease, recordScript } from "./machine";
 import { celldProject } from "./project";
 
 /** An entry's facts, as the release keeps them (ERGA_DEPLOY, in its settings in the bucket): its AWS names and its plain settings. */
@@ -138,4 +139,33 @@ export async function rollbackAws(e: AwsEntry, log: (line: string) => void, ask?
   await onMachine(aws, e.aws.machine, deployScript({ ...where, version: before }));
   await putLive(aws, e.aws.stack, before);
   return before;
+}
+
+const SSM_OUTPUT = 24_000;
+
+/** A value in a statement that the machine runs: text as hex, so that no value can end the statement or the script. */
+const literal = (v: string | number | null) =>
+  v == null ? "NULL" : typeof v == "number" ? String(Math.trunc(v)) : `CAST(X'${Buffer.from(v, "utf8").toString("hex")}' AS TEXT)`;
+
+/**
+ * The instance's database, for its own record of its deploys (deploy/deployer/instance.ts): each statement is one
+ * command on the machine (Systems Manager), which takes some seconds. The rows are the marked texts in celld's output.
+ */
+export function awsSql(aws: Aws, o: { bucket: string; region: string; machine: string }): Sql {
+  return (sql, params) => {
+    const parts = sql.split("?");
+    const statement = parts.map((part, i) => (i ? literal(params[i - 1] ?? null) : "") + part).join("");
+    // Only plain characters go into the machine's script: no quote that ends its text, nothing that the shell reads.
+    if (parts.length != params.length + 1 || !/^[A-Za-z0-9_ ,()=<>|'*.:]*$/.test(statement))
+      return Effect.fail(new DeployError({ message: "A statement of the deploys' record is not one that the machine may run." }));
+    return Effect.tryPromise({
+      try: async () => {
+        const out = await onMachine(aws, o.machine, recordScript({ bucket: o.bucket, region: o.region, sql: statement }), 120);
+        // Systems Manager gives back the first 24,000 characters of the output: more than that is a row that is cut.
+        if (out.length >= SSM_OUTPUT) throw new Error("The machine's answer is longer than Systems Manager gives back.");
+        return out.match(/erga:(?:[0-9A-F]{2})+/g) ?? [];
+      },
+      catch: (e) => (/no such table/.test((e as Error).message) ? new NoTable() : new DeployError({ message: (e as Error).message })),
+    });
+  };
 }

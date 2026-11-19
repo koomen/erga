@@ -39,7 +39,9 @@
 //                                       of the branch it tracks, or a commit of that branch; no branch moves;
 //                                       the commits main and staging are origin's branches, never the clone's own;
 //                                       --domain <domain> (it can repeat): the instance takes a custom domain, which
-//                                       a document can be published to from now on
+//                                       a document can be published to from now on; the instance holds its spec, and
+//                                       a deploy stops when the entry differs from it: --write-spec makes the
+//                                       entry's values the instance's spec first
 //   bun erga track <host> [--repo <repo>] [--branch <branch>] [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]
 //                                       the repository and the branch that a registered instance tracks
 //                                       (github.com/koomen/erga, main), and its upstream: a branch (of the same
@@ -232,8 +234,9 @@ function release(asked: string | undefined, dry: boolean) {
 /** A host from a host or a URL. */
 const hostOf = async (arg: string) => new URL((await import("./config")).originOf(arg)).host;
 
-async function deploy(args: string[], noTests: boolean, domains: string[]) {
-  if (!args.length || args.length > 2) fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--domain <domain>]...");
+async function deploy(args: string[], noTests: boolean, domains: string[], writeSpec: boolean) {
+  if (!args.length || args.length > 2)
+    fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--write-spec] [--domain <domain>]...");
   const [commit, host] = args.length == 2 ? [args[0], await hostOf(args[1])] : [undefined, await hostOf(args[0])];
   const { ergaDir } = await import("./config");
   const { deployInstance } = await import("./deploy");
@@ -241,6 +244,7 @@ async function deploy(args: string[], noTests: boolean, domains: string[]) {
     "bun erga deploy",
     ...args,
     ...(noTests ? ["--no-tests"] : []),
+    ...(writeSpec ? ["--write-spec"] : []),
     ...domains.flatMap((d) => ["--domain", d]),
   ].join(" ");
   const sha = await deployInstance({
@@ -250,6 +254,7 @@ async function deploy(args: string[], noTests: boolean, domains: string[]) {
     noTests,
     command,
     from: fromOf(),
+    writeSpec,
     ...(domains.length ? { domains } : {}),
   }).catch((e: Error) => fail(e.message));
   pass(`${host} runs ${sha.slice(0, 12)}, healthy.`);
@@ -261,7 +266,7 @@ async function rollback(arg: string | undefined, yes: boolean) {
   const { rollbackInstance } = await import("./deploy");
   const host = await hostOf(arg);
   const ask = yes ? undefined : (q: string) => /^y(es)?$/i.test(prompt(q)?.trim() ?? "");
-  await rollbackInstance({ dir: ergaDir(), host, ask }).catch((e: Error) => fail(e.message));
+  await rollbackInstance({ dir: ergaDir(), host, ask, from: fromOf() }).catch((e: Error) => fail(e.message));
   say("NOTE  The next deploy goes forward again.");
 }
 
@@ -306,10 +311,22 @@ async function register(
     profile: o.profile,
     region: o.region,
   });
-  // The entry keeps what it tracks.
-  const repo = o.repo ? repoName(o.repo) : (had?.repo ?? DEFAULT_REPO);
-  const branch = o.branch ?? had?.branch ?? DEFAULT_BRANCH;
-  const made = withUpstream({ host, repo, branch, ...(had?.upstream ? { upstream: had.upstream } : {}), ...facts }, o);
+  // The instance's spec, when it has one, says what it tracks and what deploys: the entry takes it.
+  const { entryFrom, reachOf, specOn, sqlOf } = await import("./instance");
+  const found = { host, repo: DEFAULT_REPO, branch: DEFAULT_BRANCH, ...facts };
+  const spec = await specOn(await sqlOf(found, await reachOf(found)));
+  const other = spec && ((o.repo && repoName(o.repo) != spec.repo) || (o.branch && o.branch != spec.branch));
+  if (spec && other)
+    fail(
+      `${host}'s spec on the instance tracks ${spec.repo} ${spec.branch}. Register it as it is; then change what it tracks: bun erga track ${host}`
+    );
+  // Else the entry keeps what it tracks.
+  const repo = spec?.repo ?? (o.repo ? repoName(o.repo) : (had?.repo ?? DEFAULT_REPO));
+  const branch = spec?.branch ?? o.branch ?? had?.branch ?? DEFAULT_BRANCH;
+  const made = withUpstream(
+    { ...(spec ? entryFrom(spec, found) : found), repo, branch, ...(had?.upstream ? { upstream: had.upstream } : {}) },
+    o
+  );
   const entry = typeof made == "string" ? fail(made) : made;
   writeConfig(dir, withEntry(readConfig(dir), entry));
   pass(
@@ -363,8 +380,16 @@ async function track(arg: string | undefined, o: { repo?: string; branch?: strin
     fail(
       `${entry.upstream.repo} has no branch ${entry.upstream.branch}, or this machine can't read it. ${host} is as before. ${upstreamOf(had)}`
     );
-  writeConfig(dir, withEntry(readConfig(dir), entry));
   const moved = entry.repo != had.repo || entry.branch != had.branch;
+  // The instance's spec holds what it tracks: it takes the new repository and branch. An instance with no spec yet
+  // gets the entry's with its next deploy.
+  if (moved) {
+    const { reachOf, sqlOf, trackOn } = await import("./instance");
+    await (async () => trackOn(await sqlOf(had, await reachOf(had)), entry.repo, entry.branch))().catch((e: Error) =>
+      fail(`${host}'s spec on the instance did not change: ${e.message}\n${host} tracks ${had.repo} ${had.branch}, as before.`)
+    );
+  }
+  writeConfig(dir, withEntry(readConfig(dir), entry));
   pass(
     `${host} tracks ${entry.repo} ${entry.branch}${moved ? ` (before: ${had.repo} ${had.branch})` : ""}. Its head is ${head.slice(0, 12)}. ${upstreamOf(entry)}`
   );
@@ -453,7 +478,8 @@ export async function main(argv: string[]) {
       return deploy(
         plain,
         flag("--no-tests"),
-        rest.flatMap((x, i) => (rest[i - 1] == "--domain" ? [x] : []))
+        rest.flatMap((x, i) => (rest[i - 1] == "--domain" ? [x] : [])),
+        flag("--write-spec")
       );
     case "rollback":
       return rollback(plain[0], flag("--yes"));

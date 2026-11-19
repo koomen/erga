@@ -6,7 +6,7 @@
 import { expect, test } from "bun:test";
 import type { Entry } from "../deploy/cli/config";
 import { type Run, stepRun } from "../deploy/cli/job-state";
-import { type Facts, jobOf, viewHtml } from "../deploy/cli/ops-view";
+import { type Facts, type JobRecord, jobOf, viewHtml } from "../deploy/cli/ops-view";
 import { REWRITTEN } from "../deploy/cli/auto-state";
 import { startPolls, stepPolls } from "../deploy/cli/poll-state";
 import { runOf } from "./helpers/pass.ts";
@@ -505,6 +505,7 @@ test("the page's server: Deploy and Roll back start their `bun erga` command, on
   // example.net runs main's head; staging.example.net runs the second commit of staging's three.
   const version = { "example.net": c1.slice(0, 12), "staging.example.net": c2.slice(0, 12) };
   const runs: string[][] = [];
+  const onInstance: Record<string, JobRecord[]> = {};
   let end = (_: { code: number; out: string }) => {};
   const page = serveOpsPage({
     dir: join(dir, ".erga"),
@@ -513,6 +514,8 @@ test("the page's server: Deploy and Roll back start their `bun erga` command, on
     fetch: async () => null,
     heads: async () => ({ heads: { main: c1, staging: c3 }, error: null }),
     ask: async (e) => ({ version: version[e.host as keyof typeof version], healthy: true }),
+    // Each instance's own record of its jobs: the page reads it from the instance, never from this machine's files.
+    jobs: async (e) => onInstance[e.host] ?? [],
     run: (args) => {
       runs.push(args);
       return { pid: 999_999, done: new Promise((done) => (end = done)) };
@@ -536,13 +539,13 @@ test("the page's server: Deploy and Roll back start their `bun erga` command, on
     const command = `bun erga deploy ${c1.slice(0, 12)} staging.example.net`;
     expect(((await busy.json()) as { error: string }).error).toBe(`Another job runs: ${command}. Wait for it to end.`);
     expect(await view()).toContain('title="Another job runs. Wait for it to end."');
-    // Its instance's job line shows it before its job record does; another instance's page does not.
+    // Its instance's job line shows it before the instance's record does; another instance's page does not.
     expect(await view()).toContain('data-tab="deploys"');
     expect(await view()).toContain(
       `<div class="job running"><i class="light"></i><code>${command}</code><span>starts · from this page</span></div>`
     );
     expect(await view("example.net")).toContain("No job yet.");
-    // It stops before its job record: its instance's page shows its last words.
+    // It stops before its job starts on the instance: its instance's page shows its last words.
     end({ code: 1, out: "FAIL  staging.example.net.lock is locked\n" });
     for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
     expect(await view()).toContain(`<p class="note bad failed">${command} stopped: FAIL  staging.example.net.lock is locked</p>`);
@@ -555,8 +558,32 @@ test("the page's server: Deploy and Roll back start their `bun erga` command, on
     expect(runs.at(-1)).toEqual(["deploy", c3.slice(0, 12), "staging.example.net"]);
     // Roll back: `bun erga rollback <host>`, with the same rules: only from the page, a registered instance, one job at a time.
     expect((await post("/api/rollback", { host: "example.net" })).status).toBe(409);
+    // The deploy ends, with its job in the instance's own record: the page reads it there when the command ends, and
+    // shows it as the instance's job line, its log and its history.
+    const deployed = `bun erga deploy ${c3.slice(0, 12)} staging.example.net`;
+    onInstance["staging.example.net"] = [
+      {
+        kind: "deploy",
+        host: "staging.example.net",
+        commit: c3,
+        branch: null,
+        phase: "ok",
+        id: "7",
+        command: deployed,
+        from: "page",
+        started: new Date().toISOString(),
+        ended: new Date().toISOString(),
+        out: ["Deploy to staging.example.net:", "Deployed: healthy."],
+      },
+    ];
     end({ code: 0, out: "" });
     for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
+    expect(await view()).toContain(`<a class="job ok" href="#staging.example.net/logs/7"`);
+    expect(await view("staging.example.net/logs")).toContain(
+      "<span>Deploy to staging.example.net:</span>\n<span>Deployed: healthy.</span>"
+    );
+    expect(await view("staging.example.net/history")).toContain(`<a class="h-row ok" href="#staging.example.net/logs/7" data-job="7">`);
+    expect(await view("example.net/history")).toContain("No job yet.");
     expect((await post("/api/rollback", { host: "example.net" }, "https://evil.example")).status).toBe(403);
     expect((await post("/api/rollback", { host: "nope.dev" })).status).toBe(409);
     expect((await post("/api/rollback", { host: "example.net" })).status).toBe(202);
@@ -616,6 +643,7 @@ test("the page's server asks for each upstream's head, and compares each instanc
       return { heads, error: null };
     },
     ask: async () => ({ version: c1.slice(0, 12), healthy: true }),
+    jobs: async () => [],
   });
   const view = async (host: string) => (await fetch(`http://127.0.0.1:${page.server.port}/view?hash=${host}`)).text();
   const until = async (host: string, ok: (html: string) => boolean) => {
@@ -688,6 +716,7 @@ test("the page's server checks its sources at start, not on a page load, and the
     fetch: async () => (calls.push("fetch"), "fatal: unable to access GitHub"),
     heads: async () => (calls.push("heads"), { heads: {}, error: "fatal: could not read from the repository" }),
     ask: async () => (calls.push("ask"), { version: "1".repeat(12), healthy: true }),
+    jobs: async () => [],
   });
   const at = `http://127.0.0.1:${page.server.port}`;
   const view = async () => (await fetch(`${at}/view?hash=example.net`)).text();
@@ -751,6 +780,7 @@ test("the page's server works the tests' queue: each branch's merge runs one tim
     cwd: dir,
     port: 0,
     ask: async () => ({ version: null, healthy: null }),
+    jobs: async () => [],
     fetch: async () => null,
     test: (branch) => {
       started.push(branch);

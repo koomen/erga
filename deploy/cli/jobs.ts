@@ -1,6 +1,7 @@
-// The lock and the record of a job (a deploy, a rollback, a merge, a run of the tests), in .erga/jobs/ of the main
-// clone. The lock, <host>.lock, lets one job at a time work on an instance (or on staging, or on the tests). The
-// record, <when>-<host>-<pid>.jsonl, is what the ops page shows of the job (ops-view.ts, jobOf).
+// The lock and the record of a job of this machine (a merge, a promote, a run of the tests), in .erga/jobs/ of the
+// main clone. The lock, <name>.lock, lets one job at a time work on staging, on main, or on the tests. The record,
+// <when>-<name>-<pid>.jsonl, is what the ops page reads of the job (ops-view.ts, jobOf). A deploy's or a rollback's
+// lock and log are not here: they are on the instance itself (deploy/deployer/instance.ts).
 
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ const heldBy = (path: string): Held | null => {
   }
 };
 
-/** Takes the instance's lock, or throws which job holds it. A lock of a process that stopped (or of its reused pid) is free. The result frees it. */
+/** Takes the lock of `host` (staging, main, tests), or throws which job holds it. A lock of a process that stopped (or of its reused pid) is free. The result frees it. */
 export function takeLock(dir: string, host: string, command: string): () => void {
   mkdirSync(jobsDir(dir), { recursive: true });
   const path = lockPath(dir, host);

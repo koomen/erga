@@ -1,19 +1,22 @@
 // `bun erga deploy` and `bun erga rollback` (deploy/cli/deploy.ts), from .erga/config.json, against the mock
 // Cloudflare's example account (ERGA_DEPLOY_MOCK=1): every entry takes the same path (entryTarget); the upload has the
-// entry's vars, no secret goes out, the lock and the job record, and the tests' gate. A Worker keeps its database:
+// entry's vars, no secret goes out, the lock and the job log on the instance, its spec there, and the tests' gate. A Worker keeps its database:
 // its entry takes the name of the database that it is bound to. And the branches (a clone of its own): an instance
 // deploys the head of the branch it tracks, and only a commit of that branch; no deploy moves a branch;
 // `bun erga promote` moves main to staging's head.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as Effect from "effect/Effect";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type CloudflareEntry, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
 import { commitOf, deployInstance, entryTarget, rollbackInstance, trackedHead } from "../deploy/cli/deploy";
 import { promote, promoteRefusal } from "../deploy/cli/promote";
-import { findInstance, instanceReader } from "../deploy/cli/running";
-import { lockPath, takeLock } from "../deploy/cli/jobs";
+import { entryFrom, specOn, sqlOf, startInstanceJob, trackOn } from "../deploy/cli/instance";
+import { findInstance, instanceReader, jobsReader } from "../deploy/cli/running";
+import { Cloudflare } from "../deploy/deployer/cloudflare-api";
+import { LEASE_MS } from "../deploy/deployer/instance";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { mockCloudflare } from "../dev/mock-cloudflare";
 import {
@@ -54,16 +57,13 @@ const fresh = (...entries: Entry[]) => {
   pass = writePass(dir, HEAD);
   return dir;
 };
-const records = () =>
-  readdirSync(join(dir, "jobs"))
-    .filter((f) => f.endsWith(".jsonl"))
-    .sort() // a name starts with its start time: the order of the jobs
-    .map((f) =>
-      readFileSync(join(dir, "jobs", f), "utf8")
-        .trim()
-        .split("\n")
-        .map((l) => JSON.parse(l))
-    );
+type Mock = ReturnType<typeof mockCloudflare>;
+/** An instance's jobs, as its own database has them in the mock Cloudflare: the newest first. */
+const jobsOn = (mock: Mock, entry: Entry) => jobsReader({ net: mock.fetch })(entry);
+/** The instance's database in the mock Cloudflare, for its record of its deploys. */
+const sqlOn = (mock: Mock, entry: Entry) => sqlOf(entry, { cf: new Cloudflare("mock-machine-token", mock.fetch) });
+/** The calls that change what an instance runs: no read, and no statement on its database. */
+const changes = (mock: Mock) => mock.state.calls.filter((c) => !c.startsWith("GET ") && !/\/d1\/database\/[^/]+\/query$/.test(c));
 
 beforeAll(async () => {
   process.env.ERGA_DEPLOY_MOCK = "1";
@@ -106,18 +106,36 @@ describe("bun erga deploy", () => {
     expect(mock.state.secrets["erga-next"]).toEqual(secrets);
     expect(JSON.stringify([mock.state.scripts.erga, mock.state.secrets.erga])).toBe(other);
 
-    // The job record: the command, the commit, the tests, the output, the result. The lock is free again.
-    const [job] = records();
-    expect(job[0]).toMatchObject({ command: `bun erga deploy HEAD next.example.com`, host: "next.example.com", from: "terminal" });
-    expect(job).toContainEqual({ commit: HEAD });
-    expect(job).toContainEqual({ tests: "passed" });
-    expect(job.at(-1).result).toBe("ok");
-    expect(job.filter((x) => x.out).length).toBe(lines.length);
-    expect(existsSync(lockPath(dir, "next.example.com"))).toBe(false);
+    // The job on the instance: the command, the commit, the output, the result. It holds the lock no more.
+    const [job, ...before] = await jobsOn(mock, next);
+    expect(before).toEqual([]);
+    expect(job).toMatchObject({
+      kind: "deploy",
+      command: "bun erga deploy HEAD next.example.com",
+      host: "next.example.com",
+      from: "terminal",
+      commit: HEAD,
+      phase: "ok",
+    });
+    expect(lines).toContain("Test the commit: done");
+    expect(job.out).toEqual(lines.join("\n").split("\n"));
+    // The instance had no spec: it has the entry's now, with the names of the secrets that the Worker holds.
+    expect(lines.at(-1)).toBe("The instance has its spec now: the entry's values.");
+    expect(await specOn(await sqlOn(mock, next))).toMatchObject({
+      repo: REPO,
+      branch: "staging",
+      target: { kind: "cloudflare", worker: "erga-next", database: "erga-next" },
+      settings: { GITHUB_CLIENT_ID: "Ov23-from-the-entry" },
+      secrets: Object.keys(secrets).sort(),
+    });
 
-    // A rollback by host, from the entry: the version before (the bootstrap's) serves again.
+    // A rollback by host, from the entry: the version before (the bootstrap's) serves again. It is the instance's second job.
     expect(await rollbackInstance({ dir, host: "next.example.com", net: mock.fetch, print: () => {} })).toBe(SHA1.slice(0, 12));
     expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(SHA1.slice(0, 12));
+    expect((await jobsOn(mock, next)).map((j) => [j.kind, j.phase, j.command])).toEqual([
+      ["rollback", "ok", "bun erga rollback next.example.com"],
+      ["deploy", "ok", "bun erga deploy HEAD next.example.com"],
+    ]);
   }, 60_000);
 
   test("a Worker keeps its database: its entry takes the name of the database that the Worker is bound to", async () => {
@@ -142,37 +160,77 @@ describe("bun erga deploy", () => {
     expect(lines.some((l) => l.startsWith("NOTE  erga-next is bound"))).toBe(false);
   }, 60_000);
 
-  test("a second deploy to the same host stops; a lock of a process that stopped is free", async () => {
+  test("one job at a time on an instance, from any machine: a second deploy stops; a job that stopped frees the instance after its lease", async () => {
     fresh(fleet, next);
-    const free = takeLock(dir, "example.com", "bun erga deploy main example.com");
-    await expect(deployInstance({ dir, host: "example.com", commit: "HEAD", net: mockCloudflare({ fleet: true }).fetch })).rejects.toThrow(
-      `example.com is locked: bun erga deploy main example.com (process ${process.pid})`
-    );
-    free();
-    expect(existsSync(lockPath(dir, "example.com"))).toBe(false);
-
-    const dead = Bun.spawn(["true"]);
-    await dead.exited;
-    writeFileSync(
-      lockPath(dir, "example.com"),
-      JSON.stringify({ pid: dead.pid, command: "bun erga deploy x example.com", started: "then" })
-    );
     const mock = mockCloudflare({ fleet: true });
-    expect(await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
-    expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
-
-    // A job killed with its lock, and its pid given to another process later (here, this one): the lock names the
-    // process by its pid and its start time, so it is free.
-    writeFileSync(
-      lockPath(dir, "example.com"),
-      JSON.stringify({ pid: process.pid, pidStart: "Thu Jan  1 00:00:00 1970", command: "bun erga deploy x example.com", started: "then" })
+    await bootstrap(mock);
+    const deploy = () => deployInstance({ dir, host: "next.example.com", commit: "HEAD", net: mock.fetch, print: () => {} });
+    // A job of another machine runs on the instance: its row in the instance's database is the lock.
+    const sql = await sqlOn(mock, next);
+    const other = await startInstanceJob(sql, {
+      kind: "deploy",
+      command: "bun erga deploy main next.example.com",
+      source: "terminal",
+      host: "next.example.com",
+      print: () => {},
+    });
+    const uploads = changes(mock).length;
+    await expect(deploy()).rejects.toThrow(
+      "next.example.com: Another job runs on the instance: bun erga deploy main next.example.com (from terminal), since "
     );
-    expect(await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
-    // A lock and a job record name this process with its start time.
-    const held = takeLock(dir, "example.com", "bun erga deploy main example.com");
-    expect(JSON.parse(readFileSync(lockPath(dir, "example.com"), "utf8")).pidStart).toMatch(/\d\d:\d\d:\d\d/);
-    held();
-    expect(records().at(-1)?.[0].pidStart).toMatch(/\d\d:\d\d:\d\d/);
+    expect(changes(mock).length).toBe(uploads);
+    // The other job ends: the instance is free.
+    await other.end();
+    expect(await deploy()).toBe(HEAD);
+    expect(changes(mock).length).toBeGreaterThan(uploads);
+    // A job that stopped with no end holds the instance until its lease is over.
+    await startInstanceJob(sql, {
+      kind: "rollback",
+      command: "bun erga rollback next.example.com",
+      source: "page",
+      host: "next.example.com",
+      print: () => {},
+    });
+    await expect(deploy()).rejects.toThrow("bun erga rollback next.example.com (from page)");
+    await Effect.runPromise(sql("UPDATE deploy_jobs SET alive = alive - ? WHERE state = 'running'", [LEASE_MS + 1]));
+    expect(await deploy()).toBe(HEAD);
+    expect((await jobsOn(mock, next)).map((j) => [j.kind, j.phase])).toEqual([
+      ["deploy", "ok"],
+      ["rollback", "stopped"],
+      ["deploy", "ok"],
+      ["deploy", "ok"],
+    ]);
+  }, 60_000);
+
+  test("the ops page's reader of an instance's jobs: one statement for a read, and a log only as far as it is new", async () => {
+    fresh(fleet, next);
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const sql = await sqlOn(mock, next);
+    const job = await startInstanceJob(sql, {
+      kind: "deploy",
+      command: "bun erga deploy next.example.com",
+      source: "terminal",
+      host: "next.example.com",
+      print: () => {},
+    });
+    job.log("one");
+    const read = jobsReader({ net: mock.fetch });
+    const calls = () => mock.state.calls.length;
+    // While it runs, the page shows it as running.
+    expect((await read(next)).map((j) => j.phase)).toEqual(["running"]);
+    await job.end();
+    let before = calls();
+    expect((await read(next)).map((j) => [j.phase, j.out])).toEqual([["ok", ["one"]]]);
+    // Nothing new in the log: the read is the list of the jobs alone.
+    expect(mock.state.calls.slice(before)).toEqual([expect.stringMatching(/^POST .*\/d1\/database\/[^/]+\/query$/)]);
+    // More in the log: the list, and the part of the log that is new.
+    await Effect.runPromise(sql("UPDATE deploy_jobs SET log = log || ?", ["two\nthree\n"]));
+    before = calls();
+    expect((await read(next))[0].out).toEqual(["one", "two", "three"]);
+    expect(calls() - before).toBe(2);
+    // An instance whose database has no table for its jobs has none.
+    expect(await read(fleet)).toEqual([]);
   }, 60_000);
 
   test("the tests' gate: a commit with no record runs the tests, and a failure stops before the build; --no-tests is in the record", async () => {
@@ -189,12 +247,17 @@ describe("bun erga deploy", () => {
     // The failed run is the tree's record: a second deploy refuses it with the test's name, and runs nothing.
     await expect(deploy()).rejects.toThrow("\n  e2e/a.e2e.ts: breaks");
     expect(ran).toBe(1);
-    expect(mock.state.calls).toEqual([]);
-    expect(records()[0].at(-1).result).toBe("failed");
+    expect(changes(mock)).toEqual([]);
+    // The fleet's database is from before the table of the jobs: a job that fails before its migrations leaves no row.
+    expect(await jobsOn(mock, fleet)).toEqual([]);
 
     await deploy({ noTests: true });
     expect(ran).toBe(1);
-    expect(records().some((r) => r.some((x) => x.tests == "skipped: --no-tests") && r.at(-1).result == "ok")).toBe(true);
+    // The deploy brought the table, and its job is there, whole: it ran with no lock on the instance.
+    const [job, ...more] = await jobsOn(mock, fleet);
+    expect(more).toEqual([]);
+    expect(job).toMatchObject({ phase: "ok", commit: HEAD });
+    expect(job.out).toContainEqual(expect.stringContaining("did not run (--no-tests)"));
   }, 60_000);
 });
 
@@ -270,6 +333,78 @@ describe("what an instance runs comes from Cloudflare, never from the instance",
   }, 60_000);
 });
 
+describe("the instance holds its spec, and the entry must agree with it", () => {
+  test("a deploy stops when they differ, with each field and both ways out; --write-spec, register and track make them agree", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    fresh(fleet, next);
+    const lines: string[] = [];
+    const deploy = (more: object = {}) =>
+      deployInstance({ dir, host: "next.example.com", commit: "HEAD", net: mock.fetch, print: (l) => lines.push(l), ...more });
+    // Its first deploy from this code gives the instance its spec: the entry's values.
+    await deploy();
+    const sql = await sqlOn(mock, next);
+    const first = (await specOn(sql))!;
+    expect(first).toMatchObject({ branch: "staging", settings: next.vars, secrets: ["GITHUB_CLIENT_SECRET", "SESSION_SECRET"] });
+
+    // A person changes the entry by hand: what it tracks, a setting, and a new setting.
+    const edited: Entry = { ...next, branch: "main", vars: { ...next.vars, GITHUB_CLIENT_ID: "Ov23-edited", SERVER_CONFIG: "{}" } };
+    writeConfig(dir, withEntry(readConfig(dir), edited));
+    const uploads = changes(mock).length;
+    await expect(deploy()).rejects.toThrow(
+      [
+        "next.example.com's entry in .erga/config.json and the spec on the instance differ:",
+        '  branch: the entry has "main", the instance has "staging"',
+        '  settings.GITHUB_CLIENT_ID: the entry has "Ov23-edited", the instance has "Ov23-from-the-entry"',
+        '  settings.SERVER_CONFIG: the entry has "{}", the instance has nothing',
+        "It does not deploy. To deploy with the entry's values (they become the instance's spec): bun erga deploy next.example.com --write-spec",
+        "To take the instance's spec into the entry: bun erga register next.example.com",
+      ].join("\n")
+    );
+    // Nothing went up, the spec is as it was, and the job that stopped is in the instance's log.
+    expect(changes(mock).length).toBe(uploads);
+    expect(await specOn(sql)).toEqual(first);
+    expect((await jobsOn(mock, next))[0]).toMatchObject({ phase: "failed", error: expect.stringContaining("differ") });
+
+    // --write-spec: the entry's values become the spec, with the secrets' names that the Worker holds, and they deploy.
+    lines.length = 0;
+    await deploy({ writeSpec: true });
+    expect(lines[0]).toBe(
+      [
+        "The instance's spec has the entry's values now:",
+        '  branch: the entry has "main", the instance has "staging"',
+        '  settings.GITHUB_CLIENT_ID: the entry has "Ov23-edited", the instance has "Ov23-from-the-entry"',
+        '  settings.SERVER_CONFIG: the entry has "{}", the instance has nothing',
+      ].join("\n")
+    );
+    expect(await specOn(sql)).toEqual({ ...first, branch: "main", settings: edited.vars });
+    expect(bindingsOf(mock.state, "erga-next").GITHUB_CLIENT_ID.text).toBe("Ov23-edited");
+    // They agree now: the next deploy needs no flag, and writes no spec.
+    lines.length = 0;
+    await deploy();
+    expect(lines.some((l) => l.includes("spec"))).toBe(false);
+
+    // bun erga register: the entry takes what the spec says; the host, the upstream and nothing else are the entry's own.
+    const upstream = { repo: REPO, branch: "staging" };
+    expect(entryFrom((await specOn(sql))!, { ...next, upstream })).toEqual({ ...edited, upstream });
+    // bun erga track: the spec takes the new repository and branch, and only a repository on GitHub.
+    expect(await trackOn(sql, "github.com/example/erga-fork", "release")).toBe(true);
+    expect(await specOn(sql)).toMatchObject({ repo: "github.com/example/erga-fork", branch: "release", settings: edited.vars });
+    await expect(trackOn(sql, "example.com/team/erga", "main")).rejects.toThrow("This is not a spec");
+    // An instance with no spec yet (its database is from before the table): nothing to change there.
+    expect(await trackOn(await sqlOn(mock, fleet), REPO, "main")).toBe(false);
+  }, 60_000);
+
+  test("an entry that is no spec does not deploy: nothing starts", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    fresh({ ...fleet, repo: "example.com/team/erga" });
+    await expect(deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} })).rejects.toThrow(
+      "example.com's entry in .erga/config.json is not a spec that an instance can hold:"
+    );
+    expect(mock.state.calls).toEqual([]);
+  });
+});
+
 describe("every entry takes one path", () => {
   test("an entry's target is its names and its vars, and nothing says which instance it is", () => {
     const a = entryTarget(fleet as CloudflareEntry),
@@ -300,7 +435,7 @@ describe("bun erga deploy --domain", () => {
     expect(facts()).toEqual(["example.org"]);
     expect(lines).toContainEqual(expect.stringContaining("the custom domain https://example.org"));
     expect((entryOf(readConfig(dir), "example.com") as CloudflareEntry | null)?.domains).toEqual(["example.org"]);
-    expect(records().at(-1)?.[0].command).toBe("bun erga deploy HEAD example.com --domain example.org");
+    expect((await jobsOn(mock, fleet))[0].command).toBe("bun erga deploy HEAD example.com --domain example.org");
 
     // The next deploy keeps it, from the entry's copy; another --domain adds to it.
     await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} });
@@ -357,8 +492,6 @@ describe("the branches", () => {
     const PATH = process.env.PATH;
     try {
       // origin with main and staging at C1; the clone has the pre-push hook on, as bun install sets it.
-      const origin = join(tmp, "origin.git");
-      Bun.spawnSync(["git", "init", "-q", "--bare", origin]);
       mkdirSync(join(clone, "deploy/cli/hooks"), { recursive: true });
       for (const f of ["deploy/cli/hooks/pre-push", "deploy/cli/pre-push.ts", "deploy/cli/flow.ts"])
         copyFileSync(join(ROOT, f), join(clone, f));
@@ -366,7 +499,9 @@ describe("the branches", () => {
       run("git", "init", "-q", "-b", "work");
       run("git", "add", "-A");
       const c1 = commit("C1");
-      run("git", "remote", "add", "origin", origin);
+      // The origin has GitHub's name for the repository, as the entries do: in this clone, that name is a folder.
+      Bun.spawnSync(["git", "init", "-q", "--bare", join(clone, REPO)]);
+      run("git", "remote", "add", "origin", REPO);
       run("git", "push", "-q", "origin", `${c1}:refs/heads/main`, `${c1}:refs/heads/staging`);
       run("git", "config", "core.hooksPath", "deploy/cli/hooks");
       // C2 is on staging, as a merge pushes it: a clone that is not this one has it, so this one must fetch it.
@@ -375,9 +510,7 @@ describe("the branches", () => {
       run("git", "checkout", "-q", "--detach", c1);
 
       // Each entry tracks a branch of the origin: example.com main, next.example.com staging.
-      const prod = { ...fleet, repo: origin };
-      const stage = { ...next, repo: origin };
-      fresh(prod, stage);
+      fresh(fleet, next);
       writePass(dir, c1, clone);
       writePass(dir, c2, clone);
       const mock = mockCloudflare({ fleet: true });
@@ -390,18 +523,17 @@ describe("the branches", () => {
 
       // With no commit named: the head of the branch it tracks, as the repository has it now. No branch moves.
       expect(await deployInstance({ dir, host: "next.example.com", clone, net: mock.fetch, print })).toBe(c2);
-      expect(lines).toContain(`staging on ${origin} is at ${c2.slice(0, 12)}: that commit deploys.`);
+      expect(lines).toContain(`staging on ${REPO} is at ${c2.slice(0, 12)}: that commit deploys.`);
       expect(await deployInstance({ dir, host: "example.com", clone, net: mock.fetch, print })).toBe(c1);
       expect([versionOf("erga-next"), versionOf("erga")]).toEqual([c2.slice(0, 12), c1.slice(0, 12)]);
       expect([remote("staging"), remote("main")]).toEqual([c2, c1]);
-      expect(records().some((r) => r.some((x) => "main" in x))).toBe(false);
 
       // A commit that its branch does not have does not deploy: nothing is built or uploaded.
-      const calls = mock.state.calls.length;
+      const calls = changes(mock).length;
       await expect(deployInstance({ dir, host: "example.com", commit: c2, clone, net: mock.fetch, print })).rejects.toThrow(
-        `${c2.slice(0, 12)} is not a commit of main on ${origin} (its head: ${c1.slice(0, 12)}). example.com deploys only a commit of the branch it tracks.`
+        `${c2.slice(0, 12)} is not a commit of main on ${REPO} (its head: ${c1.slice(0, 12)}). example.com deploys only a commit of the branch it tracks.`
       );
-      expect(mock.state.calls.length).toBe(calls);
+      expect(changes(mock).length).toBe(calls);
       // An older commit of its branch deploys. It keeps the files of the release that ran (this machine deployed it,
       // and kept them: here both builds have the same files, so none is lacking).
       expect(await deployInstance({ dir, host: "next.example.com", commit: c1, clone, net: mock.fetch, print })).toBe(c1);
@@ -420,15 +552,19 @@ describe("the branches", () => {
       );
       expect(remote("main")).toBe(c1);
       expect(await deployInstance({ dir, host: "next.example.com", clone, net: mock.fetch, print })).toBe(c2);
-      const changes = () => mock.state.calls.filter((c) => /^(PUT|POST|DELETE|PATCH) .*\/workers\//.test(c)).length;
-      const uploads = changes();
+      const uploads = changes(mock).length;
       expect(await promote({ dir, clone, ask, print })).toBe(c2);
       expect([remote("staging"), remote("main")]).toEqual([c2, c2]);
       expect(lines).toContain(`main is at ${c2.slice(0, 12)} on origin.`);
       expect(lines).toContain("NEXT  example.com tracks main. Deploy the commit to it: bun erga deploy example.com");
-      expect(changes()).toBe(uploads);
+      expect(changes(mock).length).toBe(uploads);
       expect(versionOf("erga")).toBe(c1.slice(0, 12));
-      expect(records().at(-1)?.[0]).toMatchObject({ command: "bun erga promote", host: "main" });
+      // A promote is a job of this machine: its record is in .erga/jobs/.
+      const [record] = readdirSync(join(dir, "jobs")).filter((f) => f.endsWith(".jsonl"));
+      expect(JSON.parse(readFileSync(join(dir, "jobs", record), "utf8").split("\n")[0])).toMatchObject({
+        command: "bun erga promote",
+        host: "main",
+      });
       // Again: main has it.
       expect(await promote({ dir, clone, ask, print })).toBeNull();
       // The instance that tracks main gets the commit with its own deploy.
@@ -447,8 +583,8 @@ describe("the branches", () => {
       expect([commitOf("main", clone), commitOf("staging", clone)]).toEqual([c2, c3]);
 
       // An instance that tracks a branch that its repository does not have: the error says how to change it.
-      expect(() => trackedHead(clone, { host: "example.com", repo: origin, branch: "gone" })).toThrow(
-        `${origin} has no branch gone, which example.com tracks. Change it: bun erga track example.com --branch <branch>`
+      expect(() => trackedHead(clone, { host: "example.com", repo: REPO, branch: "gone" })).toThrow(
+        `${REPO} has no branch gone, which example.com tracks. Change it: bun erga track example.com --branch <branch>`
       );
     } finally {
       process.env.PATH = PATH;

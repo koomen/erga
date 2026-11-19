@@ -162,6 +162,11 @@ describe("an instance's spec", () => {
       ["domain", { pages: { kind: "domain" } }],
     ];
     for (const [key, over] of onAmazon) expect(refused(onAws(over))).toContain(`["${key}"]`);
+    // With a gate in front: the secret that holds the gate's key, by its ARN.
+    const gate = "arn:aws:secretsmanager:us-west-2:123456789012:secret:erga-example-com-GateKey-AbCdEf";
+    expect(decode(onAws({ gate }))).toMatchObject({ target: { gate } });
+    for (const bad of ["GateKey", `${gate} x`, `${gate}'; id`, gate.replace("secretsmanager", "ssm")])
+      expect(refused(onAws({ gate: bad }))).toContain('["gate"]');
     expect(refused({ ...production, target: { ...production.target, kind: "local" } })).toContain('["target"]');
   });
 

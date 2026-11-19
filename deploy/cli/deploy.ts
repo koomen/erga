@@ -7,8 +7,10 @@
 // Worker keeps. No secret goes out. No instance has a path of its own: the entries differ, the code does not.
 //
 // A Worker that runs keeps its database: when its entry names another one, the entry takes the name of the database
-// that the Worker is bound to, before anything deploys. Each deploy or
-// rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/ (jobs.ts). A deploy runs only a commit
+// that the Worker is bound to, before anything deploys. Each deploy or rollback is a job on the instance itself
+// (instance.ts): its row in the instance's database is the job's log and, while it runs, the instance's lock, so one
+// job at a time works on an instance, from any machine. A deploy reads the instance's spec there: the entry must agree
+// with it (--write-spec makes the entry's values the spec), and an instance with no spec yet gets the entry's. A deploy runs only a commit
 // whose tests passed (gate.ts: bun run test): the record .erga/tests/<tree>.json of the commit's tree, which its merge wrote.
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's example account (dev/mock-cloudflare.ts, the fleet), with
@@ -45,7 +47,8 @@ import {
 import { previousVersion } from "./flow";
 import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
-import { type From, startJob, takeLock } from "./jobs";
+import { heldSecrets, putSpec, specDiff, specOf, specOn, sqlOf, startInstanceJob } from "./instance";
+import type { From } from "./jobs";
 import { parseDeployed } from "../../server/directory/index.ts";
 import { ROOT, sh } from "../root";
 
@@ -159,6 +162,8 @@ export interface DeployOptions {
   domains?: string[];
   /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first rows). */
   first?: string;
+  /** --write-spec: the entry's values become the instance's spec, before the deploy. Without it, a deploy stops when the two differ. */
+  writeSpec?: boolean;
 }
 
 /** Why `domain` can't be a custom domain, or null. */
@@ -196,6 +201,8 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const config = readConfig(o.dir);
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
+  // The entry must be a spec that the instance can hold (its repository on GitHub, each name in its form): else nothing starts.
+  specOf(entry, []);
   const aws = isAws(entry) ? entry : null;
   const domains = (o.domains ?? []).map((d) => d.toLowerCase());
   if (aws && (domains.length || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --domain is only for an instance on Cloudflare.`);
@@ -223,11 +230,47 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const { net, token, quick } = aws ? { net: globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
   const cf = new Cloudflare(token, net);
   const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${domains.map((d) => ` --domain ${d}`).join("")}`;
-  const free = takeLock(o.dir, o.host, command);
-  const job = startJob(o.dir, { command, host: o.host, from: o.from, print: o.print });
+  const reach = { cf };
+  const sql = await sqlOf(entry, reach);
+  const job = await startInstanceJob(sql, { kind: "deploy", command, source: o.from ?? "terminal", host: o.host, print: o.print });
   const log = job.log;
   const clone = o.clone ?? ROOT;
   try {
+    let t = target;
+    if (t) {
+      // A Worker that runs keeps its database: an entry that names another one takes the name of the one it is bound to.
+      const bound = await boundDatabaseName(cf, `/accounts/${t.accountId}`, t.workerName);
+      if (bound && bound != t.databaseName) {
+        log(
+          `NOTE  ${t.workerName} is bound to the database ${bound}, and ${o.host}'s entry names ${t.databaseName}: the entry takes ${bound}.`
+        );
+        t = { ...t, databaseName: bound };
+        writeConfig(o.dir, withEntry(readConfig(o.dir), { ...(entry as CloudflareEntry), database: bound }));
+      }
+    }
+    // The instance's spec: the entry must agree with it. An instance with no spec yet gets the entry's when the deploy is done.
+    let spec = await specOn(sql);
+    /** Writes the entry as the instance's spec, with the secrets' names that the platform holds, when the instance has another one, or none. */
+    const writeSpec = async () => {
+      const now = entryOf(readConfig(o.dir), o.host)!;
+      const mine = specOf(now, await heldSecrets(now, reach));
+      const changes = spec ? specDiff(mine, spec, true) : null;
+      if (changes?.length == 0 || !(await putSpec(sql, mine))) return;
+      log(
+        changes
+          ? `The instance's spec has the entry's values now:\n${changes.map((c) => `  ${c}`).join("\n")}`
+          : "The instance has its spec now: the entry's values."
+      );
+      spec = mine;
+    };
+    if (o.writeSpec) await writeSpec();
+    else if (spec) {
+      const differs = specDiff(specOf(entryOf(readConfig(o.dir), o.host)!, spec.secrets), spec);
+      if (differs.length)
+        throw new Error(
+          `${o.host}'s entry in .erga/config.json and the spec on the instance differ:\n${differs.map((d) => `  ${d}`).join("\n")}\nIt does not deploy. To deploy with the entry's values (they become the instance's spec): bun erga deploy ${o.host} --write-spec\nTo take the instance's spec into the entry: bun erga register ${o.host}`
+        );
+    }
     let sha: string;
     // Whether the branch that the instance tracks has a commit, as this clone knows it: here, and the deployer's port.
     // (Under the mock: this checkout's commit, whatever its branch.)
@@ -244,16 +287,14 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
         );
       if (!o.commit) log(`${entry.branch} on ${entry.repo} is at ${head.slice(0, 12)}: that commit deploys.`);
     }
-    job.note({ commit: sha, ...(sent.length ? { secrets: sent } : {}) });
+    job.commit(sha);
 
     if (o.noTests) {
-      job.note({ tests: "skipped: --no-tests" });
       log(`NOTE  The tests of ${sha.slice(0, 12)} did not run (--no-tests).`);
     } else {
       // The gate (gate.ts): the record of the commit's tree, which its merge wrote; with none, the tests run now.
       log("Test the commit...");
       const run = await testRun({ dir: o.dir, clone, tree: treeOf(clone, sha)!, commit: sha, what: sha.slice(0, 12), log, suite: o.suite });
-      job.note({ tests: run.state });
       const no = gateRefusal(run, sha.slice(0, 12));
       if (no) throw new Error(`${no}\nIt does not deploy.`);
       log("Test the commit: done");
@@ -284,17 +325,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       await deployToAws(aws, release, log, onBranch, o.first);
       log("Deploy to the machine: done");
       log(`Deployed ${sha.slice(0, 12)} to ${entryOrigin(aws)}: healthy.`);
-    } else {
-      let t = target!;
-      // A Worker that runs keeps its database: an entry that names another one takes the name of the one it is bound to.
-      const bound = await boundDatabaseName(cf, `/accounts/${t.accountId}`, t.workerName);
-      if (bound && bound != t.databaseName) {
-        log(
-          `NOTE  ${t.workerName} is bound to the database ${bound}, and ${o.host}'s entry names ${t.databaseName}: the entry takes ${bound}.`
-        );
-        t = { ...t, databaseName: bound };
-        writeConfig(o.dir, withEntry(readConfig(o.dir), { ...(entry as CloudflareEntry), database: bound }));
-      }
+    } else if (t) {
       log(`Deploy ${sha.slice(0, 12)} to ${o.host}${mocked() ? " (the mock Cloudflare: nothing real)" : ""}:`);
       log(`  account ${t.accountId}, Worker ${t.workerName}, database ${t.databaseName}`);
       log(
@@ -328,13 +359,12 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
         writeConfig(o.dir, withEntry(readConfig(o.dir), { ...was, ...targetFacts(t) }));
       }
     }
-    job.end("ok");
+    await writeSpec();
+    await job.end();
     return sha;
   } catch (e) {
-    job.end("failed", (e as Error).message);
+    await job.end((e as Error).message);
     throw e;
-  } finally {
-    free();
   }
 }
 
@@ -350,6 +380,8 @@ export interface RollbackOptions {
   print?: (line: string) => void;
   /** How the wait for the health row sleeps (a test's: at once). */
   sleep?: (ms: number) => Promise<void>;
+  /** Where the command was typed, for the job's row (default: a terminal). */
+  from?: From;
 }
 
 /** Puts back the Worker version from before the instance's last deploy: no build, the database as it is. The result: the version it runs then. */
@@ -360,15 +392,15 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
   const aws = isAws(entry) ? entry : null;
   const { net, token, quick } = aws ? { net: globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
   const command = `bun erga rollback ${o.host}`;
-  const free = takeLock(o.dir, o.host, command);
-  const job = startJob(o.dir, { command, host: o.host, print: o.print });
+  const sql = await sqlOf(entry, { cf: new Cloudflare(token, net) });
+  const job = await startInstanceJob(sql, { kind: "rollback", command, source: o.from ?? "terminal", host: o.host, print: o.print });
   try {
     if (aws) {
       const { rollbackAws } = await import("../aws/deploy");
       // The machine's own script waits until the release answers its health check, healthy, on the loopback.
       const now = await rollbackAws(aws, job.log, o.ask);
       job.log(`${o.host} runs release ${now} now, health ok.`);
-      job.end("ok");
+      await job.end();
       return now;
     }
     const e = entry as CloudflareEntry;
@@ -399,8 +431,7 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
           )
         : { healthy: null, why: "the version names no release" };
     job.log(`${o.host}: health ${h.healthy ? "ok" : h.healthy === false ? `FAIL (${h.why})` : `unknown (${h.why})`}.`);
-    job.end(
-      h.healthy ? "ok" : "failed",
+    await job.end(
       h.healthy
         ? undefined
         : h.healthy === false
@@ -409,9 +440,7 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
     );
     return to.version;
   } catch (e) {
-    job.end("failed", (e as Error).message);
+    await job.end((e as Error).message);
     throw e;
-  } finally {
-    free();
   }
 }

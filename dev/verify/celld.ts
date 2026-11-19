@@ -21,7 +21,10 @@
 import { writeFileSync } from "node:fs";
 import { type BrowserType, chromium, firefox, webkit } from "playwright-core";
 import { awsCli } from "../../deploy/aws/cli.ts";
-import { whereOf } from "../../deploy/aws/setup.ts";
+import { awsSql } from "../../deploy/aws/deploy.ts";
+import { awsEntry, whereOf } from "../../deploy/aws/setup.ts";
+import { heldSecrets, specOf } from "../../deploy/cli/instance.ts";
+import { Cloudflare } from "../../deploy/deployer/cloudflare-api.ts";
 import { CELLD_PORT } from "../../deploy/aws/template.ts";
 import { openEditor } from "../../e2e/helpers/editor";
 import type { Tab } from "../../e2e/helpers/fixtures";
@@ -35,6 +38,7 @@ import { answers } from "./cloudflare.ts";
 import { useDedicated } from "./dedicated.ts";
 import { agentChecks, ergas, tool } from "./erga.ts";
 import { type Answer, ask, type Jar } from "./http.ts";
+import { recordChecks } from "./record.ts";
 import { local, Report, resultsFile, type Run as VerifyRun } from "./run.ts";
 
 /** This file's two units (see the top). */
@@ -74,6 +78,16 @@ export async function machineChecks(report: Report, run: AwsRun) {
     (e: Error) => `no answer: ${e.name}`
   );
   report.add("The machine's private address does not answer from here", direct.startsWith("no answer"), direct);
+  // The instance's record of its deploys, in the machine's database: each statement is one command of Systems Manager.
+  const a = answersOf(run.unit);
+  const { Account } = await aws<{ Account: string }>("sts", "get-caller-identity");
+  const entry = awsEntry(a, Account, run.outputs!, run.unit == "6" ? GITHUB_CLIENT : undefined);
+  const spec = await heldSecrets(entry, { cf: new Cloudflare("", fetch), aws: () => aws }).then(
+    (held) => specOf(entry, held),
+    (e: Error) => e
+  );
+  if (spec instanceof Error) report.add("The instance's entry is a spec that the instance can hold", false, spec.message);
+  else await recordChecks(report, awsSql(aws, entry.aws), spec, "Systems Manager");
 }
 
 /** Waits until `read` gives a value (asked each 100 ms); null after `limit`. */

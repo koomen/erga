@@ -18,6 +18,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { bindingsProblem, passedBinding } from "./bindings";
 import { Cloudflare, DeployError, Unhealthy, tried } from "./cloudflare-api";
+import { NoTable, type Sql } from "./instance";
 import type { Step } from "./job";
 import type { Release } from "./release-format";
 import type { CloudflareTarget, Spec } from "./spec";
@@ -464,6 +465,26 @@ export async function boundDatabase(cf: Cloudflare, acc: string, worker: string)
   const settings = await cf.call<{ bindings?: { name: string; type: string; id?: string; database_id?: string }[] }>("GET", `${acc}/workers/scripts/${worker}/settings`, `read ${worker}'s settings`, undefined, { allow404: true });
   const b = settings?.bindings?.find((x) => x.type == "d1" && x.name == "DB");
   return b?.database_id ?? b?.id ?? null;
+}
+
+/**
+ * The instance's database, for its own record of its deploys (instance.ts): D1's API, on the database that the Worker
+ * is bound to. No Worker yet, or a database from before the record's migration: NoTable.
+ */
+export function d1Sql(cf: Cloudflare, target: Pick<CloudflareTarget, "account" | "worker">): Sql {
+  const acc = `/accounts/${target.account}`;
+  let db: string | null = null;
+  return (sql, params) =>
+    Effect.gen(function* () {
+      db ??= yield* tried(() => boundDatabase(cf, acc, target.worker));
+      if (!db) return yield* new NoTable();
+      const id = db;
+      const rows = yield* Effect.mapError(
+        tried(() => d1(cf, acc, id, sql, [...params], "read or write the instance's record of its deploys")),
+        (e) => (/no such table/.test(e.message) ? new NoTable() : e)
+      );
+      return (rows ?? []).map((r) => String(Object.values(r)[0]));
+    });
 }
 
 // ------------------------------------------------------------------ the steps

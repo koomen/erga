@@ -298,6 +298,23 @@ aws s3 cp s3://${o.bucket}/releases/$version.tgz - --quiet | tar -xz
 celld d1 execute erga . --bucket ${fleet(o.bucket)} --command "${o.sql.replace(/"/g, '\\"')}" 2>&1
 `;
 
+/**
+ * One statement of the instance's record of its deploys (deploy/deployer/instance.ts) on its database: celld's rows,
+ * one JSON object for each (its table has lines around each row, as wide as the row: Systems Manager gives back
+ * 24,000 characters of the output at most). A machine that runs no release yet has no database: it says so in SQLite's words for a table
+ * that is not there. Trap: `sql` goes into the script as it is: its caller (deploy.ts, awsSql) gives only a statement
+ * of plain characters, with each value as hex.
+ */
+export const recordScript = (o: { bucket: string; region: string; sql: string }) =>
+  `set -euo pipefail
+export AWS_REGION=${o.region}
+version=$(tail -1 /var/lib/erga/deployed 2>/dev/null || true)
+if [ -z "$version" ]; then echo "no such table: the machine runs no release yet"; exit 1; fi
+dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && cd "$dir"
+aws s3 cp s3://${o.bucket}/releases/$version.tgz - --quiet | tar -xz
+celld d1 execute erga . --bucket ${fleet(o.bucket)} --json --command "${o.sql}"
+`;
+
 /** The releases the machine ran, oldest first (the last one runs now). */
 export const deployedScript = () => "cat /var/lib/erga/deployed 2>/dev/null || true";
 

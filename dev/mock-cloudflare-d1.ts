@@ -1,7 +1,24 @@
 // The pretend Cloudflare's D1 (dev/mock-cloudflare.ts): the few statements the deploy and `bun erga setup` run.
 
 
+import { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
 import type { MockState } from "./mock-cloudflare";
+
+/**
+ * The instance's record of its deploys (deploy/deployer/instance.ts), for each pretend database that has its tables:
+ * a real SQLite with the migration's own tables, because the lock is one statement that only SQLite can answer.
+ */
+const records = new WeakMap<object, Database>();
+function recordOf(db: object): Database {
+  let record = records.get(db);
+  if (!record) {
+    record = new Database(":memory:");
+    record.exec(readFileSync(new URL("../server/migrations/0470_deploys.sql", import.meta.url), "utf8"));
+    records.set(db, record);
+  }
+  return record;
+}
 
 /** A statement D1 refuses (SQLite's error). */
 export class D1Error extends Error {}
@@ -12,6 +29,12 @@ export function d1Query(
   { sql, params }: { sql: string; params?: unknown[] }
 ): Record<string, unknown>[] {
   db.statements.push(sql.slice(0, 200));
+  if (/\bdeploy_(spec|jobs)\b/.test(sql) && !/CREATE TABLE/i.test(sql)) {
+    if (!db.tables.includes("deploy_jobs")) throw new D1Error("no such table: deploy_jobs: SQLITE_ERROR");
+    return recordOf(db)
+      .query(sql)
+      .all(...((params ?? []) as (string | number | null)[])) as Record<string, unknown>[];
+  }
   if (/FROM sqlite_master/i.test(sql)) return db.tables.map((name) => ({ name }));
   if (/^SELECT id FROM documents/i.test(sql.trim())) {
     if (!db.tables.includes("documents")) throw new D1Error("no such table: documents: SQLITE_ERROR");

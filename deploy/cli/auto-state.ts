@@ -4,8 +4,8 @@
 // step asks for it: one job at a time. The job's end is an event back in. The deploy is the same command as a
 // person's, with the same gate: it runs no commit whose tests did not pass (gate.ts).
 //
-// A head is tried one time. A deploy that failed stays failed: no retry. The job records say which heads were tried
-// (.erga/jobs/), so a restart of the page, or `bun erga rollback`, does not deploy the same commit again. A new commit
+// A head is tried one time. A deploy that failed stays failed: no retry. The instance's own jobs say which heads were
+// tried (deploy/deployer/instance.ts), so a restart of the page, or `bun erga rollback`, does not deploy the same commit again. A new commit
 // on the branch, or a deploy by hand, starts it again. A branch that was written again (a force push: its head does
 // not have the commit that runs) stops too: a person accepts it with `bun erga deploy <host>`.
 

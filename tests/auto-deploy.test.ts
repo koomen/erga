@@ -1,6 +1,6 @@
 // Auto-deploy on the ops page's server (`bun erga --auto-deploy`, deploy/cli/ops-page.ts), with fake repositories, instances
 // and a fake `bun erga`: an instance that does not run its branch's head gets `bun erga deploy <head> <host>`, one job
-// at a time, from "auto-deploy"; a failed one stays failed, with its reason on its page; a head that a job record has is not
+// at a time, from "auto-deploy"; a failed one stays failed, with its reason on its page; a head that a job of the instance has is not
 // tried again; a branch that was written again stops; and without --auto-deploy nothing deploys. The state's rules are
 // tests/auto-state.test.ts.
 
@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Entry } from "../deploy/cli/config";
 import { serveOpsPage } from "../deploy/cli/ops-page";
+import type { JobRecord } from "../deploy/cli/ops-view";
 
 const entry = (host: string, branch: string): Entry => ({
   host,
@@ -46,23 +47,21 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     join(dir, ".erga/config.json"),
     JSON.stringify({ instances: [entry(hosts[0], "main"), entry(hosts[1], "staging"), ...hosts.slice(2).map((h) => entry(h, "main"))] })
   );
-  // A job record: the head of main was deployed to tried.example.net before, and failed.
-  writeFileSync(
-    join(dir, ".erga/jobs/2026-11-05T10-00-00-000Z-tried.example.net-1.jsonl"),
-    [
-      {
-        command: "bun erga deploy tried.example.net",
-        host: "tried.example.net",
-        from: "terminal",
-        pid: 1,
-        started: "2026-11-05T10:00:00.000Z",
-      },
-      { commit: c3 },
-      { result: "failed", error: "the health check fails", ended: "2026-11-05T10:01:00.000Z" },
-    ]
-      .map((l) => JSON.stringify(l))
-      .join("\n")
-  );
+  // A job of tried.example.net, in its own record: the head of main was deployed to it before, and failed.
+  const tried: JobRecord = {
+    kind: "deploy",
+    host: "tried.example.net",
+    commit: c3,
+    branch: null,
+    phase: "failed",
+    id: "1",
+    command: "bun erga deploy tried.example.net",
+    from: "terminal",
+    started: "2026-11-05T10:00:00.000Z",
+    ended: "2026-11-05T10:01:00.000Z",
+    error: "the health check fails",
+    out: [],
+  };
   const runs: Record<string, string | null> = {
     "a.example.net": c1,
     "b.example.net": c1,
@@ -82,6 +81,7 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     fetch: async () => null,
     heads: async (_cwd, repo, branches) => (asked.push([repo, ...branches]), { heads: { main: c3, staging: c2 }, error: null }),
     ask: async (e) => ({ version: runs[e.host]?.slice(0, 12) ?? null, healthy: runs[e.host] ? true : null }),
+    jobs: async (e) => (e.host == tried.host ? [tried] : []),
     run: (args, from) => {
       started.push([...args, from]);
       return { pid: 999_000 + started.length, done: new Promise((done) => (end = done)) };
@@ -148,6 +148,7 @@ test("without --auto-deploy, the page deploys nothing: it asks the repository fo
     fetch: async () => null,
     heads: async () => (asked++, { heads: { main: c3 }, error: null }),
     ask: async () => ({ version: c1.slice(0, 12), healthy: true }),
+    jobs: async () => [],
     run: (args) => (started.push(args), { pid: 1, done: new Promise(() => {}) }),
   });
   try {

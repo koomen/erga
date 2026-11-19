@@ -211,15 +211,22 @@ and `main`. There are no pull requests.
   deploys only a commit whose tests (`bun run test`) passed (the record
   of its tree in `.erga/tests/`, which its merge wrote). With no record,
   it runs them first; a failed run refuses the deploy, with the failed
-  tests. `--no-tests` skips this, and the job record says so. `--domain <domain>`
+  tests. `--no-tests` skips this, and the job's log says so. `--domain <domain>`
   (it can repeat; a name on one of its account's
   zones) registers a custom domain: an admin can publish a document to it
   from then on (the document's settings, "Publish to"). The entry gets
   the domains that the deploy sent: add one with `--domain`, never by hand.
+  The instance holds its spec in its own database: what it tracks, where it
+  is, its plain settings and the names of its secrets. Its first deploy
+  writes the entry's values there. After that, a deploy stops when the entry
+  differs from the spec, and names each field. To deploy a change that you
+  made in the entry (a setting): `bun erga deploy <host> --write-spec`. To
+  take the instance's spec into the entry: `bun erga register <host>`.
 - `bun erga track <host> [--repo <repo>] [--branch <branch>]`: the
   repository and the branch that a registered instance tracks. The
   defaults are `github.com/koomen/erga` and `main`. With no option, it
-  prints them. It deploys nothing. Only when Pete asks.
+  prints them. It writes them into the instance's spec too. It deploys
+  nothing. Only when Pete asks.
 - `bun erga track <host> --upstream <branch> [--upstream-repo <repo>]`: the
   instance's upstream, a branch to compare its branch with: of its own
   repository, or of another one (a fork names `main` of
@@ -234,13 +241,19 @@ and `main`. There are no pull requests.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.
-- A deploy or a rollback holds the lock `.erga/jobs/<host>.lock` and writes
-  its record in `.erga/jobs/`. A second one on the same instance stops.
+- A deploy or a rollback is a job in the instance's own database, which
+  the command reaches through the platform's API: the job's row is its log,
+  and the instance's lock while it runs. A second job on the same instance
+  stops, from any machine. A job that stopped with no end frees the instance
+  30 minutes after its last line. The ops page shows these jobs. On an
+  instance whose database has no table for them yet (its first deploy), the
+  job runs with no lock, and its row comes when it ends.
 - `bun erga register <host> [--repo <repo>] [--branch <branch>]`:
   adds an instance that runs already to `.erga/config.json` in the main
   clone: its deploy facts and its plain settings, read from Cloudflare's API
   with this machine's Cloudflare login (the Worker at the host, and the
-  bindings of the version that serves), and what it tracks. With
+  bindings of the version that serves), and what it tracks. When the
+  instance holds its spec, the entry takes the spec's values. With
   `--host aws [--profile <name>] [--region <region>]`: from AWS, with the
   AWS CLI's login. It asks the instance nothing, and there is no token.
   Only when Pete asks.
@@ -261,8 +274,8 @@ and `main`. There are no pull requests.
   when Pete asks.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
-- When a deploy fails, read its output, or its job record in
-  `.erga/jobs/`. A release whose own health row says that it fails for three
+- When a deploy fails, read its output, or its job on the ops page (Logs,
+  History). A release whose own health row says that it fails for three
   minutes rolls the Worker back by itself.
 - AGENTS.md has the code's rules. A file's traps are in the comment at
   its top.

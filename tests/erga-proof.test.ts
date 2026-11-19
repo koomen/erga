@@ -129,6 +129,7 @@ test("the ops page serves the proof's files and nothing else, and shows no link 
     cwd: w.root,
     port: 0,
     ask: async () => ({ version: w.base.slice(0, 12), healthy: true }),
+    jobs: async () => [],
     fetch: async () => null,
   });
   const at = `http://127.0.0.1:${page.server.port}`;

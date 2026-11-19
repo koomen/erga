@@ -1,12 +1,13 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
-// reads .erga/config.json, .erga/jobs/ and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
-// through /api/events), and the clone's git. It checks its sources (poll-state.ts): each repository that an instance
+// reads .erga/config.json, .erga/jobs/ (the merges and the promotes) and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
+// through /api/events), and the clone's git. An instance's deploys and rollbacks are in the instance's own database
+// (deploy/deployer/instance.ts): the page reads them with each check of the instance (on AWS, once a minute), and every 5 seconds while one runs there. It checks its sources (poll-state.ts): each repository that an instance
 // tracks or names as its upstream, for its branches' heads (one git ls-remote, at most once a minute: the instance's
 // commits on the page are the log of that head, and its upstream's commits that it lacks are a comparison of the two heads), each instance's commit (from its platform: running.ts) and health every 15 seconds, and GitHub,
 // with a git fetch of the clone, at most once a minute, for the tests' queue. The page
 // shows the chosen instance's own checks. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Deploy and Roll back buttons run
 // `bun erga deploy` and `bun erga rollback` (POST /api/deploy, /api/rollback) in a process of their own, as a terminal
-// does: the same code, locks and job records. The page merges nothing: `bun erga merge` does.
+// does: the same code, and the same lock and job log on the instance. The page merges nothing: `bun erga merge` does.
 // With --auto-deploy it is auto-deploy too (auto-state.ts): it starts `bun erga deploy <head> <host>` for an instance
 // that does not run its branch's head, one job at a time, as its buttons do.
 // It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
@@ -20,7 +21,7 @@
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startAuto, stepAuto } from "./auto-state";
-import { type Entry, readConfig } from "./config";
+import { type Entry, isAws, readConfig } from "./config";
 import type { Answer, Branch as StatusBranch } from "./flow";
 import { readRuns } from "./test-run";
 import { type Queue, stepQueue } from "./gate";
@@ -30,7 +31,7 @@ import { busyWith, type Facts, type JobRecord, jobOf, pageHtml, repoSource, view
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
-import { instanceReader } from "./running";
+import { instanceReader, jobsReader } from "./running";
 import { ROOT, sh } from "../root";
 import { readKept, readRuns as readVerifyRuns, readState as readVerifyState, verifyDir } from "../../dev/verify/cli";
 import { readiness, resultOf, units } from "../../dev/verify/suite";
@@ -49,7 +50,7 @@ export function readGit(cwd: string): { branches: Branch[]; base: string } {
   return { branches: branchesOf(null, cwd, base), base: base.replace(/^origin\//, "") };
 }
 
-/** Each job record in .erga/jobs/, newest last (the file names start with the time). */
+/** Each job record in .erga/jobs/, newest last (the file names start with the time): the merges and the promotes. An instance's jobs are on the instance. */
 function readJobs(dir: string): JobRecord[] {
   const jobs = join(dir, "jobs");
   if (!existsSync(jobs)) return [];
@@ -64,7 +65,8 @@ function readJobs(dir: string): JobRecord[] {
         return null;
       }
     })
-    .filter((j) => j != null);
+    .filter((j) => j != null)
+    .filter((j) => j.kind == "merge" || j.kind == "promote");
 }
 
 /** A command that the page started: its process, and its end with its output. */
@@ -73,7 +75,7 @@ export interface Run {
   done: Promise<{ code: number; out: string }>;
 }
 
-/** `bun erga <args>` in a process of its own, in the clone; its job record says that the page started it, or its auto-deploy. */
+/** `bun erga <args>` in a process of its own, in the clone; its job's row says that the page started it, or its auto-deploy. */
 const runCli =
   (cwd: string) =>
   (args: string[], from: From = "page"): Run => {
@@ -96,6 +98,8 @@ export interface OpsPageOptions {
   port: number;
   /** What an instance runs, and its health (running.ts, instanceReader), or a fake in the tests. */
   ask?: (e: Entry) => Promise<Answer>;
+  /** An instance's deploys and rollbacks, from its own record (running.ts, jobsReader), or a fake in the tests. */
+  jobs?: (e: Entry) => Promise<JobRecord[]>;
   /** fetchGitHub (null: it worked, else why not), or a fake in the tests. */
   fetch?: (cwd: string) => Promise<string | null>;
   /** Runs `bun erga <args>` for the Deploy and Roll back buttons and for auto-deploy (default: the CLI, in a process of its own), or a fake. */
@@ -108,6 +112,9 @@ export interface OpsPageOptions {
   test?: (branch: string) => Run;
 }
 
+/** How often the page reads an AWS instance's jobs while none runs there. */
+const AWS_JOBS_MS = 60_000;
+
 const FILES: Record<string, [string, string]> = {
   "/ops-page.css": ["deploy/cli/ops-page.css", "text/css"],
   "/bars.css": ["client/inline/bars.css", "text/css"],
@@ -116,6 +123,7 @@ const FILES: Record<string, [string, string]> = {
 /** The ops page's server, on 127.0.0.1. */
 export function serveOpsPage(o: OpsPageOptions) {
   const ask = o.ask ?? instanceReader();
+  const askJobs = o.jobs ?? jobsReader();
   const run = o.run ?? runCli(o.cwd);
   const fetchGit = o.fetch ?? fetchGitHub;
   const askRepo = o.heads ?? repoHeads;
@@ -138,6 +146,33 @@ export function serveOpsPage(o: OpsPageOptions) {
     facts.verify.state = readVerifyState(o.dir);
     facts.verify.runs = readVerifyRuns(o.dir).map((r) => ({ ...r, result: resultOf(r, alive) }));
     facts.verify.kept = readKept(o.dir);
+  };
+  /** The jobs of this machine's records, and each instance's own, by its host: together, the facts' jobs. */
+  let local: JobRecord[] = [];
+  const onInstance: Record<string, JobRecord[]> = {};
+  const setJobs = () => {
+    facts.jobs = [...local, ...entries().flatMap((e) => onInstance[e.host] ?? [])];
+  };
+  /** Reads an instance's jobs; one read of an instance at a time. An instance that gives no answer keeps its last ones. */
+  const reading = new Map<string, Promise<void>>();
+  /** When each instance's jobs were last asked for. */
+  const asked: Record<string, number> = {};
+  const readInstance = (e: Entry): Promise<void> => {
+    asked[e.host] = Date.now();
+    const now =
+      reading.get(e.host) ??
+      askJobs(e)
+        .then(
+          (jobs) => {
+            if (stopped) return;
+            onInstance[e.host] = jobs;
+            setJobs();
+          },
+          () => {}
+        )
+        .finally(() => reading.delete(e.host));
+    reading.set(e.host, now);
+    return now;
   };
   /** The clone's feature branches, for the tests' queue: none before the first fetch ends. */
   let clone: ReturnType<typeof readGit> | null = null;
@@ -186,6 +221,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     for (const h of Object.keys(facts.answers)) if (!hosts.has(h)) delete facts.answers[h];
     for (const h of Object.keys(facts.heads)) if (!hosts.has(h)) delete facts.heads[h];
     for (const h of Object.keys(facts.logs)) if (!hosts.has(h)) delete facts.logs[h], delete logHeads[h];
+    for (const h of Object.keys(onInstance)) if (!hosts.has(h)) delete onInstance[h];
     // An upstream that is gone, or another one now (bun erga track): its head and its comparison go.
     for (const h of new Set([...Object.keys(ups), ...Object.keys(facts.upstreams)])) {
       const up = entries().find((e) => e.host == h)?.upstream;
@@ -195,7 +231,8 @@ export function serveOpsPage(o: OpsPageOptions) {
     // Each repository that an instance tracks or names as its upstream: its branches' heads, for the commits on the
     // page and for auto-deploy.
     const repos = [...new Set(entries().flatMap((e) => [e.repo, ...(e.upstream ? [e.upstream.repo] : [])].map(repoSource)))];
-    facts.jobs = readJobs(o.dir);
+    local = readJobs(o.dir);
+    setJobs();
     facts.runs = readRuns(o.dir);
     readVerify();
     poll({ type: "sources", names: [GITHUB, ...repos, ...hosts], now: Date.now() });
@@ -216,7 +253,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       const head = facts.heads[e.host] ?? null;
       const runs = facts.answers[e.host]?.version ?? null;
       const behind = !!head && !!runs && !head.startsWith(runs);
-      // A job record of this instance has the head: it was tried. Else its history must have the commit that runs.
+      // A job of this instance has the head: it was tried. Else its history must have the commit that runs.
       const tried = behind && facts.jobs.some((j) => j.kind == "deploy" && j.host == e.host && j.commit == head);
       const rewritten = behind && !tried && !inHistory(o.cwd, runs!, head!);
       step(e.host, { type: "seen", head, runs, tried, rewritten });
@@ -332,7 +369,11 @@ export function serveOpsPage(o: OpsPageOptions) {
       error = r.error ?? (gone.length ? `no branch ${gone.join(", ")}` : null);
     } else {
       const e = entries().find((x) => x.host == name);
-      const a = e ? await ask(e).catch((err: Error): Answer => ({ version: null, healthy: null, error: err.message })) : null;
+      const [a] = await Promise.all([
+        e ? ask(e).catch((err: Error): Answer => ({ version: null, healthy: null, error: err.message })) : null,
+        // On AWS a read is a command on the instance's machine: once a minute, while no job runs there.
+        e && !(isAws(e) && Date.now() - (asked[e.host] ?? 0) < AWS_JOBS_MS) ? readInstance(e) : null,
+      ]);
       if (stopped) return;
       if (a && entries().some((x) => x.host == name)) facts.answers[name] = a;
       error = a?.error ?? null;
@@ -357,7 +398,7 @@ export function serveOpsPage(o: OpsPageOptions) {
   refs = refsOf(o.cwd);
   readFiles();
   watchDir();
-  // Each 5 seconds: git's refs (a fetch in a terminal) and the jobs' processes.
+  // Each 5 seconds: git's refs (a fetch in a terminal), the jobs' processes, and the jobs of each instance where one runs.
   const tick = setInterval(() => {
     if (!watcher) {
       watchDir();
@@ -368,7 +409,12 @@ export function serveOpsPage(o: OpsPageOptions) {
       refs = r;
       readClone();
     }
-    facts.jobs = readJobs(o.dir);
+    local = readJobs(o.dir);
+    setJobs();
+    for (const e of entries()) {
+      const mine = facts.run.at == "starting" && facts.run.job.host == e.host;
+      if (mine || onInstance[e.host]?.some((j) => j.phase == "running")) void readInstance(e).then(changed);
+    }
     facts.runs = readRuns(o.dir);
     readVerify();
     changed();
@@ -377,7 +423,7 @@ export function serveOpsPage(o: OpsPageOptions) {
 
   /**
    * Starts `bun erga <args>`, unless a job runs: the result is the page's answer. `ended`: told when the command ends,
-   * with its error (its job record's, else its last words).
+   * with its error (its job's on the instance, else its last words).
    */
   const start = (args: string[], job: JobState, from: From = "page", ended?: (ok: boolean, why: string) => void) => {
     const busy = busyWith(facts);
@@ -390,12 +436,17 @@ export function serveOpsPage(o: OpsPageOptions) {
       ended?.(false, `${command} did not start: ${(e as Error).message}`);
       return Response.json({ error: `${command} did not start: ${(e as Error).message}` }, { status: 500 });
     }
+    const started = Date.now();
     facts.run = stepRun(facts.run, { type: "start", command, job });
     changed();
-    void r.done.then(({ code, out }) => {
+    void r.done.then(async ({ code, out }) => {
       readFiles();
-      // A command that stopped before its job record (a lock, a missing credential): its own words, here.
-      const record = facts.jobs.find((j) => j.id.endsWith(`-${r.pid}`));
+      // Its job on the instance, read after its end: the newest one of its kind that started with it.
+      const e = entries().find((x) => x.host == job.host);
+      if (e) await reading.get(e.host), await readInstance(e);
+      if (stopped) return;
+      // A command that stopped before its job (a lock, a missing credential): its own words, here.
+      const record = onInstance[job.host]?.find((j) => j.kind == job.kind && Date.parse(j.started) >= started);
       facts.run = stepRun(facts.run, { type: "exit", code, out, recorded: !!record });
       ended?.(code == 0, record?.error ?? (out.trim().split("\n").slice(-2).join(" ") || `exit ${code}`));
       changed();

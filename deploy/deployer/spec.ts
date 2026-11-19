@@ -69,6 +69,8 @@ const Aws = Schema.Struct({
   bucket: text(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, 63),
   /** The machine's EC2 id. */
   machine: text(/^i-[0-9a-f]{8,17}$/, 19),
+  /** With a gate in front: the secret (its ARN, in Secrets Manager) that holds the key that the gate sends the machine. */
+  gate: Schema.optionalKey(text(/^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$/, 512)),
   /** The app's host: its domain, or its CloudFront name. */
   app: Host,
   /** Documents' pages: one shared CloudFront name, or an origin each under a domain. */

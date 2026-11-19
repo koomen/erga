@@ -4,15 +4,20 @@
 // writes, and the machine's own check of its server on the loopback (the AWS CLI: Systems Manager). `bun erga status`,
 // the ops page, auto-deploy and `bun erga promote` read through one reader (instanceReader); `bun erga register` finds
 // an instance that has no entry yet the same way (findInstance). The authority is the platform's login, which a deploy
-// needs already: no sign-in to the instance, no token, and no request to it.
+// needs already: no sign-in to the instance, no token, and no request to it. The ops page reads each instance's jobs
+// the same way (jobsReader): its deploys and rollbacks, from the instance's own record of them (deploy/deployer/instance.ts).
 
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { Aws, Where } from "../aws/cli";
 import { healthRow, liveDeployment, liveRelease, readHealth } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
+import { holds, type Job, readJobs, readLog, type Sql } from "../deployer/instance";
 import { AwsFacts, CloudflareFacts, type Entry, isAws } from "./config";
 import { netOf } from "./deploy";
 import type { Answer } from "./flow";
+import { sqlOf } from "./instance";
+import type { JobRecord } from "./ops-view";
 
 /** Asks one registered instance's platform what the instance runs, and for its health. */
 export type Ask = (e: Entry) => Promise<Answer>;
@@ -34,14 +39,9 @@ const CREDENTIAL_MS = 5 * 60_000;
  * not change costs two calls of Cloudflare's API: its deployments, and its health row.
  */
 export function instanceReader(o: ReaderOptions = {}): Ask {
-  let client: { made: Promise<Cloudflare>; at: number } | null = null;
+  const client = clientOf(o);
+  const cloudflare = client.get;
   const seen = new Map<string, { deployment: string; version: string | null; database: string | null }>();
-  /** One credential for every instance that is asked at the same time. */
-  const cloudflare = () => {
-    if (!client || Date.now() - client.at > CREDENTIAL_MS)
-      client = { at: Date.now(), made: netOf(o).then(({ net, token }) => new Cloudflare(token, net)) };
-    return client.made;
-  };
   const ask = async (e: Entry): Promise<Answer> => {
     if (isAws(e)) {
       const { awsCli } = await import("../aws/cli");
@@ -78,9 +78,91 @@ export function instanceReader(o: ReaderOptions = {}): Ask {
   return (e) =>
     ask(e).catch((err: Error) => {
       // A credential that Cloudflare refused may be an old one: the next call reads the login again.
-      client = null;
+      client.drop();
       return { version: null, healthy: null, error: err.message };
     });
+}
+
+/** The Cloudflare API with this machine's credential, kept for some minutes: one for every instance that is asked at the same time. */
+function clientOf(o: ReaderOptions) {
+  let client: { made: Promise<Cloudflare>; at: number } | null = null;
+  return {
+    get: () => {
+      if (!client || Date.now() - client.at > CREDENTIAL_MS)
+        client = { at: Date.now(), made: netOf(o).then(({ net, token }) => new Cloudflare(token, net)) };
+      return client.made;
+    },
+    drop: () => void (client = null),
+  };
+}
+
+/** The lines of a job's log that the page keeps. */
+const OUT_LINES = 2000;
+/** The most parts of a log that one read takes (deploy/deployer/instance.ts, CHUNK): the next read takes the rest. */
+const PARTS = 40;
+
+/** A job of an instance's own record, as the ops page shows a job. `text`: its log. */
+export const recordOf = (host: string, job: Job, text: string, now: number): JobRecord => ({
+  kind: job.kind,
+  host,
+  commit: job.sha,
+  branch: null,
+  phase: holds(job, now) ? "running" : job.state.at == "running" ? "stopped" : job.state.at == "done" ? "ok" : "failed",
+  id: String(job.id),
+  command: job.command,
+  from: job.source,
+  started: new Date(job.started).toISOString(),
+  ...(job.state.at == "running" ? {} : { ended: new Date(job.alive).toISOString() }),
+  ...(job.state.at == "failed" ? { error: job.state.why } : {}),
+  out: text.split("\n").slice(0, -1).slice(-OUT_LINES),
+});
+
+/**
+ * A reader of the instances' jobs, newest first: each instance's last deploys and rollbacks, from its own database.
+ * It keeps each job's log as far as it read it, and a read asks only for what the log has more. An instance with no
+ * table for its jobs yet has none.
+ */
+export function jobsReader(o: ReaderOptions = {}): (e: Entry) => Promise<JobRecord[]> {
+  const client = clientOf(o);
+  /** By host and job: the log's text as far as it is read, how many bytes of the log that is, and the reader of its next bytes. */
+  const logs = new Map<string, { text: string; have: number; decoder: TextDecoder }>();
+  /** By host: the way to its database, for as long as the credential and the entry are the same (it knows which database the Worker is bound to). */
+  const ways = new Map<string, { cf: Cloudflare | null; entry: string; sql: Sql }>();
+  return async (e) => {
+    const cf = isAws(e) ? null : await client.get();
+    const entry = JSON.stringify(e);
+    const had = ways.get(e.host);
+    const way =
+      had && had.cf == cf && had.entry == entry
+        ? had
+        : { cf, entry, sql: await sqlOf(e, { cf: cf ?? new Cloudflare("", globalThis.fetch), aws: o.aws }) };
+    ways.set(e.host, way);
+    const sql = way.sql;
+    const jobs = await Effect.runPromise(
+      Effect.gen(function* () {
+        const jobs = yield* readJobs(sql);
+        for (const job of jobs) {
+          const key = `${e.host} ${job.id}`;
+          const log = logs.get(key) ?? { text: "", have: 0, decoder: new TextDecoder() };
+          logs.set(key, log);
+          for (let part = 0; log.have < job.size && part < PARTS; part++) {
+            const more = yield* readLog(sql, job.id, log.have);
+            if (!more.length) break;
+            // A part can end inside a character: the decoder keeps its first bytes for the next part.
+            log.text += log.decoder.decode(more, { stream: true });
+            log.have += more.length;
+          }
+        }
+        return jobs;
+      }).pipe(Effect.catchTag("NoTable", () => Effect.succeed([] as Job[])))
+    ).catch((err) => {
+      client.drop();
+      throw new Error(err instanceof Error ? err.message : String(err));
+    });
+    for (const key of logs.keys()) if (key.startsWith(`${e.host} `) && !jobs.some((j) => key == `${e.host} ${j.id}`)) logs.delete(key);
+    const now = Date.now();
+    return jobs.map((job) => recordOf(e.host, job, logs.get(`${e.host} ${job.id}`)?.text ?? "", now));
+  };
 }
 
 /** Where `bun erga register` looks for an instance: Cloudflare (the default), or AWS with the AWS CLI's profile and region. */

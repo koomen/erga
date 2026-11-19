@@ -192,22 +192,24 @@ if (opsArg != undefined) {
       })
     );
     const runs: Record<string, string> = { "example.net": main, "staging.example.net": shas[5], "notes.example.org": shas[2] };
-    /** A job record: a deploy of `sha` (a rollback with no commit), which ended well, or with `error`. */
-    const job = (host: string, sha: string | null, ago: number, from: string, error?: string) => {
-      const started = new Date(now - ago * 60_000).toISOString();
-      const ended = new Date(now - ago * 60_000 + 64_000).toISOString();
-      const lines = [
-        { command: sha ? `bun erga deploy ${sha.slice(0, 12)} ${host}` : `bun erga rollback ${host}`, host, from, pid: 1, started },
-        ...(sha ? [{ commit: sha }] : []),
-        { out: error ? `FAIL  ${error}` : `PASS  ${host} runs ${sha ? sha.slice(0, 12) : "the version from before"}.` },
-        error ? { result: "failed", error, ended } : { result: "ok", ended },
-      ];
-      writeFileSync(
-        join(erga, "jobs", `${started.replace(/[:.]/g, "-")}-${host}-1.jsonl`),
-        lines.map((l) => `${JSON.stringify(l)}\n`).join("")
-      );
-    };
-    // Each head has a job record, so auto-deploy starts nothing and the buttons are on. staging.example.net's deploy of
+    /** A job of an instance's own record: a deploy of `sha` (a rollback with no commit), which ended well, or with `error`. */
+    const jobs: import("../deploy/cli/ops-view").JobRecord[] = [];
+    const job = (host: string, sha: string | null, ago: number, from: string, error?: string) =>
+      jobs.unshift({
+        kind: sha ? "deploy" : "rollback",
+        host,
+        commit: sha,
+        branch: null,
+        phase: error ? "failed" : "ok",
+        id: String(jobs.length + 1),
+        command: sha ? `bun erga deploy ${sha.slice(0, 12)} ${host}` : `bun erga rollback ${host}`,
+        from,
+        started: new Date(now - ago * 60_000).toISOString(),
+        ended: new Date(now - ago * 60_000 + 64_000).toISOString(),
+        ...(error ? { error } : {}),
+        out: [error ? `FAIL  ${error}` : `PASS  ${host} runs ${sha ? sha.slice(0, 12) : "the version from before"}.`],
+      });
+    // Each head has a job, so auto-deploy starts nothing and the buttons are on. staging.example.net's deploy of
     // its head failed; notes.example.org took its head, and then a rollback.
     job("example.net", main, 290, "auto-deploy");
     job("staging.example.net", shas[5], 110, "auto-deploy");
@@ -222,6 +224,7 @@ if (opsArg != undefined) {
       port: 0,
       autoDeploy: true,
       ask: async (e) => ({ version: runs[e.host].slice(0, 12), healthy: true }),
+      jobs: async (e) => jobs.filter((j) => j.host == e.host),
       fetch: async () => null,
       heads: async (_cwd, _repo, branches) => ({
         heads: Object.fromEntries(branches.map((b) => [b, b == "staging" ? staging : main])),

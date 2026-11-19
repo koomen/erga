@@ -19,9 +19,12 @@ import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, 
 import { isStale, type Polls } from "./poll-state";
 import { type VerifyFacts, verifyHtml, verifySide } from "./verify-view";
 
-/** A job's record in .erga/jobs/ (deploy/cli/jobs.ts, startJob), as the page reads it: its state, and what it says. */
+/**
+ * A job, as the page shows it: its state, and what it says. A deploy or a rollback comes from its instance's own
+ * record (running.ts, recordOf); a merge or a promote from this machine's .erga/jobs/ (jobs.ts, startJob).
+ */
 export interface JobRecord extends JobState {
-  /** Its file's name, without .jsonl. */
+  /** Its id on its instance; a record's file name, without .jsonl. */
   id: string;
   command: string;
   from: string;

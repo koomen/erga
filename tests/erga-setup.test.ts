@@ -5,7 +5,7 @@
 // stops, and its entry stays.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CloudflareEntry, type Entry, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
@@ -13,7 +13,8 @@ import type { MockState } from "../dev/mock-cloudflare";
 import { writePass } from "./helpers/pass.ts";
 import { Cloudflare } from "../deploy/deployer/cloudflare-api";
 import { adminOn, type First, firstDeploy, writeEntry } from "../deploy/own/first";
-import { instanceReader } from "../deploy/cli/running";
+import { specOn, sqlOf } from "../deploy/cli/instance";
+import { instanceReader, jobsReader } from "../deploy/cli/running";
 import { liveOf } from "../deploy/own/facts";
 import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
@@ -40,16 +41,9 @@ afterAll(() => {
   if (dir) rmSync(join(dir, ".."), { recursive: true, force: true });
 });
 
-const jobs = () =>
-  readdirSync(join(dir, "jobs"))
-    .filter((f) => f.endsWith(".jsonl"))
-    .sort()
-    .map((f) =>
-      readFileSync(join(dir, "jobs", f), "utf8")
-        .trim()
-        .split("\n")
-        .map((l) => JSON.parse(l))
-    );
+/** An instance's jobs, as its own database has them in the mock Cloudflare: the newest first. */
+const jobsOn = (mock: { fetch: First["net"] }, host: string) =>
+  jobsReader({ net: mock.fetch })(readConfig(dir).instances.find((e) => e.host == host)!);
 
 /** What the build takes from the flow, for `host`: the answers, and what the command saw in the mock account. */
 const first = (mock: { state: MockState; fetch: First["net"] }, host: string, more: Partial<First["answers"]> = {}): First => ({
@@ -113,18 +107,31 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
     expect.stringMatching(/^INSERT INTO access_rules \(kind, value, access, created\) VALUES \('github_org', 'acme-inc', 'write', \d+\)/)
   );
   expect(rows.join("\n")).not.toContain("INSERT INTO users");
-  // The job is the setup's. Its entry tracks the default repository's main: no deploy moves a branch.
-  const [job] = jobs();
-  expect(job[0]).toMatchObject({ command: `bun erga setup ${HOST}`, host: HOST });
-  expect(job).toContainEqual({ commit: HEAD, secrets: ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"] });
-  expect(job.some((x: object) => "main" in x)).toBe(false);
+  // The job is the setup's, in the new instance's own database: the database had no table when the job started, so
+  // the job's row came with its end. Its entry tracks the default repository's main: no deploy moves a branch.
+  const [job, ...more] = await jobsOn(mock, HOST);
+  expect(more).toEqual([]);
+  expect(job).toMatchObject({ kind: "deploy", command: `bun erga setup ${HOST}`, host: HOST, commit: HEAD, phase: "ok" });
+  expect(job.out).toContainEqual(expect.stringContaining("the secrets sent: SESSION_SECRET, FACTORY_KEY, GITHUB_CLIENT_SECRET"));
   expect(readConfig(dir).instances.map((e) => [e.repo, e.branch])).toEqual([["github.com/koomen/erga", "main"]]);
+  // The instance holds its spec: what the entry says, and the names of the secrets that the Worker holds. No value.
+  const spec = await specOn(await sqlOf(readConfig(dir).instances[0], { cf }));
+  expect(spec).toMatchObject({
+    repo: "github.com/koomen/erga",
+    branch: "main",
+    target: { kind: "cloudflare", worker: "erga-ada-example-com" },
+    secrets: ["FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SESSION_SECRET"],
+  });
+  expect(JSON.stringify(spec)).not.toContain(file[HOST].SESSION_SECRET);
 
   // A run again: the Worker holds its secrets, so none goes out.
   const held = { ...mock.state.secrets["erga-ada-example-com"] };
   expect(await firstDeploy(first(mock, HOST))).toBe(HEAD);
   expect(mock.state.secrets["erga-ada-example-com"]).toEqual(held);
-  expect(jobs().at(-1)).toContainEqual({ commit: HEAD });
+  expect((await jobsOn(mock, HOST)).map((j) => [j.commit, j.phase])).toEqual([
+    [HEAD, "ok"],
+    [HEAD, "ok"],
+  ]);
   // (The rule's statement says ON CONFLICT: written again before there is an admin, it changes nothing.)
 
   // A second instance, set up later with a branch of its own: the same path, its own names, secrets, database and

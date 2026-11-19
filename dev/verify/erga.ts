@@ -22,16 +22,19 @@ import { randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import https from "node:https";
 import { join, resolve } from "node:path";
-import { type Carry, d1, healthRow, readHealth } from "../../deploy/deployer/cloudflare.ts";
+import { DEFAULT_BRANCH, DEFAULT_REPO } from "../../deploy/cli/config.ts";
+import { heldSecrets, specOf } from "../../deploy/cli/instance.ts";
+import { type Carry, d1, d1Sql, healthRow, readHealth } from "../../deploy/deployer/cloudflare.ts";
 import { findDatabase } from "../../deploy/pipeline/account.ts";
 import { DeployError } from "../../deploy/deployer/cloudflare-api.ts";
 import type { Release } from "../../deploy/deployer/release-format.ts";
 import { writeFirstRows } from "../../deploy/own/first.ts";
 import { noAnswers } from "../../deploy/own/plan.ts";
-import { runPipeline, type Target } from "../../deploy/pipeline/pipeline.ts";
+import { runPipeline, type Target, targetFacts } from "../../deploy/pipeline/pipeline.ts";
 import { Claim } from "../../server/identity/claim-link.ts";
 import { cloudflare } from "./dedicated.ts";
 import { type Answer, ask, type Jar, routes, signIn } from "./http.ts";
+import { recordChecks } from "./record.ts";
 import { acceptHost, local, otherSite, type Report, type Run, type Setting, saveRun, zone } from "./run.ts";
 import { mine } from "./safe.ts";
 import { buildRelease, hashOf, type Part } from "./update.ts";
@@ -256,6 +259,14 @@ export async function ergaChecks(run: Run, report: Report): Promise<void> {
       files.length > 0 && files.every((f) => applied.includes(f)),
       `${applied.length} of ${files.length}; the last: ${applied.at(-1)}`
     );
+    // The instance's record of its deploys, in its database, through D1's API.
+    const entry = { host: run.shell, repo: DEFAULT_REPO, branch: DEFAULT_BRANCH, ...targetFacts(targetOf(run)) };
+    const spec = await heldSecrets(entry, { cf: cloud.cf }).then(
+      (held) => specOf(entry, held),
+      (e: Error) => e
+    );
+    if (spec instanceof Error) report.add("The instance's entry is a spec that the instance can hold", false, spec.message);
+    else await recordChecks(report, d1Sql(cloud.cf, entry), spec, "D1's API");
   }
 
   // --- who Erga hears
