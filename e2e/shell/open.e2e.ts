@@ -36,8 +36,11 @@ journey("a document that is slow to open", () => {
   /** The page's own socket (it opens with the edit key) waits here. */
   const own: (() => void)[] = [];
   const said: string[] = [];
-  /** The second heading's top edge, in the page. */
-  const more = () => ed.frame<number>(`${F}.getElementById("more").getBoundingClientRect().top`);
+  /** The second heading's top edge, in the page: editing and viewing. */
+  const more = () => docFrame(page)!.evaluate(() => document.getElementById("more")!.getBoundingClientRect().top);
+  const h1More = () => docFrame(page)!.evaluate(() => document.getElementById("more")!.textContent);
+  /** Where that heading is, down the page, before the eye. */
+  let at = 0;
 
   // Before, the editor gave the room's hello 8 s, then said "Nothing to edit here" for good.
   test("a room that stays silent: the editor says the document is still opening, offers a reload, and starts when the hello comes", async ({
@@ -127,21 +130,45 @@ journey("a document that is slow to open", () => {
     expect(await more(), "the letter does not move the page").toBeCloseTo(before, 0);
   });
 
+  test("the eye, down the page: every frame the tab paints shows the page where it was", async () => {
+    at = await more();
+    const out = await views(page, async () => {
+      await page.locator("#btn-edit").click();
+      await soon(() => viewing(page)).toBe(true);
+    });
+    expect(out, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+    expect(await more(), "the eye does not move the page").toBeCloseTo(at, 0);
+  });
+
   // Before, the page asked for its build after the connection came back, the build was another after any edit, and
-  // the page reloaded itself at the next quiet moment.
-  test("an edit, then a short network drop: the editor does not reload itself", async () => {
+  // the page reloaded itself at the next quiet moment. And (Pete's): it asked at its address of the moment, and the
+  // page was made for another (with ?edit, or without: the pencil changes the address, not the page). On a real
+  // network the tab loaded again 3 s after the first press on the pencil: the room's socket opens after the editor
+  // starts, which counts as a connection that came back.
+  test("an edit, the eye, then a short network drop: the tab does not load again, and asks for the build of the page it was made for", async () => {
     await page.evaluate(`window.__before = true`);
     const checked = page.waitForResponse((r) => r.request().headers()["x-erga-check"] == "build", { timeout: 12_000 });
     expect(held.opened()).toBeGreaterThan(0);
     // The network goes for a moment: the tab's socket closes, and comes back by itself.
     await held.drop();
-    await checked;
+    expect(new URL((await checked).url()).search, "the page was opened at ?edit").toBe("?edit");
     // (Its answer is in: live.js decides at once.)
     await page.evaluate(`new Promise((r) => setTimeout(r, 0))`);
     expect(said.filter((t) => t.includes("a new release"))).toEqual([]);
     expect(await page.evaluate<boolean>(`window.__before === true`)).toBe(true);
-    expect(await ed.source()).toContain("homepage Milk</h1>");
-    expect(await ed.textOf("#more")).toBe("X");
+    // (Viewing: the shell's replica of the room, and the page as it is.)
+    expect(await page.evaluate<string>("ergaPage.collab.current()")).toContain("homepage Milk</h1>");
+    expect(await h1More()).toBe("X");
+  });
+
+  test("the pencil, down the page: every frame the tab paints shows the page where it was", async () => {
+    const back = await views(page, async () => {
+      await page.locator(".erga-edit-button").click();
+      await soon(() => editorUp(page)).toBe(true);
+    });
+    expect(back, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+    expect(await more(), "the pencil does not move the page").toBeCloseTo(at, 0);
+    expect(await page.evaluate<boolean>(`window.__before === true`)).toBe(true);
   });
 });
 
@@ -247,7 +274,10 @@ journey("a page that keeps its view in its address, in the viewer and in the edi
     expect(await page.evaluate(() => (window as any).__same), "no reload").toBe(true);
   });
 
-  test("editor: the pencil keeps the page's view; a click on the page's own button shows the other, with no new entry", async () => {
+  test("editor: the pointer on the pencil starts the editor, out of sight; the pencil keeps the page's view; a click on the page's own button shows the other, with no new entry", async () => {
+    await page.locator(".erga-edit-button").hover();
+    await soon(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready")), 10_000).toBe(true);
+    expect(`${await viewing(page)} ${await where(page)}`, "still the viewer").toBe(`true ${new URL(address).pathname}`);
     await page.locator(".erga-edit-button").click();
     await soon(() => editorUp(page), 10_000).toBe(true);
     expect(await page.evaluate(() => (window as any).__same), "no reload").toBe(true);

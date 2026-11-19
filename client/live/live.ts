@@ -49,6 +49,8 @@ declare global {
 }
 
 const KEYS = { last: "erga:live:reloads" };
+/** The address the server made this page for. Its build is that address's: the pencil changes the address (?edit), not the page. */
+const MADE_FOR = location.pathname + location.search;
 const now = () => Date.now();
 const nativeFetch = window.fetch.bind(window);
 const session = {
@@ -239,7 +241,12 @@ async function run(why: string): Promise<void> {
   const mine = document.querySelector<HTMLMetaElement>('meta[name="erga-build"]')?.content;
   const another = release != null && version != release;
   if (mine && why != "loaded" && (another || isStrong(why))) {
-    const p = await nativeFetch(location.pathname + location.search, { headers: { "X-Erga-Check": "build" }, cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    const p = await nativeFetch(MADE_FOR, {
+      headers: { "X-Erga-Check": "build" },
+      cache: "no-store",
+      credentials: "same-origin",
+      redirect: "manual",
+    });
     const theirs = p.headers.get("x-erga-build");
     if (p.status >= 500) throw new Error(`page: ${p.status}`);
     if (theirs && theirs != mine) changed.push("page");

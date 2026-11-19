@@ -25,6 +25,7 @@ const STYLE = `
 ${LOOK}
 .reply { position: absolute; display: flex; align-items: flex-end; gap: 6px; box-sizing: border-box; pointer-events: auto; background: var(--bg);
   border: 1px solid var(--rule); border-radius: 9px; padding: 5px 5px 5px 10px; }
+.reply[hidden] { display: none; }
 .reply:focus-within { border-color: var(--caret); }
 .reply.busy { opacity: 0.6; }
 textarea { flex: 1; min-width: 0; border: 0; outline: none; resize: none; background: transparent; color: var(--fg); font: 13px/18px var(--font);
@@ -82,6 +83,8 @@ export function mountCommentBox(doc: string, page: () => string, on: () => boole
   function send(e: BoxEvent) {
     const next = step(state, e);
     state = next.state;
+    // (Shown before its effects: a box out of sight takes no focus, and has no height.)
+    box.hidden = !state.ask || !place;
     for (const f of next.effects) run(f);
     draw();
   }

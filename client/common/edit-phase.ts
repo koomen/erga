@@ -1,9 +1,10 @@
 // The viewer's way into the editor and back (client/inline/viewer-edit-boot.ts does what this says): one state, and what
-// each event makes of it. The editor's code loads once, the first time in (`load`), and its socket opens with it; from
-// then on it keeps running, hidden while viewing, so each later way in is immediate. No IO here.
+// each event makes of it. The editor's code loads once (`load`), and its socket opens with it: as the pointer or the
+// focus comes to the pencil (`warm`), else the first time in. From then on it keeps running, hidden while viewing, so
+// each way in is immediate. No IO here.
 
-/** Whether the editor's code runs: not asked for, on its way, or running (it called ergaShell.ready). */
-export type Editor = "none" | "loading" | "ready";
+/** Whether the editor's code runs: not asked for, on its way, running (it called ergaShell.ready), or it didn't load. */
+export type Editor = "none" | "loading" | "ready" | "failed";
 
 export type EditState =
   | { phase: "viewing"; editor: Editor }
@@ -18,6 +19,8 @@ export type EditState =
 export type EditEvent =
   /** The pencil, the eye, Back or Forward: editing on or off. `motion`: the way out may move (no reduced motion). */
   | { type: "edit"; on: boolean; motion: boolean }
+  /** The pointer or the focus came to the pencil: the editor's code starts ahead, out of sight. */
+  | { type: "warm" }
   | { type: "ready" }
   | { type: "failed" }
   /** The way out's 420 ms are over. */
@@ -55,12 +58,15 @@ export function next(s: EditState, e: EditEvent): Step {
   const stay = { state: s, effects: [] };
   switch (s.phase) {
     case "viewing":
+      if (e.type == "warm" && s.editor == "none") return { state: { phase: "viewing", editor: "loading" }, effects: ["load"] };
       if (e.type == "edit" && e.on) {
         if (s.editor == "ready") return { state: { phase: "editing" }, effects: ["editor-on"] };
+        if (s.editor == "failed") return { state: s, effects: ["retry"] };
         return { state: { phase: "booting", restored: false }, effects: s.editor == "none" ? ["load"] : [] };
       }
       if (s.editor == "loading" && e.type == "ready") return { state: { phase: "viewing", editor: "ready" }, effects: ["unrestore"] };
-      if (s.editor == "loading" && e.type == "failed") return { state: { phase: "failed" }, effects: ["drop-edit"] };
+      // (Nobody waits for it: no note. The pencil then loads the page again, at ?edit.)
+      if (s.editor == "loading" && e.type == "failed") return { state: { phase: "viewing", editor: "failed" }, effects: [] };
       return stay;
     case "booting":
       if (e.type == "edit" && !e.on) return { state: { phase: "viewing", editor: "loading" }, effects: s.restored ? ["unrestore"] : [] };

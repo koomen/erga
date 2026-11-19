@@ -64,7 +64,28 @@ test("the editor's code fails to load: failed, the address without ?edit; the pe
   expect(r.effects).toEqual(["load", "unrestore", "drop-edit"]);
   expect(next(r.state, on).effects).toEqual(["retry"]);
   expect(next(r.state, off).effects).toEqual([]);
-  expect(run(viewing, on, off, { type: "failed" }).state).toEqual({ phase: "failed" });
+});
+
+test("the pointer on the pencil: the editor loads ahead, out of sight, one time; the pencil then finds it running", () => {
+  const r = run(viewing, { type: "warm" }, { type: "warm" });
+  expect(r.state).toEqual({ phase: "viewing", editor: "loading" });
+  expect(r.effects).toEqual(["load"]);
+  expect(looks(r.state)).toMatchObject({ editing: false, ready: false });
+  // The click before it runs: on the way in, with nothing more to load.
+  expect(next(r.state, on)).toEqual({ state: { phase: "booting", restored: false }, effects: [] });
+  const ready = next(r.state, { type: "ready" }).state;
+  expect(next(ready, on)).toEqual({ state: { phase: "editing" }, effects: ["editor-on"] });
+  expect(next(ready, { type: "warm" }).effects).toEqual([]);
+});
+
+test("the editor's code fails to load while nobody waits for it: no note; the pencil loads the page again", () => {
+  for (const before of [[{ type: "warm" }], [on, off]] as EditEvent[][]) {
+    const r = run(viewing, ...before, { type: "failed" });
+    expect(r.state).toEqual({ phase: "viewing", editor: "failed" });
+    expect(looks(r.state).failed).toBe(false);
+    expect(next(r.state, on)).toEqual({ state: r.state, effects: ["retry"] });
+    expect(next(r.state, { type: "warm" }).effects).toEqual([]);
+  }
 });
 
 test("reloaded in the editor: shown as ready until the code runs, or until the wait is over", () => {

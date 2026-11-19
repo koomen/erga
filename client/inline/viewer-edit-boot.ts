@@ -6,7 +6,8 @@
 // page in the frame, which stays as it is (client/shell/page-frame.ts). The editor's controls fade in over the viewer's
 // once it's ready (client/shell/main.ts calls ergaShell.ready), and out again on the way back; the editor keeps running
 // meanwhile (its half in the page stops), so going back in is immediate and connects nothing more.
-// Viewing, it fetches the editor's files while the browser is idle, so that first time is quick too. `built`: the
+// Viewing, it fetches the editor's files while the browser is idle, and starts the editor, out of sight, as the pointer or
+// the focus comes to the pencil: the click finds it running, or nearly. `built`: the
 // editor's files this page uses that its elements don't name (client/live/live.ts compares them with the server's).
 
 import { isMac } from "../common/app-keys";
@@ -133,9 +134,9 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
   // Back and forward: editing follows the address. The entry's page is the editor's to open, in place (client/shell/main.ts,
   // popstate: it reads the entry's ergaPage), never the page shown, which the frame's own history may not have brought back yet.
   addEventListener("popstate", () => edit(ergaEditAddress()));
-  // Viewing, the editor's files are fetched ahead, at low priority, and its room woken (its details asked for): sooner when the
-  // pointer or focus comes to the pencil, else once the document has loaded (its frame and everything in it) and the browser is
-  // idle, so it never competes with the document itself. The page fetches its half of the editor ahead too.
+  // Viewing, the editor's files are fetched ahead, at low priority, and its room woken (its details asked for), once the
+  // document has loaded (its frame and everything in it) and the browser is idle, so it never competes with the document
+  // itself. The page fetches its half of the editor ahead too. The pointer or the focus on the pencil starts the editor.
   let fetched = false;
   const prefetch = () => {
     if (fetched) return;
@@ -146,7 +147,9 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
   };
   for (const type of ["pointerover", "focusin"])
     document.addEventListener(type, (e) => {
-      if ((e.target as Element | null)?.closest?.(".erga-edit-button")) prefetch();
+      if (!(e.target as Element | null)?.closest?.(".erga-edit-button")) return;
+      prefetch();
+      dispatch({ type: "warm" });
     });
   render();
   for (const effect of state.effects) run[effect]();
