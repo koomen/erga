@@ -37,6 +37,7 @@
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine: the head
 //                                       of the branch it tracks, or a commit of that branch; no branch moves;
+//                                       the release is GitHub's (its registry), built here only when it has none;
 //                                       the commits main and staging are origin's branches, never the clone's own;
 //                                       --domain <domain> (it can repeat): the instance takes a custom domain, which
 //                                       a document can be published to from now on; the instance holds its spec, and

@@ -32,6 +32,8 @@ export interface Ports {
    */
   onBranch: (version: string) => Effect.Effect<boolean, DeployError>;
   log: (line: string) => void;
+  /** How long the wait for the release's health row lasts, on Cloudflare (cloudflare.ts, CloudflareRun): a test's, or the mock's. Default: the step's own time. */
+  waitMs?: number;
 }
 
 /** A cloud's side of the job: its steps, what the instance ran before (once a step knows), and the way back to it. */
@@ -46,7 +48,7 @@ function driverOf(spec: Read, release: Release, ports: Ports): Driver | string {
   if (target.kind == "cloudflare") {
     const cf = ports.cloudflare;
     if (!cf) return "The instance is on Cloudflare, and this deploy has no Cloudflare API.";
-    const run: CloudflareRun = { cf, spec: { target, settings: spec.settings }, release, carry: {} };
+    const run: CloudflareRun = { cf, spec: { target, settings: spec.settings }, release, carry: {}, waitMs: ports.waitMs };
     return (
       bindingsProblem(release) ?? {
         steps: CLOUDFLARE_STEPS.map((s) => ({ id: s.id, title: s.title, run: s.run(run) })),

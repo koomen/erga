@@ -2,8 +2,12 @@
 // or rolled back from this machine. Every deploy runs on a machine: a push deploys nothing. An instance tracks one
 // branch of one repository (its entry's repo and branch): with no commit named, it gets that branch's head, and it
 // never gets a commit that the branch does not have. No deploy moves a branch: `bun erga merge` moves staging, and
-// `bun erga promote` moves main (merge.ts, promote.ts). The build and the pipeline are today's (buildHere,
-// runPipeline). Every instance's target comes from its entry only (entryTarget): its names, its vars, the secrets the
+// `bun erga promote` moves main (merge.ts, promote.ts). The release is the one that GitHub built of the commit
+// (deploy/deployer/registry.ts: fetched from its registry with no login, and checked against its digest); this
+// machine builds the commit (buildHere) only when GitHub has no release of it. A deploy runs the deployer's own code
+// steps (deploy/deployer/deploy.ts), with this machine's login, on Cloudflare and on AWS: it changes the code only.
+// What changes an instance's shape runs the pipeline's steps too (runPipeline): setup's first deploy, and --domain.
+// Every instance's target comes from its entry only (entryTarget): its names, its vars, the secrets the
 // Worker keeps. No secret goes out. No instance has a path of its own: the entries differ, the code does not.
 //
 // A Worker that runs keeps its database: when its entry names another one, the entry takes the name of the database
@@ -14,10 +18,13 @@
 // whose tests passed (gate.ts: bun run test): the record .erga/tests/<tree>.json of the commit's tree, which its merge wrote.
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's example account (dev/mock-cloudflare.ts, the fleet), with
-// .build/release/ for the build: nothing real is touched, and no repository is asked: with no commit named, the
-// checkout's own deploys. In a clone that a test gives, the repository is asked as always.
+// .build/release/ for the build: nothing real is touched, and no repository and no registry is asked: with no commit
+// named, the checkout's own deploys. In a clone that a test gives, the repository is asked as always.
 
+import * as Effect from "effect/Effect";
 import { type Carry, liveDeployment, liveRelease, rollbackTo, settledHealth } from "../deployer/cloudflare";
+import { deploy } from "../deployer/deploy";
+import { fetchRelease, releaseAddress } from "../deployer/registry";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../deployer/cloudflare-api";
 import {
   STEPS,
@@ -164,6 +171,8 @@ export interface DeployOptions {
   first?: string;
   /** --write-spec: the entry's values become the instance's spec, before the deploy. Without it, a deploy stops when the two differ. */
   writeSpec?: boolean;
+  /** GitHub's registry, for the commit's release (default: the network; under ERGA_DEPLOY_MOCK, none: this machine builds). A fake, in the tests. */
+  registry?: Fetch;
 }
 
 /** Why `domain` can't be a custom domain, or null. */
@@ -250,10 +259,14 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     }
     // The instance's spec: the entry must agree with it. An instance with no spec yet gets the entry's when the deploy is done.
     let spec = await specOn(sql);
+    // The names of the secrets that the instance holds: read now, before the deploy changes the Worker (just after an
+    // upload, Cloudflare's settings do not list the secrets that the Worker kept), with those that this deploy sends.
+    const held = [...new Set([...(await heldSecrets(entry, reach)), ...sent])].sort();
+    /** The entry as it is now, as a spec. */
+    const specNow = () => specOf(entryOf(readConfig(o.dir), o.host)!, held);
     /** Writes the entry as the instance's spec, with the secrets' names that the platform holds, when the instance has another one, or none. */
     const writeSpec = async () => {
-      const now = entryOf(readConfig(o.dir), o.host)!;
-      const mine = specOf(now, await heldSecrets(now, reach));
+      const mine = specNow();
       const changes = spec ? specDiff(mine, spec, true) : null;
       if (changes?.length == 0 || !(await putSpec(sql, mine))) return;
       log(
@@ -302,7 +315,20 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
 
     const { buildHere } = await import("../pipeline/build");
     // Each part of a deploy says when it starts ("<part>...") and ends ("<part>: done"): setup's page lists them.
+    // The commit's release: the one that GitHub built, from its registry; this machine builds only when GitHub has none.
+    const registry = o.registry ?? (mocked() ? null : globalThis.fetch.bind(globalThis));
     const built = async (commit: string) => {
+      if (registry) {
+        const at = releaseAddress(entry, commit);
+        log("Fetch the release from GitHub...");
+        const fetched = await Effect.runPromise(Effect.result(fetchRelease(registry, entry, commit)));
+        if (fetched._tag == "Failure") throw new Error(fetched.failure.message);
+        if (fetched.success) {
+          log(`Fetch the release from GitHub: done, ${at}, checked against its digest`);
+          return fetched.success;
+        }
+        log(`Fetch the release from GitHub: done, GitHub has no release of ${commit.slice(0, 12)} yet (${at}): this machine builds it`);
+      }
       log("Build the code...");
       const release = await buildHere(commit, log, mocked());
       log("Build the code: done");
@@ -335,29 +361,38 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       const live = await liveDeployment(cf, t.accountId, t.workerName).catch(() => null);
       const serving = live ? ((await liveRelease(cf, t.accountId, t.workerName, live.versionId).catch(() => null))?.version ?? null) : null;
       const release = keepLast(await built(sha), { dir: o.dir, host: o.host, serving }, log);
-      const carry: Carry = {};
-      try {
-        await runPipeline(cf, release, t, {
-          carry,
-          report: (id, status, detail) =>
-            log(`${STEPS.find((s) => s.id == id)?.title}${status == "running" ? "..." : `: ${status}${detail ? `, ${detail}` : ""}`}`),
-          ...quick,
-        });
-      } catch (e) {
-        const restore = carry.restore?.versionId;
-        if (e instanceof Unhealthy && restore) {
-          await rollbackTo(cf, specTarget(t), restore, `bun erga deploy: ${sha.slice(0, 12)} was unhealthy`);
-          throw new Error(`${e.message} It is rolled back to the version before (${restore}).`);
+      if (o.secrets || o.createSubdomain || domains.length) {
+        // The instance's shape changes (setup's first deploy, a new custom domain): the pipeline's steps, all of them.
+        const carry: Carry = {};
+        try {
+          await runPipeline(cf, release, t, {
+            carry,
+            report: (id, status, detail) =>
+              log(`${STEPS.find((s) => s.id == id)?.title}${status == "running" ? "..." : `: ${status}${detail ? `, ${detail}` : ""}`}`),
+            ...quick,
+          });
+        } catch (e) {
+          const restore = carry.restore?.versionId;
+          if (e instanceof Unhealthy && restore) {
+            await rollbackTo(cf, specTarget(t), restore, `bun erga deploy: ${sha.slice(0, 12)} was unhealthy`);
+            throw new Error(`${e.message} It is rolled back to the version before (${restore}).`);
+          }
+          throw e instanceof DeployError ? new Error(e.message) : e;
         }
-        throw e instanceof DeployError ? new Error(e.message) : e;
+        // The entry gets the facts that this deploy sent: they are what the Worker holds now (a new --domain is in them).
+        const now = entryOf(readConfig(o.dir), o.host);
+        if (now && !isAws(now)) {
+          const { domains: _, ...was } = now;
+          writeConfig(o.dir, withEntry(readConfig(o.dir), { ...was, ...targetFacts(t) }));
+        }
+      } else {
+        // The code only: the deployer's own steps, by the instance's spec, as the deployer in the cloud runs them. It
+        // refuses a release that is not a commit of the spec's branch, and puts back the version before an unhealthy one.
+        const ports = { cloudflare: cf, onBranch: (version: string) => Effect.sync(() => onBranch(version)), log, waitMs: quick.waitMs };
+        const done = await runWith(quick.sleep, Effect.result(deploy(specNow(), release, ports)));
+        if (done._tag == "Failure") throw new Error(done.failure.message);
       }
       log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(t)}: healthy.`);
-      // The entry gets the facts that this deploy sent: they are what the Worker holds now (a new --domain is in them).
-      const now = entryOf(readConfig(o.dir), o.host);
-      if (now && !isAws(now)) {
-        const { domains: _, ...was } = now;
-        writeConfig(o.dir, withEntry(readConfig(o.dir), { ...was, ...targetFacts(t) }));
-      }
     }
     await writeSpec();
     await job.end();

@@ -6,70 +6,10 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { TryLater } from "../deploy/deployer/github";
 import { fetchRelease, releaseAddress, releaseState } from "../deploy/deployer/registry";
+import { bundleOf, COMMIT, registry } from "./helpers/registry.ts";
 
-const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const SPEC = { repo: "github.com/Example-Org/Erga", branch: "staging" };
-const TYPE = "application/vnd.erga.release.v1+json";
 
-const b64 = (text: string) => btoa(text);
-/** A release's bundle, as the build packs it. */
-const bundleOf = (version = COMMIT.slice(0, 12)) =>
-  new TextEncoder().encode(
-    JSON.stringify({
-      index: {
-        version,
-        built: "2026-11-19T22:30:03.116Z",
-        worker: { name: "erga", compatibilityDate: "2026-11-01", env: {} },
-        mainModule: "index.js",
-        modules: ["index.js"],
-        assets: ["page.js"],
-        migrations: ["0001_erga.sql"],
-      },
-      files: {
-        "bundle/index.js": b64("export default {}"),
-        "assets/page.js": b64("console.log(1)"),
-        "migrations/0001_erga.sql": b64("CREATE TABLE users (login TEXT);"),
-      },
-    })
-  );
-const digestOf = async (bytes: Uint8Array) =>
-  `sha256:${[...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)))].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
-
-/** A pretend ghcr.io with one release. `over`: what it answers in place of its own answer, by the call. */
-async function registry(
-  over: {
-    bundle?: Uint8Array;
-    served?: Uint8Array;
-    manifest?: (m: { layers: { mediaType: string; digest: string; size: number }[] }) => unknown;
-    token?: Response;
-    tagged?: Response;
-    blob?: Response;
-    fail?: boolean;
-  } = {}
-) {
-  const bundle = over.bundle ?? bundleOf();
-  const digest = await digestOf(bundle);
-  const manifest = { schemaVersion: 2, artifactType: TYPE, layers: [{ mediaType: TYPE, digest, size: bundle.byteLength }] };
-  const calls: { url: string; auth: string | null; accept: string | null }[] = [];
-  const fetch = async (input: Request | string | URL, init?: RequestInit) => {
-    const url = String(input);
-    const headers = new Headers(init?.headers);
-    calls.push({ url, auth: headers.get("authorization"), accept: headers.get("accept") });
-    if (over.fail) throw new Error("connection refused");
-    const path = url.replace("https://ghcr.io", "");
-    if (path.startsWith("/token?")) return over.token ?? Response.json({ token: "anonymous-token" });
-    if (path.includes("/manifests/"))
-      return (
-        over.tagged ??
-        (path.endsWith(`/manifests/${COMMIT}`)
-          ? Response.json(over.manifest ? over.manifest(manifest) : manifest)
-          : Response.json({ errors: [{ code: "MANIFEST_UNKNOWN" }] }, { status: 404 }))
-      );
-    if (path.endsWith(`/blobs/${digest}`)) return over.blob ?? new Response(new Uint8Array(over.served ?? bundle));
-    return new Response("not found", { status: 404 });
-  };
-  return { fetch, calls, digest };
-}
 const run = Effect.runPromise;
 const refused = async (fetch: Parameters<typeof fetchRelease>[0], commit = COMMIT) => run(Effect.flip(fetchRelease(fetch, SPEC, commit)));
 

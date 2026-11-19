@@ -17,6 +17,7 @@ import { entryFrom, specOn, sqlOf, startInstanceJob, trackOn } from "../deploy/c
 import { findInstance, instanceReader, jobsReader } from "../deploy/cli/running";
 import { Cloudflare } from "../deploy/deployer/cloudflare-api";
 import { LEASE_MS } from "../deploy/deployer/instance";
+import { packRelease } from "../deploy/pipeline/build";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { mockCloudflare } from "../dev/mock-cloudflare";
 import {
@@ -31,6 +32,7 @@ import {
 } from "./helpers/deploys.ts";
 import type { Suite } from "../deploy/cli/test-run";
 import { writePass } from "./helpers/pass.ts";
+import { registry } from "./helpers/registry.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
@@ -87,10 +89,20 @@ describe("bun erga deploy", () => {
     // because only the CLI's command line reads it (deploy/cli/main.ts).
     const page = process.env.ERGA_JOB_FROM;
     process.env.ERGA_JOB_FROM = "page";
+    // As Cloudflare did on staging on 2026-11-19: just after an upload, the Worker's settings list no secret that the
+    // Worker kept. The deploy reads the secrets' names before it changes the Worker.
+    let uploaded = false;
+    const net: typeof mock.fetch = async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (init?.method == "PUT" && url.endsWith("/workers/scripts/erga-next")) uploaded = true;
+      const answer = await mock.fetch(input, init);
+      if (!uploaded || !url.endsWith("/workers/scripts/erga-next/settings")) return answer;
+      const body = (await answer.json()) as { result: { bindings: { type: string }[] } };
+      body.result.bindings = body.result.bindings.filter((b) => b.type != "secret_text");
+      return Response.json(body);
+    };
     try {
-      expect(await deployInstance({ dir, host: "next.example.com", commit: "HEAD", net: mock.fetch, print: (l) => lines.push(l) })).toBe(
-        HEAD
-      );
+      expect(await deployInstance({ dir, host: "next.example.com", commit: "HEAD", net, print: (l) => lines.push(l) })).toBe(HEAD);
     } finally {
       if (page == undefined) delete process.env.ERGA_JOB_FROM;
       else process.env.ERGA_JOB_FROM = page;
@@ -251,11 +263,18 @@ describe("bun erga deploy", () => {
     // The fleet's database is from before the table of the jobs: a job that fails before its migrations leaves no row.
     expect(await jobsOn(mock, fleet)).toEqual([]);
 
-    await deploy({ noTests: true });
+    // A deploy changes the code only. The fleet's Worker is from before the documents' bucket, which this release
+    // binds: the upload stops in Cloudflare's words, and the Worker runs what it ran.
+    const before = bindingsOf(mock.state, "erga").ERGA_VERSION?.text;
+    await expect(deploy({ noTests: true })).rejects.toThrow("binding FILES: no R2 bucket erga-files");
+    expect(bindingsOf(mock.state, "erga").ERGA_VERSION?.text).toBe(before);
     expect(ran).toBe(1);
-    // The deploy brought the table, and its job is there, whole: it ran with no lock on the instance.
-    const [job, ...more] = await jobsOn(mock, fleet);
-    expect(more).toEqual([]);
+    // That deploy brought the table (its migrations), so its job is there, whole: it ran with no lock on the instance.
+    expect((await jobsOn(mock, fleet)).map((j) => [j.phase, j.commit])).toEqual([["failed", HEAD]]);
+    // With the bucket, as a setup of today makes it, the same deploy goes through.
+    mock.state.buckets!.push("erga-files");
+    await deploy({ noTests: true });
+    const [job] = await jobsOn(mock, fleet);
     expect(job).toMatchObject({ phase: "ok", commit: HEAD });
     expect(job.out).toContainEqual(expect.stringContaining("did not run (--no-tests)"));
   }, 60_000);
@@ -330,6 +349,82 @@ describe("what an instance runs comes from Cloudflare, never from the instance",
     await expect(findInstance("nowhere.example.com", { net: mock.fetch })).rejects.toThrow("No Worker answers at nowhere.example.com");
     // It only reads, and only Cloudflare's API.
     expect(mock.state.calls.slice(mark).every((c) => c.startsWith("GET /accounts"))).toBe(true);
+  }, 60_000);
+});
+
+describe("the release is the one that GitHub built", () => {
+  /** This checkout's built release as GitHub's bundle of HEAD, and a registry that has it. */
+  const github = async (over: Parameters<typeof registry>[0] = {}) => {
+    const bundle = JSON.parse(new TextDecoder().decode(packRelease(join(ROOT, ".build/release"))));
+    bundle.index.version = HEAD.slice(0, 12);
+    return registry({ bundle: new TextEncoder().encode(JSON.stringify(bundle)), commit: HEAD, ...over });
+  };
+  const world = async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    fresh(fleet, next);
+    const lines: string[] = [];
+    const deploy = (fetch: Awaited<ReturnType<typeof registry>>["fetch"]) =>
+      deployInstance({ dir, host: "next.example.com", commit: "HEAD", net: mock.fetch, registry: fetch, print: (l) => lines.push(l) });
+    return { mock, lines, deploy };
+  };
+
+  test("a deploy fetches the commit's release from the registry, checks it, and runs the deployer's steps with it; it builds nothing", async () => {
+    const { mock, lines, deploy } = await world();
+    const { fetch, calls } = await github();
+    expect(await deploy(fetch)).toBe(HEAD);
+    expect(calls.map((c) => c.url.replace(/sha256:.*/, "<digest>"))).toEqual([
+      "https://ghcr.io/token?service=ghcr.io&scope=repository:koomen/erga:pull",
+      `https://ghcr.io/v2/koomen/erga/manifests/${HEAD}`,
+      "https://ghcr.io/v2/koomen/erga/blobs/<digest>",
+    ]);
+    expect(lines).toContain(`Fetch the release from GitHub: done, ghcr.io/koomen/erga:${HEAD}, checked against its digest`);
+    expect(lines.some((l) => l.startsWith("Build the code"))).toBe(false);
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
+    // The code steps alone: the deployer's four, and no step that gives the instance its shape.
+    expect(lines.filter((l) => l.endsWith("...")).slice(-4)).toEqual([
+      "Set up the database's tables...",
+      "Upload the editor's files...",
+      "Upload the Worker, with its settings and secrets...",
+      "Wait for its health...",
+    ]);
+    expect(lines.some((l) => l.startsWith("Give it its address") || l.startsWith("Check your Cloudflare account"))).toBe(false);
+    expect(lines).toContain(`Deployed ${HEAD.slice(0, 12)} to https://next.example.com: healthy.`);
+  }, 60_000);
+
+  test("GitHub has no release of the commit yet: this machine builds it, and says so", async () => {
+    const { mock, lines, deploy } = await world();
+    const { fetch } = await github({ commit: "f".repeat(40) });
+    expect(await deploy(fetch)).toBe(HEAD);
+    expect(lines).toContain(
+      `Fetch the release from GitHub: done, GitHub has no release of ${HEAD.slice(0, 12)} yet (ghcr.io/koomen/erga:${HEAD}): this machine builds it`
+    );
+    expect(lines).toContain("Build the code: done");
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
+  }, 60_000);
+
+  test("a release that fails its check, or a registry that gives no answer, stops the deploy: no build in its place, nothing uploaded", async () => {
+    const { mock, lines, deploy } = await world();
+    const uploads = changes(mock).length;
+    const tampered = packRelease(join(ROOT, ".build/release"));
+    await expect(deploy((await github({ served: tampered })).fetch)).rejects.toThrow("is not the one that its manifest names");
+    await expect(deploy((await github({ fail: true })).fetch)).rejects.toThrow("GitHub's registry did not give the release");
+    await expect(deploy((await github({ tagged: new Response("{}", { status: 401 }) })).fetch)).rejects.toThrow("must be public");
+    expect(lines.some((l) => l.startsWith("Build the code"))).toBe(false);
+    expect(changes(mock).length).toBe(uploads);
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(SHA1.slice(0, 12));
+    expect((await jobsOn(mock, next)).map((j) => j.phase)).toEqual(["failed", "failed", "failed"]);
+  }, 60_000);
+
+  test("a release that is up but not healthy: the deployer puts the version before back, and the deploy fails with that", async () => {
+    const { mock, deploy } = await world();
+    mock.state.unhealthy = [HEAD.slice(0, 12)];
+    await expect(deploy((await github()).fetch)).rejects.toThrow(
+      /^Release \w{12} is deployed to erga-next, but its health check fails: .* It is rolled back to [\w-]+, which ran before\.$/
+    );
+    // The Worker serves the version before again.
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(SHA1.slice(0, 12));
+    expect((await jobsOn(mock, next))[0]).toMatchObject({ phase: "failed", error: expect.stringContaining("It is rolled back to") });
   }, 60_000);
 });
 
@@ -514,6 +609,8 @@ describe("the branches", () => {
       writePass(dir, c1, clone);
       writePass(dir, c2, clone);
       const mock = mockCloudflare({ fleet: true });
+      // (The fleet's instance has the documents' bucket, as a setup of today makes it.)
+      mock.state.buckets!.push("erga-files");
       await bootstrap(mock);
       // The hook needs bun on the PATH, in the push that the CLI makes.
       process.env.PATH = env.PATH;

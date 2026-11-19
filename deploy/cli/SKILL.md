@@ -288,17 +288,28 @@ and `main`. There are no pull requests.
   (`.github/workflows/release.yml`): on a push to `staging`, `main` or
   `verify`, it tests and builds the commit, and publishes its release on
   GitHub's registry (`ghcr.io/<owner>/<repository>:<commit>`; `verify`'s
-  in `<repository>-verify`, which keeps 7 days of them). No deploy fetches
-  that release yet.
-- A deploy builds the commit in a scratch worktree, then runs the pipeline:
-  the D1 migrations, the static files, the Worker with its Cron Trigger, the
-  addresses, the health. No step asks the deployed server: the server
-  writes its health into its database each minute (its Cron Trigger), and
-  the deploy reads that row through D1's API, as `bun erga status` does. A
-  new release's row comes in about a minute; the first deploy of a server
-  can wait up to 15 minutes for its first row (a new Cron Trigger starts
-  slowly). The same run makes the default homepage when the server has
-  none. A deploy sends no secret: the Workers keep their own.
+  in `<repository>-verify`, which keeps 7 days of them).
+- A deploy fetches that release of its commit, with no login, and checks
+  its bytes against the digest that the registry names. It builds the
+  commit in a scratch worktree only when GitHub has no release of it (its
+  workflow takes some minutes after a push, or failed). A release that
+  fails its check, or a registry that gives no answer, stops the deploy:
+  it builds nothing in its place.
+- A deploy changes the code only, by the deployer's own steps
+  (`deploy/deployer/`), on Cloudflare and on AWS: the D1 migrations, the
+  static files, the Worker with its Cron Trigger, the health. It refuses a
+  release that is not a commit of the instance's branch. An instance's
+  shape (its database, its bucket, its addresses, its secrets) is setup's:
+  only `bun erga setup` and `bun erga deploy --domain` run the pipeline's
+  other steps. A release that binds something new (a bucket) stops at the
+  upload on an instance that lacks it. No step asks the deployed server:
+  the server writes its health into its database each minute (its Cron
+  Trigger), and the deploy reads that row through D1's API, as
+  `bun erga status` does. A new release's row comes in about a minute; the
+  first deploy of a server can wait up to 15 minutes for its first row (a
+  new Cron Trigger starts slowly). The same run makes the default homepage
+  when the server has none. A deploy sends no secret: the Workers keep
+  their own.
 - A rollback never changes the database: migrations only add.
 
 ## Run it locally
