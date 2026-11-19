@@ -45,6 +45,7 @@ import { type Actor, NotAllowed, NotFound, type User, type UserRole, Users } fro
 
 import { Credentials, PersonKeys, type KeyCheck } from "./api-keys.ts";
 import { PageLlm } from "./page-llm.ts";
+import { Deploys } from "./deploys.ts";
 import { Feedback } from "./feedback.ts";
 import { Activity } from "./activity.ts";
 import { Lists } from "./lists.ts";
@@ -113,6 +114,8 @@ export class Directory {
   readonly pageLlm: PageLlm;
   /** The feedback people sent, and the GitHub issue of each. */
   readonly feedback: Feedback;
+  /** The instance's deploys and rollbacks, and what it and its deployer tell each other (the Ops page). */
+  readonly deploys: Deploys;
   /** What people did each day: the Analytics page (/admin). */
   readonly activity: Activity;
   /** How each account signs in (its GitHub and Google identities), and usernames. */
@@ -179,6 +182,7 @@ export class Directory {
     this.personKeys = new PersonKeys(sql, opts.credentialSecret ?? null, opts.keyCheck);
     this.pageLlm = new PageLlm(sql);
     this.feedback = new Feedback(sql, this.users);
+    this.deploys = new Deploys(sql, this.users);
     this.activity = new Activity(sql, this.users);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,

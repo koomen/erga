@@ -63,6 +63,8 @@ test("a commit takes a deploy only when GitHub has its release; the live one has
   expect(rowOf(html, 4)).toContain("Change 4 &lt;b&gt;");
   expect(rowOf(html, 4)).not.toContain("<button");
   expect(rowOf(html, 3)).toContain(`data-deploy data-host="erga.example.com" data-sha="${sha(3)}"`);
+  // It is the newest commit that takes a deploy: its button shows always, as the head's does when it has a release.
+  expect(rowOf(html, 3)).toContain('<span class="deps here show">');
   expect(rowOf(html, 2)).toContain('<span class="w">live</span><span class="at">59m</span>');
   expect(rowOf(html, 2)).toContain("data-rollback");
   expect(rowOf(html, 1)).toContain('<span class="dep wait">refused</span>');

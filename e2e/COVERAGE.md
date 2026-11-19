@@ -29,6 +29,8 @@ without; the whole run took 37 s and 36 s. V2's budget is 11 since its step for 
 loads a page again 2 s after the last time at the earliest, and the step waits for that (8.4 s at most in 13 runs).
 S3's budget is 9 since the save mark: its first step types for longer than the 2 s that an edit has to reach the server
 (libs/text/ui/unsaved.ts, GRACE_MS), 1 s more than before (7.8 s alone in 3 runs).
+A4's budget is 8 since its Ops step: the page asks the server again each second while a job runs or an ask waits, and
+the step waits for that one time (1.4 s of 6.4 s alone).
 
 The rules:
 
@@ -64,7 +66,7 @@ The rules:
 | A1 | `e2e/access/sign-in.e2e.ts` | A person cannot sign in, or a person who may not, can. | 10 |
 | A2 | `e2e/access/share.e2e.ts` | A person without access reads or edits; access taken away stays; a share does not arrive. | 9 |
 | A3 | `e2e/access/tokens.e2e.ts` | A token gives more than its scope; an agent cannot sign in; a key shows in a page. | 8 |
-| A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values; a setting is not on the page of what it governs. | 6 |
+| A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values; a setting is not on the page of what it governs; the Ops page does not ask the deployer, or does not show its job. | 8 |
 | C1 | `e2e/comments/comments.e2e.ts` | A comment is lost, lands on the wrong text, or a commenter changes the text. A card covers its text, or leaves the screen at a zoom or on a phone. | 9 |
 | R1 | `e2e/versions/versions.e2e.ts` | A version is not cut; Restore gives the wrong text; a document publishes by itself. | 13 |
 | H1 | `e2e/publishing/publishing.e2e.ts` | A domain shows the wrong document, or a site that was unpublished; a publish breaks the site; a new server has no homepage; someone who is not an admin publishes. | 7 |

@@ -8,7 +8,7 @@ import { OPERATIONS } from "../server/operations/index.ts";
 import { memory } from "./helpers/memory-sql";
 
 /** The admin operations that only read. */
-const ADMIN_READS = ["settings", "sign_in", "people", "analytics", "feedback"];
+const ADMIN_READS = ["settings", "sign_in", "people", "analytics", "feedback", "deploys"];
 
 test("every admin operation that changes the server asks first, and no read does", () => {
   for (const op of OPERATIONS.filter((o) => o.admin)) {

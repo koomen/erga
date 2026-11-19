@@ -5,6 +5,7 @@
 
 import { ADMIN_OPERATIONS } from "./admin.ts";
 import { COMMENT_OPERATIONS } from "./comments.ts";
+import { DEPLOY_OPERATIONS } from "./deploys.ts";
 import { DOCUMENT_OPERATIONS } from "./documents.ts";
 import { EDITOR_OPERATIONS } from "./editor.ts";
 import { FEEDBACK_OPERATIONS } from "./feedback.ts";
@@ -33,6 +34,7 @@ export const OPERATIONS: Operation[] = [
   ...EDITOR_OPERATIONS,
   ...COMMENT_OPERATIONS,
   ...ADMIN_OPERATIONS,
+  ...DEPLOY_OPERATIONS,
   ...PUBLISHING_OPERATIONS,
   ...FEEDBACK_OPERATIONS,
 ];

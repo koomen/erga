@@ -146,7 +146,7 @@ function history(v: InstanceView, now: number): string {
       return `<a class="h-row ${st.cls}" href="${esc(v.href("logs", j.id))}" data-job="${esc(j.id)}"><span class="h-state"><i class="light"></i>${result}</span><code class="h-cmd" title="${esc(j.error ?? j.command)}">${esc(j.command)}</code><span class="h-from">${esc(j.from == "page" ? "this page" : j.from)}</span><time datetime="${esc(j.started)}" title="${esc(j.started)}">${esc(timeAgo(Date.parse(j.started) || now, now))}</time><span class="h-took">${esc(took(j, now))}</span></a>`;
     })
     .join("");
-  return `<section class="history" aria-label="Jobs"><div class="h-row h-head"><span>Result</span><span>Command</span><span>From</span><span>Started</span><span>Took</span></div>${rows}</section>`;
+  return `<section class="history" aria-label="Jobs"><div class="h-row h-head"><span>Result</span><span>Command</span><span class="h-from">From</span><span>Started</span><span class="h-took">Took</span></div>${rows}</section>`;
 }
 
 /** A button with the page's look; a disabled one says why in its tip. */
@@ -201,7 +201,7 @@ const UPSTREAM_ROWS = 15;
  * The instance's commits, in one column. Green (a filled dot): live on the instance, the commit that it runs and those
  * before it. Orange (a ring): not on it yet. On top, the commits of its upstream that its branch lacks: no deploy
  * takes them, so they have no button. Then its branch's commits, with "live" at the commit that runs, with Roll back; a
- * Deploy button on each other row under the mouse, and always on the head's row while the head is not live. With an
+ * Deploy button on each other row under the mouse, and always on the newest row that takes a deploy while it is not live. With an
  * upstream, a tag marks each of the two heads; the line breaks between the two when each has commits that the other
  * lacks.
  */
@@ -238,6 +238,8 @@ function commits(v: InstanceView, now: number): string {
     u && u.behind.length > above.length
       ? `<div class="more">${esc(`and ${plural(u.behind.length - above.length, "more commit")} of ${u.name}`)}</div>`
       : "";
+  // The newest commit that takes a deploy: the head, or the first one under it that GitHub has a release of.
+  const first = rows.findIndex((c) => !c.release || c.release == "released");
   const body = rows
     .map((c, i) => {
       const kind = on >= 0 && i >= on ? "on" : "off";
@@ -249,7 +251,7 @@ function commits(v: InstanceView, now: number): string {
         !live || deploying
           ? c.release && c.release != "released" && !deploying
             ? noRelease(c)
-            : deployButton(v, c, deploying, i == 0)
+            : deployButton(v, c, deploying, i == first)
           : liveCell(v, at ? short(at, now) : "");
       const tip = kind == "on" ? `Live on ${v.host}` : `On ${v.branch}, not on ${v.host} yet`;
       const tags = (u && i == 0 ? tag(v.branch, `${v.branch}, the branch that ${v.host} tracks, is at this commit`) : "") + upTag(c);

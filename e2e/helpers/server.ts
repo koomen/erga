@@ -40,6 +40,7 @@ const LOCAL: Record<string, string> = {
       "ERGA_VERSION_MAX_MS",
       "ERGA_ROOM_IDLE_MS",
       "ERGA_DEPLOY",
+      "ERGA_VERSION",
       "ERGA_REMOTE_LATENCY_MS",
     ].map((k) => [k, k])
   ),

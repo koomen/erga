@@ -2,8 +2,14 @@
 // the list of users, the settings and the access rules of the whole server, and reads the whole server's counts.
 // The path: the admin pages as one page. A link shows the next page in place, styled. Users, Settings, Access and the
 // Change log follow changes that an agent makes with an admin token, with no reload. Feedback sent from the account
-// menu comes to the Feedback page, with its issue on the pretend GitHub; the page's switch turns Send feedback off and on. Analytics shows the day's counts. Then the
+// menu comes to the Feedback page, with its issue on the pretend GitHub; the page's switch turns Send feedback off and on. Ops
+// shows the server's own deploys: Deploy on a commit asks the server's deployer, played here by the deployer's own code,
+// and its job shows as it runs. Analytics shows the day's counts. Then the
 // editor (the admin pages' bars look as its bars, and Send feedback works from a document), and the pages in dark mode.
+import * as Effect from "effect/Effect";
+import { readControl, startOf, takeAsk, writeLook } from "../../deploy/deployer/control";
+import { openJob, writeSpec } from "../../deploy/deployer/instance";
+import { deployerSql } from "../helpers/deployer";
 import { openEditor } from "../helpers/editor";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { joinRoom } from "../helpers/room";
@@ -13,7 +19,8 @@ import { clickOn } from "../helpers/press";
 import { markCard, markOf, marksSeen, markThere, watchMark } from "../helpers/save-mark";
 
 // (The scripted model: the agent's pane is on the pages.)
-const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script" } });
+// (It runs the release 222222222222: the Ops page's live commit.)
+const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script", ERGA_VERSION: "2".repeat(12) } });
 
 interface Issue {
   number: number;
@@ -144,6 +151,7 @@ journey("an admin on the admin pages", () => {
       "Documents",
       "Agents and models",
       "Feedback",
+      "Ops",
       "Change log",
     ]);
     // A mark on this window, for the steps after: still here after the links, so the pages came in place.
@@ -393,6 +401,62 @@ journey("an admin on the admin pages", () => {
     // On again: the link is back in that person's page (the editor's menu sends feedback, two steps on).
     await flip();
     expect(await list()).toContain('<a href="#feedback">Send feedback</a>');
+    expect(await stayed()).toBe(true);
+  });
+
+  test("Ops: Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch turns auto-deploy on", async () => {
+    const sql = deployerSql(own!);
+    const run = Effect.runPromise;
+    const sha = (n: number) => String(n).repeat(40);
+    // The instance's spec, and its deployer's look at GitHub: the head has a release, and the server runs the commit before it.
+    await run(
+      writeSpec(sql, {
+        repo: "github.com/example/erga",
+        branch: "main",
+        target: {
+          kind: "cloudflare",
+          account: "0123456789abcdef0123456789abcdef",
+          worker: "erga",
+          database: "erga",
+          app: { kind: "domain", zoneName: "example.com", hostname: "example.com" },
+          pages: { kind: "zone", zoneName: "example-pages.com" },
+        },
+        settings: {},
+        secrets: [],
+      })
+    );
+    const at = Date.now();
+    const commits = [3, 2, 1].map((n) => ({
+      sha: sha(n),
+      title: `Change ${n}`,
+      at: at - (4 - n) * 3_600_000,
+      release: "released" as const,
+    }));
+    await run(writeLook(sql, { head: sha(3), error: null, commits }));
+    await go("/admin/ops", `.ops-view .row[data-sha="${sha(3)}"]`);
+    const text = (selector: string) => page.evaluate((s) => document.querySelector<HTMLElement>(s)?.innerText ?? "", selector);
+    expect(await text(`.row[data-sha="${sha(2)}"] .dep.live`)).toContain("live");
+    // The head's Deploy asks first; its answer goes to the deployer, which has no address: the page says that it waits.
+    await clickOn(page, `.row[data-sha="${sha(3)}"] [data-deploy]`);
+    await soon(() => text(".confirm:popover-open")).toContain("Deploy 3333333 Change 3 to");
+    await clickOn(page, ".confirm [data-go]");
+    await soon(() => text(".job.running")).toContain("asked by tester");
+    // The deployer's look: it takes the lock with the ask's job, takes the ask, and deploys. The page follows by itself.
+    const ask = (await run(readControl(sql)))!.ask!;
+    expect(ask).toMatchObject({ kind: "deploy", sha: sha(3), by: "tester" });
+    const job = await run(openJob(sql, startOf(ask)));
+    expect(await run(takeAsk(sql, ask))).toBe(true);
+    job.commit(sha(3));
+    job.line("Worker: done");
+    expect(await job.end({ at: "done" })).toBeNull();
+    await soon(() => text("a.job.ok"), 5000).toContain("from the app, by tester");
+    await clickOn(page, "a.job.ok");
+    await soon(() => text(".logs")).toContain("Worker: done");
+    // The switch saves by itself, and the deployer reads it at its next look.
+    await clickOn(page, 'a.tab[href="/admin/ops"]');
+    await page.waitForSelector("#auto-deploy");
+    await clickOn(page, "li:has(#auto-deploy) .switch .track");
+    await soon(async () => (await run(readControl(sql)))?.auto).toBe(true);
     expect(await stayed()).toBe(true);
   });
 

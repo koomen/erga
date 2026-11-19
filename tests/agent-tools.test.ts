@@ -285,7 +285,8 @@ test("one set of tools for every agent: a person's own agent has what they may (
   const dir = fresh({ admins: ["root"] });
   await dir.users.add({ login: "root", admin: true }, "bo");
   const names = async (c: Caller) => (await toolsFor(c)).flatMap(opsOf);
-  const all = OPERATIONS.map((o) => o.name);
+  // (Every operation but deploy, the ask to the server's deployer: a server with no deployer has none. tests/server-deploys.test.ts.)
+  const all = OPERATIONS.map((o) => o.name).filter((n) => n != "deploy");
   // A person's own agent: an admin's has admin power (agents/person/sessions.ts), and every operation; the document tools for any document.
   for (const via of [VIA.agent, VIA.token("CI")]) {
     const tools = await names({ dir, who: { login: "root", admin: true, via } });

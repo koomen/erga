@@ -104,8 +104,9 @@ export interface Operation {
  */
 export async function offered(op: Pick<Operation, "admin" | "wide" | "off">, caller: Caller): Promise<boolean> {
   if (op.wide && caller.who.onlyDoc != null) return false;
-  if (await op.off?.(caller)) return false;
-  return !op.admin || (await caller.dir.users.actsAsAdmin(caller.who));
+  // (The admin's check first: what turns an admin's operation off is asked only for an admin.)
+  if (op.admin && !(await caller.dir.users.actsAsAdmin(caller.who))) return false;
+  return !(await op.off?.(caller));
 }
 
 /** Runs one, as `caller`; what the directory throws becomes an OperationError (not allowed: 403; a bad value: 400). */

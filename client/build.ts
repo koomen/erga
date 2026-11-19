@@ -21,7 +21,7 @@
 //     chunk-<h>.js       code two of them share, or that one of them imports only when it needs it (the source
 //                        view's CodeMirror and languages, the agent's screenshots)
 //     style-<h>.css, editor-<h>.html, inter-<h>.css, fonts/inter-...-<h>.woff2
-//     admin-<h>.css      the admin pages' one stylesheet (client/styles/admin.css)
+//     admin-<h>.css      the admin pages' one stylesheet (client/styles/admin.css, with assets/ops/ops-view.css)
 //   manifest.json      each file's address by its name, the chunks each script needs first, their integrity
 //                      hashes and the typeface's @font-face rules (shared/assets.ts): the Worker reads it and
 //                      names the files in the pages it makes (server/pages/assets.ts). Not served.
@@ -235,8 +235,10 @@ async function build(): Promise<void> {
 
   const style = new Uint8Array(readFileSync(join(ROOT, "client/style.css")));
   files["style.css"] = put(`style-${hashOf(style)}.css`, style);
-  // The admin pages' one stylesheet (client/styles/admin.css): the same file on every admin page.
-  const admin = enc(readFileSync(join(ROOT, "client/styles/admin.css"), "utf8"));
+  // The admin pages' one stylesheet (client/styles/admin.css): the same file on every admin page. With it, the look of
+  // the Ops page's view (assets/ops/ops-view.css, which the ops page of a machine loads too): each of its rules is
+  // under .ops-view, so it changes no other page.
+  const admin = enc(["client/styles/admin.css", "assets/ops/ops-view.css"].map((f) => readFileSync(join(ROOT, f), "utf8")).join("\n"));
   files["admin.css"] = put(`admin-${hashOf(admin)}.css`, admin);
 
   // The editor's page, naming the files of this build: the typeface's rules and its own styles in it (no stylesheet to

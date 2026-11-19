@@ -10,6 +10,7 @@ export { agentsPagesRows, agentsRows } from "./agents.ts";
 export { authRows, authSettingsRows } from "./auth.ts";
 export { adminDocumentsRows, adminSitesRows } from "./documents.ts";
 export { feedbackRows } from "./feedback.ts";
+export { noDeployer } from "./ops.ts";
 export { changesRows } from "./changes.ts";
 export { pageLlmUsage } from "./page-llm.ts";
 export { usersRows } from "./users.ts";

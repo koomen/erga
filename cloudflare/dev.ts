@@ -56,6 +56,31 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   },
   {
     method: "POST",
+    path: "/__erga/deploys",
+    // {sql, params}: one statement on the instance's deploy tables, and each row's first column as text. In the cloud,
+    // a deployer and a machine reach those tables through the platform's database API, never through the server
+    // (deploy/deployer/instance.ts, Sql): this is that way for a local server, so a test's deployer writes as a real one.
+    run: (env) =>
+      Effect.gen(function* () {
+        const body = yield* HttpServerRequest.schemaBodyJson(DeploysBody).pipe(Effect.orDie);
+        if (!/\bdeploy_(spec|jobs|control)\b/.test(body.sql)) return text("Only the deploy tables.", 400);
+        return yield* call(async () => {
+          try {
+            const { results } = await env.DB.prepare(body.sql)
+              .bind(...body.params)
+              .all<Record<string, unknown>>();
+            return plainJson({ rows: results.map((r) => String(Object.values(r)[0])) });
+          } catch (e) {
+            return text((e as Error).message, 400);
+          }
+        });
+      }),
+    action: "A local deployer reads and writes the instance's deploy tables",
+    domain: "none",
+    exempt: DEV,
+  },
+  {
+    method: "POST",
     path: "/__erga/link",
     // Makes (or finds) the document for a file or folder, for whoever's signed in.
     run: (env) =>
@@ -93,6 +118,12 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     exempt: DEV,
   },
 ];
+
+/** One statement on the deploy tables. */
+const DeploysBody = Schema.Struct({
+  sql: Schema.String,
+  params: Schema.Array(Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))),
+});
 
 /** What the dev server sends to link a file or folder on disk. */
 const LinkBody = Schema.Struct({

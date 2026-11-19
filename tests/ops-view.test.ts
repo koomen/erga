@@ -360,7 +360,9 @@ test("the job line, Logs and History are the chosen instance's deploys and rollb
   const history = viewHtml(f, "example.net/history", NOW);
   expect([...history.matchAll(/class="h-row [^"]*" href="[^"]*" data-job="(\w+)"/g)].map((m) => m[1])).toEqual(["back", "old"]);
   expect(history).toContain('<span class="h-took">30 s</span>');
-  expect(history).toContain("<span>Result</span><span>Command</span><span>From</span><span>Started</span><span>Took</span>");
+  expect(history).toContain(
+    '<span>Result</span><span>Command</span><span class="h-from">From</span><span>Started</span><span class="h-took">Took</span>'
+  );
   expect(history).not.toContain("h-host");
   // A job that auto-deploy started says so.
   const auto = facts({ jobs: [job("a1", "example.net", "3", { from: "auto-deploy" })] });
