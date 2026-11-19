@@ -12,8 +12,9 @@ import { routeFor, STREAM, type RouteRow } from "../../shared/routes.ts";
 
 /** Each live list's rows, by its data-live-view: the page's own (each checks who may see them, as its page does). */
 const VIEWS: Record<string, LiveRows> = {
-  documents: documentsRows(false),
-  "documents-archived": documentsRows(true),
+  documents: documentsRows("documents"),
+  "documents-archived": documentsRows("archived"),
+  "documents-scratch": documentsRows("scratch"),
   users: usersRows,
   settings: settingsRows,
   access: accessRows,

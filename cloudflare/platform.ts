@@ -183,7 +183,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
             role: d.role,
             shared: d.shared,
             pages: d.pages,
-            ...(path != null ? { path } : d.modified == null && d.expires != null ? { expires: d.expires } : {}),
+            ...(path != null ? { path } : (d.modified == null || d.scratch) && d.expires != null ? { expires: d.expires } : {}),
           };
         }));
       },

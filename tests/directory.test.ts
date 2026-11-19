@@ -84,18 +84,25 @@ test("the archive is each person's own: off their list, on their archived list, 
   await dir.add(doc("aaaaaaaa", "One"));
   await dir.add(doc("bbbbbbbb", "Two"));
   await dir.share({ login: "ada" }, "aaaaaaaa", "bo", "viewer");
-  const ids = async (login: string, archived = false) => (await dir.lists.list(login, { archived })).map((d) => d.id).sort();
+  const ids = async (login: string, archived = false) =>
+    (await dir.lists.list(login, { view: archived ? "archived" : "documents" })).map((d) => d.id).sort();
   await dir.lists.archive("aaaaaaaa", "Ada", true);
   expect([await ids("ada"), await ids("ada", true)]).toEqual([["bbbbbbbb"], ["aaaaaaaa"]]);
   // Bo's list keeps it: Ada's archive is hers.
   expect([await ids("bo"), await ids("bo", true)]).toEqual([["aaaaaaaa"], []]);
   // A live list asks for rows by id: an archived one is off /documents and on /documents/archived.
   expect((await dir.lists.list("ada", { ids: ["aaaaaaaa"] })).length).toBe(0);
-  expect((await dir.lists.list("ada", { ids: ["aaaaaaaa"], archived: true })).length).toBe(1);
+  expect((await dir.lists.list("ada", { ids: ["aaaaaaaa"], view: "archived" })).length).toBe(1);
   await dir.lists.archive("aaaaaaaa", "ada", false);
   expect([await ids("ada"), await ids("ada", true)]).toEqual([["aaaaaaaa", "bbbbbbbb"], []]);
   // Only a document on your list, by your own permission.
   await expect(dir.lists.archive("aaaaaaaa", "cy", true)).rejects.toBeInstanceOf(NotAllowed);
+  // A scratch document is on its own list only (/documents/scratch), until it's saved.
+  await dir.add({ ...doc("cccccccc", "Loose"), scratch: true, expires: 5 });
+  const scratch = async () => (await dir.lists.list("ada", { view: "scratch" })).map((d) => [d.id, d.expires]);
+  expect([await ids("ada"), await ids("ada", true), await scratch()]).toEqual([["aaaaaaaa", "bbbbbbbb"], [], [["cccccccc", 5]]]);
+  await dir.keep("cccccccc");
+  expect([await ids("ada"), await scratch()]).toEqual([["aaaaaaaa", "bbbbbbbb", "cccccccc"], []]);
 });
 
 test("sharing: editors, viewers and anyone with the link", async () => {

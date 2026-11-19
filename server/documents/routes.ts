@@ -8,6 +8,7 @@
 //                              a template; /new?from=<id> a copy of a document you may open (the viewer's Clone)
 //   /documents                      your documents, latest edit first (archive, delete and share are operations: POST /api/tools/<name>)
 //   /documents/archived             the documents you archived, the same rows (unarchive is an operation too)
+//   /documents/scratch              your scratch documents that still exist, the same rows (save is an operation too)
 //   /admin                     the server's analytics, settings and users, for admins (each change an operation: POST /api/tools/<name>)
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with; for people not signed in, a
 //                              document shared with anyone with the link while the server lets people share publicly): its canonical address;
@@ -45,7 +46,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { adminRoutes, isAdminPath } from "../admin/index.ts";
-import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
+import { ID, type ListView, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/model/names.ts";
 import { NO_WAIT } from "../../document/api/waits.ts";
@@ -170,27 +171,27 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   return fromWeb(new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers }));
 });
 
-/** /documents: the signed-in person's documents, most recently edited first; /documents/archived: those they archived. */
-const listDocuments = Effect.gen(function* () {
+/** /documents: the signed-in person's documents, most recently edited first; /documents/archived, /documents/scratch: those lists of theirs. */
+const listDocuments = (view: ListView) =>
+  Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
-  const archived = url.pathname == "/documents/archived";
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return signInFirst(url.pathname);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
   const [docs, hours, asks] = yield* call(() =>
     Promise.all([
-      platform.docs.list(session.login, { archived }),
+      platform.docs.list(session.login, { view }),
       platform.directory.config.get("delete_docs_after_hours"),
-      archived ? [] : platform.directory.requests.waiting(session.login),
+      view == "documents" ? platform.directory.requests.waiting(session.login) : [],
     ])
   );
   // The browser keeps the list for Back, for this person only: it shows at once, and follows what changed since (its
   // rows are live: server/news/). Any other visit asks the server again.
-  return html(documentsPage(session, docs, Date.now(), hours, archived, asks), 200, {
+  return html(documentsPage(session, docs, Date.now(), hours, view, asks), 200, {
     "Cache-Control": "private, no-cache",
     Vary: "Cookie",
   });
-});
+  });
 
 /**
  * POST <document>/api/share {rotate}: the share button's token, the
@@ -223,7 +224,7 @@ export const PAGES: readonly RouteRow<HttpRoute>[] = [
   {
     method: "GET",
     path: "/documents",
-    run: listDocuments,
+    run: listDocuments("documents"),
     action: "Read your documents (Documents)",
     domain: "document",
     tool: "list_documents",
@@ -231,8 +232,16 @@ export const PAGES: readonly RouteRow<HttpRoute>[] = [
   {
     method: "GET",
     path: "/documents/archived",
-    run: listDocuments,
+    run: listDocuments("archived"),
     action: "Read your archived documents (Archived)",
+    domain: "document",
+    tool: "list_documents",
+  },
+  {
+    method: "GET",
+    path: "/documents/scratch",
+    run: listDocuments("scratch"),
+    action: "Read your scratch documents (Scratch)",
     domain: "document",
     tool: "list_documents",
   },

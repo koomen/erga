@@ -1,4 +1,5 @@
-// The documents page (/documents) and the archive (/documents/archived): a person makes, finds, archives and deletes documents,
+// The documents page (/documents), the archive (/documents/archived) and the scratch documents (/documents/scratch): a
+// person makes, finds, archives, saves and deletes documents,
 // and the open list follows what an agent or another person changes, with no reload. Then the admin's side: / opens
 // the list, ⌘K finds Erga's pages, the Home page button and the logo.
 //
@@ -387,6 +388,41 @@ journey("a person's documents", () => {
         return [n.type, n.transferSize];
       })
     ).toEqual(["back_forward", 0]);
+  });
+
+  test("the Scratch link after the heading opens the scratch documents, each with when it goes; one made meanwhile comes in; Save takes a row onto the list, and Delete empties the view", async () => {
+    await make("Loose notes", { scratch: true });
+    await clickOn(page, 'a.other-list[href$="/scratch"]');
+    await page.waitForURL(/\/documents\/scratch$/);
+    await mark(page);
+    expect(await page.innerText("h1")).toBe("Scratch");
+    expect(await shown(page)).toBe("1 document | Loose notes");
+    expect(await page.innerText(`${rowOf("Loose notes")} .note`)).toBe("Deleted in 24h");
+    // An agent makes one more, and finds both: the open view takes the new one in.
+    await make("Shopping", { scratch: true });
+    await expect.poll(() => shown(page)).toBe("2 documents | Shopping | Loose notes");
+    const listed = async (args = {}) =>
+      (await p.tool<{ documents: { id: string; expires?: string }[] }>("list_documents", args)).result!.documents;
+    expect((await listed({ scratch: true })).map((d) => [d.id, typeof d.expires])).toEqual([
+      [id.Shopping, "string"],
+      [id["Loose notes"], "string"],
+    ]);
+    // Save keeps one: it leaves this view for the list. Delete asks first; then the view says what a scratch document is.
+    await hover(page, "Loose notes");
+    await clickOn(page, 'button[aria-label="Save Loose notes"]');
+    await expect.poll(() => shown(page)).toBe("1 document | Shopping");
+    await dialogs(page, true);
+    await hover(page, "Shopping");
+    await clickOn(page, 'button[aria-label="Delete Shopping"]');
+    await expect.poll(() => shown(page)).toBe("");
+    expect(await page.innerText("p.empty")).toBe(
+      "No scratch documents. A scratch document is off your list, and deleted after 24 hours unless you save it."
+    );
+    expect(await said(page)).toEqual(["Delete “Shopping”? This can't be undone."]);
+    expect(await sameLoad(page)).toBe(true);
+    await clickOn(page, "a.other-list");
+    await page.waitForURL(/\/documents$/);
+    expect(await page.getAttribute(`${rowOf("Loose notes")} a.doc`, "href")).toBe(`/${p.login}/loose-notes?edit`);
   });
 
   test("+ Scratch, whose tip says when a scratch document goes, makes one, off the list, with a gray Save first in its quick actions, whose tip says the same; Save keeps it, at the address of its heading", async () => {

@@ -6,7 +6,7 @@
 
 import type { AgentToken, AuthStorage, SignIn, Tokens } from "./identity/index.ts";
 import type { SiteObject } from "./sites/index.ts";
-import { type Directory, type Route, type Who } from "./directory/index.ts";
+import { type Directory, type ListView, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/model/access.ts";
 import type { RestoreResult, Version, VersionsState } from "../document/history/versions.ts";
 import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../document/api/http.ts";
@@ -55,7 +55,7 @@ export interface Listed {
   created: number;
   /** When a file last changed (when it was made, if never). */
   modified: number;
-  /** When it goes away if nobody edits it (only while it's never been edited). */
+  /** When it goes away if nobody edits it (only while it's never been edited); a scratch one: when it goes unless saved. */
   expires?: number;
   /** In local development, a document that's a file or folder on disk: where it is. Deleting it leaves the files be. */
   path?: string;
@@ -199,8 +199,8 @@ export interface Platform {
     comments(doc: Route, call: CommentCall): Promise<CommentAnswer>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
-    /** `owner`'s documents, most recently changed first; with `ids`, only those of them. */
-    list(owner: string, o?: { ids?: readonly string[]; archived?: boolean }): Promise<Listed[]>;
+    /** `owner`'s documents, most recently changed first; with `ids`, only those of them; `view`: another of their lists. */
+    list(owner: string, o?: { ids?: readonly string[]; view?: ListView }): Promise<Listed[]>;
     /** Hands a request to the document's host, its path already the one inside the document. */
     fetch(doc: Route, request: Request): Promise<Response>;
     /**

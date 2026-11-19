@@ -177,12 +177,13 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "List documents",
     activity: "listing the documents",
     wide: true,
-    ui: "Documents (/documents): the list",
+    ui: "Documents (/documents): the list; Archived (/documents/archived) and Scratch (/documents/scratch)",
     description: "Your documents and those shared with you, newest first.",
     parameters: Schema.Struct({
       query: Schema.optionalKey(Schema.String),
       all: bool("Everyone's (admins)."),
       archived: bool("Only those you archived (archive_document); else none of them."),
+      scratch: bool("Only the scratch ones that still exist (expires: when each goes); else none of them."),
       limit: Schema.optionalKey(Schema.Int),
     }),
     run: async (args, caller) => {
@@ -196,7 +197,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         return { documents, moreDocuments: total - documents.length };
       }
       const q = query.trim().toLowerCase();
-      const listed = (await platformOf(caller).docs.list(who.login.toLowerCase(), { archived: args.archived === true }))
+      const listed = (
+        await platformOf(caller).docs.list(who.login.toLowerCase(), {
+          view: args.scratch === true ? "scratch" : args.archived === true ? "archived" : "documents",
+        })
+      )
         .map((d) => ({
           id: d.id,
           title: d.title,
@@ -283,7 +288,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     name: "save_document",
     label: "Save a scratch document",
     activity: "saving a scratch document",
-    ui: "A scratch document's page: Save",
+    ui: "A scratch document's page, and Scratch (/documents/scratch): Save",
     description: "Saves a scratch document: on the list, never deleted.",
     parameters: Schema.Struct({ document: DOCUMENT, title: Schema.optionalKey(str("Default: the first heading.")) }),
     run: async (args, caller) => {

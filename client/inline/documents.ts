@@ -1,5 +1,5 @@
 // The documents list's script (/documents, server/pages/documents.ts): times in the reader's own language and zone, the New
-// document picker, a question before deleting, Archive (Unarchive on /documents/archived), the share dialog, and each
+// document picker, a question before deleting, Archive (Unarchive on /documents/archived, Save on /documents/scratch), the share dialog, and each
 // document's pages beneath its row.
 
 import { fastClick } from "../common/fast-click";
@@ -63,8 +63,8 @@ export default function docs(c: DocsConfig): void {
     }
     counted();
   }
-  /** A row's Archive or Unarchive: the operation (archive_document, unarchive_document), as an agent's is; the row goes at once. */
-  function wireArchive(b: HTMLButtonElement) {
+  /** A row's Archive, Unarchive or Save: the operation (data-op: archive_document, say), as an agent's is; the row goes at once. */
+  function wireMove(b: HTMLButtonElement) {
     b.addEventListener("click", () => gone(b.closest("li")!, b.dataset.op!, b.dataset.id));
   }
   // Sharing: each change is saved as it's made (client/common/share-list.ts); the row follows, as any change does.
@@ -287,10 +287,10 @@ export default function docs(c: DocsConfig): void {
     const f = row.querySelector<HTMLFormElement>("form[data-title]"),
       s = row.querySelector<HTMLElement>("button.share"),
       t = row.querySelector<HTMLElement>("button.twist"),
-      a = row.querySelector<HTMLButtonElement>("button.archive");
+      m = row.querySelector<HTMLButtonElement>("button.move");
     if (going.has(row.dataset.live ?? "")) row.hidden = true;
     if (f) wireDelete(f);
-    if (a) wireArchive(a);
+    if (m) wireMove(m);
     if (s) wireShare(s);
     if (t) wireTwist(t);
   }

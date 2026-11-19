@@ -1,7 +1,7 @@
 // The documents list page (/documents): a person's documents, latest edit first.
 
 import type { Listed, LiveRow, LiveRows, Session } from "../platform.ts";
-import type { AccessRequest } from "../directory/index.ts";
+import type { AccessRequest, ListView } from "../directory/index.ts";
 import { asset, assetScripts } from "./assets.ts";
 import { appPage, ICON, link, withEdit } from "./chrome.ts";
 import { homeButton, pageBars } from "./bars.ts";
@@ -22,7 +22,7 @@ function sharedNote(d: Listed): string {
  * One document's row on the list: the full page's, and the one an open list fetches when the row changes
  * (server/news/: data-live is its key, data-sort its place, the latest edit first).
  */
-export function docRow(session: Session, d: Listed, now: number, hours: number | null, archived: boolean): string {
+export function docRow(session: Session, d: Listed, now: number, hours: number | null, view: ListView): string {
   const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
   const mine = d.role == "owner";
   const note =
@@ -32,7 +32,9 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
         ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : d.role == "commenter" ? "can comment" : "view only"}</span>`
         : d.path != null
           ? `<span class="note" title="${esc(d.path)}">On disk</span>`
-          : left != null
+          : left != null && view == "scratch"
+            ? `<span class="note" title="${esc(scratchMakeTip(hours))}">Deleted in ${left}h</span>`
+            : left != null
             ? `<span class="note" title="${hours == null ? "Made when unedited documents were deleted: it still goes unless someone edits it" : `A document nobody edits is deleted ${hours} hours after it's made`}">Unedited · deleted in ${left}h</span>`
             : "";
   const when = new Date(d.modified).toISOString();
@@ -44,16 +46,22 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
       ? `<span class="twist none" aria-hidden="true"></span>`
       : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="${esc(addressOf(d))}" data-title="${esc(d.title)}"${d.role == "owner" || d.role == "editor" ? " data-edit" : ""}>${ICON.chevron}</button>`;
   // Archive (Unarchive on /documents/archived): each person's own, on their permission; the default homepage has none of theirs.
-  const [op, tip] = archived ? ["unarchive_document", "Unarchive"] : ["archive_document", "Archive"];
-  const archive =
-    d.owner == HOME_OWNER
+  // On /documents/scratch, Save in its place (save_document), for the owner. Each takes the row off the list it is on.
+  const [op, tip, icon] =
+    view == "scratch"
+      ? ["save_document", "Save", ICON.save]
+      : view == "archived"
+        ? ["unarchive_document", "Unarchive", ICON.unarchive]
+        : ["archive_document", "Archive", ICON.archive];
+  const move =
+    d.owner == HOME_OWNER || (view == "scratch" && !mine)
       ? ""
-      : `<button type="button" class="act archive" aria-label="${tip} ${esc(d.title)}" data-tip="${tip}" data-op="${op}" data-id="${esc(d.id)}">${archived ? ICON.unarchive : ICON.archive}</button>`;
+      : `<button type="button" class="act move" aria-label="${tip} ${esc(d.title)}" data-tip="${tip}" data-op="${op}" data-id="${esc(d.id)}">${icon}</button>`;
   // The whole row opens the document (the link stretches over it); its buttons sit on top.
   return `  <li data-live="doc:${esc(d.id)}" data-sort="${d.modified}">
     <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(addressOf(d), session)))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${timeAgo(d.modified, now, "en-US", "UTC")}</time>
-    <div class="acts">${archive}${
+    <div class="acts">${move}${
       mine
         ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="${esc(addressOf(d))}">${ICON.share}</button>
     <form data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" data-tip="${remove}">${ICON.delete}</button></form>`
@@ -63,15 +71,16 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
 }
 
 /**
- * The documents view: yours and those shared with you, with new, open, archive, share and delete; or, `archived`
- * (/documents/archived), those you archived, the same rows with Unarchive. Each heading links to the other list.
+ * The documents view: yours and those shared with you, with new, open, archive, share and delete; or, by `view`, those
+ * you archived (/documents/archived), the same rows with Unarchive, or your scratch ones (/documents/scratch), with Save.
+ * The heading of /documents links to the other lists, and theirs back to it.
  */
 export function documentsPage(
   session: Session,
   docs: Listed[],
   now: number,
   hours: number | null,
-  archived = false,
+  view: ListView = "documents",
   /** The requests for access to the person's documents that wait for an answer (server/directory/requests.ts). */
   asks: AccessRequest[] = []
 ): string {
@@ -84,24 +93,38 @@ export function documentsPage(
         )
         .join("")}</ul>`
     : "";
-  const rows = docs.map((d) => docRow(session, d, now, hours, archived)).join("\n");
+  const rows = docs.map((d) => docRow(session, d, now, hours, view)).join("\n");
   const count = plural(docs.length, "document");
-  const [title, other, otherLabel] = archived ? ["Archived", "/documents", "Documents"] : ["Documents", "/documents/archived", "Archived"];
-  const trail = archived ? [{ label: "Documents", href: "/documents" }, { label: "Archived" }] : [{ label: "Documents" }];
-  const empty = archived ? "No archived documents. A document you archive leaves your list and waits here." : "No documents yet.";
+  const [title, empty] =
+    view == "scratch"
+      ? [
+          "Scratch",
+          `No scratch documents. A scratch document is off your list${hours == null ? " until you save it" : `, and deleted after ${hours} hours unless you save it`}.`,
+        ]
+      : view == "archived"
+        ? ["Archived", "No archived documents. A document you archive leaves your list and waits here."]
+        : ["Documents", "No documents yet."];
+  const others =
+    view == "documents"
+      ? [
+          ["/documents/archived", "Archived"],
+          ["/documents/scratch", "Scratch"],
+        ]
+      : [["/documents", "Documents"]];
+  const trail = view == "documents" ? [{ label: title }] : [{ label: "Documents", href: "/documents" }, { label: title }];
   return appPage(
     title,
     inlineStyle("documents") + inlineStyle("scratch"),
     `${pageBars(session, trail, { documents: homeButton(link(HOME_ADDRESS, session)) })}<main>
   <header>
-    <div><div class="heading"><h1>${title}</h1><a class="other-list" href="${esc(link(other, session))}">${otherLabel}</a></div><p class="sub" id="documents-count"${docs.length ? "" : " hidden"}>${count}</p></div>
+    <div><div class="heading"><h1>${title}</h1>${others.map(([to, label]) => `<a class="other-list" href="${esc(link(to, session))}">${label}</a>`).join("")}</div><p class="sub" id="documents-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     <div class="make">
       <div class="make-buttons"><input type="search" class="input find" placeholder="Find" aria-label="Find documents by title or address" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false"${docs.length ? "" : " hidden"}>${newDocButton("pill", "New")}<a class="pill scratch erga-scratch-tip" href="${esc(link("/scratch", session))}" draggable="false" data-tip="${esc(scratchMakeTip(hours))}" aria-description="${esc(scratchMakeTip(hours))}">${PLUS}Scratch</a></div>
     </div>
   </header>
   ${asking}<p class="none" id="documents-none" role="status" hidden></p>
   <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>
-  <ol class="rows" data-live-kind="doc" data-live-view="${archived ? "documents-archived" : "documents"}" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
+  <ol class="rows" data-live-kind="doc" data-live-view="${view == "documents" ? view : `documents-${view}`}" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
   <p class="empty"${docs.length ? " hidden" : ""}>${empty}</p>
 </main>
 <dialog id="share" aria-labelledby="share-title" data-me="${esc(session.login.toLowerCase())}">
@@ -125,19 +148,19 @@ ${inlineScript("documents", { close: ICON.close, tree: asset("pages-tree.js"), q
 }
 
 /**
- * The rows of /documents (or, `archived`, of /documents/archived) that `keys` name ("doc:<id>"), as the person's list has them now
- * (null: off it, archived or back), for an open list (server/news/).
+ * The rows of /documents (or of the list `view`: /documents/archived, /documents/scratch) that `keys` name ("doc:<id>"), as the
+ * person's list has them now (null: off it: archived or back, saved, deleted), for an open list (server/news/).
  */
 export const documentsRows =
-  (archived: boolean): LiveRows =>
+  (view: ListView): LiveRows =>
   async (platform, session, keys) => {
   const ids = keys.map((k) => k.slice("doc:".length));
   const [docs, hours] = await Promise.all([
-    platform.docs.list(session.login, { ids, archived }),
+    platform.docs.list(session.login, { ids, view }),
     platform.directory.config.get("delete_docs_after_hours"),
   ]);
   const now = Date.now();
   const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
-  for (const d of docs) out[`doc:${d.id}`] = { html: docRow(session, d, now, hours, archived), sort: d.modified };
+  for (const d of docs) out[`doc:${d.id}`] = { html: docRow(session, d, now, hours, view), sort: d.modified };
   return out;
 };

@@ -95,7 +95,8 @@ this one, and nothing ${owner} said in another.
 - documents: list_documents, create_document, delete_document, rename_document and
   share_document: the documents list (/documents) and sharing (its owner's). create_document
   with scratch makes a scratch document (/scratch: off the list, deleted as unedited ones are);
-  save_document keeps one. archive_document moves one off ${owner}'s list into their archive
+  save_document keeps one; list_documents with scratch lists those not deleted yet
+  (/documents/scratch). archive_document moves one off ${owner}'s list into their archive
   (/documents/archived), for them only; unarchive_document puts it back; list_documents with
   archived lists the archive. list_documents gives the newest 20 (limit): its moreDocuments
   says how many it left out, so ask for more, or use query, before you say there is no such

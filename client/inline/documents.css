@@ -66,7 +66,7 @@
   #share .buttons { justify-content: space-between; }
   /* The New menu (server/pages/templates.ts) follows the system, as this page does (:root: over its own style, which comes after this). */
   @media (prefers-color-scheme: dark) { :root .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); } }
-  /* The heading, and the small link to the other list after it (/documents/archived, or back to /documents). */
+  /* The heading, and the small links to the other lists after it (/documents/archived, /documents/scratch; or back to /documents). */
   .heading { display: flex; align-items: baseline; gap: 12px; }
   .other-list { font-size: 13px; font-weight: 500; color: var(--soft); text-decoration: none; transition: color 120ms ease; }
   .other-list:hover { color: var(--link); }
