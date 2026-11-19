@@ -5,7 +5,13 @@
    The glass: the page's colour at 76% (the menus: 90%), a blur of what is under it, a white shine on the top half, a white
    edge inside, and a soft shadow. On a white or near-white page (page-white) the glass is tinted 3.5% and its shadow
    halved, so it still reads as a surface; on a dark page it is dark glass. Not a filter on a wrapper: a filter stops the
-   blur. The agent takes the same glass (client/style.css), and the editor's cards (client/styles/glass.css). */
+   blur. The agent takes the same glass (client/style.css), and the editor's cards (client/styles/glass.css).
+
+   Trap: the save mark (.save-state, .save-mark and its picture) gets no animation and no transition, but the circle's
+   turn while it saves. With a fade-in of the mark as the editor starts, and the circle's animation there but paused, the browser at
+   times stopped giving the pointer to the document's page after a reload at a phone's width: every move went to the
+   viewer, for good (e2e/shell/panels.e2e.ts failed in 1 whole run of 4; without them, in 0 of 8). The cause in the
+   browser is not known. tests/unsaved.test.ts holds this. */
 :root {
   /* The bars' bottom edge, from the window's top: a sticky header on a page that scrolls under the bars sticks here. */
   --bars-top: max(8px, env(safe-area-inset-top)); --bars-height: 42px; --bars-bottom: calc(var(--bars-top) + var(--bars-height));
@@ -97,8 +103,8 @@ button.erga-view-button { margin: 0; padding: 0; border: 0; background-color: tr
 /* The save mark (server/pages/bars.ts, SAVE_MARK; client/common/save-mark.ts), left of the buttons' bar and touching it,
    in its band, outside its glass: a gray check (saved), a gray circle (saving), a red x (not saved). The circle turns
    while something saves: a faint ring, and a quarter of it that goes round. The check comes back a moment after the last
-   save, so the circle holds, and turns on, while a person types. Where the person asked for no motion
-   (prefers-reduced-motion), three dots stand still in the circle's place. A hover (.over) says which it is; on the red x, a hover
+   save (the mark's state holds the circle: client/common/save-mark.ts, HOLD_MS), so the circle turns on while a person
+   types. Where the person asked for no motion (prefers-reduced-motion), three dots stand still in the circle's place. A hover (.over) says which it is; on the red x, a hover
    or a click (.open) opens the card that says what failed. */
 .save-state { --bad: #d92d20; position: absolute; right: 100%; top: 0; bottom: 0; display: flex; align-items: center; }
 html.page-dark body .save-state { --bad: #ff6b5e; }
@@ -107,18 +113,14 @@ html.page-dark body .save-state { --bad: #ff6b5e; }
 .save-mark:focus-visible { outline: 2px solid var(--caret, #3b7cf0); outline-offset: 1px; }
 .save-mark svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .save-mark svg > * { opacity: 0; }
-.save-state[data-at="saved"] .save-mark svg > * { transition: opacity 160ms ease 320ms; }
-.save-ring { transform-origin: 8px 8px; animation: erga-save-turn 800ms linear infinite paused; }
+.save-ring { transform-origin: 8px 8px; }
 .save-ring .save-track { stroke-opacity: 0.3; }
-.save-state[data-at="saving"] .save-ring { animation-play-state: running; }
-/* (It turns on until the check has taken its place.) */
-.save-state[data-at="saved"] .save-mark .save-ring { transition: opacity 160ms ease 320ms, animation-play-state 0s 480ms allow-discrete; }
+.save-state[data-at="saving"] .save-ring { animation: erga-save-turn 800ms linear infinite; }
 @keyframes erga-save-turn { to { transform: rotate(360deg); } }
 .save-dots circle { fill: currentColor; stroke: none; }
 .save-state[data-at="saved"] .save-check, .save-state[data-at="saving"] .save-ring, .save-state[data-at="error"] .save-x { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
-  .save-ring { animation: none; }
-  .save-state[data-at="saving"] .save-ring { opacity: 0; }
+  .save-state[data-at="saving"] .save-ring { animation: none; opacity: 0; }
   .save-state[data-at="saving"] .save-dots { opacity: 1; }
 }
 .save-state[data-at="error"] .save-mark { color: var(--bad); cursor: pointer; }
@@ -139,7 +141,7 @@ html.page-dark body .erga-bar .save-card { background: color-mix(in srgb, #1c1c1
 .save-card p { margin: 0; }
 .save-card p + .save-title { margin-top: 8px; }
 .save-card .save-title { font-weight: 550; color: var(--fg); }
-@media (prefers-reduced-motion: reduce) { .save-mark svg > *, .erga-bar .save-card { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .erga-bar .save-card { transition: none !important; } }
 
 /* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (.quick: the buttons) open
    out of it to its left as its menu opens under it, and close back into it (client/common/quick.ts).
