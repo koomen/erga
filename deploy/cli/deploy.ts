@@ -22,7 +22,7 @@
 // named, the checkout's own deploys. In a clone that a test gives, the repository is asked as always.
 
 import * as Effect from "effect/Effect";
-import { type Carry, liveDeployment, liveRelease, rollbackTo, settledHealth } from "../deployer/cloudflare";
+import { type Carry, liveDeployment, liveRelease, rollbackTo } from "../deployer/cloudflare";
 import { deploy } from "../deployer/deploy";
 import { fetchRelease, releaseAddress } from "../deployer/registry";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../deployer/cloudflare-api";
@@ -51,7 +51,7 @@ import {
   withEntry,
   writeConfig,
 } from "./config";
-import { previousVersion } from "../deployer/rollback";
+import { rollback } from "../deployer/rollback";
 import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
 import { heldSecrets, putSpec, specDiff, specOf, specOn, sqlOf, startInstanceJob } from "./instance";
@@ -419,63 +419,35 @@ export interface RollbackOptions {
   from?: From;
 }
 
-/** Puts back the Worker version from before the instance's last deploy: no build, the database as it is. The result: the version it runs then. */
-export async function rollbackInstance(o: RollbackOptions): Promise<string | null> {
+/**
+ * Rolls the instance back to what it ran before its last deploy, with the deployer's own steps (deploy/deployer/
+ * rollback.ts): no build, the database as it is. The result: the release that it runs then.
+ */
+export async function rollbackInstance(o: RollbackOptions): Promise<string> {
   const config = readConfig(o.dir);
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
   const aws = isAws(entry) ? entry : null;
   const { net, token, quick } = aws ? { net: globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
-  const command = `bun erga rollback ${o.host}`;
-  const sql = await sqlOf(entry, { cf: new Cloudflare(token, net) });
-  const job = await startInstanceJob(sql, { kind: "rollback", command, source: o.from ?? "terminal", host: o.host, print: o.print });
+  const cf = new Cloudflare(token, net);
+  const sql = await sqlOf(entry, { cf });
+  const job = await startInstanceJob(sql, {
+    kind: "rollback",
+    command: `bun erga rollback ${o.host}`,
+    source: o.from ?? "terminal",
+    host: o.host,
+    print: o.print,
+  });
   try {
-    if (aws) {
-      const { rollbackAws } = await import("../aws/deploy");
-      // The machine's own script waits until the release answers its health check, healthy, on the loopback.
-      const now = await rollbackAws(aws, job.log, o.ask);
-      job.log(`${o.host} runs release ${now} now, health ok.`);
-      await job.end();
-      return now;
-    }
-    const e = entry as CloudflareEntry;
-    const cf = new Cloudflare(token, net);
-    const list = await cf.call<{ deployments: { created_on: string; versions: { version_id: string; percentage: number }[] }[] }>(
-      "GET",
-      `/accounts/${e.account}/workers/scripts/${e.worker}/deployments`,
-      `read ${e.worker}'s deployments`
-    );
-    const sorted = [...(list?.deployments ?? [])].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on));
-    const p = previousVersion(sorted);
-    if (!p) throw new Error(`${e.worker} has no deployment of another version to go back to.`);
-    // The release of each version, from the version's own bindings: nothing asks the instance.
-    const [before, to] = await Promise.all([p.now, p.before].map((v) => liveRelease(cf, e.account, e.worker, v)));
-    job.log(`${o.host} (Worker ${e.worker}) runs release ${before.version ?? "?"}, Worker version ${p.now}.`);
-    job.log(
-      `Rollback goes to the Worker version before it: ${p.before}${to.version ? ` (release ${to.version})` : ""}. The database stays as it is.`
-    );
-    if (o.ask && !o.ask("Roll back now? [y/N]")) throw new Error("Not rolled back.");
-    await rollbackTo(cf, e, p.before, command);
-    job.log(`${o.host} runs release ${to.version ?? "?"} now. Its health row comes within a minute...`);
-    // Its health: the row that the release writes into its database within a minute (a release from before the row writes none).
-    const h =
-      to.version && to.database
-        ? await runWith(
-            o.sleep ?? quick.sleep,
-            settledHealth(cf, `/accounts/${e.account}`, to.database, to.version, quick.waitMs ?? 180_000)
-          )
-        : { healthy: null, why: "the version names no release" };
-    job.log(`${o.host}: health ${h.healthy ? "ok" : h.healthy === false ? `FAIL (${h.why})` : `unknown (${h.why})`}.`);
-    await job.end(
-      h.healthy
-        ? undefined
-        : h.healthy === false
-          ? "the health check fails after the rollback"
-          : `no health row after the rollback: ${h.why}`
-    );
-    return to.version;
+    const cloud = aws ? { aws: (await import("../aws/deploy")).awsApi(aws) } : { cloudflare: cf };
+    // The person's yes, after the log says where the rollback goes.
+    const ok = Effect.sync(() => !o.ask || o.ask("Roll back now? [y/N]"));
+    const now = await runWith(o.sleep ?? quick.sleep, rollback(specOf(entry, []), { ...cloud, log: job.log, waitMs: quick.waitMs, ok }));
+    job.log(`${o.host} runs release ${now} now, health ok.`);
+    await job.end();
+    return now;
   } catch (e) {
     await job.end((e as Error).message);
-    throw e;
+    throw new Error((e as Error).message);
   }
 }

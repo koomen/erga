@@ -148,7 +148,8 @@ export const look = (ports: LookPorts): Effect.Effect<string> =>
         return yield* inJob(startOf(ask), `The ${ask.kind} that ${ask.by} asked for`, (job) =>
           Effect.gen(function* () {
             if (!(yield* takeAsk(sql, ask))) return yield* wrong("The ask changed before its job started: nothing is done.");
-            if (ask.kind == "rollback") return yield* rollback(spec, { ...ports.cloud, log: job.line });
+            // The admin said yes in the app.
+            if (ask.kind == "rollback") return void (yield* rollback(spec, { ...ports.cloud, log: job.line, ok: Effect.succeed(true) }));
             job.commit(ask.sha);
             // A commit that the look saw on the branch is on it. For an older one, GitHub's API says (github.ts).
             const seen = commits.some((c) => c.sha == ask.sha);

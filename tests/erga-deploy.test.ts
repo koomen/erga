@@ -316,7 +316,7 @@ describe("what an instance runs comes from Cloudflare, never from the instance",
     // sees that version's commit.
     const lines: string[] = [];
     expect(await rollbackInstance({ dir, host: "next.example.com", net, print: (l) => lines.push(l) })).toBe(SHA1.slice(0, 12));
-    expect(lines.at(-1)).toBe("next.example.com: health ok.");
+    expect(lines.at(-1)).toBe(`next.example.com runs release ${SHA1.slice(0, 12)} now, health ok.`);
     expect(await ask(next)).toEqual({ version: SHA1.slice(0, 12), healthy: true });
     // A release whose own report says that a check fails.
     mock.state.unhealthy = [SHA1.slice(0, 12)];

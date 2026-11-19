@@ -78,8 +78,22 @@ export async function factsOnAws(
 }
 
 /** The releases the machine ran, oldest first: the last one runs now. */
-export async function deployedReleases(e: AwsEntry): Promise<string[]> {
-  return (await onMachine(awsOf(e), e.aws.machine, deployedScript(), 60)).split("\n").filter(Boolean);
+/**
+ * AWS's calls of a deploy or a rollback, for one instance, with the AWS CLI. `first`: SQL that the machine runs once
+ * that release answers (setup's first admin): it goes with that release only, never with one that a rollback loads.
+ */
+export function awsApi(e: AwsEntry, first?: { version: string; sql: string }): AwsApi {
+  const aws = awsOf(e);
+  const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
+  return {
+    putRelease: (r, vars) => Effect.flatMap(celldTgz(r, vars), (tgz) => tried(() => putRelease(aws, e.aws.bucket, tgz, r.version))),
+    deployed: tried(async () => (await onMachine(aws, e.aws.machine, deployedScript(), 60)).split("\n").filter(Boolean)),
+    load: (version) =>
+      tried(() =>
+        onMachine(aws, e.aws.machine, deployScript({ ...where, version, ...(version == first?.version ? { first: first.sql } : {}) }))
+      ),
+    setLive: (version) => tried(() => putLive(aws, e.aws.stack, version)),
+  };
 }
 
 /**
@@ -95,36 +109,12 @@ export async function deployToAws(
   onBranch: (version: string) => boolean,
   first?: string
 ): Promise<void> {
-  const aws = awsOf(e);
-  const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
-  const api: AwsApi = {
-    putRelease: (r, vars) => Effect.flatMap(celldTgz(r, vars), (tgz) => tried(() => putRelease(aws, e.aws.bucket, tgz, r.version))),
-    deployed: tried(() => deployedReleases(e)),
-    // Setup's first SQL goes with the new release only, never with the release that a rollback loads.
-    load: (version) =>
-      tried(() => onMachine(aws, e.aws.machine, deployScript({ ...where, version, ...(version == release.version ? { first } : {}) }))),
-    setLive: (version) => tried(() => putLive(aws, e.aws.stack, version)),
-  };
   const spec = { repo: e.repo, branch: e.branch, target: { kind: "aws" as const, ...e.aws }, settings: e.vars };
-  const ports = { aws: api, onBranch: (version: string) => Effect.sync(() => onBranch(version)), log };
+  const aws = awsApi(e, first ? { version: release.version, sql: first } : undefined);
+  const ports = { aws, onBranch: (version: string) => Effect.sync(() => onBranch(version)), log };
   await Effect.runPromise(deploy(spec, release, ports)).catch((err) => {
     throw new Error((err as Error).message);
   });
-}
-
-/** Loads the release the machine ran before the one that runs: the database as it is. The result: the release it runs then. */
-export async function rollbackAws(e: AwsEntry, log: (line: string) => void, ask?: (q: string) => boolean): Promise<string> {
-  const list = await deployedReleases(e);
-  const now = list.at(-1),
-    before = list.at(-2);
-  if (!now || !before) throw new Error(`${e.host} has no release before ${now ?? "the one it runs"} to go back to.`);
-  log(`${e.host} runs release ${now}. Rollback goes to the release before it: ${before}. The database stays as it is.`);
-  if (ask && !ask("Roll back now? [y/N]")) throw new Error("Not rolled back.");
-  const aws = awsOf(e);
-  const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
-  await onMachine(aws, e.aws.machine, deployScript({ ...where, version: before }));
-  await putLive(aws, e.aws.stack, before);
-  return before;
 }
 
 const SSM_OUTPUT = 24_000;

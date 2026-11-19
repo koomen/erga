@@ -16,6 +16,15 @@ import type { CloudflareTarget, Spec } from "./spec";
 /** How long a rollback waits for the health row of the release that runs again. */
 const HEALTH_MS = 180_000;
 
+/** What a rollback acts through: the API of the target's cloud, the job's log, and who says yes. */
+export interface RollbackPorts extends Pick<Ports, "cloudflare" | "aws" | "log" | "waitMs"> {
+  /**
+   * Whether the rollback goes on, asked after the log says where it goes: a person at a terminal answers, and the
+   * deployer in the cloud says yes (an admin asked for it in the app).
+   */
+  ok: Effect.Effect<boolean>;
+}
+
 const Deployments = Schema.Struct({
   deployments: Schema.Array(
     Schema.Struct({
@@ -37,7 +46,7 @@ export function previousVersion(
 
 const wrong = (message: string) => new DeployError({ message });
 
-const onCloudflare = (cf: Cloudflare, t: CloudflareTarget, log: Ports["log"]) =>
+const onCloudflare = (cf: Cloudflare, t: CloudflareTarget, { log, ok, waitMs }: RollbackPorts) =>
   Effect.gen(function* () {
     const list = yield* cf.request(
       "GET",
@@ -58,42 +67,44 @@ const onCloudflare = (cf: Cloudflare, t: CloudflareTarget, log: Ports["log"]) =>
     log(
       `The rollback goes to the version before it: ${p.before}${to.version ? ` (release ${to.version})` : ""}. The database stays as it is.`
     );
+    if (!(yield* ok)) return yield* wrong("Not rolled back.");
     yield* tried(() => rollbackTo(cf, t, p.before, "rollback"));
     log(`The Worker runs release ${to.version ?? "?"} again. Its health row comes within a minute...`);
     if (!to.version || !to.database) return yield* wrong("No health row after the rollback: the version names no release.");
-    const h = yield* settledHealth(cf, `/accounts/${t.account}`, to.database, to.version, HEALTH_MS);
+    const h = yield* settledHealth(cf, `/accounts/${t.account}`, to.database, to.version, waitMs ?? HEALTH_MS);
     if (h.healthy !== true)
       return yield* wrong(
         h.healthy === false ? `The health check fails after the rollback: ${h.why}` : `No health row after the rollback: ${h.why}`
       );
     log(`Release ${to.version} is healthy.`);
+    return to.version;
   });
 
-const onAws = (aws: AwsApi, log: Ports["log"]) =>
+const onAws = (aws: AwsApi, { log, ok }: RollbackPorts) =>
   Effect.gen(function* () {
     const ran = yield* aws.deployed;
     const now = ran.at(-1);
     const before = ran.at(-2);
     if (!now || !before) return yield* wrong(`The machine has no release before ${now ?? "the one that it runs"} to go back to.`);
     log(`The machine runs release ${now}. The rollback goes to the release before it: ${before}. The database stays as it is.`);
+    if (!(yield* ok)) return yield* wrong("Not rolled back.");
     // The machine's own script waits until the release answers its health check, healthy.
     const said = yield* aws.load(before);
     yield* aws.setLive(before);
     log(`The machine runs release ${before} again: ${said.trim().split("\n").at(-1) ?? ""}`);
+    return before;
   });
 
 /**
- * Rolls the instance of `spec` back to what it ran before its last deploy, each step said in the log. It fails when
- * there is nothing to go back to, or when what runs again is not healthy. It takes no lock: its caller does.
+ * Rolls the instance of `spec` back to what it ran before its last deploy, each step said in the log: the release that
+ * it runs then. It fails when there is nothing to go back to, when `ok` says no, or when what runs again is not
+ * healthy. It takes no lock: its caller does.
  */
-export const rollback = (
-  spec: Pick<Spec, "target">,
-  ports: Pick<Ports, "cloudflare" | "aws" | "log">
-): Effect.Effect<void, DeployError> => {
+export const rollback = (spec: Pick<Spec, "target">, ports: RollbackPorts): Effect.Effect<string, DeployError> => {
   const target = spec.target;
   if (target.kind == "cloudflare")
     return ports.cloudflare
-      ? onCloudflare(ports.cloudflare, target, ports.log)
+      ? onCloudflare(ports.cloudflare, target, ports)
       : Effect.fail(wrong("The instance is on Cloudflare, and this rollback has no Cloudflare API."));
-  return ports.aws ? onAws(ports.aws, ports.log) : Effect.fail(wrong("The instance is on AWS, and this rollback has no AWS API."));
+  return ports.aws ? onAws(ports.aws, ports) : Effect.fail(wrong("The instance is on AWS, and this rollback has no AWS API."));
 };

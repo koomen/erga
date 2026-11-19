@@ -357,17 +357,26 @@ describe("a rollback on AWS", () => {
   test("the machine loads the release before the one that it runs; with none before, nothing is done", async () => {
     const log: string[] = [];
     const { aws, calls } = machine(["aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"]);
-    await run(rollback({ target }, { aws, log: (line) => log.push(line) }));
+    await run(rollback({ target }, { aws, log: (line) => log.push(line), ok: Effect.succeed(true) }));
     expect(calls).toEqual(["load bbbbbbbbbbbb", "setLive bbbbbbbbbbbb"]);
     expect(log).toEqual([
       "The machine runs release cccccccccccc. The rollback goes to the release before it: bbbbbbbbbbbb. The database stays as it is.",
       "The machine runs release bbbbbbbbbbbb again: health ok",
     ]);
     const first = machine(["aaaaaaaaaaaa"]);
-    const none = await run(Effect.flip(rollback({ target }, { aws: first.aws, log: () => {} })));
+    const none = await run(Effect.flip(rollback({ target }, { aws: first.aws, log: () => {}, ok: Effect.succeed(true) })));
     expect(none.message).toBe("The machine has no release before aaaaaaaaaaaa to go back to.");
     expect(first.calls).toEqual([]);
-    expect((await run(Effect.flip(rollback({ target }, { log: () => {} })))).message).toBe(
+    // A person who says no at the terminal: the log says where the rollback goes, and nothing is loaded.
+    const no = machine(["aaaaaaaaaaaa", "bbbbbbbbbbbb"]);
+    const said: string[] = [];
+    const stopped = await run(
+      Effect.flip(rollback({ target }, { aws: no.aws, log: (line) => said.push(line), ok: Effect.succeed(false) }))
+    );
+    expect(stopped.message).toBe("Not rolled back.");
+    expect(said).toHaveLength(1);
+    expect(no.calls).toEqual([]);
+    expect((await run(Effect.flip(rollback({ target }, { log: () => {}, ok: Effect.succeed(true) })))).message).toBe(
       "The instance is on AWS, and this rollback has no AWS API."
     );
   });
