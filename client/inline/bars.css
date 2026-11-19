@@ -85,6 +85,8 @@ html.page-dark body :is(.erga-bar, .chrome) {
 html.page-dark .erga-bar .erga-account-menu a { color: #cacad2; }
 .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
   transition: color 150ms ease, background-color 150ms ease; }
+/* A hidden one (the zoom's level at 100%) takes no room: also on a published site, which has no client/style.css. */
+.erga-view-button[hidden] { display: none; }
 .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
 /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
 .erga-view-button[aria-pressed="true"] { color: var(--caret, #3b7cf0); }

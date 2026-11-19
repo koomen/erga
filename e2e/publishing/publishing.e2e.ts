@@ -803,7 +803,7 @@ journey("the Erga domain", () => {
     expect(await js<string>(`document.querySelector(${JSON.stringify(`${indexRow} .et-name`)}).getAttribute("href")`)).toBe("/_home?edit");
   });
 
-  test("signed out, / has Clone and Sign in with its menu, and no Edit", async ({ tab }) => {
+  test("signed out, / has Clone and Sign in with its menu, and no Edit; its bar has no empty slot", async ({ tab }) => {
     const p = tab.page;
     await openRoot(p, main);
     const id = docOf((await front(main)).html);
@@ -815,9 +815,11 @@ journey("the Erga domain", () => {
           edit: r?.querySelector(".erga-edit-button")?.getAttribute("href") ?? null,
           account: (r?.querySelector(".erga-account") as HTMLElement | null)?.dataset.ergaAccount ?? null,
           inBody: !!document.body.querySelector("erga-controls"),
+          // The bar's hidden buttons that take room all the same (the zoom's level).
+          empty: [...(r?.querySelectorAll(".erga-view-buttons [hidden]") ?? [])].filter((e) => e.getClientRects().length).map((e) => e.id),
         };
       });
-    expect(await controls()).toEqual({ clone: `/new?from=${id}`, edit: null, account: "out", inBody: false });
+    expect(await controls()).toEqual({ clone: `/new?from=${id}`, edit: null, account: "out", inBody: false, empty: [] });
     const menuHidden = () =>
       p.evaluate(() => (document.querySelector("erga-controls")!.shadowRoot!.querySelector(".erga-account-menu") as HTMLElement).hidden);
     await p.evaluate(() =>
