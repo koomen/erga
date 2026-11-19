@@ -437,6 +437,13 @@ journey("the agent on the documents' list", () => {
     });
     await agentClosed(page);
     await page.addInitScript(FIRST_PAINT);
+    // The window's error events of this kind (Chromium keeps them from the page's errors; WebKit reports them).
+    await page.addInitScript(() =>
+      addEventListener("error", (e) => {
+        const w = window as unknown as { loops?: number };
+        if (String((e as ErrorEvent).message).startsWith("ResizeObserver loop")) w.loops = (w.loops ?? 0) + 1;
+      })
+    );
     await page.goto(docs());
     await until(
       () => page.evaluate(() => document.getElementById("agent-model")!.textContent == "script (test model)"),
@@ -453,6 +460,9 @@ journey("the agent on the documents' list", () => {
     address = (await runTool<{ address: string }>(s.root, "create_document", { title: "Keep me" }, { user: LISA })).result!.address;
     await page.click("#agent-fab");
     await agentOn(page);
+    // The panel's box takes its size with no error: no observer's call there changes a size that an observer watches.
+    await settle(page);
+    expect(await page.evaluate(() => (window as unknown as { loops?: number }).loops ?? 0)).toBe(0);
 
     // The card shows the sentence and the call itself, whole: a long argument is cut, and opens on a click. It is the
     // model's text: none of it is markup.

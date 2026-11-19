@@ -31,7 +31,7 @@ export interface Seen {
   taken: string | null;
   /** AWS: the stack's status and outputs, and each resource of the template on disk ("Name (Type)"). */
   stack: { status: string | null; outputs: Record<string, string>; resources: string[] } | null;
-  /** The app step's secret is there: the GitHub App's, or (single sign-on on AWS) the client's in Secrets Manager. */
+  /** The app step's secret is there: the GitHub App's, or (single sign-on on AWS) the client's in Parameter Store. */
   app: boolean;
   /** The server as its platform shows it: the release that serves, its health, and whether its settings are the answers' sign-in. */
   live: { version: string | null; healthy: boolean; signIn: "ok" | { bad: string } | null } | null;
@@ -97,6 +97,8 @@ export function missing(a: Answers): string[] {
   if (sso(a) && aws && !a.issuer) need.push("--issuer <URL>: the issuer URL of the organization's sign-in (OpenID Connect).");
   if (sso(a) && aws && !a.client) need.push("--client <ID>: Erga's client ID at the organization's sign-in.");
   if (a.emailClaim && !(sso(a) && aws)) need.push("--email-claim is only for --sign-in sso on AWS: leave it out.");
+  if (a.signInDays && !(sso(a) && aws))
+    need.push("--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
   return need;
 }
@@ -194,7 +196,7 @@ export function planText(a: Answers, s: Seen): string[] {
   const email = emailOf(a);
   const signIn = sso(a)
     ? a.where == "aws"
-      ? `• your organization's sign-in, at a load balancer in front (you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"})${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}`
+      ? `• your organization's sign-in, at the gate in front of Erga (you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"})${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}${a.signInDays ? `; a sign-in lasts ${a.signInDays} days` : ""}`
       : "• your organization's sign-in, with Cloudflare Access"
     : "• a GitHub App, for sign-in (you click one button)";
   const tracks = `• it tracks ${a.branch} of ${a.repo}: a deploy gives it that branch's newest commit`;
@@ -205,7 +207,9 @@ export function planText(a: Answers, s: Seen): string[] {
         ? "• your own network"
         : `• a new network, with a ${a.egress == "nat-gateway" ? "NAT gateway" : "small NAT machine"}`,
       "• one machine (t4g.small), with no public address",
-      sso(a) ? "• an S3 bucket, a load balancer and its certificate" : "• an S3 bucket, 2 CloudFront distributions and the certificates",
+      sso(a)
+        ? "• an S3 bucket, 2 CloudFront distributions with the gate's functions, and the certificates"
+        : "• an S3 bucket, 2 CloudFront distributions and the certificates",
       `• the documents' pages on ${pagesOf(a)}`,
       signIn,
       tracks,

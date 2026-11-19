@@ -292,12 +292,15 @@ let roomStart: Promise<ArrayBuffer | null> = Promise.resolve(null);
 async function start(run: number) {
   performance.mark("erga:init");
   const m = editing()!;
-  roomStart = fetch(`${m.doc}/api/start?${new URLSearchParams({ key: m.key })}`).then(
+  // On this page's own origin (a document's page calls no other): the document's address there, /d/<id>.
+  const here = location.origin + new URL(m.doc).pathname;
+  roomStart = fetch(`${here}/api/start?${new URLSearchParams({ key: m.key })}`).then(
     (r) => (r.ok ? r.arrayBuffer() : null),
     () => null
   );
-  // Erga's worker on this origin, for a reload offline (only an origin of this document's own has it: never a shared host).
-  const offline = keepOffline(null);
+  // Erga's worker on this origin, for a reload offline (only an origin of this document's own has it: never a shared
+  // host; and not where the server says a worker can't work: server/documents/pages-origin.ts, workerFor).
+  const offline = reader.worker ? keepOffline(null) : Promise.resolve(false);
   if (document.readyState != "complete") await new Promise((r) => addEventListener("load", r, { once: true }));
   own = await offline;
   send({ type: "loaded", run });
@@ -307,7 +310,9 @@ async function start(run: number) {
 function join(run: number) {
   const m = editing()!;
   if (own) pageCopy ??= keepPage(SHELL, () => collab?.current() ?? "");
-  const room = `${m.doc.replace(/^http/, "ws")}/api/room`;
+  // On this page's own origin (a document's page calls no other): the document's address there, /d/<id>.
+  const here = location.origin + new URL(m.doc).pathname;
+  const room = `${here.replace(/^http/, "ws")}/api/room`;
   const c = (collab = new Collab({
     start: roomStart,
     // (Only the room: the person's events, the agent's asks among them, are the viewer's to hear.)
@@ -711,7 +716,7 @@ function person(login: string) {
 }
 
 /**
- * The comment ops, from the page (comments.ts): the read, resolve and reopen. POST /api/tools/<op> on the viewer's
+ * The comment ops, from the page (comments.ts): the read, resolve and reopen. POST /api/tools/<op> on this page's own
  * origin with the edit key, which names the person (server/api.ts, keyedComment). On this page, of this document. (A
  * comment, a reply and an edit go from the viewer's box, with the person's session: client/common/comment-box.ts.)
  */
@@ -720,7 +725,7 @@ async function commentOp(op: "comment" | "comments", args: Record<string, unknow
   if (!m) throw new Error("The editor stopped.");
   const url = new URL(m.doc),
     id = url.pathname.split("/").pop()!;
-  const r = await fetch(`${url.origin}/api/tools/${op}?${new URLSearchParams({ doc: id, key: m.key })}`, {
+  const r = await fetch(`/api/tools/${op}?${new URLSearchParams({ doc: id, key: m.key })}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...args, document: id, page: m.path }),

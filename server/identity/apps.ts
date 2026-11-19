@@ -30,7 +30,7 @@
 //      If they fail, nothing changes.
 //   2. If the app in use works, the new values wait ("pending"): sign-in keeps
 //      the values that work until an admin signs in with the new ones (Test
-//      sign-in, server/identity/oauth.ts). Only that real sign-in proves the callback URL,
+//      sign-in, server/identity/sign-in.ts). Only that real sign-in proves the callback URL,
 //      which a provider checks during a sign-in only.
 //   3. If the app in use doesn't work (or there is none), there is nothing to
 //      lose: the new values are used at once.
@@ -52,8 +52,7 @@ import * as Schema from "effect/Schema";
 import type { Act } from "../../shared/attribution.ts";
 import { sha256 } from "../../shared/bytes.ts";
 import { KeyBox, type SignInChange } from "../directory/index.ts";
-import { type AppCheck, type AppValues, type Provider, PROVIDERS } from "./providers.ts";
-import type { ProxyStatus } from "./proxy.ts";
+import { type AppCheck, type AppValues, CALLBACK_PATH, type Provider, PROVIDERS } from "./providers.ts";
 
 /** A value an admin pasted that can't be used; the message says why, for a person or an agent to act on. */
 export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", { message: Schema.String }) {
@@ -302,7 +301,7 @@ export async function statusOf(c: AppContext, o: { origin: string; dev: boolean;
     provider: c.provider,
     origin: o.origin,
     homepageUrl: o.origin,
-    callbackUrl: `${o.origin}${PROVIDERS[c.provider].callbackPath}`,
+    callbackUrl: `${o.origin}${CALLBACK_PATH}`,
     dev: o.dev,
     inUse: {
       clientId: now.clientId || null,
@@ -327,13 +326,11 @@ export type By = Act & { admin?: boolean };
  * How people sign in on a server, as the Sign-in page and the admin agent see it: its mode (mode.ts), and that
  * mode's own status. Never a secret.
  */
-export type SignInStatus =
-  | { mode: "oauth"; apps: Record<Provider, AuthStatus>; providers: ProvidersOn }
-  | { mode: "proxy"; proxy: ProxyStatus };
+export type SignInStatus = { mode: "oauth"; apps: Record<Provider, AuthStatus>; providers: ProvidersOn } | { mode: "gate" };
 
 /**
  * What the Sign-in page and the admin agent do, on this server only. Admins only. No call answers a secret.
- * All but `status` are the OAuth mode's: in the proxy mode they refuse (the deploy sets the proxy: nothing to change here).
+ * All but `status` are the OAuth mode's: with a gate in front they refuse (the deploy sets the gate: nothing to change here).
  */
 export interface AuthOps {
   /** `by`: who asks, with their admin power (Users.actsAsAdmin): each call checks it. */

@@ -29,6 +29,16 @@
     "yjs": "13.6.33"
   },
   "devDependencies": {
+    "@babel/core": "8.1.2",
+    "@babel/plugin-transform-destructuring": "8.0.5",
+    "@babel/plugin-transform-for-of": "8.0.7",
+    "@babel/plugin-transform-logical-assignment-operators": "8.1.2",
+    "@babel/plugin-transform-nullish-coalescing-operator": "8.0.1",
+    "@babel/plugin-transform-object-rest-spread": "8.0.1",
+    "@babel/plugin-transform-optional-catch-binding": "8.0.1",
+    "@babel/plugin-transform-optional-chaining": "8.0.5",
+    "@babel/plugin-transform-parameters": "8.0.5",
+    "@babel/plugin-transform-spread": "8.0.8",
     "@biomejs/biome": "2.6.3",
     "@cloudflare/vite-plugin": "2.0.0-beta.sha-ad79608dd",
     "@e2e-dev/web": "0.13.0",

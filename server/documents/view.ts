@@ -33,6 +33,7 @@ import { type DocRow, ID, OWNER, roleMay } from "../directory/index.ts";
 import type { Role } from "../../document/model/access.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
+import { handOff } from "../identity/index.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
 import {
   accountHtml,
@@ -398,8 +399,9 @@ async function render(
     [BUILD_HEADER]: build,
     [OWN_ACCOUNT]: "1",
     Vary: "Cookie",
-    // The page's origin, connected to as early as can be (an early hint, where the edge sends them).
-    Link: `<${origin}>; rel=preconnect`,
+    // The page's origin, connected to as early as can be (an early hint, where the edge sends them); and, where a gate
+    // in front hands the frame's first request over to it, the gate's accept host (server/identity, handOff).
+    Link: [origin, ...(handOff(platform, url) ? [handOff(platform, url)!.accept] : [])].map((o) => `<${o}>; rel=preconnect`).join(", "),
   };
   const empty = (status: number) =>
     HttpServerResponse.empty({ status, headers: { "Content-Type": "text/html; charset=utf-8", ...headers } });

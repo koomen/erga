@@ -124,7 +124,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       const wide = who.onlyDoc == null;
       const limit = Math.min(Math.max(Number(args.limit) || TOKENS_SHOWN, 1), 100),
         offset = Math.max(Number(args.offset) || 0, 0);
-      const mine = wide ? await platformOf(caller).tokens.list(who.login, limit, offset) : null;
+      const mine = wide ? await platformOf(caller).grants.list(who.login, limit, offset) : null;
       return {
         login: who.login,
         ...(caller.name ? { name: caller.name } : {}),
@@ -145,10 +145,9 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         ...(mine
           ? {
               // Newest first, `limit` of them (expired ones never); `moreTokens`: how many come after these.
-              tokens: mine.tokens.map((t) => ({
+              tokens: mine.grants.map((t) => ({
                 id: t.id,
                 label: t.label,
-                kind: t.kind,
                 scope: t.scope,
                 ...(t.docId ? { document: t.docId } : {}),
                 expires: iso(t.expires),
@@ -156,7 +155,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
                 lastUsed: iso(t.lastUsed),
                 ...(t.id == token?.id ? { yours: true } : {}),
               })),
-              moreTokens: Math.max(mine.total - offset - mine.tokens.length, 0),
+              moreTokens: Math.max(mine.total - offset - mine.grants.length, 0),
               // The person's own keys for their agent's models: never a key, only whether it's set. Pasted only in Settings, Agent.
               apiKeys: (await dir.personKeys.list(who)).map((k) => ({
                 name: k.name,
@@ -491,7 +490,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         const k = await dir.personKeys.clear(who, String(args.api_key));
         return { removed: k.name, label: k.label };
       }
-      if (!(await platformOf(caller).tokens.revoke(who.login, String(args.token), who.via)))
+      if (!(await platformOf(caller).grants.revoke(who.login, String(args.token), who.via)))
         throw new OperationError({ message: `You have no token "${args.token}".`, status: 404 });
       return { revoked: args.token };
     },

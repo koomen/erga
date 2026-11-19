@@ -49,7 +49,7 @@ export const hostile = (s: Server) => `<!doctype html>
     if (key && !window.__steal) {
       var id = u.pathname.split("/api/")[0].split("/").pop();
       window.__steal = function (op, args) {
-        return fetch(window.__ergaReader.config.shell + "/api/tools/" + op + "?" + new URLSearchParams({ doc: id, key: key }), {
+        return fetch("/api/tools/" + op + "?" + new URLSearchParams({ doc: id, key: key }), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(Object.assign({ document: id }, args)),

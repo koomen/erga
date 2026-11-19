@@ -36,20 +36,19 @@
 // The server's API for agents (/api/..., /mcp, /llms.txt) and /tokens are
 // server/api.ts's.
 //
-// Anywhere, "Authorization: Bearer erga_..." (an agent token, server/identity)
-// signs in as the person it stands for, as their agent (Session.agent), with
-// that person's permissions.
+// Anywhere, an agent's token (server/identity/grants.ts) signs in as the person
+// it stands for, as their agent (Session.agent), with that person's permissions.
 //
 // Signing in, the editor's own files and the WebSockets stay with the
 // Worker.
 
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import { adminRoutes, isAdminPath } from "../admin/index.ts";
 import { ID, type ListView, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/model/names.ts";
 import { NO_WAIT } from "../../document/api/waits.ts";
+import { handOff } from "../identity/index.ts";
 import { newDoc, scratchDoc } from "./make.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
@@ -62,8 +61,9 @@ import { routeAt, routeFor, SECRET, type RouteRow } from "../../shared/routes.ts
 export const documentRoutes: HttpRoute = Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
   const path = url.pathname;
+  // A document's pages origin: its files; and its page's own socket and start, with an edit key (below).
   const pages = pagesHost(url, platform);
-  if (pages) return yield* pagesRoutes(pages);
+  if (pages && !(KEYED_PATH.test(path) && url.searchParams.has("key"))) return yield* pagesRoutes(pages);
   const list = routeAt(PAGES, path);
   if (list) return yield* list.run;
   if (isAdminPath(path)) return yield* adminRoutes;
@@ -112,14 +112,18 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   // From the document's own page, on its pages origin (which has no cookies), with an edit key (edit-key.ts): its socket
   // and its start. As the person the key names, never as a cookie that came with it; the document decides what they
   // may do. (The files dropped on the page go from the viewer, with the person's session: client/shell/uploads.ts.)
+  // Only on that origin: a document's page calls no other, so the gate in front checks one cookie for each origin.
+  // (The Origin check stops what always names its Origin: a socket's first request, and another site's script that
+  // asks to read the answer (CORS). A page's own GET names none, and neither does another site's plain GET (a link, a
+  // frame, an image, a request with no CORS): there the key alone is the proof, and no other site has one.)
   const key = url.searchParams.get("key");
   if (key != null && keyed(request, rest)) {
     const doc = yield* call(() => platform.directory.route(route.id));
     const origin = doc ? pagesOrigin(doc.owner, doc.id, url, platform) : "";
-    if (!doc || request.headers.get("origin") != origin) return text("Not from this document's page", 403);
-    const cors = { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
+    const from = request.headers.get("origin");
+    if (!doc || url.origin != origin || (from != null && from != origin)) return text("Not from this document's page", 403);
     const person = yield* call(() => readEditKey(platform.secret, key, doc.owner, doc.id));
-    if (!person) return text("This key has expired: reload the page.", 403, cors);
+    if (!person) return text("This key has expired: reload the page.", 403);
     const headers = new Headers(request.headers);
     headers.delete("cookie");
     const inner = new URL(url);
@@ -136,11 +140,10 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
         )
       )
     );
-    if (answer.status == 101) return fromWeb(answer);
-    const out = new Headers(answer.headers);
-    for (const [k, v] of Object.entries(cors)) out.set(k, v);
-    return fromWeb(new Response(answer.body, { status: answer.status, headers: out }));
+    return fromWeb(answer);
   }
+  // A pages origin has nothing else of the document's host: its files, and those two.
+  if (pages) return text("Not found", 404);
   // The bytes of a file that an agent's write waits for (document/api/uploads.ts, arrive): from its shell, which has no
   // session. The document takes them only where a write named their sha-256 and size, as the person who wrote; so
   // nobody is forwarded, whoever asks. A document there is, before its host is asked.
@@ -187,36 +190,11 @@ const listDocuments = (view: ListView) =>
   );
   // The browser keeps the list for Back, for this person only: it shows at once, and follows what changed since (its
   // rows are live: server/news/). Any other visit asks the server again.
-  return html(documentsPage(session, docs, Date.now(), hours, view, asks), 200, {
+  return html(documentsPage(session, docs, Date.now(), hours, view, asks, handOff(platform, url)?.warm), 200, {
     "Cache-Control": "private, no-cache",
     Vary: "Cookie",
   });
   });
-
-/**
- * POST <document>/api/share {rotate}: the share button's token, the
- * person's one 'share' token, the same each time until rotated.
- */
-const shareToken = Effect.fnUntraced(function* (session: Session) {
-  const { request, url, platform } = yield* ctx;
-  const refuse = (error: string) => plainJson({ ok: false, error }, 403);
-  // The server's browser (Session.view) runs an agent's code in the viewer's window: an agent too.
-  if (session.agent || session.view) return refuse("An agent can't make tokens.");
-  const origin = request.headers.get("origin");
-  if (origin && origin != url.origin) return refuse("Forbidden");
-  // Any body that isn't { rotate: true } keeps the token as it is.
-  const { rotate } = yield* call(() => request.json().catch(() => ({}))).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(RotateBody)),
-    Effect.orElseSucceed(() => ({ rotate: false }))
-  );
-  const via = whoOf(session).via;
-  const { token } = yield* call(() =>
-    platform.tokens.share({ login: session.login, name: session.name, ...(via ? { via } : {}) }, rotate === true)
-  );
-  return json({ token });
-});
-
-const RotateBody = Schema.Struct({ rotate: Schema.optional(Schema.Unknown) });
 
 /** The pages of the documents list, and a new document. (Each function answers any method.) */
 export const PAGES: readonly RouteRow<HttpRoute>[] = [
@@ -311,15 +289,6 @@ export const ROUTES: readonly RouteRow<(a: Asked) => HttpRoute>[] = [
     domain: "document",
     exempt: `${SECRET}: a key that opens the document as the person, which only their own viewer holds`,
   },
-  {
-    method: "POST",
-    path: "/d/<id>/api/share",
-    // The share button's token is the app's, not the document's: for whoever may open the document.
-    run: (a) => Effect.flatMap(openable(a), (doc) => (doc ? shareToken(a.session) : Effect.succeed(text("Not allowed", 403)))),
-    action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)",
-    domain: "document",
-    exempt: SECRET,
-  },
 ];
 
 /**
@@ -329,6 +298,12 @@ export const ROUTES: readonly RouteRow<(a: Asked) => HttpRoute>[] = [
 const keyed = (request: Request, rest: string) =>
   (rest == "/api/room" && request.headers.get("upgrade")?.toLowerCase() == "websocket") ||
   (rest == "/api/start" && request.method == "GET");
+
+/** The same, as a path of the document's pages origin: /d/<id>/api/room and /d/<id>/api/start, as on the app's. */
+const KEYED_PATH = /^\/d\/[^/]+\/api\/(room|start)$/;
+
+/** Whether a request to a pages origin is a comment op of the document's page, with its edit key (keyedOp). */
+export const isKeyedOp = (url: URL) => KEYED_OPS.test(url.pathname) && url.searchParams.has("key");
 
 /** PUT <document>/api/blobs/<sha-256>: the bytes of a file that a write waits for. */
 const AWAITED = /^\/api\/blobs\/[0-9a-f]{64}$/;

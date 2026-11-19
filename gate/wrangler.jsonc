@@ -1,0 +1,25 @@
+// The gate's own Worker, in front of a private Erga (gate/mounts/worker.ts): SSO on Cloudflare.
+// A deploy fills in the hosts and the issuer; the secrets are EDGE_KEY, GATE_KEY and IDP_SECRET (`wrangler secret put`).
+// Erga's own Worker gets the same GATE_KEY (a secret), and no route, no custom domain and workers_dev = false.
+{
+  "name": "erga-gate",
+  "main": "mounts/worker.ts",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": false,
+  "services": [{ "binding": "ERGA", "service": "erga" }],
+  "vars": {
+    "SHELL": "erga.example.com",
+    "CONTENT": "erga-pages.example.net",
+    // How many days a sign-in lasts, from 1 to 90. Erga's own setting (sign_in_days) doesn't reach this gate.
+    "SIGN_IN_DAYS": "30",
+    // An OIDC issuer (Cognito, or any other) ...
+    "IDP": "{\"name\":\"sso\",\"issuer\":\"https://idp.example.com\",\"authorize\":\"https://idp.example.com/oauth2/authorize\",\"token\":\"https://idp.example.com/oauth2/token\",\"client\":\"<client id>\"}"
+    // ... or Cloudflare Access in front of the shell's host (then no IDP and no IDP_SECRET):
+    // "ACCESS": "{\"team\":\"<team>\",\"aud\":\"<the application's audience tag>\"}"
+  },
+  "routes": [
+    { "pattern": "erga.example.com/*", "zone_name": "example.com" },
+    { "pattern": "erga-pages.example.net/*", "zone_name": "erga-pages.example.net" },
+    { "pattern": "*.erga-pages.example.net/*", "zone_name": "erga-pages.example.net" }
+  ]
+}

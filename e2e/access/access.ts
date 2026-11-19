@@ -115,7 +115,7 @@ export async function signIn(root: string, as: string | null): Promise<string> {
   return r.headers
     .getSetCookie()
     .map((x) => x.split(";")[0])
-    .find((x) => /^erga_session(_\d+)?=/.test(x))!;
+    .find((x) => /^erga_\d+=/.test(x))!;
 }
 
 /** Makes a token as the Settings dialog does (POST /tokens/new), with a session cookie (none: DEV_LOGIN): the token, or "". */

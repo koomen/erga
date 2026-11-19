@@ -24,6 +24,7 @@ The direct dependencies (`package.json`), and their licenses:
 | `@earendil-works/pi-ai` (with `openai` and `@google/genai`, Apache 2.0, which it bundles) | MIT | yes |
 | `yjs` | MIT | yes |
 | `@cloudflare/vite-plugin`, `vite`, `@types/bun`, `@types/node` | MIT | no (development) |
+| `@babel/core`, `@babel/plugin-transform-*` (nine plugins: `gate/lower.ts`) | MIT | no (development) |
 | `cf` | MIT or Apache 2.0 | no (development) |
 | `@e2e-dev/web`, `e2e`, `playwright-core`, `typescript` | Apache 2.0 | no (development) |
 
@@ -52,6 +53,10 @@ Notes:
 - `ai-docs` has no license field. It is not a dependency: it is a folder of
   examples inside the `effect` package (`node_modules/effect/ai-docs`), under
   Effect's MIT license. Erga does not import it, and the build does not bundle it.
+
+- The counts above are from before Babel (2026-11-18): it builds the gate's CloudFront Functions (`gate/lower.ts`),
+  and Erga ships none of it. It adds 45 packages for development only: 41 MIT, and one each Apache 2.0, ISC and
+  CC BY 4.0 (`caniuse-lite`, data).
 
 - The counts above are from before `@earendil-works/pi-ai` (2026-11-01). It
   adds about 80 packages, MIT and Apache 2.0 for the most part. Of them the build

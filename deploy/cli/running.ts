@@ -47,7 +47,10 @@ export function instanceReader(o: ReaderOptions = {}): Ask {
       const { awsCli } = await import("../aws/cli");
       const { healthOnAws, liveOnAws } = await import("../aws/deploy");
       const aws = (o.aws ?? awsCli)({ profile: e.profile, region: e.aws.region });
-      const [version, h] = await Promise.all([liveOnAws(aws, e.aws.stack), healthOnAws(aws, e.aws.machine)]);
+      const [version, h] = await Promise.all([
+        liveOnAws(aws, e.aws.stack),
+        healthOnAws(aws, e.aws.machine, e.aws.gate ? { key: e.aws.gate, region: e.aws.region } : undefined),
+      ]);
       const healthy = h ? h.ok && (!version || h.version == version) : null;
       const health = !h ? "the machine's server gave no health report" : healthy ? undefined : h.why || `it runs ${h.version ?? "?"}`;
       return {

@@ -15,6 +15,8 @@ export interface ReaderConfig {
   prefix: string;
   /** The digest of the text the page was made from (shared/page-html.ts, sourceDigest): the editor checks it has the same. */
   src: string;
+  /** Whether the page asks for Erga's service worker on this origin (server/documents/pages-origin.ts, workerFor). */
+  worker: boolean;
   /** The document's public address (https://<host>/<owner>/<slug>): the viewer says it once the page is up (erga-address). */
   address?: string;
   /**
@@ -79,15 +81,15 @@ export const GUARD_END = ["mouseup", "touchend", "touchcancel"];
 /**
  * A page imports Erga's libraries by their path alone (<script type="module" src="/erga/<name>/editor.js">): its text
  * names no server, so a copy of the document works on any. Each server serves its own (serveLibrary), the build its
- * editor runs, on the app's origin, `shell`: a pages origin has nothing of Erga's, so the page as served names them
- * there. On the app's origin itself (a published site, served as it is) the path is right as written. The text the
- * editor reads stays as written.
+ * editor runs, on the app's origin and on every document's pages origin: there the path is right as written. A
+ * published site on a custom domain has nothing of Erga's: its page as served names them at the app's origin, `shell`.
+ * The text the editor reads stays as written.
  */
 export const localLibraries = (html: string, shell: string) =>
   html.replace(/(<script\b[^>]*\bsrc\s*=\s*["']?)(\/erga\/[a-z]+\/editor\.js)/gi, `$1${shell}$2`);
 
 /** A document's page as its pages origin serves it: its text, with Erga's `head` first in its <head> (server/pages/reader.ts). */
-export const pageOf = (text: string, head: string, shell: string) => insertHead(localLibraries(text, shell), head);
+export const pageOf = (text: string, head: string) => insertHead(text, head);
 
 /**
  * Erga's head of a page the pages origin made (what `pageOf` put first in its <head>): its scripts, each a <script
@@ -105,13 +107,12 @@ export function headIn(served: string): string | null {
  * (headIn): the same head, with the new text's digest (the page's editor puts it in the browser's copy, for a reload
  * offline: libs/text/ui/offline-page.ts). Null if the head names no text.
  */
-export function pageAgain(head: string, text: string, shell: string): string | null {
+export function pageAgain(head: string, text: string): string | null {
   const src = /"src":"[^"]*"/;
   if (!src.test(head)) return null;
   return pageOf(
     text,
-    head.replace(src, () => `"src":${JSON.stringify(sourceDigest(text))}`),
-    shell
+    head.replace(src, () => `"src":${JSON.stringify(sourceDigest(text))}`)
   );
 }
 

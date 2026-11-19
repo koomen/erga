@@ -3,29 +3,48 @@
 // Erga's service worker), then the tools API (versions, files, a page's own API, view_page), the
 // homepage signed out, the edge's caches (each second request a hit), and the person's agent. Each line says what it saw: ok, or what failed.
 //
-//   SESSION_SECRET=... bun deploy/aws/check.ts <origin> <login>
+//   SESSION_SECRET=... bun deploy/aws/check.ts <origin> <provider> <subject>
 //
-// The session cookie is signed here with the server's SESSION_SECRET, for `login`, who must be a user there.
-// The tools get a documents token made with it, as on the Settings page, which ends the next day.
+// For a server whose gate runs inside its Worker (server/identity/mode.ts: the OAuth mode). The gate's sign-in cookie
+// is made here with the server's SESSION_SECRET, for the provider's subject (GitHub's account id, Google's sub) of a
+// user there. The tools get a documents token made with it, as on the Settings page, which ends the next day.
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { cookieName, SESSION_COOKIE, sessionCookie } from "../../server/identity/index.ts";
+import { signInCookies } from "../../gate/core.ts";
+import { webPort } from "../../gate/port.ts";
+import { edgeKey } from "../../server/identity/caller.ts";
 import { openEditor } from "../../e2e/helpers/editor";
 import type { Server } from "../../e2e/helpers/server";
 
-const [origin, login] = process.argv.slice(2);
+const [origin, provider, subject] = process.argv.slice(2);
 const secret = process.env.SESSION_SECRET;
-if (!origin || !login || !secret) {
-  console.error("usage: SESSION_SECRET=... bun deploy/aws/check.ts <origin> <login>");
+if (!origin || !provider || !subject || !secret) {
+  console.error("usage: SESSION_SECRET=... bun deploy/aws/check.ts <origin> <provider> <subject>");
   process.exit(2);
 }
 const root = origin.replace(/\/+$/, "");
 const url = new URL(root);
-const cookie = { name: cookieName(url, SESSION_COOKIE), value: await sessionCookie(secret, { login, name: login }, 3600) };
+// The shell cookie, as the gate inside the server's Worker makes it (the first of a sign-in's cookies).
+const [shell] = await signInCookies(
+  Date.now(),
+  {
+    key: await edgeKey(secret),
+    shell: url.host,
+    content: "pages.invalid",
+    https: url.protocol == "https:",
+    open: true,
+    idp: {},
+    oauth: true,
+  },
+  webPort,
+  { p: provider, sub: subject, email: "", name: "" }
+);
+const [name, value] = [shell.slice(0, shell.indexOf("=")), shell.slice(shell.indexOf("=") + 1, shell.indexOf(";"))];
+const cookie = { name, value };
 const headers = { cookie: `${cookie.name}=${cookie.value}`, origin: root, "content-type": "application/json" };
 
 const results: [string, string][] = [];
@@ -58,7 +77,7 @@ async function tool<T = any>(name: string, args: Record<string, unknown>): Promi
       headers,
       body: JSON.stringify({ label: "celld check", scope: "documents", expires }),
     });
-    token = ((await r.json()) as { token?: string }).token ?? "";
+    token = r.headers.get("x-erga-token") ?? "";
     if (!token) throw new Error(`no token: ${r.status}`);
   }
   const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
@@ -80,9 +99,7 @@ let typed = "";
 const browser = await chromium.launch();
 try {
   const context = await browser.newContext({ viewport: { width: 1100, height: 800 } });
-  await context.addCookies([
-    { ...cookie, domain: url.hostname, path: "/", secure: url.protocol == "https:", httpOnly: true, sameSite: "Lax" },
-  ]);
+  await context.addCookies([{ ...cookie, url: root, secure: url.protocol == "https:", httpOnly: true, sameSite: "Lax" }]);
   const tabOf = async () => {
     const page = await context.newPage();
     const errors: string[] = [];

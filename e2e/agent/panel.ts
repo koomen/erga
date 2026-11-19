@@ -174,7 +174,7 @@ export async function person(server: Server, login: string) {
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
-    .find((c) => /^erga_session(_\d+)?=/.test(c));
+    .find((c) => /^erga_\d+=/.test(c));
   if (!cookie) throw new Error(`signing in as ${login}: ${r.status}`);
   const get = (path: string, init: RequestInit = {}) =>
     fetch(root + path, {

@@ -2,40 +2,42 @@
 // stands for one way a secret could leak or be used where it shouldn't.
 
 import { expect, test } from "bun:test";
-import { Directory } from "../server/directory/index.ts";
-import { Tokens } from "../server/identity/tokens";
+import { seal } from "../gate/core.ts";
+import { webPort } from "../gate/port.ts";
+import { edgeKey } from "../server/identity/caller.ts";
 import { freshLogin, runTool, server as app, type Server } from "./helpers/app";
-import { memory } from "./helpers/memory-sql";
 
 
-test("an agent token works only on the server whose secret made it, not on a copy of its database", async () => {
-  const sql = memory();
-  const dir = new Directory(sql);
-  const first = new Tokens(sql, "first-secret-".repeat(3), dir),
-    copy = new Tokens(sql, "copy-secret-".repeat(3), dir);
-  const { token } = await first.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
-  expect((await first.verify(token))?.login).toBe("ada");
-  // The copy holds the same rows, but not the first server's secret.
-  expect(await copy.verify(token)).toBeNull();
-  // Its own tokens still work there.
-  const own = await copy.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
-  expect((await copy.verify(own.token))?.login).toBe("ada");
-  expect(await first.verify(own.token)).toBeNull();
-});
-
-test("the Share buttons on a copy of another server's database give a token that works there, not the other server's row", async () => {
-  const sql = memory();
-  const dir = new Directory(sql);
-  const first = new Tokens(sql, "first-secret-".repeat(3), dir),
-    copy = new Tokens(sql, "copy-secret-".repeat(3), dir);
-  const ada = { login: "ada", name: "Ada" };
-  const before = await first.share(ada, false);
-  const shared = await copy.share(ada, false);
-  expect((await copy.verify(shared.token))?.login).toBe("ada");
-  expect(shared.token).not.toBe(before.token);
-  // The next time, the same token (the copy's own now), as on the first server.
-  expect((await copy.share(ada, false)).token).toBe(shared.token);
-  expect((await first.share(ada, false)).token).not.toBe(shared.token);
+test("an agent's token and a sign-in's cookie work only on the server whose secret made them: the gate's key comes from it", async () => {
+  const s = app();
+  const login = freshLogin("key");
+  const who = { p: "dev", sub: login, email: "", name: login };
+  const end = Math.floor(Date.now() / 1000) + 3600;
+  const whoami = async (headers: Record<string, string>) =>
+    (
+      await s.fetch("/api/tools/whoami", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: s.root, ...headers },
+        body: "{}",
+      })
+    ).status;
+  // A sign-in's cookie under this server's key signs its person in; under another server's key it is nobody's.
+  const cookie = async (secret: string) =>
+    `erga=${await seal(webPort, await edgeKey(secret), "s", { ...who, i: Date.now() }, end)}; erga_signed_out=1`;
+  expect(await whoami({ Cookie: await cookie(s.platform.secret) })).toBe(200);
+  expect(await whoami({ Cookie: await cookie("another-server's-secret") })).toBe(401);
+  // The same for an agent's token; and the server's secret itself is not the key.
+  const token = (secret: string, key?: string) =>
+    edgeKey(secret).then((k) => seal(webPort, key ?? k, "a", { p: "dev", sub: login, g: "nosuchgrant" }, end));
+  expect(await whoami({ Authorization: `Bearer ${await token("another-server's-secret")}` })).toBe(401);
+  expect(await whoami({ Authorization: `Bearer ${await token("", s.platform.secret)}` })).toBe(401);
+  // A token under this server's key reaches the app, which finds no grant for it: refused there.
+  const refused = await s.fetch("/mcp", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await token(s.platform.secret)}` },
+    body: "{}",
+  });
+  expect([refused.status, refused.headers.get("www-authenticate")]).toEqual([401, expect.stringContaining('error="invalid_token"')]);
 });
 
 test("a document's pages token is checked whole (its MAC compared in constant time): a changed one opens nothing", async () => {

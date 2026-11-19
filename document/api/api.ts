@@ -7,7 +7,6 @@
 // plus a _tag naming which failure it was. A body or parameter that doesn't
 // decode is a 400 saying what's wrong (BadRequest).
 //
-// The share button's /api/share isn't here either: tokens are the app.s, which answers it before it reaches a document.
 //
 // Not here: the WebSocket (/api/room: the room, and with ?events=1 the person's events), the editor's start (/api/start:
 // binary, shared/room-socket.ts), the files (the editor's

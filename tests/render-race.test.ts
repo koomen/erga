@@ -57,13 +57,14 @@ test("the viewer's page in the server's browser does not follow the document's c
     secret: "secret-".repeat(6),
     dev: () => false,
     pagesDomain: () => "erga-pages.test",
+    signIn: { mode: "oauth" },
     edge: { cache: null, background: (work: Promise<unknown>) => void work.catch(() => {}) },
     docs: { view: async () => ({ role: "owner", name: null, test: false, ver: "l1", file: "index.html", canonical: "", shares: 0 }) },
   } as unknown as Platform;
   const follows = async () =>
     (await (await respond(documentRoutes, new Request(`https://erga.test/ada/${doc.slug}`), platform)).text()).includes('name="erga-ver"');
   expect(await follows()).toBe(true);
-  // The server's browser, for view_page (a view cookie's session).
+  // The server's browser, for view_page (its session: server/identity/admit.ts, viewRequest).
   session = { login: "ada", name: "Ada", onlyDoc: doc.id, view: true };
   expect(await follows()).toBe(false);
 });

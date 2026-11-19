@@ -1,11 +1,9 @@
 // The one helper that signs every cookie, token and key (server/signed.ts): a sealed string opens only for its own
-// purpose, with its own secret, in its shape, and before it expires. An agent token and an OAuth client id keep the
-// strings they always had.
+// purpose, with its own secret, in its shape, and before it expires.
 
 import { expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import * as Schema from "effect/Schema";
-import { clientIdFor, clientOf } from "../server/identity/mcp-oauth.ts";
 import { mac, signed } from "../server/signed.ts";
 
 const Pass = Schema.Struct({ login: Schema.String });
@@ -48,13 +46,6 @@ test("`until` sets the expiry itself: the same string for the same expiry", asyn
   expect(a).toBe(b);
 });
 
-test("mac is HMAC-SHA256 in base64url: an agent token's and a client id's strings stay as they were", async () => {
-  expect(await mac("erga-agent-token:secret", "tok_1")).toBe(
-    createHmac("sha256", "erga-agent-token:secret").update("tok_1").digest("base64url")
-  );
-  const id = await clientIdFor("secret", { name: "App", redirectUris: ["http://localhost:1/cb"] });
-  const value = Buffer.from(JSON.stringify({ n: "App", r: ["http://localhost:1/cb"] })).toString("base64url");
-  expect(id).toBe(`${value}.${createHmac("sha256", "secret:oauth-client").update(value).digest("base64url")}`);
-  expect(await clientOf("secret", id)).toEqual({ name: "App", redirectUris: ["http://localhost:1/cb"] });
-  expect(await clientOf("other", id)).toBeNull();
+test("mac is HMAC-SHA256 in base64url", async () => {
+  expect(await mac("key", "tok_1")).toBe(createHmac("sha256", "key").update("tok_1").digest("base64url"));
 });

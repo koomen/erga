@@ -27,7 +27,7 @@ import {
   type Route,
   type Who,
 } from "../directory/index.ts";
-import { AuthError, type AgentToken, type AuthOps } from "../identity/index.ts";
+import { AuthError, type AuthOps, type Grant } from "../identity/index.ts";
 import { forwardedAs } from "../documents/index.ts";
 import { DocumentBehind, type Platform } from "../platform.ts";
 import type { ToolContent } from "../../document/api/operations.ts";
@@ -55,8 +55,8 @@ export interface Caller {
   readonly platform?: Platform;
   /** Sign-in's settings, where the server has them: for the sign-in operations. */
   readonly auth?: AuthOps;
-  /** An outside agent's token, when it calls with one. */
-  readonly token?: AgentToken;
+  /** An outside agent's grant, when it calls with a token. */
+  readonly token?: Grant;
   /**
    * The call came with a page's edit key (server/api.ts, fromPage). The page's own scripts can send one as the person,
    * so it writes no comment (comments.ts).
@@ -117,7 +117,7 @@ export async function runOperation(op: Operation, args: Record<string, unknown>,
     });
   if (op.wide && caller.who.onlyDoc != null)
     throw new OperationError({
-      message: `${op.name} isn't for a document token: it reaches one document only. Make a token with the documents scope at /tokens.`,
+      message: `${op.name} isn't for a document token: it reaches one document only. Make a token with the documents scope in Settings.`,
       status: 403,
     });
   try {

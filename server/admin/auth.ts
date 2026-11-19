@@ -1,6 +1,6 @@
 // /admin/auth, the Sign-in page: everything that governs how people sign in on this server (client/inline/admin-auth.ts
 // changes it). It shows what the sign-in reports (server/identity/settings.ts, authOps.status): the mode, and that
-// mode's own parts: each OAuth provider's card, or the proxy in front. A secret that is set shows as its last 4
+// mode's own parts: each OAuth provider's card; none with a gate in front. A secret that is set shows as its last 4
 // characters, with Replace and Remove: the page never has the secret. Then what a new account gets (its username: a
 // setting row, ./settings.ts), and the deploy's secrets that sign-in needs.
 
@@ -16,7 +16,6 @@ import {
   type CheckState,
   type Provider,
   type ProvidersOn,
-  type ProxyStatus,
   type SignInStatus,
 } from "../identity/index.ts";
 import { setAt } from "./parts.ts";
@@ -118,7 +117,7 @@ function providerSection(p: Provider, on: ProvidersOn, s: AuthStatus, session: S
 
 const IDS = Object.keys(PROVIDERS) as Provider[];
 
-/** Each provider's section, as its status is now; none in the proxy mode. */
+/** Each provider's section, as its status is now; none with a gate in front. */
 function sections(session: Session, status: SignInStatus): Partial<Record<Provider, string>> {
   if (status.mode != "oauth") return {};
   return Object.fromEntries(IDS.map((id) => [id, providerSection(id, status.providers, status.apps[id], session)]));
@@ -127,9 +126,9 @@ function sections(session: Session, status: SignInStatus): Partial<Record<Provid
 /** The two modes, as the page names them (server/identity/mode.ts): the name, and what it is in one sentence. */
 const MODES: Record<SignInStatus["mode"], { name: string; what: string }> = {
   oauth: { name: "OAuth sign-in", what: "Erga signs people in with the providers below." },
-  proxy: {
-    name: "Proxy sign-in",
-    what: "A proxy in front of this server signs people in.",
+  gate: {
+    name: "Single sign-on",
+    what: "A gate in front of this server signs people in with your organization's sign-in, before any request reaches the server.",
   },
 };
 
@@ -139,19 +138,6 @@ function modeSection(mode: SignInStatus["mode"]): string {
     <header><h3 class="provider-head">${MODES[mode].name}</h3><span class="app-state working">In use</span></header>
     <p class="summary">${esc(MODES[mode].what)}</p>
     <p class="note">The deploy sets the mode.</p>
-  </section>`;
-}
-
-/** The proxy mode's card: which proxy is in front, and the values that show a header is for this server. */
-function proxySection(p: ProxyStatus): string {
-  const rows = [...(p.header ? [{ name: "Header", value: p.header }] : []), ...p.values];
-  return `<section class="mode proxy" data-proxy="${esc(p.kind ?? "")}">
-    <header><h3 class="provider-head">${esc(p.label)}</h3><span class="app-state ${p.kind ? "working" : "misconfigured"}">${p.kind ? "In front" : "Misconfigured"}</span></header>
-    <section class="server" data-state="${p.kind ? "working" : "misconfigured"}">
-      <p class="summary">${p.kind ? "People sign in at the proxy." : "The deploy's value for the proxy (PROXY_SIGN_IN) isn't one this server can read: nobody can sign in."}</p>
-      <dl>${rows.map((r) => `<dt>${esc(r.name)}</dt><dd><code>${esc(r.value)}</code></dd>`).join("")}</dl>
-      <p class="note">The deploy sets these values.</p>
-    </section>
   </section>`;
 }
 
@@ -169,7 +155,7 @@ export async function authPage(platform: Platform, session: Session, status: Sig
     body: `
   <section aria-labelledby="page-head" class="auth" data-live-kind="auth" data-live-view="auth" data-live-order="asc" data-live-at="${Date.now()}">
     ${modeSection(status.mode)}
-    ${status.mode == "proxy" ? proxySection(status.proxy) : IDS.map((id) => s[id]).join("\n    ")}
+    ${IDS.map((id) => s[id] ?? "").join("\n    ")}
   </section>
   <section class="new-accounts" aria-labelledby="accounts-head">
     <h3 class="sub-head" id="accounts-head">New accounts</h3>

@@ -59,32 +59,32 @@ const LIVE_WATCH = inlineCall("page-live-watch");
  * each of its modules against it, and it must come before any module loads), and after it, the scripts the editor needs
  * from the page's first moment (its problems and its live log, the text guard, ergaEditor).
  */
-export function readerPage(html: string, o: { shell: string; prefix: string; src: string; editor: boolean }): string {
+export function readerPage(html: string, o: { shell: string; prefix: string; src: string; editor: boolean; worker: boolean }): string {
   // erga/text, unless the page brings its editor: it imports erga/text itself (/erga/text/editor.js), or has its own
   // (<meta name="erga-editor" content="own">). Then the page's editor hears the viewer's word (erga-mode) itself.
-  const scripts = o.editor ? frameScripts(o.shell) : undefined;
+  const scripts = o.editor ? frameScripts() : undefined;
   const editor = scripts && bringsEditor(html) ? { ...scripts, src: "", preload: [] } : scripts;
   const head =
     (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
-    `<script data-erga>${readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) })}</script>` +
+    `<script data-erga>${readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, worker: o.worker, ...(editor ? { editor } : {}) })}</script>` +
     // The templates' typefaces, by name, from Erga's own files: a page asks no other site for them.
-    (pageFonts(o.shell) ? `<style data-erga>${pageFonts(o.shell)}</style>` : "") +
+    (pageFonts() ? `<style data-erga>${pageFonts()}</style>` : "") +
     (editor
       ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${LIVE_WATCH}</script><script data-erga>${TEXT_GUARD}</script><script data-erga>${EDITING_API}</script>`
       : "");
-  return pageOf(html, head, o.shell);
+  return pageOf(html, head);
 }
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
 export const readerVersion = () =>
   versionOf(
-    readerScript({ shell: "", prefix: "", src: "" }) +
+    readerScript({ shell: "", prefix: "", src: "", worker: true }) +
       PROBLEM_WATCH +
       TEXT_GUARD +
       EDITING_API +
       LIVE_WATCH +
       asset("frame.js") +
-      pageFonts("")
+      pageFonts()
   );
 
 /** A digest of text (FNV-1a), which changes whenever it does. */

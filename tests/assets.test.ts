@@ -46,18 +46,30 @@ test("a page names this build's files: its scripts as modules, with the chunks t
   expect(stemOf("/_erga/fonts/inter-latin-normal-iiii9999.woff2")).toBe("/_erga/fonts/inter-latin-normal");
 });
 
-test("an editor's page names the editor's half at the app's origin, with the integrity of every script it may load, before any of the page's own", () => {
+test("an editor's page names the editor's half on its own origin, with the integrity of every script it may load, before any of the page's own", () => {
   useAssets(MANIFEST);
-  const page = readerPage("<!doctype html><html><head><script type=\"module\" src=\"app.js\"></script></head><body></body></html>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: true });
+  const page = readerPage('<!doctype html><html><head><script type="module" src="app.js"></script></head><body></body></html>', {
+    shell: "https://erga.test",
+    prefix: "/t/x/",
+    src: "s",
+    editor: true,
+    worker: true,
+  });
   const map = JSON.parse(/<script type="importmap" data-erga>(.*?)<\/script>/.exec(page)![1]) as { integrity: Record<string, string> };
-  expect(map.integrity).toEqual({ "https://erga.test/_erga/frame-bbbb2222.js": "sha384-frame", "https://erga.test/_erga/chunk-gggg7777.js": "sha384-chunk", "https://erga.test/_erga/chunk-hhhh8888.js": "sha384-later" });
+  expect(map.integrity).toEqual({
+    "/_erga/frame-bbbb2222.js": "sha384-frame",
+    "/_erga/chunk-gggg7777.js": "sha384-chunk",
+    "/_erga/chunk-hhhh8888.js": "sha384-later",
+  });
+  // A document's page calls only its own origin: nothing in it names the app's origin but the viewer's (`shell`).
+  expect(page.replace('"shell":"https://erga.test"', "")).not.toContain("https://erga.test");
   expect(page.indexOf('type="importmap"')).toBeLessThan(page.indexOf('src="app.js"'));
   const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(page)![1]);
   // erga/text at its one address, its build and first chunk preloaded (each pinned by the map).
   expect(config.editor).toMatchObject({
-    src: "https://erga.test/erga/text/editor.js",
+    src: "/erga/text/editor.js",
     integrity: "",
-    preload: ["https://erga.test/_erga/frame-bbbb2222.js", "https://erga.test/_erga/chunk-gggg7777.js"],
+    preload: ["/_erga/frame-bbbb2222.js", "/_erga/chunk-gggg7777.js"],
   });
   // A page that brings its own editor gets none added.
   const own = readerPage(`<meta name="erga-editor" content="own"><p>x</p>`, {
@@ -65,10 +77,11 @@ test("an editor's page names the editor's half at the app's origin, with the int
     prefix: "/t/x/",
     src: "s",
     editor: true,
+    worker: true,
   });
   expect(JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(own)![1]).editor).toMatchObject({ src: "", preload: [] });
   // A reader's page has none of the editor's.
-  const reader = readerPage("<p>x</p>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: false });
+  const reader = readerPage("<p>x</p>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: false, worker: true });
   expect(reader).not.toContain("importmap");
   expect(reader).not.toContain("frame-bbbb2222");
   // Another frame build is another version of what goes in a page: a page kept by its ETag never names a script that's gone.
@@ -128,7 +141,7 @@ test("a file has an ETag, is checked each time, and is a 304 with no body when u
   expect(pageTag).not.toBe(etag!);
   expect((await framed(`${url}index.html`, { "If-None-Match": pageTag })).status).toBe(304);
   expect((await framed(`${url}index.html`, { "If-None-Match": etag! })).status).toBe(200);
-  // The editor (erga/text) loads from the app's origin at one address, its newest build; the build and its chunks
+  // The editor (erga/text) loads from the page's own origin at one address, its newest build; the build and its chunks
   // preloaded, each with its integrity.
   const html = await page.text();
   const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(html)?.[1] ?? "null") as {
@@ -138,16 +151,16 @@ test("a file has an ETag, is checked each time, and is a 304 with no body when u
   };
   expect(config.shell).toBe(p.origin);
   expect(config.prefix).toBe(at.pathname);
-  expect(config.editor.src).toBe(`${p.origin}/erga/text/editor.js`);
+  expect(config.editor.src).toBe("/erga/text/editor.js");
   expect(html).toContain('<script type="importmap" data-erga>');
   const build = config.editor.preload[0];
-  expect(build).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
+  expect(build).toMatch(/^\/_erga\/frame-[a-z0-9]+\.js$/);
   expect(config.editor.map[build]).toMatch(/^sha384-/);
-  // The library's address: asked again each time, loadable from the document's origin, and it imports that build.
-  const library = await s.fetch(config.editor.src, { headers: { Origin: at.origin } });
+  // The library's address, on the document's own origin: asked again each time, and it imports that build.
+  const library = await s.fetch(`${at.origin}${config.editor.src}`);
   expect(library.headers.get("cache-control")).toBe("no-cache");
   expect(library.headers.get("access-control-allow-origin")).toBe("*");
-  expect(await library.text()).toBe(`import ${JSON.stringify(new URL(build).pathname)};\n`);
+  expect(await library.text()).toBe(`import ${JSON.stringify(build)};\n`);
   // A file that isn't there is never kept.
   expect((await s.fetch("/_erga/frame-none.js")).headers.get("cache-control")).toBe("no-store");
   // The editor's shell is in the page (no page of its own to fetch); its script and chunks are preloaded, and its start

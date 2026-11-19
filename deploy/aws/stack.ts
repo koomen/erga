@@ -3,12 +3,13 @@
 // change, and applies it (deploy/aws/setup.ts).
 //
 //   .erga/aws/<stack>.json          the main stack, in the instance's region
-//   .erga/aws/<stack>-certs.json    CloudFront with domains: the ACM certificates, in us-east-1 (CloudFront's region)
+//   .erga/aws/<stack>-certs.json    with domains: the ACM certificates, in us-east-1 (CloudFront's region); with the
+//                                   gate in front, its Lambda@Edge function too
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Aws, awsCli, type Where } from "./cli";
-import { type AwsShape, certificatesTemplate, stackTemplate } from "./template";
+import { type AwsShape, certificatesTemplate, stackTemplate, TEMPLATE_MAX } from "./template";
 
 /** CloudFront takes certificates only from this region. */
 export const CERT_REGION = "us-east-1";
@@ -16,13 +17,24 @@ export const CERT_REGION = "us-east-1";
 export const templatesDir = (dir: string) => join(dir, "aws");
 export const templatePath = (dir: string, stack: string, certs = false) => join(templatesDir(dir), `${stack}${certs ? "-certs" : ""}.json`);
 
-/** Writes the templates of `shape` into .erga/aws/. The result: the paths. */
+/**
+ * Writes the templates of `shape` into .erga/aws/. The result: the paths. A template with the gate's code has no
+ * indentation (template.ts, TEMPLATE_MAX); one that AWS would refuse for its size fails here.
+ */
 export function writeTemplates(dir: string, shape: AwsShape): string[] {
   mkdirSync(templatesDir(dir), { recursive: true });
-  const out: [string, unknown][] = [[templatePath(dir, shape.stack), stackTemplate(shape)]];
-  if (shape.domains && shape.edge.kind == "cloudfront")
-    out.unshift([templatePath(dir, shape.stack, true), certificatesTemplate(shape.stack, shape.domains)]);
-  for (const [path, t] of out) writeFileSync(path, `${JSON.stringify(t, null, 2)}\n`);
+  const gate = shape.edge.kind == "gate" ? shape.edge.code : undefined;
+  const out: [string, string][] = [[templatePath(dir, shape.stack), `${JSON.stringify(stackTemplate(shape), null, 2)}\n`]];
+  if (shape.domains)
+    out.unshift([
+      templatePath(dir, shape.stack, true),
+      `${JSON.stringify(certificatesTemplate(shape.stack, shape.domains, gate), null, gate ? 0 : 2)}\n`,
+    ]);
+  for (const [path, text] of out) {
+    const size = Buffer.byteLength(text);
+    if (size > TEMPLATE_MAX) throw new Error(`The template ${path} is ${size} bytes: CloudFormation takes ${TEMPLATE_MAX} at most.`);
+    writeFileSync(path, text);
+  }
   return out.map(([p]) => p);
 }
 

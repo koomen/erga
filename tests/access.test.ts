@@ -209,7 +209,12 @@ test("suggestions: the Workspace domains and GitHub organizations of people who 
 test("a GitHub sign-in's organizations: active memberships only, as the pretend GitHub answers the person's token; none when it can't", async () => {
   const { mockGithub } = await import("../dev/github-mock");
   const { memberships } = await import("../server/identity/providers");
-  const gh = mockGithub({ app: { slug: "erga-editor", clientId: "Iv1.x", clientSecret: "s" }, origin: "https://gh.test", callback: "https://erga.test/auth/github/callback", orgs: ["Acme", "other"] });
+  const gh = mockGithub({
+    app: { slug: "erga-editor", clientId: "Iv1.x", clientSecret: "s" },
+    origin: "https://gh.test",
+    callback: "https://erga.test/_edge/callback",
+    orgs: ["Acme", "other"],
+  });
   gh.state.tokens.push({ token: "ghu_ada", kind: "user", login: "ada" });
   const real = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => gh.fetch(new Request(new URL(String(input instanceof Request ? input.url : input).replace("https://gh.test/api", "https://gh.test/__github/api")), init)).then((r) => r ?? new Response("", { status: 404 }))) as typeof fetch;
@@ -228,7 +233,7 @@ test("Add user: GitHub's rate limit is said as such; with the sign-in app, a pas
   const gh = mockGithub({
     app: { slug: "erga-editor", clientId: APP.clientId, clientSecret: APP.secret },
     origin: "https://gh.test",
-    callback: "https://erga.test/auth/github/callback",
+    callback: "https://erga.test/_edge/callback",
   });
   let app: typeof APP | null = null;
   const dir = new Directory(memory(), {

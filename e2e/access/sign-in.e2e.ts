@@ -270,6 +270,16 @@ journey("who may sign in, on a server of its own", () => {
     expect(await page.evaluate(() => (document.activeElement as HTMLInputElement | null)?.name)).toBe("clientId");
     await page.keyboard.press("Escape");
     expect(await page.isHidden(`${CARD} form.configure`)).toBe(true);
+    // A sign-in with them, in another tab: the gate's sign-in, GitHub's page (the pretend one, as Ada), the gate's
+    // callback, which trades the code and signs her in one time. Then her list shows, and the next page asks no sign-in.
+    const tab = await page.context().newPage();
+    await tab.goto(`${root}/_edge/sign-in?idp=github&next=/documents`);
+    expect(new URL(tab.url()).pathname).toBe("/__github/login/oauth/authorize");
+    await tab.click("#authorize");
+    await until(() => new URL(tab.url()).pathname == "/documents", 10_000, "signed in, and at her documents");
+    await soon(async () => (await corner(tab)).label).toBe("You (Ada)");
+    expect((await tab.request.get(`${root}/documents/archived`, { maxRedirects: 0 })).status()).toBe(200);
+    await tab.close();
     // Remove asks first: yes.
     await page.evaluate(() => {
       window.confirm = () => true;
@@ -518,9 +528,15 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
     await page.goto(signIn());
     await until(() => path() == "/documents", 10_000, "no username step the second time");
     await soon(async () => (await corner(page)).label).toBe("You (Nia)");
+    // (Sign-out loads the gate's sign-out on the documents' site, in a hidden frame of its page.)
+    const gate: string[] = [];
+    page.on("response", (r) => void (r.url().includes("/_edge/sign-out") && gate.push(`${r.status()} ${r.url()}`)));
     await clickOn(page, "[data-erga-account] button");
     await clickOn(page, `.erga-account-menu a[href="/auth/logout"]`);
     await until(() => path() == "/", 10_000, "signing out goes to the homepage");
+    // The gate's cookies are gone from the browser, here and on the documents' site (another site: <id>.localhost).
+    expect(gate).toEqual([`200 http://accept.localhost:${new URL(root).port}/_edge/sign-out`]);
+    expect((await page.context().cookies()).filter((c) => /^(erga|member)_\d+$/.test(c.name))).toEqual([]);
     // Signed out: a person in a circle, whose menu has only Sign in.
     await page.goto(`${root}/nobody-here`);
     let c = await corner(page);

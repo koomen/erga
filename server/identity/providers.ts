@@ -1,8 +1,9 @@
 // The OAuth providers: GitHub and Google, one entry each (PROVIDERS). All that is one provider's own is in its entry:
 // where its app is made and what its values look like, how its app is checked, its addresses, what its sign-in asks,
-// and how it says who signed in (a `Vouched`: server/directory/identities.ts). The flow (oauth.ts), the apps' values
-// and their rules (apps.ts, settings.ts) and the pages read an entry by its id, and never ask which provider it is.
-// A new provider is a new entry here, a row in shared/sign-in.ts, and its two routes (server/app.ts).
+// and how it says who signed in (a `Vouched`: server/directory/identities.ts). The flow (sign-in.ts: the gate runs it,
+// gate/core.ts, and asks here for the code's exchange), the apps' values and their rules (apps.ts, settings.ts) and the
+// pages read an entry by its id, and never ask which provider it is.
+// A new provider is a new entry here, a row in shared/sign-in.ts, and its route (server/app.ts).
 
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -10,6 +11,9 @@ import * as Option from "effect/Option";
 import { githubAvatar, googleAvatar } from "../../shared/avatars.ts";
 import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { groupOf, NotAllowed, type Vouched } from "../directory/index.ts";
+
+/** Where every provider sends a person back: the gate's callback (gate/core.ts). */
+export const CALLBACK_PATH = "/_edge/callback";
 
 /** An app's two values. An empty string: not set. */
 export interface AppValues {
@@ -44,7 +48,6 @@ export interface OAuthProvider {
   /** The deploy's names for the app's client ID (a text binding) and secret (a Worker secret). */
   idEnv: string;
   secretEnv: string;
-  callbackPath: string;
   /** What a client ID looks like, and how the page says so. */
   clientId: RegExp;
   clientIdShape: string;
@@ -60,10 +63,10 @@ export interface OAuthProvider {
   check(v: AppValues, o?: Ask & { origin?: string | null }): Promise<AppCheck>;
   /** Where a browser goes to sign in. */
   authorizeUrl(origin: string | null): string;
-  /** What that address takes besides the client, the callback and the state. `groups`: a rule reads its groups. */
-  authorize(o: { groups: boolean }): Record<string, string>;
-  /** Its token for the callback's code, traded with the app's secret. */
-  token(origin: string | null, app: AppValues, code: string, redirect: string): Promise<Token>;
+  /** Its scope, and what else that address takes besides the gate's own values (the client, the callback, the state, PKCE). `groups`: a rule reads its groups. */
+  authorize(o: { groups: boolean }): { scope: string } & Record<string, string>;
+  /** Its token for the callback's code, traded with the app's secret and the sign-in's PKCE verifier. */
+  token(origin: string | null, app: AppValues, code: string, redirect: string, verifier: string): Promise<Token>;
   /** Who the token's person is; null: it didn't say. The token is used here once, and never stored. */
   who(origin: string | null, token: string, o: { groups: boolean }): Promise<Vouched | null>;
   /**
@@ -119,7 +122,6 @@ const github: OAuthProvider = {
   newApp: "https://github.com/settings/applications/new",
   idEnv: "GITHUB_CLIENT_ID",
   secretEnv: "GITHUB_CLIENT_SECRET",
-  callbackPath: "/auth/github/callback",
   clientId: /^[A-Za-z0-9._-]{8,80}$/,
   clientIdShape: "a GitHub Client ID: it is 8 to 80 letters and digits, like Ov23li…",
   clientIdLike: "Ov23li…",
@@ -127,7 +129,7 @@ const github: OAuthProvider = {
   noSecret: "Paste the app's client secret too (Generate a new client secret, on the app's page on GitHub).",
   setup: (o) => [
     `Open ${github.newApp}, signed in as the GitHub account that should own the app.`,
-    `Enter the application name "${o.name}", the homepage URL ${o.origin}, and the authorization callback URL ${o.origin}${github.callbackPath}. Leave Enable Device Flow off. Click Register application.`,
+    `Enter the application name "${o.name}", the homepage URL ${o.origin}, and the authorization callback URL ${o.origin}${CALLBACK_PATH}. Leave Enable Device Flow off. Click Register application.`,
     `Copy the Client ID. Click Generate a new client secret, and copy the secret.`,
     `Paste both ${o.pagePlace}. They save by themselves: Erga checks them with GitHub before it uses them.`,
   ],
@@ -171,11 +173,11 @@ const github: OAuthProvider = {
   // read:org, only while a rule names a GitHub organization: their memberships, private ones too (an OAuth app's scope;
   // Erga's GitHub App ignores scopes: it needs the Members permission, and to be installed on the organization).
   authorize: ({ groups }) => ({ scope: groups ? "read:user read:org" : "read:user", allow_signup: "false" }),
-  token: (origin, app, code, redirect) =>
+  token: (origin, app, code, redirect, verifier) =>
     fetch(`${githubWww(origin)}/login/oauth/access_token`, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Erga" },
-      body: JSON.stringify({ client_id: app.clientId, client_secret: app.secret, code, redirect_uri: redirect }),
+      body: JSON.stringify({ client_id: app.clientId, client_secret: app.secret, code, redirect_uri: redirect, code_verifier: verifier }),
     }).then(
       (r) => r.json() as Promise<Token>,
       (e: Error) => ({ error: "unreachable", error_description: e.message })
@@ -259,7 +261,6 @@ const google: OAuthProvider = {
   newApp: "https://console.cloud.google.com/apis/credentials",
   idEnv: "GOOGLE_CLIENT_ID",
   secretEnv: "GOOGLE_CLIENT_SECRET",
-  callbackPath: "/auth/google/callback",
   clientId: /^[0-9]{4,30}-[a-z0-9]{8,64}\.apps\.googleusercontent\.com$/,
   clientIdShape: "a Google OAuth client ID: digits, a dash, letters and digits, then .apps.googleusercontent.com",
   clientIdLike: "1234…apps.googleusercontent.com",
@@ -268,7 +269,7 @@ const google: OAuthProvider = {
   setup: (o) => [
     `Open ${google.newApp}, in the Google Cloud project that should own the client. If Google asks, set up the OAuth consent screen first (External, the app name "${o.name}", your support email).`,
     `Click Create credentials, then OAuth client ID. Choose the application type Web application, and the name "${o.name}".`,
-    `Under Authorized redirect URIs, add ${o.origin}${google.callbackPath}. Click Create.`,
+    `Under Authorized redirect URIs, add ${o.origin}${CALLBACK_PATH}. Click Create.`,
     `Copy the Client ID and the Client secret.`,
     `Paste both ${o.pagePlace}. They save by themselves: Erga checks them with Google before it uses them.`,
   ],
@@ -285,7 +286,7 @@ const google: OAuthProvider = {
           client_id: v.clientId,
           client_secret: v.secret,
           code: `erga-check-${crypto.randomUUID()}`,
-          redirect_uri: "https://example.com/auth/google/callback",
+          redirect_uri: `https://example.com${CALLBACK_PATH}`,
         },
         signal,
         o.fetch
@@ -314,9 +315,15 @@ const google: OAuthProvider = {
     );
   },
   authorizeUrl: (origin) => googleEndpoints(origin).authorize,
-  authorize: () => ({ response_type: "code", scope: "openid email profile", prompt: "select_account" }),
-  token: (origin, app, code, redirect) =>
-    googleExchange(origin, { client_id: app.clientId, client_secret: app.secret, code, redirect_uri: redirect }).then(
+  authorize: () => ({ scope: "openid email profile", prompt: "select_account" }),
+  token: (origin, app, code, redirect, verifier) =>
+    googleExchange(origin, {
+      client_id: app.clientId,
+      client_secret: app.secret,
+      code,
+      redirect_uri: redirect,
+      code_verifier: verifier,
+    }).then(
       (r) => r.json() as Promise<Token>,
       (e: Error) => ({ error: "unreachable", error_description: e.message })
     ),

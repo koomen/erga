@@ -3,6 +3,10 @@
 // The app is an Effect (server/http.ts): cloudflare/index.ts turns it into the
 // Worker's fetch handler, and the unit tests may run it on a Platform in memory.
 //
+// Every request comes through the gate (gate/core.ts; server/identity/mount.ts), which says who calls. The gate
+// answers its own paths itself, before the app: /_edge/... (its sign-in and callback, the hand-off to a document's
+// site), /.well-known/oauth-... and /oauth/token (MCP's authorization server).
+//
 //   /                          the document published to the Erga domain, served from its last publish, with
 //                              Erga's bars if its publishing setting has them. Nothing published: nothing (a 404
 //                              with no body). Someone signed in goes to /documents instead (homeGoesToDocuments).
@@ -15,16 +19,15 @@
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
 //   /auth/sign-in              signing in: the providers that are on (GitHub, Google), to choose from
-//   /auth/github[/callback], /auth/google[/callback]
-//                              signing in with each; /auth/logout signs out; ?app=pending, a test sign-in with the
-//                              values that wait on /admin/auth
+//   /auth/github, /auth/google signing in with each, through the gate's sign-in; /auth/logout signs out; ?app=pending,
+//                              a test sign-in with the values that wait on /admin/auth
+//   /auth/sso                  a gate in front signed them in: their account (server/identity/sign-in.ts)
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   /auth/domain-pass          a custom domain's sign-in, through here (server/identity/domain-pass.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
-//   /.well-known/oauth-..., /oauth/...
-//                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/mcp-oauth.ts)
-//   /tokens/...                approving an agent's request for a token; making one (the Settings dialog)
+//   /oauth/authorize           MCP's sign-in: the person lets an agent's app act for them (server/identity/authorize.ts)
+//   /tokens/new                making a token to paste (the Settings dialog)
 //   /_home-files/<gen>/<path>  the Erga domain's published files
 //   any other address          the Erga domain's published site (server/sites/addresses.ts): its redirects, its files
 //                              at clean addresses (/about), its 404 page; Erga's own paths, and documents that are
@@ -37,6 +40,8 @@
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
 //                              on Cloudflare served without the Worker, kept for a year); /logo.png, Erga's logo
 //   /erga/<name>/editor.js     an editing library (erga/text), at its one address: its newest build, which a page imports
+//                              (both, and the page's keyed calls, on every document's pages origin too: a document's
+//                              page calls only its own origin)
 //   /erga-sw.js                Erga's service worker (pages/worker.ts), here and on a document's own pages origin: the
 //                              editor opens with no connection. The only service worker a pages origin takes
 //   /api/llm                   a document's page calls a model as its signed-in visitor (agents/page-llm.ts)
@@ -55,10 +60,11 @@ import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/routes.ts";
 import { DOMAIN_LLM_PATH, domainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
-import { serverApi } from "./api.ts";
-import { documentRoutes, ergaAddress, isPagesSite, workerHere } from "./documents/index.ts";
+import { serverApi, unauthorized } from "./api.ts";
+import { documentRoutes, ergaAddress, isKeyedOp, isPagesSite, workerHere } from "./documents/index.ts";
 import { domainOf, ERGA, LIVE_FILES, liveDoc, nothing, serveDomain, serveLiveFile, serveRoot, serveSitePath } from "./sites/index.ts";
 import {
+  authorize,
   chooseSignIn,
   claimRoute,
   DOMAIN_ERGA,
@@ -66,14 +72,15 @@ import {
   domainPass,
   domainSignIn,
   devSignIn,
-  finishOAuth,
-  isOAuthPath,
-  oauthRoutes,
-  proxySignIn,
+  refusedAgent,
+  signedOut,
   signOut,
-  startOAuth,
+  ssoSignIn,
+  SSO_PATH,
+  startSignIn,
   tokensRoutes,
   usernameStep,
+  WARM_PATH,
 } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
 import { newsRoutes } from "./news/index.ts";
@@ -95,8 +102,8 @@ import {
 import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
 import { HttpServerResponse } from "effect/http";
-import { call, fromWeb, platform, redirect, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
-import { DEV, routeAt, routeFor, SIGN_IN, type RouteRow } from "../shared/routes.ts";
+import { call, fromWeb, html, platform, redirect, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
+import { DEV, routeAt, routeFor, SECRET, SIGN_IN, type RouteRow } from "../shared/routes.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
@@ -107,6 +114,8 @@ export const app = (outside: Outside): Route =>
     const request = yield* webRequest,
       p = yield* platform;
     const url = new URL(request.url);
+    // An agent whose grant isn't good (revoked, ended): refused, whatever it asks, so its app signs in again.
+    if (yield* call(() => refusedAgent(p, request))) return unauthorized(url.origin, true);
     // A custom domain is its site's alone: the published files as they are, and nothing of Erga's.
     // Under /_erga/ only, Erga's: the pages' model (window.ergaLLM) and signing in for it (identity/domain-pass.ts);
     // not while nothing is published there.
@@ -120,7 +129,8 @@ export const app = (outside: Outside): Route =>
     }
     // The editor's files' addresses, for the pages below to name (pages/assets.ts).
     if (!isAsset(url.pathname)) yield* call(() => loadAssets(p, url));
-    const answer = yield* route(url, outside);
+    // (A sign-in that its person's sign-out ended: the answer has the gate end that browser's cookies.)
+    const answer = signedOut(request, yield* route(url, outside));
     // Every page of the site's own has who you are in its upper right; a document's pages origin, and its files, never do.
     if (answer.status == 101) return answer;
     // The corner, live.js and the security headers rewrite the page: they take it as a web Response.
@@ -151,18 +161,16 @@ const SIGN = { domain: "none", exempt: SIGN_IN } as const;
 /** The routes this file answers itself: signing in, the deploy's default homepage, and the release an open page follows. */
 export const ROUTES: readonly RouteRow<Route>[] = [
   { method: "GET", path: "/auth/sign-in", run: chooseSignIn, action: "Choose a way to sign in that is on here", ...SIGN },
-  // The OAuth mode (server/identity/oauth.ts): one flow, a start and a callback for each provider.
+  // The OAuth mode (server/identity/sign-in.ts): Erga's checks of the provider, then the gate's sign-in with it.
   // ?app=pending: a test sign-in with the values that wait on /admin/auth.
-  { method: "GET", path: "/auth/github", run: startOAuth("github"), action: "Sign in with GitHub", ...SIGN },
-  { method: "GET", path: "/auth/github/callback", run: finishOAuth("github"), action: "GitHub sends the user back, signed in", ...SIGN },
-  { method: "GET", path: "/auth/google", run: startOAuth("google"), action: "Sign in with Google", ...SIGN },
-  { method: "GET", path: "/auth/google/callback", run: finishOAuth("google"), action: "Google sends the user back, signed in", ...SIGN },
-  // The proxy mode (server/identity/proxy.ts): the signed header of the proxy in front of the server.
+  { method: "GET", path: "/auth/github", run: startSignIn("github"), action: "Sign in with GitHub", ...SIGN },
+  { method: "GET", path: "/auth/google", run: startSignIn("google"), action: "Sign in with Google", ...SIGN },
+  // A gate in front of the server signed them in already: their account.
   {
     method: "GET",
-    path: "/auth/proxy",
-    run: proxySignIn,
-    action: "Sign in with the organization's sign-in at the proxy in front of the server",
+    path: SSO_PATH,
+    run: ssoSignIn,
+    action: "Sign in with the organization's sign-in at the gate in front of the server",
     ...SIGN,
   },
   { method: "POST", path: "/auth/logout", run: signOut, action: "Sign out", ...SIGN },
@@ -195,6 +203,23 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     ...SIGN,
   },
   { method: "GET", path: "/auth/domain-pass", run: domainPass, action: "Sign in on a custom domain, through this one", ...SIGN },
+  // MCP's sign-in (server/identity/authorize.ts): the gate is the authorization server; the person decides here.
+  {
+    method: "GET",
+    path: "/oauth/authorize",
+    run: authorize,
+    action: "An MCP app's request to act for the user, to approve or deny",
+    domain: "none",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
+  {
+    method: "POST",
+    path: "/oauth/authorize",
+    run: authorize,
+    action: "Approve or deny an MCP app's request",
+    domain: "none",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
   // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
   {
     method: "GET",
@@ -218,13 +243,23 @@ const route = (url: URL, outside: Outside): Route =>
       return workerHere(url, p) ? serveWorker() : text("Not found", 404);
     // A pages origin's page that deletes its offline copies: sign-out frames it (client/inline/sign-out.ts).
     if (path == CLEAR_PATH && request.method == "GET" && isPagesSite(url, p)) return serveClear();
+    // A page of the documents' site with nothing on it: the list of documents frames it, so that a gate in front runs
+    // its hand-off there before the person's first document (server/identity/caller.ts, handOff).
+    if (path == WARM_PATH && request.method == "GET" && isPagesSite(url, p)) return html("", 200, { "Cache-Control": "no-store" });
     // A document's pages origin serves its page and files, and nothing of this site's.
     // No service worker of a document's there: one would outlive the page that registered it, in the browser of whoever
     // viewed it, and answer for the document's files after its authors had changed them. Only Erga's own, above.
     if (isPagesSite(url, p) && request.headers.get("service-worker") == "script")
       return text("A document's page can't register a service worker.", 403);
-    // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)
-    if (isPagesSite(url, p)) return yield* documentRoutes;
+    // And what its page calls, all on its own origin (the gate in front checks one cookie for each origin): the
+    // editor's files and libraries, as on the app's origin, and the comment ops with the page's edit key.
+    if (isPagesSite(url, p)) {
+      if (isAssetPath(path)) return yield* serveAsset;
+      const library = libraryOf(path);
+      if (library && (request.method == "GET" || request.method == "HEAD")) return serveLibrary(library);
+      if (isKeyedOp(url)) return yield* serverApi;
+      return yield* documentRoutes;
+    }
     // This file's own routes. Signing in: each function answers its path's methods itself.
     const own = path.startsWith("/auth/")
       ? routeAt(ROUTES, path)
@@ -244,8 +279,6 @@ const route = (url: URL, outside: Outside): Route =>
     const there = yield* outside(url);
     if (there) return there;
     const read = request.method == "GET" || request.method == "HEAD";
-    // MCP's sign-in: the metadata, an app's registration, the person's approval, the token.
-    if (isOAuthPath(path)) return yield* oauthRoutes;
     // The document published to the Erga domain, served directly from its last publish; nothing published: nothing.
     if (path == "/" && read) {
       // Someone signed in goes to their documents.

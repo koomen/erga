@@ -41,7 +41,7 @@ import { DiskLink } from "../../document/store/disk";
 import type { Env } from "../env";
 import { CALLS, throughDoor, type CallAnswer } from "./document-door";
 import { blobsOf } from "../blobs";
-import { renderer } from "../render";
+import { renderer } from "../app";
 import { safeAvatar } from "../../shared/avatars";
 import * as Duration from "effect/Duration";
 

@@ -7,13 +7,12 @@ import { expect, spyOn, test } from "bun:test";
 import * as Schema from "effect/Schema";
 import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
-import { sessionOf } from "../server/identity/index.ts";
+import { Grants, sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
-import { Tokens } from "../server/identity/tokens";
 import { agentTools, allTools, KINDS, jsonSchemaOf } from "../agents/tools";
 import { argumentsSchema } from "../agents/run";
-import { mcp, person, server as app } from "./helpers/app";
+import { calling, mcp, person, server as app } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 
 const ORIGIN = "https://erga.test";
@@ -26,21 +25,22 @@ const notObjects = (tools: Listed[]) =>
 async function server() {
   const sql = memory();
   const dir = new Directory(sql, { admins: ["ada"] });
-  const tokens = new Tokens(sql, "secret-".repeat(6), dir);
+  const grants = new Grants(sql, dir);
   const platform = {
     directory: dir,
-    tokens,
+    grants,
+    signIn: { mode: "oauth" },
     sessionOf: (request: Request) => sessionOf(platform, request),
     dev: () => false,
   } as unknown as Platform;
-  const { token } = await tokens.mint({ login: "ada", name: "Ada" }, "Ada's", { scope: "admin" });
+  const ada = { login: "ada", provider: "github", subject: "1001" };
+  const grant = await grants.make(ada, "Ada's", { scope: "admin" });
+  // As Ada's agent with that grant (the gate names it so).
+  const agent = calling({ kind: "agent", p: ada.provider, sub: ada.subject, g: grant.id });
   const call = (path: string, init: RequestInit = {}) =>
     respond(
       serverApi,
-      new Request(`${ORIGIN}${path}`, {
-        ...init,
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...init.headers },
-      }),
+      new Request(`${ORIGIN}${path}`, { ...init, headers: { ...agent, "Content-Type": "application/json", ...init.headers } }),
       platform
     );
   return { call };

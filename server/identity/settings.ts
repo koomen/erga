@@ -4,7 +4,7 @@
 // sign-in only: no server sets another's. And what the pages ask of the
 // sign-in, whatever its mode (mode.ts): its status, the ways to sign in.
 
-import { SIGN_IN_PROVIDERS, type SignInChoice } from "../../shared/sign-in.ts";
+import { SIGN_IN_PROVIDERS, type SignInChoice, SSO } from "../../shared/sign-in.ts";
 import type { Act } from "../../shared/attribution.ts";
 import { type AccountLookup, label, NotAllowed } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
@@ -25,17 +25,16 @@ import {
 import { testEnded, type PendingTest, type TestEnd } from "./app-test.ts";
 import type { OAuthSignIn } from "./mode.ts";
 import { type AppCheck, type AppValues, type Provider, providerOf, PROVIDERS } from "./providers.ts";
-import { proxyStatus } from "./proxy.ts";
 
 type SignInPlatform = Pick<Platform, "deploy" | "signIn" | "own" | "directory" | "dev">;
 
 const IDS = Object.keys(PROVIDERS) as Provider[];
 
-/** The OAuth mode's values. A server in the proxy mode has none: what asks for them there is refused. */
+/** The OAuth mode's values. A server with a gate in front has none: what asks for them there is refused. */
 function oauthOf(platform: Pick<Platform, "signIn">): OAuthSignIn {
   if (platform.signIn.mode != "oauth")
     throw new AuthError({
-      message: "This server signs in with a proxy in front of it: it has no OAuth providers. The deploy sets its sign-in.",
+      message: "A gate in front of this server signs people in: it has no OAuth providers. The deploy sets its sign-in.",
     });
   return platform.signIn;
 }
@@ -147,10 +146,10 @@ export async function providersOn(platform: Pick<Platform, "own">): Promise<Prov
 
 /**
  * The ways to sign in here, for the sign-in page and a page's sign-in dialog (shared/sign-in.ts): the providers that
- * are on, or the proxy in front. Each one's sign-in is at /auth/<id>.
+ * are on, or the gate in front. Each one's sign-in is at /auth/<id>.
  */
 export async function signInChoices(platform: Pick<Platform, "own" | "signIn">): Promise<SignInChoice[]> {
-  if (platform.signIn.mode == "proxy") return [{ id: "proxy", label: SIGN_IN_PROVIDERS.proxy.label }];
+  if (platform.signIn.mode == "gate") return [{ id: SSO, label: SIGN_IN_PROVIDERS[SSO].label }];
   const on = await providersOn(platform);
   return IDS.filter((id) => on[id]).map((id) => ({ id, label: PROVIDERS[id].label }));
 }
@@ -220,7 +219,7 @@ export function authOps(platform: SignInPlatform, origin: string): AuthOps {
   return {
     async status(by) {
       await mustAdmin(by);
-      if (platform.signIn.mode == "proxy") return { mode: "proxy", proxy: proxyStatus(platform.signIn.proxy) };
+      if (platform.signIn.mode == "gate") return { mode: "gate" };
       const [apps, providers] = await Promise.all([Promise.all(IDS.map((id) => localStatus(platform, origin, id))), providersOn(platform)]);
       return { mode: "oauth", apps: Object.fromEntries(IDS.map((id, i) => [id, apps[i]])) as Record<Provider, AuthStatus>, providers };
     },

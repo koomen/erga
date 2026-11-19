@@ -17,6 +17,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { signed } from "../signed.ts";
 import { ID, OWNER } from "../directory/index.ts";
+import { handOff } from "../identity/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./routes.ts";
 import { sourceDigest } from "../../shared/page-html.ts";
@@ -37,6 +38,16 @@ export const isPagesSite = (url: URL, platform: Platform) => url.hostname.endsWi
  */
 export const workerHere = (url: URL, platform: Pick<Platform, "pagesDomain" | "pagesShared">) =>
   !(isPagesSite(url, platform as Platform) && platform.pagesShared?.(url) == url.hostname);
+
+/**
+ * Whether a document's page at `url`, in a frame of the viewer at `shell`, asks for Erga's service worker: where this
+ * origin has it, but not behind a gate in front with the documents on another site than the viewer's (handOff). There
+ * the gate's member cookie is another site's cookie in the frame, and a browser sends it with the frame's requests but
+ * with none of a worker's: not for the worker's script, and not with a request that the worker passes on (Chromium 153
+ * and Firefox 155; dev/gate-browsers.ts with GATE_WORKER shows both). The gate refuses those requests, so a worker
+ * there would break the page it answers. Such a server keeps no copy of a document's page for a reload offline.
+ */
+export const workerFor = (url: URL, shell: string, platform: Platform) => workerHere(url, platform) && !handOff(platform, new URL(shell));
 
 /** The origin a document's page runs on. */
 export function pagesOrigin(owner: string, id: string, url: URL, platform: Platform): string {
@@ -234,7 +245,13 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   if (answer.status == 304) return new Response(null, { status: 304, headers });
   const text = await answer.text();
   return new Response(
-    readerPage(text, { shell, prefix: `/t/${token}/${ver ? `@${ver}/` : ""}`, src: sourceDigest(text), editor: !!claims.edit }),
+    readerPage(text, {
+      shell,
+      prefix: `/t/${token}/${ver ? `@${ver}/` : ""}`,
+      src: sourceDigest(text),
+      editor: !!claims.edit,
+      worker: workerFor(url, shell, platform),
+    }),
     {
     status: 200,
     headers,

@@ -1,13 +1,13 @@
 // The server's one API: everything a person can do on the server, for their own pages and for every agent alike.
 // The same operations, through the same route, with the same answers: with the person's session (their pages), or
-// with one of their agent tokens (an outside agent: "Authorization: Bearer erga_...").
+// with one of their agent tokens (an outside agent: "Authorization: Bearer ...", which the gate checks: the app hears
+// only whose agent it is, server/identity/admit.ts).
 //
-// The routes are ROUTES, at the end of this file. /tokens/... is a person's tokens: approve or deny an agent's
-// request; make one, for the Settings dialog (server/identity/tokens-page.ts).
+// The routes are ROUTES, at the end of this file. /tokens/new makes a token, for the Settings dialog
+// (server/identity/tokens-page.ts).
 //
 // The app (server/app.ts) sends those paths here: each answer is an Effect
-// (server/http.ts), with the platform that knows agent tokens. The share button's token
-// (<document>/api/share) is server/documents/routes.ts's.
+// (server/http.ts), with the platform that knows the agents' grants.
 //
 // The tools are agents/tools.ts's: the operations (server/operations/), and every document
 // tool (read, edit, write, ...) with a `document` argument, run in that document's host as the person's agent. A
@@ -18,22 +18,12 @@ import * as Schema from "effect/Schema";
 import { HttpServerResponse } from "effect/http";
 import { type Platform, type Session, whoOf } from "./platform";
 import { call, json, platform as currentPlatform, text, webRequest, type Route } from "./http.ts";
-import { AGENT_SIGN_IN, routeFor, type RouteRow } from "../shared/routes.ts";
-import { callerAddress } from "../shared/http.ts";
+import { routeFor, type RouteRow } from "../shared/routes.ts";
 import { allTools, jsonSchemaOf, runTool, toolsFor, type Tool } from "../agents/tools";
 import { addFile, type Caller, cleanFilePath, guideFor, OperationError } from "./operations/index.ts";
 import { keyedOp } from "./documents/index.ts";
 import type { ToolContent } from "../document/api/operations";
-import {
-  authOps,
-  expiryOf,
-  REQUEST_MINUTES,
-  resourceMetadataUrl,
-  SCOPES,
-  ScopeError,
-  type AgentToken,
-  type Scope,
-} from "./identity/index.ts";
+import { authOps, type Grant } from "./identity/index.ts";
 import { Base64 } from "effect/encoding";
 
 /** Who calls a tool here: the person signed in (their session, or an agent's token), the platform, and the server's origin. */
@@ -48,7 +38,7 @@ const callerOf = (platform: Platform, session: Session, origin: string): ToolCon
   auth: authOps(platform, origin),
   platform,
   session,
-  ...(session.agent ? { token: session.agent as AgentToken } : {}),
+  ...(session.agent ? { token: session.agent } : {}),
 });
 
 /** The tools a caller may use. */
@@ -84,14 +74,15 @@ const runNamed = Effect.fnUntraced(function* (name: string, args: unknown, ctx: 
 const failure = (error: string, status: number) =>
   json({ ok: false, error }, status, status == 401 ? { "WWW-Authenticate": 'Bearer realm="erga"' } : {});
 const NO_TOKEN = (origin: string) =>
-  `This needs Erga's sign-in. Add Erga's MCP server, ${origin}/mcp, to your app (Claude Code, Codex): it signs you in through your user's browser. If you had a token, it expired or was revoked.`;
+  `This needs Erga's sign-in. Add Erga's MCP server, ${origin}/mcp, to your app (Claude Code): it signs you in through your user's browser. If you had a token, it expired or was revoked.`;
 /**
- * No token, or one that doesn't work: a 401 that names /mcp's metadata, where an MCP app finds how to sign in
- * (server/identity/mcp-oauth.ts).
+ * No token, or one that doesn't work (`sent`: its grant was revoked or ended; the gate itself refuses a token that
+ * isn't its own): a 401 that names /mcp's metadata, where an MCP app finds how to sign in (the gate answers it:
+ * gate/core.ts).
  */
-const unauthorized = (origin: string, sent: boolean) =>
+export const unauthorized = (origin: string, sent = false) =>
   json({ ok: false, error: NO_TOKEN(origin) }, 401, {
-    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl(origin)}"${sent ? ', error="invalid_token"' : ""}`,
+    "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"${sent ? ', error="invalid_token"' : ""}`,
   });
 
 /** The body as JSON, as `schema` has it; or None, when it isn't JSON or isn't that. */
@@ -110,7 +101,7 @@ export const serverApi: Route = Effect.gen(function* () {
     path = url.pathname.replace(/\/+$/, "") || "/",
     origin = url.origin;
   const session = yield* call(() => platform.sessionOf(request));
-  const agent = session?.agent ? (session as Session & { agent: AgentToken }) : null;
+  const agent = session?.agent ? (session as Session & { agent: Grant }) : null;
   // An agent token's caller (MCP is for tokens only).
   const ctx: ToolContext | null = agent && callerOf(platform, agent, origin);
   // A comment op from a document's page, with its edit key: before the session, which the pages origin has none of.
@@ -121,10 +112,7 @@ export const serverApi: Route = Effect.gen(function* () {
   const found = routeFor(ROUTES, method, path);
   if (found) return yield* found.route.run({ request, url, origin, platform, session, ctx }, found.params);
   if (path == "/api/tools" || path.startsWith("/api/tools/"))
-    return (
-      signInFirst(request, session, origin) ??
-      failure(`GET ${origin}/api/tools lists the tools; POST ${origin}/api/tools/<name> runs one.`, 404)
-    );
+    return signInFirst(session) ?? failure(`GET ${origin}/api/tools lists the tools; POST ${origin}/api/tools/<name> runs one.`, 404);
   return failure(`There's nothing at ${request.method} ${path}. Erga's MCP server is ${origin}/mcp.`, 404);
 });
 
@@ -139,13 +127,12 @@ interface Asked {
 }
 
 /** The one API is for someone signed in: the answer to anyone else, or null. */
-const signInFirst = (request: Request, session: Session | null, origin: string) =>
-  session ? null : request.headers.get("authorization") ? unauthorized(origin, true) : failure("Sign in first.", 401);
+const signInFirst = (session: Session | null) => (session ? null : failure("Sign in first.", 401));
 
 /** The operations and tools the caller may use, as JSON (name, description, JSON Schema). */
 const listTools = ({ request, origin, platform, session }: Asked): Route =>
   Effect.gen(function* () {
-    if (!session) return signInFirst(request, session, origin)!;
+    if (!session) return signInFirst(session)!;
     return json({ ok: true, tools: (yield* listed(callerOf(platform, session, origin))).map(specOf) });
   });
 
@@ -155,7 +142,7 @@ const listTools = ({ request, origin, platform, session }: Asked): Route =>
  */
 const runOne = ({ request, origin, platform, session }: Asked, { name }: Record<string, string>): Route =>
   Effect.gen(function* () {
-    if (!session) return signInFirst(request, session, origin)!;
+    if (!session) return signInFirst(session)!;
     if (name.includes("/")) return failure(`GET ${origin}/api/tools lists the tools; POST ${origin}/api/tools/<name> runs one.`, 404);
     // A person's session acts only from this site's own pages.
     // (A form another site posts as text/plain carries an Origin too: only this site's own is let through.)
@@ -175,7 +162,7 @@ const runOne = ({ request, origin, platform, session }: Asked, { name }: Record<
 
 /** A folder of files as a document (multipart or JSON), or into one: for an HTTP client (curl -F), whose multipart body isn't an operation's JSON arguments. */
 const uploadRoute = ({ request, origin, ctx }: Asked): Route => {
-  if (!ctx) return Effect.succeed(unauthorized(origin, !!request.headers.get("authorization")));
+  if (!ctx) return Effect.succeed(unauthorized(origin));
   return upload(ctx).pipe(
     Effect.map((r) => json({ ok: true, ...r })),
     Effect.catchTag("OperationError", (e) =>
@@ -185,8 +172,8 @@ const uploadRoute = ({ request, origin, ctx }: Asked): Route => {
 };
 
 /**
- * POST /api/tools/comment or /api/tools/comments, ?doc=<id>&key=<edit key>: the page's editor on its pages origin,
- * which has no cookie (libs/text/ui/comments.ts). As the person the key names, on the key's document only, and only from
+ * POST /api/tools/comment or /api/tools/comments, ?doc=<id>&key=<edit key>, on the document's pages origin: the page's
+ * editor there, which has no cookie (libs/text/ui/comments.ts). As the person the key names, on the key's document only, and only from
  * that document's page; the operation decides what they may do, as for any caller.
  */
 const fromPage = Effect.fnUntraced(function* (
@@ -196,20 +183,11 @@ const fromPage = Effect.fnUntraced(function* (
   origin: string
 ) {
   const request = yield* webRequest;
-  if (request.headers.get("origin") != keyed.origin) return failure("Only this document's own page may do this.", 403);
-  const cors = { "Access-Control-Allow-Origin": keyed.origin, Vary: "Origin" };
-  if (request.method == "OPTIONS")
-    return HttpServerResponse.empty({
-      status: 204,
-      headers: {
-        ...cors,
-        "Access-Control-Allow-Methods": "POST",
-        "Access-Control-Allow-Headers": "content-type",
-        "Access-Control-Max-Age": "600",
-      },
-    });
-  if (request.method != "POST") return json({ ok: false, error: "POST it." }, 405, cors);
-  if (!keyed.person || !keyed.who) return json({ ok: false, error: "This key has expired: reload the page." }, 403, cors);
+  // On the document's own origin, from its own page: a document's page calls no other origin (so no CORS here).
+  if (new URL(request.url).origin != keyed.origin || request.headers.get("origin") != keyed.origin)
+    return failure("Only this document's own page may do this.", 403);
+  if (request.method != "POST") return json({ ok: false, error: "POST it." }, 405);
+  if (!keyed.person || !keyed.who) return json({ ok: false, error: "This key has expired: reload the page." }, 403);
   const args = yield* body(Schema.Record(Schema.String, Schema.Unknown));
   const caller: Caller = { dir: platform.directory, who: keyed.who, name: keyed.person.name, origin, platform, fromPage: true };
   return yield* runNamed(
@@ -217,8 +195,8 @@ const fromPage = Effect.fnUntraced(function* (
     { ...(args._tag == "Some" ? args.value : {}), document: keyed.doc.id },
     caller
   ).pipe(
-    Effect.map((result) => json({ ok: true, result }, 200, cors)),
-    Effect.catchTag("OperationError", (e) => Effect.succeed(json({ ok: false, error: e.message }, e.status, cors)))
+    Effect.map((result) => json({ ok: true, result })),
+    Effect.catchTag("OperationError", (e) => Effect.succeed(json({ ok: false, error: e.message }, e.status)))
   );
 });
 
@@ -304,7 +282,7 @@ const decodeRpc = Schema.decodeUnknownOption(RpcMessage);
 const mcp = Effect.fnUntraced(function* (ctx: ToolContext | null, origin: string) {
   const request = yield* webRequest;
   // No token: the 401 that starts an MCP app's sign-in.
-  if (!ctx) return unauthorized(origin, !!request.headers.get("authorization"));
+  if (!ctx) return unauthorized(origin);
   if (request.method != "POST") return text("This MCP server answers POSTs only (stateless, no event stream).", 405, { Allow: "POST" });
   const parsed = yield* body(Schema.Unknown);
   if (parsed._tag == "None") return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
@@ -376,54 +354,6 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
   }
 });
 
-// ---------------------------------------------------------------- asking for a token
-
-/** An agent's request for a token; each field checked below, with words that say how to fix it. */
-const TokenAsk = Schema.Struct({
-  label: Schema.optionalKey(Schema.Unknown),
-  scope: Schema.optionalKey(Schema.Unknown),
-  doc: Schema.optionalKey(Schema.Unknown),
-  expires: Schema.optionalKey(Schema.Unknown),
-});
-
-/** POST /api/auth/request {label, scope, doc?, expires?}: a link for the person to approve, and a code to poll with. */
-const askForToken = Effect.fnUntraced(function* (platform: Platform, origin: string) {
-  // The address the edge saw the request come from; none in local development.
-  const from = callerAddress((yield* webRequest).headers);
-  const asked = yield* body(TokenAsk);
-  const b = asked._tag == "Some" ? asked.value : {};
-  const scope = b.scope ?? "documents";
-  if (!SCOPES.includes(scope as Scope)) return failure(`scope must be "document" (one document: give doc), "documents" or "admin".`, 400);
-  const expires = expiryOf(b.expires);
-  if (expires == "bad") return failure("expires must be a time (ISO 8601, e.g. 2026-12-31T00:00:00Z), a date, or left out for a token that lasts until it's revoked.", 400);
-  const grant = { scope: scope as Scope, docId: typeof b.doc == "string" ? b.doc : null, expires };
-  const made = yield* Effect.tryPromise({
-    try: () => platform.tokens.request(typeof b.label == "string" ? b.label : null, grant, undefined, from),
-    catch: (e) => e,
-  }).pipe(Effect.result);
-  if (made._tag == "Failure") {
-    if (made.failure instanceof ScopeError) return failure(made.failure.message, 400);
-    return yield* Effect.die(made.failure);
-  }
-  const r = made.success;
-  const approve = `${origin}/tokens/approve?code=${r.userCode}`;
-  return json({
-    ok: true, code: r.code, user_code: r.userCode, label: r.label, scope, approve_url: approve,
-    poll_url: `${origin}/api/auth/poll`, interval: 2, expires_in: Math.round((r.expires - Date.now()) / 1000),
-    next: `Ask your user to open ${approve} (signed in to Erga) and approve "${r.label}" (scope: ${scope}). Meanwhile POST {"code": "${r.code}"} to ${origin}/api/auth/poll every couple of seconds: it answers 202 while waiting and 200 with the token once they've approved.`,
-  });
-});
-
-/** POST /api/auth/poll {code}: 202 waiting, 200 with the token (once), 410 if it expired, was denied or was collected. */
-const pollForToken = Effect.fnUntraced(function* (platform: Platform) {
-  const asked = yield* body(Schema.Struct({ code: Schema.String }));
-  if (asked._tag == "None") return failure('Send {"code": "..."}, the code /api/auth/request gave you.', 400);
-  const r = yield* call(() => platform.tokens.collect(asked.value.code));
-  if (r.status == "pending") return json({ ok: false, status: "pending", error: "Not approved yet: ask again in a couple of seconds." }, 202);
-  if (r.status == "gone") return json({ ok: false, status: "gone", error: `That request expired (they last ${REQUEST_MINUTES} minutes), was denied, or its token was already collected: ask again.` }, 410);
-  return json({ ok: true, status: "approved", token: r.token, login: r.login });
-});
-
 /** /llms.txt: only where an agent starts. Nothing in Erga sends an agent here; MCP's instructions and tools are the manual. */
 const llmsTxt = (origin: string) => `# Erga
 
@@ -431,7 +361,7 @@ Erga is a multiplayer HTML page editor. Agents use it through its MCP server: ${
 
 Add it to your MCP app (Streamable HTTP). It signs you in through your user's browser, and its instructions and tools tell you the rest.
 
-Without MCP, call the same tools over HTTP with a token (Authorization: Bearer erga_...): GET ${origin}/api/tools lists them, and POST ${origin}/api/tools/<name> runs one, with its arguments as JSON.
+Without MCP, call the same tools over HTTP with a token (Authorization: Bearer <token>): GET ${origin}/api/tools lists them, and POST ${origin}/api/tools/<name> runs one, with its arguments as JSON.
 `;
 
 // ---------------------------------------------------------------- the routes
@@ -455,7 +385,7 @@ export const ROUTES: readonly RouteRow<(a: Asked, params: Record<string, string>
     path: "/mcp",
     // The same list and the same calls over MCP (stateless, Streamable HTTP, JSON answers), for a token: an adapter,
     // with no logic of its own. Without one, a 401 that starts an MCP app's sign-in in the browser
-    // (server/identity/mcp-oauth.ts). An outside agent's manual is the tools' descriptions and the instructions `initialize` answers.
+    // (server/identity/authorize.ts). An outside agent's manual is the tools' descriptions and the instructions `initialize` answers.
     run: ({ ctx, origin }) => mcp(ctx, origin),
     action: "The same tools over MCP, for an outside agent with a token",
     domain: "none",
@@ -477,22 +407,5 @@ export const ROUTES: readonly RouteRow<(a: Asked, params: Record<string, string>
     action: "Upload a folder of files as a document, or into one, from an HTTP client (curl -F): multipart, so not an operation's JSON",
     domain: "document",
     tool: "create_document",
-  },
-  // An agent asks for a token: a link for its person to approve; and collects the token once they have.
-  {
-    method: "POST",
-    path: "/api/auth/request",
-    run: ({ platform, origin }) => askForToken(platform, origin),
-    action: "An outside agent asks for a token",
-    domain: "none",
-    exempt: AGENT_SIGN_IN,
-  },
-  {
-    method: "POST",
-    path: "/api/auth/poll",
-    run: ({ platform }) => pollForToken(platform),
-    action: "An outside agent collects its token",
-    domain: "none",
-    exempt: AGENT_SIGN_IN,
   },
 ];

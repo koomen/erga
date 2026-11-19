@@ -1,23 +1,24 @@
-// Signing in with Google (server/identity/oauth.ts, providers.ts), against the pretend Google (dev/google-mock.ts): the live check
-// of a client, the switch that turns Google on (and its lockout rules), a sign-in from start to session, by the sub, and
-// the way back in: values set on the page that stop working give way to the deploy's.
+// Signing in with Google (server/identity/sign-in.ts, providers.ts), through the gate (server/identity/mount.ts: its
+// sign-in, state and callback), against the pretend Google (dev/google-mock.ts): the live check of a client, the switch
+// that turns Google on (and its lockout rules), a sign-in from start to the gate's cookie, by the sub, and the way back
+// in: values set on the page that stop working give way to the deploy's.
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mockGoogle, type MockGoogleUser } from "../dev/google-mock";
 import { AuthApps } from "../server/identity/apps";
 import type { OAuthSignIn } from "../server/identity/mode";
-import { finishOAuth, startOAuth } from "../server/identity/oauth";
+import { gated } from "../server/identity/mount";
 import { PROVIDERS } from "../server/identity/providers";
 import { authOps, providersOn, signInApp } from "../server/identity/settings";
-import { chooseSignIn } from "../server/identity/sign-in";
+import { chooseSignIn, startSignIn as start } from "../server/identity/sign-in";
 import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { memory } from "./helpers/memory-sql.ts";
-import { respond } from "../server/http.ts";
+import { respond, type Route, text } from "../server/http.ts";
+import * as Effect from "effect/Effect";
 
-const startSignIn = startOAuth("github"),
-  startGoogleSignIn = startOAuth("google"),
-  finishGoogleSignIn = finishOAuth("google"),
+const startSignIn = start("github"),
+  startGoogleSignIn = start("google"),
   checkGoogleApp = PROVIDERS.google.check;
 const GOOGLE = "https://google.test", GITHUB = "https://github.test";
 const GITHUB_APP = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
@@ -28,7 +29,7 @@ const ADA: MockGoogleUser = { sub: "1001", email: "ada@example.com", email_verif
 let google: ReturnType<typeof mockGoogle>;
 const realFetch = globalThis.fetch;
 beforeEach(() => {
-  google = mockGoogle({ clientId: APP.clientId, clientSecret: APP.secret, redirects: [`${ORIGIN}/auth/google/callback`], user: ADA });
+  google = mockGoogle({ clientId: APP.clientId, clientSecret: APP.secret, redirects: [`${ORIGIN}/_edge/callback`], user: ADA });
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     // GitHub's token endpoint, as it answers the live check of a working app.
@@ -52,7 +53,8 @@ function server() {
       devLogin: null,
       encryptionKey: "factory-key",
     },
-    deploy: { version: null, primary: null },
+    deploy: { version: null, domains: [], app: null },
+    pagesDomain: () => "pages.example",
   } as unknown as Platform;
   return { platform, own, directory };
 }
@@ -60,15 +62,34 @@ function server() {
 /** The deploy's apps of a server made here (the OAuth mode's). */
 const appsOf = (platform: Platform) => (platform.signIn as OAuthSignIn).apps;
 
-const cookieOf = (r: Response) => (r.headers.get("set-cookie") ?? "").split(/,(?=\s*erga_)/).map((c) => c.split(";")[0].trim()).join("; ");
+const cookieOf = (r: Response) =>
+  r.headers
+    .getSetCookie()
+    .map((c) => c.split(";")[0].trim())
+    .join("; ");
 
-/** A whole sign-in: /auth/google, Google's page, the callback. The callback's answer. */
+/** The server's sign-in routes behind the gate, as the Worker has them: the gate answers its own paths (/_edge/...). */
+const ROUTES: Record<string, Route> = { "/auth/google": startGoogleSignIn, "/auth/github": startSignIn, "/auth/sign-in": chooseSignIn };
+const visit = (platform: Platform, at: string, headers: Record<string, string> = {}) =>
+  gated(platform, new Request(at.startsWith("/") ? ORIGIN + at : at, { headers }), (r) =>
+    respond(ROUTES[new URL(r.url).pathname] ?? Effect.succeed(text("the app")), r, platform)
+  );
+
+/** The start of a sign-in: /auth/<provider>, then the gate's sign-in, which goes off to the provider with its state cookie. */
+async function startAt(platform: Platform, path: string): Promise<Response> {
+  const first = await visit(platform, path);
+  return first.status == 302 && first.headers.get("location")!.startsWith("/_edge/sign-in")
+    ? visit(platform, first.headers.get("location")!)
+    : first;
+}
+
+/** A whole sign-in: /auth/google, the gate's sign-in, Google's page, the gate's callback. The callback's answer. */
 async function signInWithGoogle(platform: Platform, q = ""): Promise<Response> {
-  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents${q}`), platform);
+  const start = await startAt(platform, `/auth/google?next=/documents${q}`);
   expect(start.status).toBe(302);
   const atGoogle = await google.fetch(new Request(start.headers.get("location")!));
   expect(atGoogle.status).toBe(302);
-  return respond(finishGoogleSignIn, new Request(atGoogle.headers.get("location")!, { headers: { cookie: cookieOf(start) } }), platform);
+  return visit(platform, atGoogle.headers.get("location")!, { cookie: cookieOf(start) });
 }
 
 /** A rule for one account, with write, made with it (as an admin's rule, or local development's, would be). */
@@ -99,11 +120,19 @@ test("Google is off until an admin turns it on: its sign-in says so in place and
   expect(choose).toContain("Continue with GitHub");
   expect(choose).toContain("Continue with Google");
   expect(choose).not.toContain("same account");
-  const start = new URL(
-    (await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents`), platform)).headers.get("location")!
+  // Erga's checks pass: off to the gate's sign-in, which goes to Google with the client, the gate's callback and PKCE.
+  expect((await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents`), platform)).headers.get("location")).toBe(
+    "/_edge/sign-in?idp=google&next=%2Fdocuments"
   );
+  const start = new URL((await startAt(platform, "/auth/google?next=/documents")).headers.get("location")!);
+  expect(start.searchParams.get("code_challenge_method")).toBe("S256");
   expect(start.origin + start.pathname).toBe(`${GOOGLE}/o/oauth2/v2/auth`);
-  expect(Object.fromEntries(start.searchParams)).toMatchObject({ client_id: APP.clientId, redirect_uri: `${ORIGIN}/auth/google/callback`, response_type: "code", scope: "openid email profile" });
+  expect(Object.fromEntries(start.searchParams)).toMatchObject({
+    client_id: APP.clientId,
+    redirect_uri: `${ORIGIN}/_edge/callback`,
+    response_type: "code",
+    scope: "openid email profile",
+  });
 });
 
 test("the sign-in page says what the person will open, or that they canceled; the same page whoever may join", async () => {
@@ -190,7 +219,7 @@ test("a sign-in from start to session, by the sub; someone unknown is refused; G
   const ok = await signInWithGoogle(platform);
   expect(ok.status).toBe(302);
   expect(ok.headers.get("location")).toBe("/documents");
-  expect(ok.headers.get("set-cookie")).toContain("erga_session=");
+  expect(ok.headers.get("set-cookie")).toContain("__Host-erga=s.");
   // Her email changes at Google: the sub still signs her in.
   google.state.user = { ...ADA, email: "ada@new.example.com" };
   expect((await signInWithGoogle(platform)).status).toBe(302);
@@ -208,35 +237,37 @@ test("Cancel on the provider's page goes back to Sign in; any other refusal is o
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
   /** The provider's answer to a sign-in that started here: the callback with `query`, and the start's state. */
   const back = async (query: string) => {
-    const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/koomen/trip`), platform);
+    const start = await startAt(platform, "/auth/google?next=/koomen/trip");
     const state = new URL(start.headers.get("location")!).searchParams.get("state");
-    return respond(
-      finishGoogleSignIn,
-      new Request(`${ORIGIN}/auth/google/callback?state=${state}&${query}`, { headers: { cookie: cookieOf(start) } }),
-      platform
-    );
+    return visit(platform, `/_edge/callback?state=${state}&${query}`, { cookie: cookieOf(start) });
   };
   const canceled = await back("error=access_denied");
   expect(canceled.status).toBe(302);
-  expect(canceled.headers.get("location")).toBe("/auth/sign-in?next=%2Fkoomen%2Ftrip&canceled");
-  // Refused for another reason, or a code the provider won't trade: the same page, and the provider's words stay in the log.
+  expect(canceled.headers.get("location")).toBe("/auth/sign-in?next=%2Fkoomen%2Ftrip&canceled=");
+  // Any other refusal of the provider's goes back there too: the gate's callback trades only a code.
+  expect((await back("error=server_error&error_description=Their+own+words")).headers.get("location")).toBe(
+    "/auth/sign-in?next=%2Fkoomen%2Ftrip&canceled="
+  );
+  // A code the provider won't trade: one page, and the provider's words stay in the log.
   const logged: string[] = [];
   const log = console.log;
   console.log = (...a: unknown[]) => void logged.push(a.join(" "));
   try {
-    for (const query of ["error=server_error&error_description=Their+own+words", "code=not-a-code"]) {
-      const failed = await back(query);
-      expect(failed.status).toBe(400);
-      const html = await failed.text();
-      expect(html).toContain("<h1>Sign-in didn't work</h1>");
-      expect(html).toContain('<p><a href="/auth/sign-in">Try again</a>. If it keeps failing, tell your Erga admin.</p>');
-      expect(html.slice(html.indexOf("<main"))).not.toMatch(/Google|Their own words|server_error|invalid_grant/);
-    }
+    const failed = await back("code=not-a-code");
+    expect(failed.status).toBe(400);
+    const html = await failed.text();
+    expect(html).toContain("<h1>Sign-in didn't work</h1>");
+    expect(html).toContain('<p><a href="/auth/sign-in">Try again</a>. If it keeps failing, tell your Erga admin.</p>');
+    expect(html.slice(html.indexOf("<main"))).not.toMatch(/Google|invalid_grant/);
+    // Nobody is signed in.
+    expect(failed.headers.get("set-cookie") ?? "").not.toContain("__Host-erga=s.");
   } finally {
     console.log = log;
   }
-  expect(logged.join("\n")).toContain("sign-in failed: Google: server_error: Their own words");
-  expect(logged.length).toBe(2);
+  expect(logged.join("\n")).toContain("sign-in failed: Google: invalid_grant");
+  expect(logged.length).toBe(1);
+  // A callback with no sign-in of this browser's behind it (no state cookie, or another's state): nothing.
+  expect((await visit(platform, "/_edge/callback?state=abc&code=x")).status).toBe(400);
 });
 
 test("one way in: Erga names the account itself, from the address, when the one rule lets in her Workspace; else she chooses", async () => {
@@ -251,13 +282,13 @@ test("one way in: Erga names the account itself, from the address, when the one 
   google = mockGoogle({
     clientId: APP.clientId,
     clientSecret: APP.secret,
-    redirects: [`${ORIGIN}/auth/google/callback`],
+    redirects: [`${ORIGIN}/_edge/callback`],
     user: { ...ADA, hd: "example.com" },
   });
   const one = await only((d) => d.rules.add(koomen, { kind: "workspace", value: "example.com", access: "write" }));
   const named = await signInWithGoogle(one.platform);
   expect(named.headers.get("location")).toBe("/documents");
-  expect(named.headers.get("set-cookie")).toContain("erga_session=");
+  expect(named.headers.get("set-cookie")).toContain("__Host-erga=s.");
   expect((await one.directory.identities.find("google", "1001"))?.login).toBe("ada");
   // A name that is taken gets a number.
   google.state.user = { ...ADA, sub: "1002", email: "Ada@example.com", hd: "example.com" };
@@ -285,14 +316,12 @@ test("new values for the client wait for an admin's test sign-in with them, as G
   const apps = new AuthApps(own, "factory-key");
   const NEW = { clientId: "123456789012-newnewnewnewnew.apps.googleusercontent.com", secret: "GOCSPX-newnewnewnewnewnew" };
   await apps.keep("google", "pending", NEW, { login: "koomen" });
-  google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/auth/google/callback`], user: ADA });
+  google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/_edge/callback`], user: ADA });
   const tested = await signInWithGoogle(platform, "&app=pending");
   expect(tested.status).toBe(302);
   expect(await apps.values("google", "active")).toEqual(NEW);
   // GitHub's sign-in is unchanged by Google's switch.
-  expect(new URL((await respond(startSignIn, new Request(`${ORIGIN}/auth/github`), platform)).headers.get("location")!).origin).toBe(
-    GITHUB
-  );
+  expect(new URL((await startAt(platform, "/auth/github")).headers.get("location")!).origin).toBe(GITHUB);
 });
 
 test("a test sign-in by someone refused, or with no account yet, notes why beside the values that wait", async () => {
@@ -301,7 +330,7 @@ test("a test sign-in by someone refused, or with no account yet, notes why besid
   const apps = new AuthApps(own, "factory-key");
   const NEW = { clientId: "123456789012-newnewnewnewnew.apps.googleusercontent.com", secret: "GOCSPX-newnewnewnewnewnew" };
   await apps.keep("google", "pending", NEW, { login: "koomen" });
-  google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/auth/google/callback`], user: ADA });
+  google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/_edge/callback`], user: ADA });
   // Ada may not sign in here (invite-only): the test has a result all the same.
   expect((await signInWithGoogle(platform, "&app=pending")).status).toBe(403);
   expect((await apps.read("google")).pending?.test).toMatchObject({
@@ -314,31 +343,6 @@ test("a test sign-in by someone refused, or with no account yet, notes why besid
   expect((await signInWithGoogle(platform, "&app=pending")).headers.get("location")).toBe("/auth/username");
   expect((await apps.read("google")).pending?.test?.error).toContain("has no account here");
   expect(await apps.values("google", "active")).toBeNull();
-});
-
-test("values that change during a test sign-in: its end tests nothing, and the new values have no result", async () => {
-  const { platform, own, directory } = server();
-  await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
-  await directory.users.signedIn("koomen");
-  await directory.identities.link("koomen", { provider: "google", subject: "1001", handle: "k@example.com", name: null, emails: [] });
-  const apps = new AuthApps(own, "factory-key");
-  const NEW = { clientId: "123456789012-newnewnewnewnew.apps.googleusercontent.com", secret: "GOCSPX-newnewnewnewnewnew" };
-  const NEWER = { clientId: "123456789012-newernewernewer.apps.googleusercontent.com", secret: "GOCSPX-newernewernewernew" };
-  await apps.keep("google", "pending", NEW, { login: "koomen" });
-  google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/auth/google/callback`], user: ADA });
-  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents&app=pending`), platform);
-  const atGoogle = await google.fetch(new Request(start.headers.get("location")!));
-  // Another admin saves other values while this test is at Google.
-  await apps.keep("google", "pending", NEWER, { login: "koomen" });
-  const back = await respond(
-    finishGoogleSignIn,
-    new Request(atGoogle.headers.get("location")!, { headers: { cookie: cookieOf(start) } }),
-    platform
-  );
-  expect(back.status).toBe(409);
-  expect(await back.text()).toContain("changed during this test sign-in");
-  expect((await apps.read("google")).pending).toMatchObject({ clientId: NEWER.clientId });
-  expect((await apps.read("google")).pending?.test).toBeUndefined();
 });
 
 test("a Google account's picture is Google's, kept at each sign-in; with none, no picture (never GitHub's)", async () => {

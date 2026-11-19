@@ -1,18 +1,29 @@
 // The AWS host of bun erga (deploy/aws/): the stacks' templates, the instance's entry from the answers, the first rows'
 // SQL. No AWS here: the templates are pure. (The flow's AWS lane: tests/own.test.ts.)
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Aws } from "../deploy/aws/cli";
 import { liveOnAws, liveParam } from "../deploy/aws/deploy";
+import { gateCode, gateSettings, INLINE_MAX, putEdgeKey } from "../deploy/aws/gate";
 import { deployScript, factsScript, healthScript, provisionScript, putObject, sqlScript } from "../deploy/aws/machine";
 import { ADMIN_SQL, adminIn, awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
-import { changeSetKind } from "../deploy/aws/stack";
-import { type AwsShape, certificatesTemplate, NAT_USER_DATA, paramPath, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
+import { changeSetKind, writeTemplates } from "../deploy/aws/stack";
+import {
+  type AwsShape,
+  certificatesTemplate,
+  GATE_PARTS,
+  type GateCode,
+  idpSecretParam,
+  NAT_USER_DATA,
+  paramPath,
+  stackTemplate,
+  TEMPLATE_MAX,
+} from "../deploy/aws/template";
 import { instanceReader } from "../deploy/cli/running";
 import { signInOf } from "../deploy/own/facts";
-import { noAnswers, pagesProblem } from "../deploy/own/plan";
+import { noAnswers, pagesProblem, varsOf } from "../deploy/own/plan";
 
 const shape: AwsShape = {
   stack: "erga",
@@ -38,6 +49,8 @@ test("the machine is private: CloudFront's prefix list is its only way in, and i
     expect(c.ViewerCertificate).toEqual({ CloudFrontDefaultCertificate: true });
   }
   expect(r.Forwarded.Properties.FunctionCode).toContain('r.headers["x-forwarded-host"] = { value: r.headers.host.value }');
+  // (CloudFront refuses a function that writes the scheme, with a 502 for each request: the server needs no header for it.)
+  expect(r.Forwarded.Properties.FunctionCode).not.toContain("x-forwarded-proto");
   // The cache key has the host: each document's pages origin has its own files at the same paths.
   expect(r.CachePolicy.Properties.CachePolicyConfig.ParametersInCacheKeyAndForwardedToOrigin.HeadersConfig.Headers).toEqual(["Host"]);
   // The bucket outlives the stack: the documents are in it.
@@ -120,117 +133,244 @@ test("the first rows go only into a database with no admin, and a quote can't le
   expect(firstSql({ ...aws, signIn: "invite" })).toBe("");
 });
 
-// ------------------------------------------------------------------ the proxy mode: the organization's sign-in at a proxy
+// ------------------------------------------------------------------ the gate in front: the organization's sign-in (SSO)
 
 const oidc = {
   issuer: "https://idp.example.com/pool",
   authorize: "https://sign-in.example.com/oauth2/authorize",
   token: "https://sign-in.example.com/oauth2/token",
-  userInfo: "https://sign-in.example.com/oauth2/userInfo",
   clientId: "client-1",
 };
-const balanced: AwsShape = {
+const domains = { app: "erga.example.com", appZone: "Z1", pages: "example-pages.com", pagesZone: "Z2" };
+const code: GateCode = { functions: { edge: "E()", agents: "A()", request: "R()", response: "S()" }, lambda: "exports.handler=h;" };
+const gated: AwsShape = {
   stack: "erga-example-com",
   egress: { kind: "nat-instance" },
-  domains: { app: "erga.example.com", appZone: "Z1", pages: "pages.erga.example.com", pagesZone: "Z1" },
-  edge: { kind: "proxy", oidc },
+  domains,
+  edge: { kind: "gate", prefixList: "pl-82a045eb", code },
 };
-type Rule = { Properties: { Priority: number; Conditions: Record<string, any>[]; Actions: Record<string, any>[] } };
-const rulesOf = (s: AwsShape) =>
-  Object.entries(resources(s))
-    .filter(([, r]) => r.Type == "AWS::ElasticLoadBalancingV2::ListenerRule")
-    .map(([name, r]) => ({ name, ...(r as unknown as Rule).Properties }))
-    .sort((a, b) => a.Priority - b.Priority);
-/** A rule's values to match, each condition's list. */
-const valuesOf = (c: Record<string, any>): unknown[] =>
-  (c.HostHeaderConfig ?? c.PathPatternConfig ?? c.HttpHeaderConfig ?? c.QueryStringConfig ?? c.SourceIpConfig).Values;
+type Behavior = {
+  PathPattern?: string;
+  CachePolicyId: unknown;
+  FunctionAssociations: { EventType: string; FunctionARN: { Ref: string } }[];
+  LambdaFunctionAssociations?: { EventType: string; LambdaFunctionARN: unknown; IncludeBody: boolean }[];
+};
+/** A distribution's behaviors by path ("*": the default), each with its viewer-request function and whether the Lambda is its origin request. */
+const behaviorsOf = (d: { Properties: Record<string, any> }) =>
+  Object.fromEntries(
+    [d.Properties.DistributionConfig.DefaultCacheBehavior, ...(d.Properties.DistributionConfig.CacheBehaviors ?? [])].map((b: Behavior) => [
+      b.PathPattern ?? "*",
+      {
+        request: b.FunctionAssociations.find((f) => f.EventType == "viewer-request")!.FunctionARN.Ref,
+        response: b.FunctionAssociations.find((f) => f.EventType == "viewer-response")?.FunctionARN.Ref,
+        lambda: b.LambdaFunctionAssociations?.map((l) => `${l.EventType}${l.IncludeBody ? " with the body" : ""}`).join() ?? null,
+      },
+    ])
+  );
 
-test("a proxy in front: the sign-in on the app's address, and no CloudFront", () => {
-  const r = resources(balanced);
-  expect(Object.values(r).filter((x) => x.Type.startsWith("AWS::CloudFront::"))).toEqual([]);
-  // The machine lets in the proxy only; the proxy is public, in two zones.
+test("the gate in front: its four functions on both distributions, and the key that only CloudFront and the machine know", () => {
+  const r = resources(gated);
+  // The machine is as private as without the gate: CloudFront's prefix list only, a VPC origin, no public address.
   expect(r.Firewall.Properties.SecurityGroupIngress).toEqual([
-    {
-      IpProtocol: "tcp",
-      FromPort: 8080,
-      ToPort: 8080,
-      SourceSecurityGroupId: { Ref: "ProxyFirewall" },
-      Description: "The proxy",
-    },
+    { IpProtocol: "tcp", FromPort: 8080, ToPort: 8080, SourcePrefixListId: "pl-82a045eb", Description: "CloudFront" },
   ]);
-  expect(r.Proxy.Properties).toMatchObject({ Scheme: "internet-facing", Subnets: [{ Ref: "PublicSubnet" }, { Ref: "PublicSubnetB" }] });
   expect(r.Machine.Properties.SubnetId).toEqual({ Ref: "PrivateSubnet" });
-  // Its health check asks the machine itself, a path with no sign-in.
-  expect(r.Targets.Properties).toMatchObject({
-    Port: 8080,
-    HealthCheckPath: "/api/health",
-    Targets: [{ Id: { Ref: "Machine" } }],
+  // The gate's code is the us-east-1 stack's: this stack has none of it, and takes each function's ARN as a parameter.
+  expect(Object.values(r).filter((x) => x.Type == "AWS::CloudFront::Function" || x.Type == "AWS::CloudFront::KeyValueStore")).toEqual([]);
+  expect(JSON.stringify(stackTemplate(gated))).not.toContain("E()");
+  // The app's distribution: each part of the gate on its own paths; the Lambda only where the gate needs the network
+  // (the callback) or a body (the token endpoint). The response function is on every behavior: it signs, and it
+  // removes Erga's headers to the gate.
+  expect(behaviorsOf(r.AppDistribution)).toEqual({
+    "*": { request: "GateRequest", response: "GateResponse", lambda: null },
+    "/_edge/*": { request: "GateEdge", response: "GateResponse", lambda: "origin-request" },
+    "/oauth/token": { request: "GateAgents", response: "GateResponse", lambda: "origin-request with the body" },
+    "/.well-known/oauth-*": { request: "GateAgents", response: "GateResponse", lambda: null },
   });
-  // One certificate, in this stack and region: the app's name and the pages' wildcard. The names point at the proxy.
-  expect(r.Certificate.Properties).toMatchObject({ DomainName: "erga.example.com", SubjectAlternativeNames: ["*.pages.erga.example.com"] });
-  expect(r.PagesRecord.Properties).toMatchObject({ HostedZoneId: "Z1", Name: "*.pages.erga.example.com", Type: "A" });
-  expect(r.AppRecord.Properties.AliasTarget.DNSName).toEqual({ "Fn::GetAtt": ["Proxy", "DNSName"] });
-  // Any other host: nothing.
-  expect(r.Listener.Properties.DefaultActions[0]).toMatchObject({ Type: "fixed-response", FixedResponseConfig: { StatusCode: "404" } });
-  const t = stackTemplate(balanced) as { Parameters: Record<string, unknown>; Outputs: Record<string, unknown> };
-  expect(t.Parameters.AppCertificate).toBeUndefined();
-  expect(t.Outputs.Proxy).toEqual({ Value: { Ref: "Proxy" } });
-
-  // The last rule: everything else on the app's address signs in first. The client's secret is a reference: never a value.
-  const rules = rulesOf(balanced);
-  const signIn = rules.at(-1)!;
-  expect(signIn.name).toBe("SignInRule");
-  expect(signIn.Conditions.map(valuesOf)).toEqual([["erga.example.com"]]);
-  expect(signIn.Actions.map((a) => a.Type)).toEqual(["authenticate-oidc", "forward"]);
-  expect(signIn.Actions[0].AuthenticateOidcConfig).toMatchObject({
-    Issuer: oidc.issuer,
-    AuthorizationEndpoint: oidc.authorize,
-    TokenEndpoint: oidc.token,
-    UserInfoEndpoint: oidc.userInfo,
-    ClientId: "client-1",
-    ClientSecret: { "Fn::Sub": "{{resolve:secretsmanager:${OidcSecret}:SecretString}}" },
-    Scope: "openid email",
+  // The pages' distribution (each document's host, and the accept host): no callback and no token endpoint there.
+  expect(behaviorsOf(r.PagesDistribution)).toEqual({
+    "*": { request: "GateRequest", response: "GateResponse", lambda: null },
+    "/_edge/*": { request: "GateEdge", response: "GateResponse", lambda: null },
   });
-  expect(t.Parameters.OidcSecret).toMatchObject({ Default: "erga/erga-example-com/oidc-client-secret" });
+  // No cache keeps one of the gate's own answers; Erga's answers are the origin's to decide, as without the gate.
+  const app = r.AppDistribution.Properties.DistributionConfig;
+  expect(app.CacheBehaviors.map((b: Behavior) => b.CachePolicyId)).toEqual(Array(3).fill("4135ea2d-6df8-44a3-9df3-4b5a84be39ad"));
+  expect(app.DefaultCacheBehavior.CachePolicyId).toEqual({ Ref: "CachePolicy" });
+  expect(app.CacheBehaviors[0].LambdaFunctionAssociations[0].LambdaFunctionARN).toEqual({ Ref: "EdgeVersion" });
+  // The key that proves the gate to Erga: AWS makes it; both distributions send it with each request to the machine,
+  // read by CloudFormation from the secret (a reference: no value in the template); the machine's role reads it.
+  expect(r.GateKey).toMatchObject({ Type: "AWS::SecretsManager::Secret", Properties: { GenerateSecretString: { PasswordLength: 64 } } });
+  expect(r.GateKey.Properties.Name).toBeUndefined();
+  for (const d of [r.AppDistribution, r.PagesDistribution]) {
+    const origin = d.Properties.DistributionConfig.Origins[0];
+    expect(origin.VpcOriginConfig).toMatchObject({ VpcOriginId: { "Fn::GetAtt": ["Origin", "Id"] } });
+    expect(origin.OriginCustomHeaders).toEqual([
+      { HeaderName: "x-erga-front", HeaderValue: { "Fn::Sub": "{{resolve:secretsmanager:${GateKey}:SecretString}}" } },
+    ]);
+  }
+  const role = r.Role.Properties.Policies[0].PolicyDocument.Statement;
+  expect(role).toContainEqual({ Effect: "Allow", Action: "secretsmanager:GetSecretValue", Resource: { Ref: "GateKey" } });
+  // Without the gate: no such header, no such permission, no secret.
+  const plain = resources({ ...gated, edge: { kind: "cloudfront", prefixList: "pl-82a045eb" } });
+  expect(plain.AppDistribution.Properties.DistributionConfig.Origins[0].OriginCustomHeaders).toBeUndefined();
+  expect(JSON.stringify(plain)).not.toContain("secretsmanager");
+  expect(plain.GateKey).toBeUndefined();
+  // The stack takes the Lambda's version and the functions from the us-east-1 stack, and says where the machine finds the key.
+  const t = stackTemplate(gated) as { Parameters: Record<string, unknown>; Outputs: Record<string, unknown> };
+  expect(Object.keys(t.Parameters)).toEqual(
+    expect.arrayContaining(["AppCertificate", "PagesCertificate", "EdgeVersion", "GateEdge", "GateAgents", "GateRequest", "GateResponse"])
+  );
+  expect(t.Outputs).toMatchObject({ GateKey: { Value: { Ref: "GateKey" } } });
+  expect(t.Outputs.Store).toBeUndefined();
+  // The gate's functions hold the app's host: no gate on CloudFront's own names.
+  expect(() => stackTemplate({ ...gated, domains: null })).toThrow("needs domains");
 });
 
-test("what passes the proxy without the sign-in: the pages by their token, the token paths, a keyed request, the server's browser", () => {
-  const rules = rulesOf(balanced);
-  // First, a caller's own X-Forwarded-Host is refused: celld would take it for the host.
-  expect(rules[0]).toMatchObject({ name: "RefuseForwardedHost", Priority: 1 });
-  expect(rules[0].Conditions[0].HttpHeaderConfig).toEqual({ HttpHeaderName: "X-Forwarded-Host", Values: ["?*"] });
-  expect(rules[0].Actions[0].FixedResponseConfig.StatusCode).toBe("400");
-  const open = rules.filter((r) => r.Actions.length == 1 && r.Actions[0].Type == "forward");
-  const by = Object.fromEntries(open.map((r) => [r.name, r.Conditions.map(valuesOf)]));
-  // A document's own address: its files by their token and the offline worker, never the app's pages.
-  expect(by.PagesRule).toEqual([["*.pages.erga.example.com"], ["/t/*", "/erga-sw.js", "/erga-clear"]]);
-  // The app's address: MCP and its OAuth for the client, the operations, an agent's token request.
-  const tokens = open.filter((r) => r.name.startsWith("TokenRule"));
-  expect(tokens.every((r) => r.Conditions[0].HostHeaderConfig.Values[0] == "erga.example.com")).toBe(true);
-  const paths = tokens.flatMap((r) => r.Conditions[1].PathPatternConfig.Values);
-  expect(paths).toEqual(TOKEN_PATHS.flat());
-  for (const p of ["/mcp", "/oauth/token", "/oauth/register", "/api/tools/*", "/api/auth/poll"]) expect(paths).toContain(p);
-  // The CLI and the deploy read an instance from AWS (the load balancer's health check goes to the machine itself, past
-  // these rules): no path of theirs passes the proxy.
-  expect(paths.filter((p) => /^\/api\/(ops|health|deploys)\b/.test(p))).toEqual([]);
-  // Where a user approves an agent, signs in or is an admin stays behind the sign-in.
-  expect(paths.filter((p) => /^\/(oauth\/authorize|tokens|auth|admin)\b/.test(p) || p == "/*")).toEqual([]);
-  expect(by.KeyRule).toEqual([["erga.example.com"], ["/d/*/api/*"], [{ Key: "key", Value: "*" }]]);
-  // The server's own browser comes from the NAT's address: a fixed one.
-  expect(by.OwnBrowserRule).toEqual([["erga.example.com"], [{ "Fn::Sub": "${NatAddress.PublicIp}/32" }]]);
-  expect(resources(balanced).NatAddress.Properties.InstanceId).toEqual({ Ref: "Nat" });
-  expect(resources({ ...balanced, egress: { kind: "nat-gateway" } }).NatAddress.Type).toBe("AWS::EC2::EIP");
-  // No more rules than these, and each within a proxy's limits: 5 values a rule, 3 a condition, 5 wildcards.
-  expect(open.length + 2).toBe(rules.length);
-  for (const r of rules) {
-    const values = r.Conditions.flatMap(valuesOf);
-    expect(values.length).toBeLessThanOrEqual(5);
-    expect(Math.max(...r.Conditions.map((c) => valuesOf(c).length))).toBeLessThanOrEqual(3);
-    expect((JSON.stringify(values).match(/[*?]/g) ?? []).length).toBeLessThanOrEqual(5);
+test("the gate's code is in us-east-1's stack, with the certificates: the four functions and their key store, and the Lambda", () => {
+  const t = certificatesTemplate("erga-example-com", domains, code) as {
+    Resources: Record<string, { Type: string; Properties: Record<string, any> }>;
+    Outputs: Record<string, { Value: { Ref: string } }>;
+  };
+  expect(t.Resources.AppCertificate.Type).toBe("AWS::CertificateManager::Certificate");
+  // The four functions, as built, each with the key store (the edge key is in it, never in a template).
+  const functions = Object.entries(t.Resources).filter(([, x]) => x.Type == "AWS::CloudFront::Function");
+  expect(functions.map(([name, x]) => [name, x.Properties.Name, x.Properties.FunctionCode]).sort()).toEqual([
+    ["GateAgents", "erga-example-com-agents", "A()"],
+    ["GateEdge", "erga-example-com-edge", "E()"],
+    ["GateRequest", "erga-example-com-request", "R()"],
+    ["GateResponse", "erga-example-com-response", "S()"],
+  ]);
+  for (const [name, x] of functions) {
+    expect(x.Properties.FunctionConfig).toMatchObject({
+      Runtime: "cloudfront-js-2.0",
+      KeyValueStoreAssociations: [{ KeyValueStoreARN: { "Fn::GetAtt": ["Store", "Arn"] } }],
+    });
+    // The main stack takes each one's ARN, by the same name.
+    expect(t.Outputs[name]).toEqual({ Value: { "Fn::GetAtt": [name, "FunctionMetadata.FunctionARN"] } } as never);
+  }
+  expect(t.Resources.Store.Type).toBe("AWS::CloudFront::KeyValueStore");
+  expect(t.Outputs.Store).toEqual({ Value: { "Fn::GetAtt": ["Store", "Arn"] } } as never);
+  expect(t.Resources.Edge.Properties).toMatchObject({ Runtime: "nodejs22.x", Handler: "index.handler", Code: { ZipFile: code.lambda } });
+  // Lambda@Edge has no environment: its settings are in its code.
+  expect(t.Resources.Edge.Properties.Environment).toBeUndefined();
+  expect(t.Resources.EdgeRole.Properties.AssumeRolePolicyDocument.Statement[0].Principal.Service).toEqual([
+    "lambda.amazonaws.com",
+    "edgelambda.amazonaws.com",
+  ]);
+  // It reads the sign-in's client secret, and nothing else. That parameter is not in the machine's folder.
+  expect(t.Resources.EdgeRole.Properties.Policies[0].PolicyDocument.Statement).toEqual([
+    {
+      Effect: "Allow",
+      Action: "ssm:GetParameter",
+      Resource: {
+        "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/erga-gate/erga-example-com/idp-secret",
+      },
+    },
+  ]);
+  expect(idpSecretParam("erga-example-com").startsWith(paramPath("erga-example-com"))).toBe(false);
+  // A distribution names a version. Another build is another resource, so CloudFormation makes its version.
+  const version = t.Outputs.EdgeVersion.Value.Ref;
+  expect(t.Resources[version]).toEqual({
+    Type: "AWS::Lambda::Version",
+    DeletionPolicy: "Retain",
+    Properties: { FunctionName: { Ref: "Edge" } },
+  } as never);
+  const next = certificatesTemplate("erga-example-com", domains, { ...code, lambda: "exports.handler=other;" }) as typeof t;
+  expect(next.Outputs.EdgeVersion.Value.Ref).not.toBe(version);
+  // Without the gate: the certificates only.
+  expect(Object.keys((certificatesTemplate("erga", domains) as typeof t).Resources)).toEqual(["AppCertificate", "PagesCertificate"]);
+});
+
+test("the gate's code is built for the instance: its hosts and its issuer in the functions, the secret's name in the Lambda, no secret's value", async () => {
+  const built = await gateCode("erga-example-com", domains, oidc, "us-east-1");
+  for (const part of GATE_PARTS) {
+    // Each one under CloudFront's 10 KB (gate/build.ts refuses a larger one), and a script: CloudFront calls `handler`.
+    expect(built.functions[part].length).toBeLessThan(10 * 1024);
+    expect(built.functions[part]).toContain("function handler(");
+    expect(built.functions[part]).toContain('shell:"erga.example.com"');
+    expect(built.functions[part]).toContain('content:"example-pages.com"');
+  }
+  // Only people with a proof come in, and the organization's issuer signs them in, with this server's client there.
+  expect(gateSettings(domains, oidc)).toEqual({
+    shell: "erga.example.com",
+    content: "example-pages.com",
+    https: true,
+    open: false,
+    idp: { sso: { authorize: oidc.authorize, client: "client-1", scope: "openid email profile" } },
+    oauth: true,
+    hours: 30 * 24,
+  });
+  // A sign-in lasts 30 days, or the days that the deploy says (--sign-in-days): in the code of the function that signs.
+  expect(built.functions.response).toContain("hours:720");
+  expect(gateSettings(domains, oidc, 7).hours).toBe(7 * 24);
+  expect((await gateCode("erga-example-com", domains, oidc, "us-east-1", 7)).functions.response).toContain("hours:168");
+  // The Lambda: a script that CloudFormation takes inline, with where the client's secret is, and the token endpoint.
+  expect(built.lambda.length).toBeLessThanOrEqual(INLINE_MAX);
+  expect(built.lambda).toMatch(/exports\.handler=[\w$]+;$/);
+  expect(built.lambda).toContain("/erga-gate/erga-example-com/idp-secret");
+  expect(built.lambda).toContain(oidc.token);
+  // The us-east-1 stack written to disk carries the code, within the size that CloudFormation takes from a command.
+  const dir = mkdtempSync(join(tmpdir(), "erga-gate-"));
+  try {
+    const shape: AwsShape = { ...gated, edge: { kind: "gate", prefixList: "pl-1", code: built } };
+    const [certs, main] = writeTemplates(dir, shape);
+    const edge = JSON.parse(readFileSync(certs, "utf8"));
+    expect(edge.Resources.Edge.Properties.Code.ZipFile).toBe(built.lambda);
+    expect(edge.Resources.GateRequest.Properties.FunctionCode).toBe(built.functions.request);
+    for (const file of [certs, main]) expect(readFileSync(file).length).toBeLessThan(TEMPLATE_MAX);
+    // Four functions at CloudFront's own limit (10 KB each) still fit (here with no character that JSON escapes).
+    const full = "x".repeat(10 * 1024);
+    const most = { functions: { edge: full, agents: full, request: full, response: full }, lambda: "y".repeat(INLINE_MAX) };
+    expect(readFileSync(writeTemplates(dir, { ...shape, edge: { kind: "gate", prefixList: "pl-1", code: most } })[0]).length).toBeLessThan(
+      TEMPLATE_MAX
+    );
+    // A template over the limit fails here, with its size: not at AWS.
+    const over = { ...most, lambda: "y".repeat(8000) };
+    expect(() => writeTemplates(dir, { ...shape, edge: { kind: "gate", prefixList: "pl-1", code: over } })).toThrow(
+      "CloudFormation takes 51200"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
-const viaProxy = {
+test("the gate's edge key goes into its store one time: a store that has one keeps it", async () => {
+  const calls: string[][] = [];
+  const store = "arn:aws:cloudfront::1:key-value-store/abc";
+  let key = "";
+  const aws = (has: boolean) =>
+    (async (...args: string[]) => {
+      calls.push(args);
+      // (The key's file is there only while the command runs.)
+      if (args[1] == "put-key") key = readFileSync(args[7].replace("file://", ""), "utf8");
+      if (args[1] == "get-key") {
+        if (!has)
+          throw new Error("aws cloudfront-keyvaluestore get-key failed: An error occurred (ResourceNotFoundException): Key not found");
+        return { Key: "key" };
+      }
+      return args[1] == "describe-key-value-store" ? { ETag: "E1" } : null;
+    }) as Aws;
+  expect(await putEdgeKey(aws(false), store)).toBe(true);
+  const put = calls.find((c) => c[1] == "put-key")!;
+  expect(put.slice(0, 6)).toEqual(["cloudfront-keyvaluestore", "put-key", "--kvs-arn", store, "--key", "key"]);
+  expect(put.slice(8)).toEqual(["--if-match", "E1"]);
+  // A random key of 48 bytes: the gate signs with it. It goes through a file of this user's, which is gone after: a
+  // command's words show in the process list, and the CLI takes a value that starts with "-" for an option.
+  expect(key).toMatch(/^[\w-]{64}$/);
+  expect(put[7]).toMatch(/^file:\/\//);
+  expect(JSON.stringify(calls)).not.toContain(key);
+  expect(existsSync(put[7].replace("file://", ""))).toBe(false);
+  calls.length = 0;
+  expect(await putEdgeKey(aws(true), store)).toBe(false);
+  expect(calls.map((c) => c[1])).toEqual(["get-key"]);
+  // Any other failure stops the deploy: no key is written over a store that could not be read.
+  const broken = (async () => {
+    throw new Error("aws cloudfront-keyvaluestore get-key failed: AccessDenied");
+  }) as Aws;
+  await expect(putEdgeKey(broken, store)).rejects.toThrow("AccessDenied");
+});
+
+const viaGate = {
   ...aws,
   host: "erga.example.com",
   region: "us-west-2",
@@ -240,25 +380,16 @@ const viaProxy = {
   client: "client-1",
 };
 
-test("the organization's sign-in on AWS: the server learns its proxy from the stack, and everybody who passes it may write", () => {
-  // The server learns whose header is the sign-in from the stack's proxy.
-  const entry = awsEntry(
-    viaProxy,
-    "123456789012",
-    { AppHost: "erga.example.com", Proxy: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1" },
-    undefined
-  );
-  expect(JSON.parse(entry.vars.PROXY_SIGN_IN)).toEqual({
-    kind: "aws-alb",
-    signer: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1",
-    issuer: "https://idp.example.com/pool",
-    client: "client-1",
-  });
+test("the organization's sign-in on AWS: the entry says where the gate's key is, and everybody who passes the gate may write", () => {
+  // The machine's deploy reads the key that the gate sends from the stack's secret: the entry names it.
+  const secret = "arn:aws:secretsmanager:us-west-2:123456789012:secret:GateKey-AbCdEf";
+  const entry = awsEntry(viaGate, "123456789012", { AppHost: "erga.example.com", GateKey: secret }, undefined);
+  expect(entry.aws.gate).toBe(secret);
   expect(entry.vars.GITHUB_CLIENT_ID).toBe("");
   expect(entry.aws.pages).toEqual({ kind: "domain", domain: "pages.erga.example.com" });
-  // No proxy known yet: a value the server reads as no proxy (nobody signs in), never GitHub's sign-in.
-  expect(awsEntry(viaProxy, "1", { AppHost: "erga.example.com" }, undefined).vars.PROXY_SIGN_IN).toBe("{}");
-  const sql = firstSql(viaProxy);
+  // With no gate in front, the entry names no key.
+  expect("gate" in awsEntry(aws, "1", { AppHost: "erga.example.com" }, undefined).aws).toBe(false);
+  const sql = firstSql(viaGate);
   expect(sql).toContain("INSERT INTO access_rules (kind, value, access, created) SELECT 'everybody', '', 'write'");
   expect(sql).toContain("WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
   expect(sql).not.toContain("INSERT INTO people");
@@ -269,7 +400,6 @@ test("the sign-in's endpoints come from its issuer; setup's check of the sign-in
     issuer: oidc.issuer,
     authorization_endpoint: oidc.authorize,
     token_endpoint: oidc.token,
-    userinfo_endpoint: oidc.userInfo,
   };
   const issuer = (d: unknown) =>
     (async (url: string) =>
@@ -284,15 +414,16 @@ test("the sign-in's endpoints come from its issuer; setup's check of the sign-in
   );
   await expect(discoverOidc("https://none.example.com", issuer(document))).rejects.toThrow("didn't answer");
 
-  // The settings that the release runs with must be the answers' sign-in: the proxy of the stack, for this client.
+  // The settings that the release runs with must be the answers' sign-in. (The proxy's setting is from before the
+  // gate: the server reads it no more, and setup still compares it.)
   const signer = "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1";
-  const deployed = awsEntry(viaProxy, "1", { AppHost: "erga.example.com", Proxy: signer }, undefined).vars;
-  expect(signInOf(viaProxy, undefined, deployed, signer)).toBe("ok");
-  expect(signInOf({ ...viaProxy, client: "client-2" }, undefined, deployed, signer)).toMatchObject({
+  const deployed = varsOf(viaGate, undefined, signer);
+  expect(signInOf(viaGate, undefined, deployed, signer)).toBe("ok");
+  expect(signInOf({ ...viaGate, client: "client-2" }, undefined, deployed, signer)).toMatchObject({
     bad: expect.stringContaining("PROXY_SIGN_IN"),
   });
   // A release from before the stack had its proxy runs with no proxy at all.
-  expect(signInOf(viaProxy, undefined, { PROXY_SIGN_IN: "{}" }, signer)).toMatchObject({ bad: expect.stringContaining("deploy again") });
+  expect(signInOf(viaGate, undefined, { PROXY_SIGN_IN: "{}" }, signer)).toMatchObject({ bad: expect.stringContaining("deploy again") });
   // With a GitHub App: its client id.
   const github = { ...aws, pages: "example-pages.com" };
   expect(signInOf(github, "Iv1.ada", { GITHUB_CLIENT_ID: "Iv1.ada" })).toBe("ok");
@@ -361,32 +492,58 @@ test("a deploy again of the same release runs this deploy's settings, not those 
   "s3 cp") cat "$FAKE/release.tgz" ;;
   "s3 ls") echo node ;;
   "ssm get-parameters-by-path") echo '{"Parameters":[{"Name":"/erga/erga/SESSION_SECRET","Value":"s"}]}' ;;
+  "secretsmanager get-secret-value") [ "$4" = "$FAKE_SECRET" ] && echo the-gate-key || { echo "AccessDenied" >&2; exit 254; } ;;
 esac`
   );
   tool("celld", `[ "$1" = deploy ] && cp wrangler.json "$FAKE/loaded.json"; true`);
-  // The release answers its own health check on the loopback: healthy, as release v1.
-  tool("curl", `echo '{"ok":true,"version":"v1","checks":{}}'`);
+  // The release answers its own health check on the loopback: healthy, as release v1. (As curl does, it reads the
+  // header that comes on its input: else the script's printf may write to a pipe that nothing reads, and fail.)
+  tool("curl", `case "$*" in *"-H @-"*) cat >/dev/null ;; esac; echo '{"ok":true,"version":"v1","checks":{}}'`);
   // (macOS's sed needs a suffix after -i.)
   tool(
     "sed",
     `if [ "$1" = -i ] && [ "$(uname)" = Darwin ]; then shift; exec ${Bun.which("sed")} -i '' "$@"; fi; exec ${Bun.which("sed")} "$@"`
   );
-  const script = deployScript({ bucket: "bucket", region: "us-west-2", stack: "erga", version: "v1" }).replaceAll(
-    "/var/lib/erga",
-    join(dir, "state")
-  );
-  const deploy = (proxy: string) => {
+  const SECRET = "arn:aws:secretsmanager:us-west-2:1:secret:GateKey-AbCdEf";
+  const scriptOf = (gateKey?: string) =>
+    deployScript({ bucket: "bucket", region: "us-west-2", stack: "erga", version: "v1", gateKey }).replaceAll(
+      "/var/lib/erga",
+      join(dir, "state")
+    );
+  const run = (proxy: string, script: string, more: Record<string, string> = {}) => {
     const release = join(dir, "release");
     mkdirSync(release, { recursive: true });
     writeFileSync(join(release, "wrangler.json"), JSON.stringify({ vars: { PROXY_SIGN_IN: proxy } }));
     Bun.spawnSync(["tar", "-czf", join(dir, "release.tgz"), "-C", release, "."]);
-    const r = Bun.spawnSync(["bash", "-c", script], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE: dir } });
+    rmSync(join(dir, "loaded.json"), { force: true });
+    return Bun.spawnSync(["bash", "-c", script], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE: dir, FAKE_SECRET: SECRET, ...more },
+    });
+  };
+  const deploy = (proxy: string, script = scriptOf(), more: Record<string, string> = {}) => {
+    const r = run(proxy, script, more);
     expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
     return JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars;
   };
   try {
     expect(deploy("old")).toEqual({ PROXY_SIGN_IN: "old", SESSION_SECRET: "s" });
     expect(deploy("new")).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s" });
+    // With the gate in front: the machine reads the key that the gate sends from the stack's secret, as Erga's GATE_KEY.
+    expect(deploy("new", scriptOf(SECRET))).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s", GATE_KEY: "the-gate-key" });
+    // A machine that can't read the key loads nothing: without it Erga would take itself for a server with no gate.
+    const refused = run("new", scriptOf("arn:another"));
+    expect([refused.exitCode == 0, existsSync(join(dir, "loaded.json"))]).toEqual([false, false]);
+    // The machine's own health check carries the key: Erga behind a gate answers no request without it.
+    // (From curl's input: the key is in no command's words.)
+    expect(scriptOf(SECRET)).toContain(
+      `health() { printf 'x-erga-front: %s\\n' "$GATE_KEY" | curl -sS -m 10 -H @- localhost:8080/api/health 2>/dev/null; }`
+    );
+    expect(scriptOf()).toContain("health() { curl -sS -m 10 localhost:8080/api/health 2>/dev/null; }");
+    expect(healthScript({ key: SECRET, region: "us-west-2" })).toBe(
+      `export AWS_REGION=us-west-2\nGATE_KEY=$(aws secretsmanager get-secret-value --secret-id '${SECRET}' --query SecretString --output text) || true\nprintf 'x-erga-front: %s\\n' "$GATE_KEY" | curl -sS -m 10 -H @- localhost:8080/api/health 2>/dev/null || true`
+    );
+    // With no gate, a GATE_KEY of the machine's own environment is not the release's.
+    expect(deploy("new", scriptOf(), { GATE_KEY: "stray" })).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s" });
     expect(readFileSync(join(dir, "state", "deployed"), "utf8")).toBe("v1\n");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -482,4 +639,25 @@ test("on the machine: a release's deploy facts for bun erga register, and setup'
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the gate in front: no behavior with the Lambda goes to the VPC origin, which CloudFront refuses", () => {
+  const r = resources(gated);
+  for (const d of [r.AppDistribution, r.PagesDistribution]) {
+    const c = d.Properties.DistributionConfig;
+    const vpc = new Set(c.Origins.filter((o: any) => o.VpcOriginConfig).map((o: any) => o.Id));
+    for (const b of [c.DefaultCacheBehavior, ...(c.CacheBehaviors ?? [])])
+      if (b.LambdaFunctionAssociations?.some((l: any) => l.EventType.startsWith("origin-"))) expect(vpc.has(b.TargetOriginId)).toBe(false);
+    // The other origin gets no key of the machine's.
+    for (const o of c.Origins.filter((o: any) => !o.VpcOriginConfig)) expect(o.OriginCustomHeaders).toBeUndefined();
+  }
+  expect(r.GateOrigin.Type).toBe("AWS::S3::Bucket");
+});
+
+test("the gate in front: a behavior with the Lambda passes it only the header it reads, never the all-viewer policy", () => {
+  const r = resources(gated);
+  const c = r.AppDistribution.Properties.DistributionConfig;
+  for (const b of c.CacheBehaviors.filter((b: any) => b.LambdaFunctionAssociations))
+    expect(b.OriginRequestPolicyId).toEqual({ Ref: "GateOriginPolicy" });
+  expect(r.GateOriginPolicy.Properties.OriginRequestPolicyConfig.HeadersConfig.Headers).toEqual(["x-erga-exchange"]);
 });

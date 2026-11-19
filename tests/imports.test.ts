@@ -3,6 +3,8 @@
 //
 //   1. shared/        nothing of ours (assets/ is data: any layer may import it). A library's API (libs/<name>/api/) is
 //                     in this layer too: it needs no browser, and the document's object runs it for agents.
+//                     gate/ too (the auth gate: its core and its mounts): it imports nothing of ours, and runs apart
+//                     from Erga where the deploy puts it in front. gate/build.ts and gate/lower.ts are tools.
 //   2. document/      shared/. It gets the directory and the sandbox through DocumentDeps. It knows no agent. Its
 //                     files are in six folders, highest first: a file imports only its own folder and those below.
 //                       api/      serves the document to callers
@@ -79,6 +81,7 @@ function imports(file: string): { spec: string; type: boolean }[] {
 function layer(path: string): number {
   const top = path.split("/")[0];
   if (top == "shared") return 1;
+  if (top == "gate") return path == "gate/build" || path == "gate/lower" ? 8 : 1;
   if (top == "libs") return path.split("/")[2] == "api" ? 1 : 7;
   if (top == "document") return 2;
   if (top == "server") return path == "server/app" || path == "server/api" ? 5 : 3;
@@ -129,7 +132,7 @@ function wrong(from: string, to: string, type: boolean): string | null {
 
 test("every import keeps the layers", () => {
   const found: string[] = [];
-  const code = ["shared", "libs", "document", "server", "agents", "cloudflare", "client", "deploy", "dev"];
+  const code = ["shared", "gate", "libs", "document", "server", "agents", "cloudflare", "client", "deploy", "dev"];
   for (const f of files(code)) {
     const from = f.replace(/\.ts$/, "");
     for (const { spec, type } of imports(f)) {

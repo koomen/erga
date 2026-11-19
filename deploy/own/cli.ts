@@ -16,6 +16,7 @@
 //       --issuer <URL> --client <ID>     --sign-in sso on AWS: the organization's sign-in (OpenID Connect)
 //       --email-claim <claim>:<prefix>   --sign-in sso on AWS, when the sign-in gives no email claim: where the
 //                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
+//       --sign-in-days <days>            --sign-in sso on AWS: how long a sign-in lasts, from 1 to 90 (default: 30)
 //       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
 //       --no-tests             the build runs no tests
@@ -60,6 +61,7 @@ const OPTIONS: Record<string, TextAnswer> = {
   "--issuer": "issuer",
   "--client": "client",
   "--email-claim": "emailClaim",
+  "--sign-in-days": "signInDays",
   "--pages": "pages",
   "--egress": "egress",
 };
@@ -343,7 +345,7 @@ async function remove(host: string, yes: boolean) {
   if (entry && isAws(entry)) {
     const { awsCli } = await import("../aws/cli");
     const { CERT_REGION, stackState } = await import("../aws/stack");
-    const { oidcSecretName, paramPath } = await import("../aws/template");
+    const { idpSecretParam, paramPath } = await import("../aws/template");
     const name = entry.aws.stack,
       where = { profile: entry.profile, region: entry.aws.region };
     if (!yes)
@@ -353,27 +355,36 @@ async function remove(host: string, yes: boolean) {
       );
     const aws = awsCli(where);
     const bucket = (await stackState(aws, name)).outputs.Bucket;
-    for (const [w, s] of [
-      [where, name],
-      [{ ...where, region: CERT_REGION }, `${name}-certs`],
+    // Trap: with the gate in front, CloudFront keeps copies of the Lambda@Edge function for a time after its
+    // distributions are gone, and refuses to delete the function until then. The us-east-1 stack is tried again each
+    // two minutes, for half an hour; after that the secrets go all the same, and the command says what is left.
+    let left = "";
+    for (const [w, s, tries] of [
+      [where, name, 1],
+      [{ ...where, region: CERT_REGION }, `${name}-certs`, entry.aws.gate ? 15 : 1],
     ] as const) {
       const cli = awsCli(w);
-      if (!(await stackState(cli, s)).status) continue;
-      await cli("cloudformation", "delete-stack", "--stack-name", s);
-      say(`  ${s}: AWS deletes it (it takes minutes)...`);
-      await cli("cloudformation", "wait", "stack-delete-complete", "--stack-name", s);
-      pass(`stack ${s} deleted`);
+      for (let i = 0; i < tries && (await stackState(cli, s)).status; i++) {
+        if (i) await Bun.sleep(120_000);
+        await cli("cloudformation", "delete-stack", "--stack-name", s);
+        say(`  ${s}: AWS deletes it (it takes minutes)...`);
+        await cli("cloudformation", "wait", "stack-delete-complete", "--stack-name", s).catch(() => {});
+      }
+      if ((await stackState(cli, s)).status) left = s;
+      else pass(`stack ${s} deleted`);
+      if (left) break;
     }
     const params =
       (await aws<{ Parameters: { Name: string }[] }>("ssm", "get-parameters-by-path", "--path", paramPath(name)).catch(() => null))
         ?.Parameters ?? [];
     for (const p of params) await aws("ssm", "delete-parameter", "--name", p.Name);
     if (params.length) pass(`${params.length} secrets deleted from Parameter Store`);
-    if (entry.vars.PROXY_SIGN_IN)
-      await aws("secretsmanager", "delete-secret", "--secret-id", oidcSecretName(name), "--force-delete-without-recovery").then(
-        () => pass("the sign-in's client secret deleted from Secrets Manager"),
+    if (entry.aws.gate)
+      await awsCli({ ...where, region: CERT_REGION })("ssm", "delete-parameter", "--name", idpSecretParam(name)).then(
+        () => pass("the sign-in's client secret deleted from Parameter Store"),
         () => {}
       );
+    if (left) say(`NOTE  The stack ${left} is still there. Run the command again later: it deletes what is left.`);
     if (bucket)
       say(
         `NOTE  The bucket ${bucket} stays, with the documents. Delete it by hand if they are gone for good: aws s3 rb s3://${bucket} --force`
@@ -462,6 +473,15 @@ export async function setupMain(argv: string[]) {
       say(`No setup command ${rest[0]}.`);
       return usage(2);
     }
+    // Single sign-on needs the gate in front of the server (gate/mounts/). On AWS the stacks make it
+    // (deploy/aws/template.ts, deploy/aws/gate.ts), and the verify suite deploys it (bun erga verify 5). No run on a
+    // real account has passed yet, and this flow still writes the old proxy's setting: refused here, before anything
+    // is made, until one has. On Cloudflare, setup does not make the gate's Worker yet.
+    if (answers.signIn == "sso")
+      return fail(
+        "Single sign-on is not available in this version: the gate in front of the server is not verified on a real account yet.",
+        "Choose --sign-in invite or --sign-in organization."
+      );
     const again = ["bun erga setup", host, ...args, ...(remote && !flag("--remote") ? ["--remote"] : [])].join(" ");
     await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), again });
   } catch (e) {

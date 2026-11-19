@@ -13,6 +13,9 @@ async function origin(now: string, edit = false) {
   const asked: Request[] = [];
   const platform = {
     secret: "s",
+    // (Where the documents' pages are, and that no gate is in front: the page asks for Erga's service worker.)
+    pagesDomain: () => "erga-pages.dev",
+    signIn: { mode: "oauth" },
     directory: { route: async () => ({ id: "abcd1234", owner: "ada", test: false }) },
     docs: {
       fetch: async (_: unknown, r: Request) => {

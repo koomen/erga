@@ -24,9 +24,9 @@ import { type Caller, iso, LOGIN, type Operation, OperationError, said } from ".
 const OAUTH = Object.keys(PROVIDERS) as Provider[];
 /** An OAuth provider (the OAuth mode's: set_sign_in). */
 const PROVIDER = Schema.Literals(OAUTH).annotate({ description: OAUTH.join(" or ") });
-/** The provider of a person's account: an OAuth provider, or the proxy of a server in the proxy mode (sign_in says the mode). */
+/** The provider of a person's account: an OAuth provider, or sso on a server with a gate in front (sign_in says the mode). */
 const ACCOUNT_PROVIDER = Schema.Literals(Object.keys(SIGN_IN_PROVIDERS)).annotate({
-  description: `${OAUTH.join(" or ")}; proxy on a server whose sign-in mode is proxy (sign_in)`,
+  description: `${OAUTH.join(" or ")}; sso on a server whose sign-in mode is gate (sign_in)`,
 });
 const ACCESS = Schema.Literals(["none", "read", "write"]).annotate({
   description: "none ('No access'), read ('Can authenticate') or write ('Can create and edit content')",
@@ -177,15 +177,14 @@ export const ADMIN_OPERATIONS: Operation[] = [
     label: "Read how people sign in",
     activity: "reading how people sign in",
     admin: true,
-    description: "How people sign in: the mode (oauth or proxy); the providers on, each OAuth app and a live check of each; or the proxy.",
+    description: "How people sign in: the mode (oauth or gate); the providers on, each OAuth app and a live check of each.",
     parameters: Schema.Struct({}),
     run: async (_args, caller) => {
       const status = await authOf(caller).status(caller.who);
-      if (status.mode == "proxy")
+      if (status.mode == "gate")
         return {
-          mode: "proxy",
-          proxy: status.proxy,
-          note: "A proxy in front of the server signs each user in. The deploy sets it: nothing here changes it.",
+          mode: "gate",
+          note: "A gate in front of the server signs each user in, with the organization's sign-in. The deploy sets it: nothing here changes it.",
         };
       return {
         mode: "oauth",
@@ -318,9 +317,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
           "add (provider, handle, role; before they ever signed in too), role (role), remove (sessions and tokens stop; documents stay)",
       }),
       provider: Schema.optionalKey(ACCOUNT_PROVIDER),
-      handle: Schema.optionalKey(
-        Schema.String.annotate({ description: "add: the account's login (github), or its email (google, proxy)" })
-      ),
+      handle: Schema.optionalKey(Schema.String.annotate({ description: "add: the account's login (github), or its email (google, sso)" })),
       login: Schema.optionalKey(LOGIN),
       person: Schema.optionalKey(PERSON),
       role: Schema.optionalKey(

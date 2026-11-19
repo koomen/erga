@@ -111,7 +111,7 @@ test("the agent's settings: the database reads start together, so their stalls d
 test("the operations: the person's own list and remove; an agent never sees a key", async () => {
   const { dir } = fresh();
   await dir.personKeys.set(bob, "openai", OPENAI);
-  const platform = { tokens: { list: async () => ({ tokens: [], total: 0 }) } };
+  const platform = { grants: { list: async () => ({ grants: [], total: 0 }) } };
   const caller = { dir, who: { login: "bob", via: "agent" }, name: "Bob", origin: "http://x", platform } as never;
   const listed = JSON.stringify(((await runOperation(op("whoami"), {}, caller)) as { apiKeys: unknown }).apiKeys);
   expect(listed).toContain('"last4":"Ow42"');
@@ -137,14 +137,13 @@ test("POST /api/agent/keys: from the person's own page only; the answer never ho
       headers: { "Content-Type": "application/json", ...headers },
     });
   expect((await post({ name: "openai", value: OPENAI }, { Origin: "https://evil.example" })).status).toBe(403);
-  expect((await post({ name: "openai", value: OPENAI }, { Origin: origin, Authorization: "Bearer erga_x" })).status).toBe(403);
   const r = await post({ name: "openai", value: OPENAI });
   const text = await r.text();
   expect(r.status).toBe(200);
   expect(text).not.toContain(OPENAI.slice(0, 20));
   expect(JSON.parse(text).key).toMatchObject({ name: "openai", set: true, last4: "Ow42" });
   expect((await post({ name: "openai", value: "nope" })).status).toBe(400);
-  // An agent's token session can't set one.
+  // An agent can't set one: the route knows an agent by its session (the gate keeps its token, and names the agent).
   session = { login: "bob", name: "Bob", agent: {} } as unknown as Partial<Session>;
   expect((await post({ name: "openai", value: OPENAI })).status).toBe(403);
   session = { login: "bob", name: "Bob" };

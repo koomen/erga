@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { base64, base64url, fromBase64, fromBase64url, hex, randomToken, readableSize, sha256, sha256Hex } from "../shared/bytes";
 import { baseName, joinPath, pageUrl, parentOf, slugify } from "../document/model/pages";
 import { dateTag, decodeEntities, esc, escapeAttr, escapeHtmlText, escapeRe, jsonInScript } from "../shared/html";
-import { callerAddress, isLocal } from "../shared/http";
+import { callerAddress, isLocal, overHttps } from "../shared/http";
 import { plural, sleep, timeAgo } from "../shared/time";
 
 test("esc escapes the five characters HTML gives a meaning, in text and in either quote", () => {
@@ -117,6 +117,30 @@ test("paths and page addresses: one set of helpers for the server and the browse
     "/ada/notes",
     "/ada/notes/blog",
     "/ada/notes/a%20b",
+  ]);
+});
+
+test("a deployed server's address is https, whatever its listener hears; this machine's stays as it is", async () => {
+  // celld behind CloudFront hears plain HTTP: the browser asked HTTPS. No header says so, and none can say otherwise.
+  expect(overHttps("http://erga.example.com/d/1/room?key=k")).toBe("https://erga.example.com/d/1/room?key=k");
+  expect(overHttps("http://1-ada.pages.example.net:8080/t/x/")).toBe("https://1-ada.pages.example.net:8080/t/x/");
+  expect(overHttps("https://erga.example.com/")).toBeNull();
+  // Local development, and a document's pages there: http.
+  for (const local of ["http://localhost:4712/", "http://1-ada.localhost:4712/", "http://127.0.0.1:4712/", "http://[::1]:4712/"])
+    expect(overHttps(local)).toBeNull();
+  // The request with the address changed is the same request: its method, its headers (a socket's too) and its body.
+  const heard = new Request("http://erga.example.com/api/tools/whoami", {
+    method: "POST",
+    headers: { upgrade: "websocket", origin: "https://erga.example.com", "content-type": "application/json" },
+    body: "{}",
+  });
+  const asked = new Request(overHttps(heard.url)!, heard);
+  expect([asked.url, asked.method, asked.headers.get("upgrade"), asked.headers.get("origin"), await asked.text()]).toEqual([
+    "https://erga.example.com/api/tools/whoami",
+    "POST",
+    "websocket",
+    "https://erga.example.com",
+    "{}",
   ]);
 });
 

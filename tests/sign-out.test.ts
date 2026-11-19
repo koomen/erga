@@ -1,79 +1,88 @@
-// Sign-out ends all the person's sign-ins, on all devices (server/identity/sign-in.ts, signOut): each session cookie
-// carries the person's sign-in number (users.sessions), and sign-out raises the number. A cookie that someone copied
-// stops with it.
+// Sign-out ends all the person's sign-ins, on all devices (server/identity/sign-in.ts, signOut): the gate's cookie
+// says when its sign-in was made, sign-out writes its time for the person (users.sessions), and a sign-in made before
+// it is nobody's (server/identity/admit.ts). A cookie that someone copied stops with it. The answer asks the gate to
+// end this browser's cookies, and the page loads the gate's sign-out on the documents' site.
 
 import { expect, test } from "bun:test";
-import * as Effect from "effect/Effect";
-import { Directory } from "../server/directory/index.ts";
-import { sessionOf } from "../server/identity/session.ts";
-import { signIn, signOut } from "../server/identity/sign-in.ts";
-import { respond } from "../server/http";
-import type { Platform } from "../server/platform";
-import { memory } from "./helpers/memory-sql";
+import { freshLogin, server as app } from "./helpers/app";
 
-const ORIGIN = "https://erga.test";
+const cookieIn = (r: Response, name: string) =>
+  r.headers
+    .getSetCookie()
+    .map((c) => c.split(";")[0])
+    .find((c) => c.startsWith(`${name}=`));
 
-async function server() {
-  const dir = new Directory(memory(), { admins: ["root"] });
-  await dir.users.add({ login: "root", admin: true }, "ada");
-  await dir.users.add({ login: "root", admin: true }, "bo");
-  const platform = {
-    secret: "s".repeat(40),
-    directory: dir,
-    dev: () => false,
-    signIn: {},
-    deploy: { domains: [] },
-  } as unknown as Platform;
-  /** A new sign-in of `login`: its session cookie, as a browser keeps it. */
-  const cookieOf = async (login: string) => {
-    const r = await respond(
-      Effect.flatMap(
-        Effect.sync(() => new Request(`${ORIGIN}/auth/x`)),
-        (request) => signIn(platform, request, { login, name: login }, "/documents")
-      ),
-      new Request(`${ORIGIN}/auth/x`),
-      platform
-    );
-    return r.headers
-      .getSetCookie()
-      .map((c) => c.split(";")[0])
-      .find((c) => c.startsWith("erga_session="))!;
+function server() {
+  const s = app();
+  /** A new sign-in of the GitHub account `handle` (local development's pretend provider): the gate's cookie, as a browser keeps it. */
+  const cookieOf = async (handle: string, subject: string) => {
+    // (A sign-in made in the same millisecond as a sign-out is ended with it: the next one is later.)
+    const t = Date.now();
+    while (Date.now() == t);
+    const r = await s.fetch(`/auth/dev?provider=github&subject=${subject}&handle=${handle}&next=/documents`);
+    return cookieIn(r, "erga")!;
   };
-  const who = async (cookie: string) =>
-    (await sessionOf(platform, new Request(`${ORIGIN}/documents`, { headers: { cookie } })))?.login ?? null;
-  const out = (cookie: string) =>
-    respond(signOut, new Request(`${ORIGIN}/auth/logout`, { method: "POST", headers: { cookie, origin: ORIGIN } }), platform);
+  const who = async (cookie: string) => {
+    const r = await s.fetch("/api/tools/whoami", {
+      method: "POST",
+      headers: { Cookie: cookie, Origin: s.root, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    return r.ok ? ((await r.json()) as { result: { login: string } }).result.login : null;
+  };
+  const out = (cookie: string) => s.fetch("/auth/logout", { method: "POST", headers: { Cookie: cookie, Origin: s.root } });
   const elsewhere = (cookie: string, method: string) =>
-    respond(
-      signOut,
-      new Request(`${ORIGIN}/auth/logout`, { method, headers: { cookie, origin: "https://evil.example", "sec-fetch-site": "cross-site" } }),
-      platform
-    );
-  return { dir, cookieOf, who, out, elsewhere };
+    s.fetch("/auth/logout", { method, headers: { Cookie: cookie, Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" } });
+  return { s, cookieOf, who, out, elsewhere };
 }
 
 test("sign-out ends every sign-in of the person: a copied cookie and another device's stop; other people's stay", async () => {
-  const { cookieOf, who, out } = await server();
-  const laptop = await cookieOf("ada"),
-    phone = await cookieOf("ada"),
+  const { s, cookieOf, who, out } = server();
+  const ada = freshLogin("ada"),
+    bo = freshLogin("bo");
+  const laptop = await cookieOf(ada, "1"),
+    phone = await cookieOf(ada, "1"),
     copied = laptop,
-    other = await cookieOf("bo");
-  expect([await who(laptop), await who(phone), await who(other)]).toEqual(["ada", "ada", "bo"]);
+    other = await cookieOf(bo, "2");
+  expect([await who(laptop), await who(phone), await who(other)]).toEqual([ada, ada, bo]);
 
-  expect((await out(laptop)).status).toBe(200);
+  const answer = await out(laptop);
+  expect(answer.status).toBe(200);
+  // The gate ends this browser's cookies (Erga asked it to: the header that asks never leaves the server). The
+  // documents share this site here (<id>.localhost under localhost), so their cookie ended with it.
+  expect([cookieIn(answer, "erga"), cookieIn(answer, "member")]).toEqual(["erga=", "member="]);
+  expect(await answer.text()).toContain('"gate":null');
+  expect(answer.headers.get("x-erga-gate")).toBeNull();
   expect([await who(copied), await who(phone)]).toEqual([null, null]);
-  expect(await who(other)).toBe("bo");
+  expect(await who(other)).toBe(bo);
+  // The gate ends the cookies of a browser that comes with a sign-in from before it.
+  const stale = await s.fetch("/documents", { headers: { Cookie: phone }, redirect: "manual" });
+  expect([cookieIn(stale, "erga"), cookieIn(stale, "member"), stale.headers.get("x-erga-gate")]).toEqual(["erga=", "member=", null]);
 
   // A new sign-in works, and the old cookies stay ended.
-  const again = await cookieOf("ada");
-  expect([await who(again), await who(copied)]).toEqual(["ada", null]);
+  const again = await cookieOf(ada, "1");
+  expect([await who(again), await who(copied)]).toEqual([ada, null]);
 });
 
 test("a request that isn't the person's own sign-out ends nothing", async () => {
-  const { cookieOf, who, elsewhere } = await server();
-  const cookie = await cookieOf("ada");
+  const { cookieOf, who, elsewhere } = server();
+  const ada = freshLogin("ada");
+  const cookie = await cookieOf(ada, "1");
   // Another site's link to /auth/logout, and its form: the question, not the sign-out.
-  expect(await (await elsewhere(cookie, "GET")).text()).toContain("Sign out of Erga");
-  expect(await (await elsewhere(cookie, "POST")).text()).toContain("Sign out of Erga");
-  expect(await who(cookie)).toBe("ada");
+  for (const method of ["GET", "POST"]) {
+    const asked = await elsewhere(cookie, method);
+    expect(await asked.text()).toContain("Sign out of Erga");
+    expect(cookieIn(asked, "erga")).toBeUndefined();
+  }
+  expect(await who(cookie)).toBe(ada);
+});
+
+test("documents on another site: the sign-out page loads the gate's sign-out there, which ends that site's cookie", async () => {
+  const { s } = server();
+  // (The app at 127.0.0.1, and the documents under localhost: two sites.)
+  const page = await s.fetch("http://127.0.0.1/auth/logout", { method: "POST", headers: { Origin: "http://127.0.0.1" } });
+  expect(await page.text()).toContain('"gate":"http://accept.localhost/_edge/sign-out"');
+  const r = await s.fetch("http://accept.localhost/_edge/sign-out");
+  expect(r.status).toBe(200);
+  expect(r.headers.getSetCookie().join("\n")).toMatch(/^member=; Path=\/; Max-Age=0; HttpOnly; Domain=localhost/);
 });

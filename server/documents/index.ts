@@ -3,7 +3,7 @@
 // list, delete and share; the default homepage. The rest of the app imports documents
 // through this file.
 
-export { forwarded, forwardedAs, documentRoutes, ergaAddress, keyedOp } from "./routes.ts";
+export { forwarded, forwardedAs, documentRoutes, ergaAddress, isKeyedOp, keyedOp } from "./routes.ts";
 export { forgetDecisions } from "./view.ts";
 export { makeHome } from "./landing.ts";
 export { makeDoc, startingFiles } from "./make.ts";

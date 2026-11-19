@@ -580,7 +580,7 @@ journey("the Erga domain", () => {
 
   test("only an admin publishes, from this site; someone with edit access edits the document, and sees its publishing; the session cookie is HttpOnly", async () => {
     const cookie = (await get(main, "/auth/github?as=Ada")).headers.get("set-cookie") ?? "";
-    expect(cookie).toMatch(/erga_session(_\d+)?=[^;]+;.*HttpOnly/i);
+    expect(cookie).toMatch(/erga_\d+=[^;]+;.*HttpOnly/i);
     expect(cookie).toMatch(/SameSite=Lax/i);
     const bo = unique("bo");
     const share = async (login: string, role: string) =>
@@ -661,7 +661,7 @@ journey("the Erga domain", () => {
     expect(await (await get(main, "/data.json")).text()).toBe(`{"ok":"new"}`);
     // (The app's own files are under /_erga/: a name at the root is the site's.)
     expect(await (await get(main, "/style.css")).text()).toContain("rgb(1, 2, 3)");
-    expect(iso.cookie).not.toContain("erga_session");
+    expect(iso.cookie).not.toMatch(/erga_\d+=/);
     // On a phone, the controls never make the page wider than the window, even with a scrollbar's room to take back.
     await p.setViewportSize({ width: 390, height: 844 });
     const wide = () =>

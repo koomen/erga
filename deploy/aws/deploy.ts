@@ -49,9 +49,14 @@ export async function liveOnAws(aws: Aws, stack: string): Promise<string | null>
 /**
  * The health of the instance's server now, as the machine itself sees it: the server's own report on the loopback, read
  * through Systems Manager (no request from outside). `why`: the checks that failed. Null: the server gave no report.
+ * `gate`: with the gate in front, the stack's secret that holds its key (the entry's `aws.gate`), and the region.
  */
-export async function healthOnAws(aws: Aws, machine: string): Promise<{ ok: boolean; version: string | null; why: string } | null> {
-  const out = (await onMachine(aws, machine, healthScript(), 60)).trim();
+export async function healthOnAws(
+  aws: Aws,
+  machine: string,
+  gate?: { key: string; region: string }
+): Promise<{ ok: boolean; version: string | null; why: string } | null> {
+  const out = (await onMachine(aws, machine, healthScript(gate), 60)).trim();
   let h: { ok?: unknown; version?: unknown; checks?: Record<string, { ok?: boolean; error?: string }> } | null = null;
   try {
     h = JSON.parse(out);
@@ -92,7 +97,7 @@ export async function deployedReleases(e: AwsEntry): Promise<string[]> {
  */
 export async function deployToAws(e: AwsEntry, release: Release, log: (line: string) => void, first?: string): Promise<void> {
   const aws = awsOf(e);
-  const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack };
+  const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
   const project = await celldProject(release, awsVars(e, release.version));
   const size = await putRelease(aws, e.aws.bucket, project, release.version);
   log(`Release ${release.version} is in the bucket ${e.aws.bucket} (${(size / 1e6).toFixed(1)} MB).`);
@@ -118,7 +123,8 @@ export async function rollbackAws(e: AwsEntry, log: (line: string) => void, ask?
   log(`${e.host} runs release ${now}. Rollback goes to the release before it: ${before}. The database stays as it is.`);
   if (ask && !ask("Roll back now? [y/N]")) throw new Error("Not rolled back.");
   const aws = awsOf(e);
-  await onMachine(aws, e.aws.machine, deployScript({ bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, version: before }));
+  const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
+  await onMachine(aws, e.aws.machine, deployScript({ ...where, version: before }));
   await putLive(aws, e.aws.stack, before);
   return before;
 }

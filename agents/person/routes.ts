@@ -2,8 +2,8 @@
 // (PersonAgents, sessions.ts) and answers its page. A page of a document names it on each request (?doc=<its id>):
 // the request is about that document's thread. Without it, the thread for the rest of Erga.
 //
-// The panel is the person's, in a browser: no token reaches it. An outside agent with a token
-// ("Authorization: Bearer erga_...", server/identity) calls the same tools itself (MCP, POST /api/tools/<name>,
+// The panel is the person's, in a browser: an agent with a token is refused (`personOf`; the gate keeps the token and
+// names its agent, server/identity). An outside agent calls the same tools itself (MCP, POST /api/tools/<name>,
 // server/api.ts).
 
 import * as Effect from "effect/Effect";
@@ -13,7 +13,7 @@ import type { Platform } from "../../server/platform.ts";
 import { PANEL, routeFor, SECRET, STREAM, type RouteRow } from "../../shared/routes.ts";
 import { docOf } from "./sessions.ts";
 
-/** Someone signed in, in person (in a browser: for their own agent panel, which no token reaches). */
+/** Someone signed in, in person (in a browser: for their own agent panel, which is no agent's). */
 const personOf = (platform: Platform, request: Request) =>
   call(async (): Promise<{ login: string; name: string } | null> => {
     const session = await platform.sessionOf(request);
@@ -53,13 +53,6 @@ export const agentApi: Route = Effect.gen(function* () {
 const agentRoutes = (origin: string): Route =>
   Effect.gen(function* () {
     const { request, url, platform } = yield* ctx;
-    if (/^Bearer\s/i.test(request.headers.get("authorization") ?? ""))
-      return json(
-        {
-          error: `The agent panel is a user's, in a browser: an outside agent calls the same tools itself, over MCP (${url.origin}/mcp).`,
-        },
-        403
-      );
     const me = yield* personOf(platform, request);
     if (!me)
       return json({ error: "Sign in as yourself to talk to your agent." }, (yield* call(() => platform.sessionOf(request))) ? 403 : 401);

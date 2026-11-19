@@ -45,10 +45,11 @@ export function privateHost(hostname: string): boolean {
 }
 
 /**
- * Whether the server's own browser may ask for `url`: one of `own` (Erga's own origins, wherever they are), or an
- * http(s) or WebSocket address that isn't private. An address of no network (data:, blob:, about:) always.
+ * Whether the server's own browser may ask the network for `url`: an http(s) or WebSocket address that isn't private,
+ * or one of the origins in `allowed` (a test's own, on this machine). An address of no network (data:, blob:, about:)
+ * always. (Erga's own addresses are not asked here: the render answers them itself.)
  */
-export function reachable(url: string, own: readonly string[]): boolean {
+export function reachable(url: string, allowed: readonly string[]): boolean {
   let u: URL;
   try {
     u = new URL(url);
@@ -57,5 +58,5 @@ export function reachable(url: string, own: readonly string[]): boolean {
   }
   if (!/^(https?|wss?):$/.test(u.protocol)) return /^(data|blob|about):$/.test(u.protocol);
   const origin = `${u.protocol.replace("ws", "http")}//${u.host}`;
-  return own.includes(origin) || !privateHost(u.hostname);
+  return allowed.includes(origin) || !privateHost(u.hostname);
 }

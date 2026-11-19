@@ -34,7 +34,6 @@ const ROUTE_FILES = [
   "server/api.ts",
   "server/admin/routes.ts",
   "server/documents/routes.ts",
-  "server/identity/mcp-oauth.ts",
   "server/identity/tokens-page.ts",
   "server/news/routes.ts",
   "agents/person/routes.ts",

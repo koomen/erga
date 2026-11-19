@@ -61,6 +61,8 @@ export const AwsFacts = Schema.Struct({
     machine: Schema.String,
     /** The app's host: its domain, or its CloudFront name. */
     app: Schema.String,
+    /** With the gate in front: the stack's secret (its ARN) that holds the key the gate sends the machine (GATE_KEY). */
+    gate: Schema.optionalKey(Schema.String),
     /** Documents' pages: one shared CloudFront name, or an origin each under a domain. */
     pages: Schema.Union([
       Schema.Struct({ kind: Schema.Literal("shared"), host: Schema.String }),

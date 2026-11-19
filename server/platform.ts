@@ -4,7 +4,7 @@
 // memory. The app's code takes a Platform and web Requests, and never a
 // Cloudflare binding.
 
-import type { AgentToken, AuthStorage, SignIn, Tokens } from "./identity/index.ts";
+import type { AuthStorage, Grant, Grants, SignIn } from "./identity/index.ts";
 import type { SiteObject } from "./sites/index.ts";
 import { type Directory, type ListView, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/model/access.ts";
@@ -24,19 +24,19 @@ export interface Session {
   name: string;
   /** In local development, the name a tab gave in ?user=, carried along in the links it follows. */
   as?: string;
-  /** Signed in with an agent token: an agent acting as this person. */
-  agent?: AgentToken;
+  /** An agent acting as this person, by its token: the grant the token names (server/identity/grants.ts). */
+  agent?: Grant;
   /**
    * Comes with admin power: a signed-in browser session does,
-   * a token only with the admin scope (withTokens). Every admin-only call
+   * an agent only with the admin scope. Every admin-only call
    * needs it, and Users.isAdmin must say yes too (Users.mustAdmin).
    */
   admin?: boolean;
-  /** Signed in with a document token or a view cookie: this one document (its id), and no other. */
+  /** An agent with the document scope, or the server's browser: this one document (its id), and no other. */
   onlyDoc?: string;
   /**
-   * The server's browser, rendering the document's page in the viewer for an agent (view_page: identity/session.ts,
-   * viewCookie): the person on one document, with no admin power and no agent of theirs. It runs an agent's code
+   * The server's browser, rendering the document's page in the viewer for an agent (view_page: identity/admit.ts,
+   * viewRequest): the person on one document, with no admin power and no agent of theirs. It runs an agent's code
    * (eval_in_page), so what it does is an agent's (whoOf: `via`), and it makes no token (shareToken).
    */
   view?: boolean;
@@ -83,7 +83,7 @@ export type LiveRows = (platform: Platform, session: Session, keys: string[], or
  * (agents/person/sessions.ts). cloudflare/platform.ts builds the whole of it.
  */
 export interface Platform {
-  /** Who's asking, if anyone: a signed-in person, or an agent with their token (server/identity/session.ts). */
+  /** Who's asking, if anyone: a signed-in person, or an agent with their token (server/identity/admit.ts). */
   sessionOf(request: Request): Promise<Session | null>;
   /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): assets/templates/doc is a blank document. */
   templates: Record<string, Record<string, string>>;
@@ -117,8 +117,8 @@ export interface Platform {
   secret: string;
   /** Every document's address, title and permissions; the server's users and settings. */
   directory: Directory;
-  /** Agent tokens. */
-  tokens: Tokens;
+  /** The grants people gave their agents. */
+  grants: Grants;
   /** What this server runs, and where its deploy put it. */
   deploy: {
     /** The release this server runs (the commit), or null where no deploy named one. */
@@ -128,7 +128,7 @@ export interface Platform {
     /** The app's own host in the deploy facts (app), or null: where a custom domain sends a visitor to sign in. */
     app: string | null;
   };
-  /** How people sign in: the mode and its values, from the deploy (server/identity/mode.ts), and what both modes read. */
+  /** How people sign in: where the gate runs and its values, from the deploy (server/identity/mode.ts), and what both modes read. */
   signIn: SignIn & {
     /** Local development: the login signed in without a provider; null elsewhere. */
     devLogin: string | null;

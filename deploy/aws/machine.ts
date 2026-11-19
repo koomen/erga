@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { FRONT } from "../../gate/mounts/web.ts";
 import type { Aws } from "./cli";
 import { CELLD_PORT, paramFolder } from "./template";
 
@@ -192,6 +193,18 @@ echo "celld $(/usr/local/bin/celld --version | head -1); $(curl -fsS http://${CH
 `;
 }
 
+/** The stack's secret that holds the gate's key (GATE_KEY), into the shell's GATE_KEY: the machine's role may read it. */
+const gateKeyOf = (secret: string) =>
+  `GATE_KEY=$(aws secretsmanager get-secret-value --secret-id '${secret}' --query SecretString --output text)`;
+
+/**
+ * The machine's own request to its server's health check, on the loopback. With the gate in front (`gate`), Erga
+ * answers only a request with the gate's key (server/identity/mount.ts): the shell's GATE_KEY. curl reads that header
+ * from its input (printf is the shell's own): the key is in no command's words, which the machine's other users see.
+ */
+const healthCurl = (gate: boolean) =>
+  `${gate ? `printf '${FRONT}: %s\\n' "$GATE_KEY" | ` : ""}curl -sS -m 10 ${gate ? "-H @- " : ""}localhost:${CELLD_PORT}/api/health 2>/dev/null`;
+
 /**
  * Loads a release that is in the bucket: the database's migrations first (they only add: the release that runs now
  * still works on the new schema), then the Worker, then it waits until the new version answers. Trap: celld's node
@@ -203,16 +216,35 @@ echo "celld $(/usr/local/bin/celld --version | head -1); $(curl -fsS http://${CH
  * three minutes at most, until the release answers its own health check, healthy, on the loopback (GET /api/health: its
  * version, the database, a document): a release that does not is an error, and the caller loads the release before.
  * The release makes the default homepage itself, in its scheduled run (its Cron Trigger, in the project's
- * wrangler.json: server/health.ts). `first`: SQL to run after it answers (setup's first admin).
+ * wrangler.json: server/health.ts). `first`: SQL to run after it answers (setup's first admin). `gateKey`: with the
+ * gate in front (deploy/aws/template.ts), the stack's secret that holds the key the distributions send with each
+ * request: the machine reads it, and it is Erga's GATE_KEY (server/identity/mode.ts). A deploy whose machine can't
+ * read it stops here: without the key Erga would take itself for a server with no gate in front.
  */
-export function deployScript(o: { bucket: string; region: string; stack: string; version: string; first?: string }): string {
+export function deployScript(o: {
+  bucket: string;
+  region: string;
+  stack: string;
+  version: string;
+  first?: string;
+  gateKey?: string;
+}): string {
   return `set -euo pipefail
 export AWS_REGION=${o.region}
 live=$(mktemp -d) && trap 'rm -rf "$live"' EXIT && cd "$live"
 aws s3 cp s3://${o.bucket}/releases/${o.version}.tgz - --quiet | tar -xz
-aws ssm get-parameters-by-path --path ${paramFolder(o.stack)} --with-decryption --output json | python3 -c 'import json, sys
+${
+  // (Each on a line of its own: `set -e` does not stop at a command that fails before an `&&`.)
+  o.gateKey
+    ? `${gateKeyOf(o.gateKey)}
+test -n "$GATE_KEY"
+export GATE_KEY`
+    : "unset GATE_KEY"
+}
+aws ssm get-parameters-by-path --path ${paramFolder(o.stack)} --with-decryption --output json | python3 -c 'import json, os, sys
 c = json.load(open("wrangler.json"))
 c["vars"].update({p["Name"].rsplit("/", 1)[1]: p["Value"] for p in json.load(sys.stdin)["Parameters"]})
+if "GATE_KEY" in os.environ: c["vars"]["GATE_KEY"] = os.environ["GATE_KEY"]
 json.dump(c, open("wrangler.json", "w"))'
 quiet() { grep -v 'jemalloc\\|allocator' || true; }
 migrate() { celld d1 migrations apply erga . --bucket ${fleet(o.bucket)} 2>&1 | quiet | tail -3; }
@@ -225,7 +257,7 @@ else
   for i in $(seq 1 60); do aws s3 ls ${fleet(o.bucket)}/nodes/ 2>/dev/null | grep -q . && break; sleep 2; done
   migrate
 fi
-health() { curl -sS -m 10 localhost:${CELLD_PORT}/api/health 2>/dev/null; }
+health() { ${healthCurl(!!o.gateKey)}; }
 healthy() { health | python3 -c 'import json, sys
 h = json.load(sys.stdin)
 sys.exit(0 if h.get("ok") is True and h.get("version") == "${o.version}" else 1)' 2>/dev/null; }
@@ -238,8 +270,12 @@ echo "runs ${o.version}"
 `;
 }
 
-/** The server's own health report, as it answers the machine on the loopback (GET /api/health), in 10 seconds: one line of JSON, or nothing. */
-export const healthScript = () => `curl -sS -m 10 localhost:${CELLD_PORT}/api/health 2>/dev/null || true`;
+/**
+ * The server's own health report, as it answers the machine on the loopback (GET /api/health), in 10 seconds: one line
+ * of JSON, or nothing. `gate`: with the gate in front, the stack's secret that holds the gate's key, and its region.
+ */
+export const healthScript = (gate?: { key: string; region: string }) =>
+  `${gate ? `export AWS_REGION=${gate.region}\n${gateKeyOf(gate.key)} || true\n` : ""}${healthCurl(!!gate)} || true`;
 
 /** One release's deploy facts (ERGA_DEPLOY in its settings, as the bucket has them), as one line of JSON. */
 export const factsScript = (o: { bucket: string; region: string; version: string }) =>

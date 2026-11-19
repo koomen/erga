@@ -20,7 +20,8 @@ import {
   statusOf,
 } from "../server/identity/apps";
 import type { SignInChange } from "../server/directory/index.ts";
-import { startOAuth } from "../server/identity/oauth";
+import { gated } from "../server/identity/mount";
+import { startSignIn as start } from "../server/identity/sign-in";
 import { type AppCheck, type AppValues, PROVIDERS } from "../server/identity/providers";
 import { testedSignIn } from "../server/identity/settings";
 import { testEnded, type PendingTest } from "../server/identity/app-test";
@@ -32,7 +33,7 @@ import { respond } from "../server/http.ts";
 
 quietConsole();
 
-const startSignIn = startOAuth("github");
+const startSignIn = start("github");
 const checkGithubApp = PROVIDERS.github.check;
 
 const GOOD = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
@@ -171,12 +172,12 @@ test("the status: what's in use and where from, never a secret, the URLs GitHub 
     pagePlace: "on this server's page",
   });
   expect(none.check.state).toBe("not_set_up");
-  expect(none.callbackUrl).toBe("https://staging.erga.dev/auth/github/callback");
+  expect(none.callbackUrl).toBe("https://staging.erga.dev/_edge/callback");
   expect(none.homepageUrl).toBe("https://staging.erga.dev");
   const steps = none.setup!.join("\n");
   for (const s of [
     "https://github.com/settings/applications/new",
-    "https://staging.erga.dev/auth/github/callback",
+    "https://staging.erga.dev/_edge/callback",
     "on this server's page",
     "GITHUB_CLIENT_ID as a text binding",
   ])
@@ -212,7 +213,8 @@ function serverOn(own: Platform["own"]): Platform {
       devLogin: null,
       encryptionKey: "factory-key",
     },
-    deploy: { version: null },
+    deploy: { version: null, domains: [], app: null },
+    pagesDomain: () => "pages.example",
     own,
     directory: { config: { record: async () => {} } } as unknown as Directory,
   } as unknown as Platform;
@@ -222,8 +224,14 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
   const { storage } = store();
   const env = serverOn(storage);
   const apps = new AuthApps(storage, "factory-key");
-  const go = async (q = "") =>
-    new URL((await respond(startSignIn, new Request(`https://erga.dev/auth/github${q}`), env)).headers.get("location") ?? "about:blank");
+  /** Where /auth/github goes, behind the gate: Erga's checks, then the gate's sign-in, which goes off to GitHub. */
+  const visit = (on: Platform, at: string) => gated(on, new Request(`https://erga.dev${at}`), (r) => respond(startSignIn, r, on));
+  const goOn = async (on: Platform, q = "") => {
+    const first = await visit(on, `/auth/github${q}`);
+    const next = first.headers.get("location") ?? "";
+    return new URL((next.startsWith("/_edge/sign-in") ? (await visit(on, next)).headers.get("location") : null) ?? "about:blank");
+  };
+  const go = (q = "") => goOn(env, q);
   expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
   // Nothing waits: a test sign-in says so.
   expect((await respond(startSignIn, new Request("https://erga.dev/auth/github?app=pending"), env)).status).toBe(404);
@@ -231,8 +239,9 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
   expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
   const test = await go("?app=pending&next=/admin/auth");
   expect(test.searchParams.get("client_id")).toBe(OTHER.clientId);
-  expect(test.searchParams.get("state")).toStartWith("p.");
-  expect(test.searchParams.get("redirect_uri")).toBe("https://erga.dev/auth/github/callback");
+  expect(test.searchParams.get("redirect_uri")).toBe("https://erga.dev/_edge/callback");
+  // The gate's sign-in itself, asked for the values that wait when none do: nothing.
+  expect((await visit(serverOn(store().storage), "/_edge/sign-in?idp=github&x=pending")).status).toBe(404);
   // A test that worked for someone who isn't an admin changes nothing, and says why; an admin's puts them in use.
   expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "bo", admin: false }, "github")).toBe(false);
   expect((await apps.read("github")).pending?.test?.error).toContain("only an admin's sign-in");
@@ -249,11 +258,7 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
     put: async () => {},
     delete: async () => {},
   });
-  expect(
-    new URL((await respond(startSignIn, new Request("https://erga.dev/auth/github"), broken)).headers.get("location")!).searchParams.get(
-      "client_id"
-    )
-  ).toBe(GOOD.clientId);
+  expect((await goOn(broken)).searchParams.get("client_id")).toBe(GOOD.clientId);
 });
 
 test("a test sign-in's end: an admin's puts the values in use; every other end notes why; a test of other values notes nothing", () => {
@@ -291,4 +296,95 @@ test("sign-in's next= stays on the site, however the address is dressed up", asy
   expect((await s.fetch(`/auth/github?as=someone&next=${encodeURIComponent("/documents?x=1")}`)).headers.get("location")).toBe(
     "/documents?x=1"
   );
+});
+
+test("a GitHub sign-in from start to the gate's cookie, against the pretend GitHub: PKCE, the gate's callback, and the account by GitHub's id", async () => {
+  const { mockGithub } = await import("../dev/github-mock");
+  const { Directory } = await import("../server/directory/index.ts");
+  const { memory } = await import("./helpers/memory-sql.ts");
+  const GH = "https://gh.test/__github";
+  const ORIGIN = "https://erga.example";
+  const gh = mockGithub({
+    app: { slug: "erga", clientId: GOOD.clientId, clientSecret: GOOD.secret },
+    origin: "https://gh.test",
+    callback: `${ORIGIN}/_edge/callback`,
+    user: "ada",
+  });
+  const directory = new Directory(memory(), { admins: ["koomen"], providers: ["github", "google"] });
+  const koomen = { login: "koomen", admin: true };
+  await directory.rules.change(koomen, (await directory.rules.list(koomen)).find((r) => r.kind == "everybody")!.id, "write");
+  const env = {
+    ...serverOn(store().storage),
+    directory,
+    secret: "s".repeat(40),
+    signIn: {
+      mode: "oauth",
+      apps: { github: GOOD, google: { clientId: "", secret: "" } },
+      origins: { github: GH, google: null },
+      devLogin: null,
+      encryptionKey: "factory-key",
+    },
+  } as unknown as Platform;
+  const real = globalThis.fetch;
+  const sent: Record<string, unknown>[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (!request.url.startsWith("https://gh.test/")) return real(input, init);
+    if (request.url.endsWith("/login/oauth/access_token")) sent.push(JSON.parse(String(init?.body)));
+    return (await gh.fetch(request)) ?? new Response("", { status: 404 });
+  }) as typeof fetch;
+  try {
+    const visit = (at: string, cookie = "") =>
+      gated(env, new Request(at.startsWith("/") ? ORIGIN + at : at, { headers: cookie ? { cookie } : {} }), (r) =>
+        respond(startSignIn, r, env)
+      );
+    const first = await visit("/auth/github?next=/documents");
+    const start = await visit(first.headers.get("location")!);
+    const atGithub = new URL(start.headers.get("location")!);
+    expect(atGithub.origin + atGithub.pathname).toBe(`${GH}/login/oauth/authorize`);
+    expect(Object.fromEntries(atGithub.searchParams)).toMatchObject({
+      client_id: GOOD.clientId,
+      redirect_uri: `${ORIGIN}/_edge/callback`,
+      scope: "read:user",
+      allow_signup: "false",
+      code_challenge_method: "S256",
+    });
+    // GitHub's page: Authorize goes back to the gate's callback, with the code and the state.
+    const back = /id="authorize" href="([^"]+)"/.exec(await (await gh.fetch(new Request(atGithub)))!.text())![1].replace(/&amp;/g, "&");
+    const cookie = start.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    const done = await visit(back, cookie);
+    expect([done.status, done.headers.get("location")]).toEqual([302, "/documents"]);
+    expect(done.headers.getSetCookie().join("\n")).toContain("__Host-erga=s.");
+    // The sign-in lasts the admins' setting (sign_in_days): 30 days until one sets it, and the member cookie with it.
+    const lives = (r: Response) =>
+      r.headers
+        .getSetCookie()
+        .filter((c) => /^(__Host-erga|__Host-member|member)=[^;]/.test(c))
+        .map((c) => Number(/Max-Age=(\d+)/.exec(c)![1]));
+    expect(lives(done)).toEqual([30 * 86400, 30 * 86400]);
+    // A change is for the sign-ins after it.
+    await directory.config.set(koomen, "sign_in_days", 7);
+    const again = await visit((await visit("/auth/github?next=/documents")).headers.get("location")!);
+    const next = /id="authorize" href="([^"]+)"/
+      .exec(await (await gh.fetch(new Request(again.headers.get("location")!)))!.text())![1]
+      .replace(/&amp;/g, "&");
+    const state = again.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    expect(lives(await visit(next, state))).toEqual([7 * 86400, 7 * 86400]);
+    // The code went to GitHub with the sign-in's PKCE verifier, whose challenge GitHub had.
+    expect(sent[0]).toMatchObject({ client_id: GOOD.clientId, redirect_uri: `${ORIGIN}/_edge/callback` });
+    const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(sent[0].code_verifier)))).toString(
+      "base64url"
+    );
+    expect(challenge).toBe(atGithub.searchParams.get("code_challenge")!);
+    // One way in, and GitHub's logins are one person's each: the account has her login, by GitHub's id for her.
+    expect((await directory.identities.find("github", "101"))?.login).toBe("ada");
+  } finally {
+    globalThis.fetch = real;
+  }
 });

@@ -3,7 +3,6 @@
 
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
-import { Tokens } from "../server/identity/tokens";
 import { type Caller, findDocument } from "../server/operations/operation";
 import { memory } from "./helpers/memory-sql";
 
@@ -69,44 +68,4 @@ test("someone with Can authenticate only views what is shared with them, by the 
   expect((await again.openAs({ login: "bo" }, "ada", doc.slug))?.role).toBe("viewer");
   expect(await again.access({ login: "bo" }, doc)).toBe("viewer");
   await expect(findDocument({ ...caller("bo"), dir: again }, `/ada/${doc.slug}`, "edit")).rejects.toThrow("You can't edit that document.");
-});
-
-test("a token that was good a moment ago is not asked of the database again", async () => {
-  const { sql, seen, dir } = await server();
-  const tokens = new Tokens(sql, "secret-".repeat(6), dir);
-  const { token, info } = await tokens.mint({ login: "ada", name: "Ada" }, "Ada's", { scope: "documents" });
-  expect((await tokens.verify(token))?.id).toBe(info.id);
-  seen.reads = 0;
-  expect((await tokens.verify(token))?.id).toBe(info.id);
-  expect(seen.reads).toBe(0);
-  // A token that isn't good is asked each time.
-  expect(await tokens.verify(`${token}x`)).toBeNull();
-  expect(await tokens.verify(`${token}x`)).toBeNull();
-  expect(seen.reads).toBe(2);
-  // Revoked on this server: it stops at once.
-  await tokens.revoke("ada", info.id);
-  expect(await tokens.verify(token)).toBeNull();
-});
-
-test("a remembered token stops when it expires, and after ten seconds the database is asked again", async () => {
-  const { sql, seen, dir } = await server();
-  const tokens = new Tokens(sql, "secret-".repeat(6), dir);
-  const now = Date.now;
-  try {
-    const t0 = now();
-    const short = await tokens.mint({ login: "ada", name: "Ada" }, "Short", { scope: "documents", expires: t0 + 5_000 });
-    const long = await tokens.mint({ login: "ada", name: "Ada" }, "Long", { scope: "documents" });
-    expect(await tokens.verify(short.token)).not.toBeNull();
-    expect(await tokens.verify(long.token)).not.toBeNull();
-    Date.now = () => t0 + 6_000;
-    expect(await tokens.verify(short.token)).toBeNull();
-    seen.reads = 0;
-    expect(await tokens.verify(long.token)).not.toBeNull();
-    expect(seen.reads).toBe(0);
-    Date.now = () => t0 + 11_000;
-    expect(await tokens.verify(long.token)).not.toBeNull();
-    expect(seen.reads).toBeGreaterThan(0);
-  } finally {
-    Date.now = now;
-  }
 });

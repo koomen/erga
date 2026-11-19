@@ -1,7 +1,7 @@
 // Share with an agent: a menu under its button, in the editor (client/shell/sharing.ts), the bars of every other page
 // (bars.ts) and the admin pages (client/admin/admin-share.ts). Two ways to give an outside agent the page:
 // - Install Erga's MCP: the one-line prompt (agent-prompt.ts). The agent's app signs in on Erga, so no token is in it.
-// - Copy a prompt with a token: a new token (POST /tokens/new, as Settings makes one) that lasts as long as the person
+// - Copy a prompt with a token: a new token (POST /tokens/new, as Settings makes one: in the answer's header) that lasts as long as the person
 //   picks, for their documents or (an admin's) admin access, in a prompt that adds Erga's MCP server with it. Only for
 //   someone signed in, on the app's own origin (`tokens`). Settings lists the token, with Revoke.
 
@@ -201,9 +201,10 @@ export function mountAgentMenu(o: AgentMenuOptions) {
       })
         .catch(() => null)
         .then(async (r) => {
-          const body = (r ? await r.json().catch(() => ({})) : {}) as { ok?: boolean; error?: string; token?: string };
-          if (!r?.ok || !body.ok || !body.token) throw new Error(body.error ?? "Couldn't reach the server: try again.");
-          return tokenPrompt({ origin, address: o.address(), token: body.token, scope, expires });
+          const body = (r ? await r.json().catch(() => ({})) : {}) as { ok?: boolean; error?: string };
+          const token = r?.headers.get("x-erga-token");
+          if (!r?.ok || !body.ok || !token) throw new Error(body.error ?? "Couldn't reach the server: try again.");
+          return tokenPrompt({ origin, address: o.address(), token, scope, expires });
         });
       const copied = copyLater(made);
       const prompt = await made.catch((err: Error) => err);

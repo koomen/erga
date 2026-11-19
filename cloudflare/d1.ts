@@ -2,7 +2,7 @@
 // settings, on D1, through D1's API. A batch is one transaction.
 
 import { Directory, parseDeployed, type Param, type Permission, type Sql } from "../server/directory/index.ts";
-import { accountLookup, providersOf, Tokens } from "../server/identity/index.ts";
+import { accountLookup, Grants, providersOf } from "../server/identity/index.ts";
 import { forgetDecisions } from "../server/documents/index.ts";
 
 import type { Env } from "./env";
@@ -116,10 +116,5 @@ export function factoryKey(env: Env): string | null {
   return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
 }
 
-let tokens: { db: D1Database; tokens: Tokens } | null = null;
-
-/** Agent tokens, on the same database: one for all requests, since it remembers the tokens that were good a moment ago. */
-export function tokensOf(env: Env): Tokens {
-  if (tokens?.db !== env.DB) tokens = { db: env.DB, tokens: new Tokens(sqlOn(env.DB), env.SESSION_SECRET, directoryOf(env)) };
-  return tokens.tokens;
-}
+/** The agents' grants, on the same database. */
+export const grantsOf = (env: Env): Grants => new Grants(sqlOn(env.DB), directoryOf(env));

@@ -1,7 +1,7 @@
 // Tokens and keys: what an agent's token may reach, how an agent gets one, and where a person keeps their keys.
 //
-// The first journey is on the shared server: a person approves an agent in the browser (the device flow, and MCP's
-// sign-in as an MCP app does it), then a new person uses Settings, the dialog on every page: their own API key gives
+// The first journey is on the shared server: a person approves an agent in the browser (MCP's sign-in, as an MCP app
+// does it: authorize, approve, token, refresh), and a revoke stops it; then a new person uses Settings, the dialog on every page: their own API key gives
 // their agent its models, and their tokens are listed, made and revoked there.
 // The second journey is on a server of this file's own, with no agent key: a token of a smaller scope reaches its
 // document and nothing else, the agent's panel says how to turn the agent on, and the admin saves the server's keys
@@ -11,6 +11,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { agentPrompt } from "../../client/common/agent-prompt";
 import { getter, mint, signIn, soon, tool, unique, upload } from "./access";
 import { markOf } from "../helpers/save-mark";
 
@@ -62,26 +63,23 @@ async function discover(root: string) {
     any
   >;
   expect(server.code_challenge_methods_supported).toEqual(["S256"]);
-  return server as { authorization_endpoint: string; token_endpoint: string; registration_endpoint: string };
+  return server as { authorization_endpoint: string; token_endpoint: string; registration_endpoint?: string };
 }
 
-async function register(endpoint: string, redirect: string) {
-  const r = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_name: "Claude Code (erga)", redirect_uris: [redirect], token_endpoint_auth_method: "none" }),
-  });
-  expect(r.status).toBe(201);
-  return ((await r.json()) as { client_id: string }).client_id;
-}
-
+/** The gate's token endpoint: a code (with its PKCE verifier) or a refresh grant, for a token. */
 const trade = async (endpoint: string, fields: Record<string, string>) => {
   const r = await fetch(endpoint, { method: "POST", body: new URLSearchParams({ grant_type: "authorization_code", ...fields }) });
-  return { status: r.status, body: (await r.json()) as { access_token?: string; token_type?: string; scope?: string; error?: string } };
+  return {
+    status: r.status,
+    body: (await r.json()) as { access_token?: string; refresh_token?: string; token_type?: string; expires_in?: number; error?: string },
+  };
 };
 
 const whoami = async (root: string, token: string) =>
-  JSON.parse((await mcpTool(root, token, "whoami")).text) as { adminPower: boolean; token: { scope: string; expires: string | null } };
+  JSON.parse((await mcpTool(root, token, "whoami")).text) as {
+    adminPower: boolean;
+    token: { id: string; scope: string; expires: string | null };
+  };
 
 /**
  * Opens Settings from the account menu, as a person does, and waits until the dialog has drawn its lists. The dialog
@@ -109,39 +107,11 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
   /** The new person's 17 tokens, as they are made. */
   let tokens: Promise<void>;
 
-  test("the device flow: the approval page shows the scope, the document and the expiry, and no agent; approved, the agent collects its token", async ({
+  test("an MCP app signs in through the browser: the page gives documents only unless the admin chooses; the app refreshes its token; a revoke stops it at once", async ({
     tab,
   }) => {
     page = tab.page;
-    tab.strict = true;
     await agentClosed(page);
-    const made = await upload(root, await mint(root, null, { label: "Docs", scope: "documents" }), "Scoped one");
-    const post = (path: string, body: object) =>
-      fetch(`${root}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const asked = (await (
-      await post("/api/auth/request", {
-        label: "Claude Code",
-        scope: "document",
-        doc: made.address,
-        expires: new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10),
-      })
-    ).json()) as { code: string; user_code: string; approve_url: string };
-    const u = new URL(asked.approve_url);
-    await page.goto(root + u.pathname + u.search);
-    const card = await page.innerText("main");
-    for (const part of ["One document", "Scoped one", "Expires", "Deny", "Approve"]) expect(card).toContain(part);
-    // A page where the person grants access has no agent: it can't see or act on the approval.
-    expect(await page.locator("#agent, .agent-fab").count()).toBe(0);
-    await page.click("button[value=approve]");
-    await until(() => page.evaluate(() => document.body.innerText.includes("Approved")), 10_000, "approved in the browser");
-    const got = (await (await post("/api/auth/poll", { code: asked.code })).json()) as { token?: string };
-    expect(got.token).toBeTruthy();
-    expect((await tool(root, got.token!, "whoami")).text).toContain('"scope": "document"');
-  });
-
-  test("an MCP app signs in through the browser: the card gives documents only unless the admin chooses; then the Share prompt's steps work", async ({
-    tab,
-  }) => {
     tab.strict = false; // (The app's own page, and a key that Settings refuses later, log the browser's errors.)
     // The app's own loopback server, which the browser comes back to with the code.
     const heard: URLSearchParams[] = [];
@@ -153,42 +123,61 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     try {
       const redirect = `http://127.0.0.1:${(app.address() as AddressInfo).port}/callback`;
       const as = await discover(root);
-      const client = await register(as.registration_endpoint, redirect);
+      // The server registers no app: the app names itself (Claude Code: --client-id).
+      expect(as.registration_endpoint).toBeUndefined();
+      const client = "Claude Code (erga)";
       const { verifier, challenge } = await pkce();
-      const authorize = `${as.authorization_endpoint}?${new URLSearchParams({ response_type: "code", client_id: client, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256", state: "xyz", resource: `${root}/mcp`, scope: "documents" })}`;
-      // An address the app didn't register is refused on Erga.
+      const authorize = `${as.authorization_endpoint}?${new URLSearchParams({ response_type: "code", client_id: client, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256", state: "xyz", resource: `${root}/mcp` })}`;
+      // An address that is not on this computer is refused, before any page.
       expect(
-        (await fetch(authorize.replace(encodeURIComponent(redirect), encodeURIComponent(`${redirect}/elsewhere`)), { redirect: "manual" }))
-          .status
+        (
+          await fetch(authorize.replace(encodeURIComponent(redirect), encodeURIComponent("https://elsewhere.example/callback")), {
+            redirect: "manual",
+            headers: { "Sec-Fetch-Dest": "document" },
+          })
+        ).status
       ).toBe(400);
 
       // The person (the dev login, an admin, signed in) sees what the app asks for.
       await page.goto(authorize);
-      expect(new URL(page.url()).pathname).toBe("/tokens/approve");
+      expect(new URL(page.url()).pathname).toBe("/oauth/authorize");
+      // A page where the person grants access has no agent: it can't see or act on the approval.
       expect(await page.locator("#agent, .agent-fab").count()).toBe(0);
       const card = await page.evaluate(() => document.querySelector(".approve")?.textContent ?? "");
       for (const part of [
-        "Claude Code (erga) wants a token for reading and editing your documents, and admin power.",
+        "Claude Code (erga) wants to act for you: reading and editing your documents.",
         "the app, on this computer",
+        "30 days",
       ])
         expect(card).toContain(part);
-      // Documents only is the default: one click on Approve never gives admin power. The card says when each choice ends.
+      // Documents only is the default: one click on Approve never gives admin power.
       expect(await page.getByLabel(/Documents only/).isChecked()).toBe(true);
       expect(await page.getByLabel(/Admin power/).isChecked()).toBe(false);
-      expect(await page.locator("dl.grant").innerText()).toContain("Admin power: 30 days");
       await page.click("button[value=approve]");
       const back = await until(() => heard[0], 10_000, "the browser back at the app");
       expect(back.get("state")).toBe("xyz");
-      // A wrong verifier uses the code up: the app starts again.
-      const wrong = { code: back.get("code")!, client_id: client, redirect_uri: redirect, code_verifier: "x".repeat(43) };
-      expect((await trade(as.token_endpoint, wrong)).body.error).toBe("invalid_grant");
-      await page.goto(authorize);
-      await page.click("button[value=approve]");
-      const again = (await until(() => heard[1], 10_000, "back at the app again")).get("code")!;
-      const got = await trade(as.token_endpoint, { code: again, client_id: client, redirect_uri: redirect, code_verifier: verifier });
-      expect([got.status, got.body.token_type, got.body.scope]).toEqual([200, "Bearer", "documents"]);
-      const token = got.body.access_token!;
-      expect(await whoami(root, token)).toMatchObject({ adminPower: false, token: { scope: "documents" } });
+      const code = back.get("code")!;
+      // Only the app that began the sign-in trades the code: with its PKCE verifier, as the same client.
+      expect(
+        (await trade(as.token_endpoint, { code, client_id: client, redirect_uri: redirect, code_verifier: "x".repeat(43) })).body.error
+      ).toBe("invalid_grant");
+      expect(
+        (await trade(as.token_endpoint, { code, client_id: "another app", redirect_uri: redirect, code_verifier: verifier })).body.error
+      ).toBe("invalid_grant");
+      const got = await trade(as.token_endpoint, { code, client_id: client, redirect_uri: redirect, code_verifier: verifier });
+      expect([got.status, got.body.token_type, got.body.expires_in]).toEqual([200, "Bearer", 3600]);
+      const first = got.body.access_token!;
+      const me = await whoami(root, first);
+      expect(me).toMatchObject({ adminPower: false, token: { scope: "documents" } });
+      // The token lasts an hour: the app gets the next one with its refresh grant, for the same grant of the person's.
+      const fresh = await trade(as.token_endpoint, {
+        grant_type: "refresh_token",
+        refresh_token: got.body.refresh_token!,
+        client_id: client,
+      });
+      expect(fresh.status).toBe(200);
+      const token = fresh.body.access_token!;
+      expect((await whoami(root, token)).token.id).toBe(me.token.id);
 
       // /mcp with the token: the tools, then the Share prompt's "open <document address>".
       const instructions = (await mcp(root, token, "initialize", { protocolVersion: "2025-06-18" })).result.instructions;
@@ -210,12 +199,29 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
       // Settings lists it, to revoke (whoami's tokens, the dialog's list).
       expect((await mcpTool(root, token, "documents", { op: "whoami" })).text).toContain("Claude Code (erga)");
 
-      // A person who isn't an admin sees no choice on the card.
+      // A person who isn't an admin sees no choice on the page.
       cookie = await signIn(root, login);
-      const theirs = (await fetch(authorize, { redirect: "manual", headers: { Cookie: cookie } })).headers.get("location")!;
-      const plain = await (await fetch(new URL(theirs, root), { headers: { Cookie: cookie } })).text();
-      expect(plain).toContain("wants a token for reading and editing your documents.</h2>");
+      const plain = await (await fetch(authorize, { headers: { Cookie: cookie, "Sec-Fetch-Dest": "document" } })).text();
+      expect(plain).toContain("wants to act for you: reading and editing your documents.</h2>");
       expect(plain).not.toContain("Documents only");
+
+      // Revoke (Settings' button runs this operation): the app's next request is refused, with the 401 that makes it
+      // sign in again; its refresh grant gives a token that the server refuses too.
+      const revoked = await fetch(`${root}/api/tools/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: root },
+        body: JSON.stringify({ token: me.token.id }),
+      });
+      expect(revoked.status).toBe(200);
+      const later = await trade(as.token_endpoint, {
+        grant_type: "refresh_token",
+        refresh_token: fresh.body.refresh_token!,
+        client_id: client,
+      });
+      for (const t of [first, token, later.body.access_token!]) {
+        const refused = await mcp(root, t, "tools/list");
+        expect([refused.status, refused.auth]).toEqual([401, expect.stringContaining('error="invalid_token"')]);
+      }
     } finally {
       app.close();
     }
@@ -325,7 +331,8 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     await page.click("#erga-settings form.make button");
     await page.waitForSelector("#erga-settings .made pre.secret");
     const secret = (await page.textContent("#erga-settings .made pre.secret"))!;
-    expect(secret).toMatch(/^erga_/);
+    // The gate's token: it says nothing but whose it is and which grant.
+    expect(secret).toMatch(/^a\.[\w-]+\.[\w-]+$/);
     expect((await tool(root, secret, "whoami")).text).toContain('"scope": "documents"');
     const row = `#erga-settings section.tokens li[data-id]:has-text("${label}")`;
     await page.waitForSelector(row);
@@ -385,14 +392,9 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     expect((await get(`/d/${two.id}/doc/index.html`, auth)).status).toBe(403);
     expect((await tool(root, token, "list_documents")).status).toBe(403);
 
-    // The editor's Share card token (documents): the admin's documents, no admin tools.
-    const at = await get(`${one.address}/api/share`, {
-      method: "POST",
-      headers: { Origin: root, "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const share = ((await at.json()) as { token: string }).token;
-    expect(share).toMatch(/^erga_/);
+    // The Share menu's token (documents): the admin's documents, no admin tools.
+    const share = await mint(root, null, { label: "Share with an agent", scope: "documents" });
+    expect(share).toBeTruthy();
     // The Share card's prompt, step by step: the tools, with the document's address as "document".
     const document = root + one.address;
     expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited by its token");
@@ -426,7 +428,7 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     await soon(panel, 10_000).toBe("To enable the agent, add an LLM provider key. Or connect your own agent.");
     await page.click("#agent-hint >> text=connect your own agent");
     await soon(() => page.evaluate(() => document.querySelector("#agent-hint .agent-connect pre")?.textContent ?? "")).toBe(
-      `Add Erga's MCP server, ${root}/mcp, then open ${root}/documents.`
+      agentPrompt("/documents", root)
     );
 
     await page.click("#agent-hint >> text=add an LLM provider key");

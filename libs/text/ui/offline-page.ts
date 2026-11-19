@@ -27,7 +27,7 @@ export function keepPage(shell: string, text: () => string) {
     const t = text(),
       h = await head;
     if (t == last || h == null) return;
-    const page = pageAgain(h, t, shell);
+    const page = pageAgain(h, t);
     if (page == null) return;
     last = t;
     const headers = {

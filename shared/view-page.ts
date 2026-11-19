@@ -164,3 +164,21 @@ export const EVAL_TIMEOUT = { default: 5_000, max: 15_000 };
 export const EVAL_MAX_JSON = 20_000;
 export const evalTimeout = (req: { timeout?: number }) =>
   Math.max(100, Math.min(EVAL_TIMEOUT.max, Number(req.timeout) || EVAL_TIMEOUT.default));
+
+/**
+ * Which addresses are Erga's own, for the server's browser, which asks the network nothing of them (cloudflare/render.ts):
+ * the app's origin, and every document's pages origin, all at one scheme and port.
+ */
+export interface OwnAddresses {
+  app: string;
+  scheme: string;
+  port: string;
+  /** The one host that all documents share, or null: then every host that ends with `domain` (".example-pages.com"). */
+  host: string | null;
+  domain: string;
+}
+
+/** Whether an http(s) address is one of Erga's own. */
+export const isOwn = (own: OwnAddresses, url: URL) =>
+  url.origin == own.app ||
+  (url.protocol == own.scheme && url.port == own.port && (own.host ? url.hostname == own.host : url.hostname.endsWith(own.domain)));

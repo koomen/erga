@@ -6,6 +6,7 @@
 import { type CloudflareEntry, DEFAULT_BRANCH, DEFAULT_REPO, repoName } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
+import { SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 export type Where = "cloudflare" | "aws";
 /** Who may sign in: users the admin invites, they and an organization's users, or everyone the organization's single sign-on lets pass. */
@@ -36,6 +37,8 @@ export interface Answers {
   client: string;
   /** sso on AWS, when the sign-in gives no `email`: the claim with the address, and the text before it ("preferred_username:corp|"). */
   emailClaim: string;
+  /** sso on AWS: how many days a sign-in at the gate lasts ("": the gate's 30). Without sso, an admin sets it on /admin/settings. */
+  signInDays: string;
   /** Documents' pages: "shared", or a domain. "": the default (pagesOf). */
   pages: string;
   /** --remote (or $SSH_CONNECTION): the user is at another computer. Their steps go through their terminal, never a browser here. */
@@ -61,6 +64,7 @@ export const noAnswers = (host: string): Answers => ({
   issuer: "",
   client: "",
   emailClaim: "",
+  signInDays: "",
   pages: "",
   remote: false,
 });
@@ -69,8 +73,8 @@ export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
 
 /**
  * Where documents' pages run. Cloudflare: one shared workers.dev address (safe for one author; a domain of their own
- * is a later change). AWS: a domain. With single sign-on it is pages.<host>: the proxy's certificate is the stack's
- * own, and the user's sign-on guards both. Without it, the pages need a whole zone that isn't the app's (a page's
+ * is a later change). AWS: a domain. With single sign-on it is pages.<host>: the gate in front guards both, with the
+ * user's sign-on. Without it, the pages need a whole zone that isn't the app's (a page's
  * script must not share the app's site), so the user names one ("": not answered).
  */
 export const pagesOf = (a: Answers): string => a.pages || (a.where != "aws" ? "shared" : sso(a) ? `pages.${a.host}` : "");
@@ -135,6 +139,12 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
         v,
         `"${v}" isn't <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".`
       );
+    case "signInDays":
+      return is(
+        /^[1-9]\d?$/.test(v) && Number(v) <= SIGN_IN_DAYS_MAX,
+        v,
+        `"${v}" isn't a whole number of days from 1 to ${SIGN_IN_DAYS_MAX}.`
+      );
     case "pages":
       return is(low == "shared" || HOST.test(low), low, "pages is shared, or a domain.");
   }
@@ -171,9 +181,9 @@ export const emailOf = (a: Pick<Answers, "emailClaim">): { claim: string; prefix
 };
 
 /**
- * Single sign-on: the server's setting for the proxy in front (PROXY_SIGN_IN: server/identity/proxy.ts); null without
- * it. `signer`: on AWS, the proxy's ARN (the stack's output). A proxy whose values aren't all known yet gives "{}",
- * which the server reads as no proxy: then nobody signs in, and no other sign-in stands in.
+ * Single sign-on: the server's setting for the proxy in front (PROXY_SIGN_IN, which the server reads no more: the gate replaced it, server/identity/mode.ts); null without
+ * it. `signer`: on AWS, the proxy's ARN (the stack's output). A proxy whose values aren't all known yet gives "{}".
+ * A server with any value here and no gate's key (GATE_KEY) refuses to come up: no other sign-in stands in.
  */
 export function proxySetting(a: Answers, signer?: string): string | null {
   if (!sso(a)) return null;
@@ -246,7 +256,7 @@ export function namesOf(
 /** The stack's name of the instance on AWS. */
 export const stackOf = (a: Answers) => namesOf(a.host).worker;
 
-export const callbackOf = (host: string) => `https://${host}/auth/github/callback`;
+export const callbackOf = (host: string) => `https://${host}/_edge/callback`;
 
 /**
  * The entry of `.erga/config.json` for a new instance on Cloudflare, from the answers alone: its names, its plain

@@ -30,7 +30,7 @@ const DEV_VARS = new Set(["DEV_LOGIN", "SESSION_SECRET", "ANTHROPIC_API_KEY", "E
 const LOCAL: Record<string, string> = {
   GITHUB_CLIENT_ID: "ERGA_GITHUB_CLIENT_ID",
   SERVER_CONFIG: "ERGA_SERVER_CONFIG",
-  PROXY_SIGN_IN: "ERGA_PROXY_SIGN_IN",
+  GATE_KEY: "ERGA_GATE_KEY",
   ...Object.fromEntries(
     [
       "ERGA_WRITE_DELAY_MS",

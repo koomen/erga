@@ -135,7 +135,7 @@ export function ergaDev(opts: DevOptions): Plugin {
       const github = mockGithub({
         app: { slug: "erga-editor", clientId: "Iv1.mockgithubapp0", clientSecret: "mock-github-client-secret" },
         origin: devOrigin,
-        callback: `${devOrigin}/auth/github/callback`,
+        callback: `${devOrigin}/_edge/callback`,
         user: process.env.ERGA_GITHUB_USER || "ada",
       });
       server.httpServer?.on("close", () => void stopLocalBrowser());

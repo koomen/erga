@@ -4,7 +4,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { Directory, type News } from "../server/directory/index.ts";
-import { Tokens } from "../server/identity/tokens.ts";
+import { Grants } from "../server/identity/grants.ts";
 import { Hub, KEEP_MS, type Listener } from "../server/news/index.ts";
 import { memory } from "./helpers/memory-sql.ts";
 
@@ -68,18 +68,13 @@ test("each change on the admin pages sends its row's key to the admins, with the
   expect(take()).toEqual(["user:eve>admins", "user:dee>admins", `change:${await log()}>admins`]);
 });
 
-test("a token's key goes to its person's open /settings as it's made, rotated or revoked", async () => {
+test("a token's key goes to its person's open /settings as its grant is made or revoked", async () => {
   const { dir, sql, take } = directory();
-  const tokens = new Tokens(sql, "secret-".repeat(6), dir);
-  const me = { ...ada, name: "Ada" };
-  const { info } = await tokens.mint(me, "Laptop", { scope: "documents" });
-  expect(take()).toEqual([`token:${info.id}>ada`]);
-  const share = (await tokens.share(me, false)).info;
-  expect(take()).toEqual([`token:${share.id}>ada`]);
-  const next = (await tokens.share(me, true)).info;
-  expect(take()).toEqual([`token:${share.id}>ada`, `token:${next.id}>ada`]);
-  await tokens.revoke("ada", info.id);
-  expect(take().slice(0, 1)).toEqual([`token:${info.id}>ada`]);
+  const grants = new Grants(sql, dir);
+  const grant = await grants.make({ ...ada, provider: "github", subject: "1001" }, "Laptop", { scope: "documents" });
+  expect(take()).toEqual([`token:${grant.id}>ada`]);
+  await grants.revoke("ada", grant.id);
+  expect(take().slice(0, 1)).toEqual([`token:${grant.id}>ada`]);
 });
 
 /** A hub on SQLite, its clock in the test's hands, and two open pages: Ada's and an admin's. */

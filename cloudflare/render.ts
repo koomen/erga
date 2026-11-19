@@ -1,14 +1,39 @@
 // view_page and eval_in_page, rendered by the server's browser (cloudflare/browser.ts): it opens the page in Erga's
 // real viewer, as its person does, at the document's address (/d/<id>/<page>, ?edit for the editor): the viewer on the
 // app's origin, the bars as the document's settings give them, and the page in its frame on the document's pages
-// origin. The browser is signed in as the agent's person with a view cookie (server/identity/session.ts): one document,
-// a few minutes, no admin power; in a browser context of the person's own (cloudflare/browser.ts). The frame's page comes from
-// the room (the job's html: the agent's latest edits, or a preview), the rest over the network. In the frame,
+// origin; in a browser context of the person's own (cloudflare/browser.ts). In the frame,
 // client/page-tools/capture.ts waits for its fonts, shows a step and holds its animations; the browser takes each
 // picture itself, of the whole window.
 //
+// The browser asks the network nothing of Erga's. Each request is paused before it goes out (CDP's Fetch domain), in
+// every target of the page (the window, a frame of another site), and one for an address of Erga's own (the app's
+// origin, a host of the documents' domain) is answered here, in process, by the app itself (`erga`:
+// cloudflare/app.ts). A page's WebSocket to such an address is answered here too (render-sockets.ts). So the gate is
+// never asked, wherever it runs: a gate in front of the server lets in only a browser that signed in, which this one
+// never did, and it needs nothing new for this one. Who asks:
+//
+//   - the viewer's own page (a page of the app's, in the window's main frame), of the app's origin: the agent's
+//     person, on this one document, with no admin power (server/identity/admit.ts, viewRequest);
+//   - anything else (the document's page and its frames, a worker), of either: nobody. The document's files need
+//     nobody: the pass in their address opens them, and the app checks it, and the document's share count, as for
+//     any browser. The room's socket there needs the page's edit key, as for any browser.
+//
+// The frame's page is the job's html (the room's text: the agent's latest edits, or a preview), in the app's own
+// answer for it: its status and its headers (frame-ancestors) stand. A request for any other address goes to the
+// network as it is.
+//
+// Trap: who made a request is what the browser says (the frame's id that CDP gives, the origin of the page in it),
+// never what the request says. A document's page is its authors' code, and it writes its requests' headers.
+// Trap: no cookie goes with a request that is answered here, and none comes back (viewRequest; ergaAnswer). The
+// browser keeps no cookie of Erga's.
+// Trap: what does not pause still goes to the network, as nobody: a window that a page opens, a worker's socket. Local
+// development signs in a browser with no sign-in (the dev login): this one comes as a browser that signed out
+// (`signedOut`).
+// Trap: a page here has no service worker (client/inline/page-in-process.ts): a worker's own requests would be
+// nobody's, the viewer's page among them.
+//
 // Trap: a browser of our own (the dev server's Chrome, the AWS host's) is on the server's machine, so the render
-// refuses each request to a private address but Erga's own two origins (`own`; private-address.ts). A test
+// refuses each request to a private address that is not Erga's own (private-address.ts). A test
 // whose page loads from another site on 127.0.0.1 names that origin in its server's ERGA_RENDER_ALLOW
 // (a test's own fonts server). The check reads the address as written: a public name that resolves to a
 // private address, and a WebSocket, still pass.
@@ -24,15 +49,18 @@
 // "Cannot perform I/O on behalf of a different Durable Object". Keep it in the object (`browsers`), never in a module
 // variable.
 
+import { ASK } from "../gate/core";
 import type { RenderJob } from "../document/life/document";
 import { encodePath, pageAddress } from "../document/model/pages";
-import { base64 } from "../shared/bytes";
+import { base64, fromBase64 } from "../shared/bytes";
 import {
   FRAMES,
   VIEW_DEFAULT,
   evalTimeout,
+  isOwn,
   renderTimes,
   type ColorScheme,
+  type OwnAddresses,
   type Shot,
   type StepShown,
   type ViewResult,
@@ -41,13 +69,13 @@ import { sourceDigest } from "../shared/page-html";
 import { PICTURE, pictureParts } from "../shared/picture";
 import { reachable } from "./private-address";
 import { pagesOrigin, readPagesClaims } from "../server/documents/index";
-import { cookieName, SESSION_COOKIE, viewCookie } from "../server/identity/index";
+import { cookieName, SIGNED_OUT, viewRequest } from "../server/identity/index";
 import { loadAssets, readerPage } from "../server/pages/index";
-import { browserBinding, browsers } from "./browser";
-import type { Page } from "./cdp";
+import type { Platform } from "../server/platform";
+import { browsers } from "./browser";
+import type { BrowserBinding, Page } from "./cdp";
+import { pageSockets } from "./render-sockets";
 import { renderTools, type Runner } from "./render-tools";
-import type { Env } from "./env";
-import { platform } from "./platform";
 
 /** How long the page may take to load. */
 const LOAD_MS = 10_000;
@@ -62,53 +90,101 @@ const CLOSE_MS = 5_000;
 
 type Job = RenderJob & { owner: string; id: string };
 
-/** A document's renderer (one for each Durable Object: its own connection), or none where there's no browser. */
-export function renderer(env: Env): ((job: Job) => Promise<ViewResult>) | undefined {
-  const binding = browserBinding(env);
-  if (!binding) return undefined;
-  const mine = browsers(binding);
-  return (job) => render(env, mine, job);
+/**
+ * The largest answer of Erga's that the browser gets, in bytes: it goes in one message of the browser's connection, as
+ * base64 (a Worker's WebSocket takes 32 MiB in a message). A larger file fails to load there.
+ */
+const MAX_ANSWER = 8 * 1024 * 1024;
+
+/**
+ * How many of Erga's answers one render has at a time, from the app's answer until the browser has it: each one's
+ * bytes are in this object's memory, three times over (the bytes, their base64, the message). And how many more may
+ * wait: a request past them fails.
+ */
+const AT_ONCE = 4;
+const IN_LINE = 500;
+
+/** What a render needs of the server it runs in (cloudflare/app.ts; a test's server in memory). */
+export interface RenderServer {
+  platform: Platform;
+  /** The app itself, behind the gate: its answer to a request. */
+  erga: (request: Request) => Promise<Response>;
+  /**
+   * A browser of our own (the AWS host's Chrome, local development's), which is on the server's machine and in its
+   * network: the only origins of a private address that it may ask, besides Erga's own. Null for Cloudflare's
+   * browser, which sees only the public internet.
+   */
+  allow: string[] | null;
 }
 
-/** Where the render reaches the document: the viewer's address, the frame's origin, and the view cookie. */
+/** A server's renderer, in the browser behind `binding` (one for each Durable Object: its own connection). */
+export function rendering(binding: BrowserBinding, server: RenderServer): (job: Job) => Promise<ViewResult> {
+  const mine = browsers(binding);
+  return (job) => render(server, mine, job);
+}
+
+/** Where the render reaches the document: the viewer's address, the frame's origin, and which addresses are Erga's own. */
 interface Place {
   app: URL;
   shell: string;
   pages: string;
-  cookie: { name: string; value: string; url: string; path: string; httpOnly: true; secure: boolean; sameSite: "Lax" };
-  secret: string;
-  /**
-   * A browser of our own (the AWS host's Chrome, local development's), which is on the server's machine and in its
-   * network: the only origins of a private address that it may ask (Erga's own two). Null for Cloudflare's browser,
-   * which sees only the public internet.
-   */
-  own: string[] | null;
+  server: RenderServer;
+  /** Erga's own addresses: the app's origin, and the hosts of the documents' domain (any document's pages origin). */
+  own: OwnAddresses;
+  /** The addresses whose requests pause: Erga's own; for a browser of our own, all (a private address is refused). */
+  patterns: string[];
 }
 
-async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Promise<ViewResult> {
+/** A request of the browser's, paused before it goes out (CDP's Fetch.requestPaused). */
+interface Paused {
+  requestId: string;
+  frameId: string;
+  resourceType: string;
+  request: {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    hasPostData?: boolean;
+    postData?: string;
+    postDataEntries?: { bytes?: string }[];
+  };
+}
+
+async function render(server: RenderServer, mine: ReturnType<typeof browsers>, job: Job): Promise<ViewResult> {
   const t0 = Date.now();
-  const p = platform(env);
+  const p = server.platform;
   const app = new URL(job.origin);
   // The editor's files' addresses, for the frame's page (readerPage): this object's isolate may not be the Worker's.
   await loadAssets(p, app);
   const rest = pageAddress(job.path);
   const pages = pagesOrigin(job.owner, job.id, app, p);
+  // Every document's pages origin is at this one's scheme and port: on the one shared host, or under the documents' domain.
+  const at = new URL(pages);
+  const own: OwnAddresses = {
+    app: app.origin,
+    scheme: at.protocol,
+    port: at.port,
+    host: p.pagesShared?.(app) || null,
+    domain: `.${p.pagesDomain(app)}`,
+  };
   const place: Place = {
     app,
     shell: `${app.origin}/d/${job.id}${rest ? `/${encodePath(rest)}` : ""}${job.req.editor ? "?edit" : ""}`,
     pages,
-    cookie: {
-      name: cookieName(app, SESSION_COOKIE),
-      value: await viewCookie(p.secret, job.by, job.id, t0),
-      url: `${app.origin}/`,
-      path: "/",
-      httpOnly: true,
-      secure: app.protocol == "https:",
-      sameSite: "Lax",
-    },
-    secret: p.secret,
-    own: env.BROWSER ? null : [app.origin, new URL(pages).origin, ...(env.ERGA_RENDER_ALLOW ?? "").split(",").filter(Boolean)],
+    server,
+    own,
+    patterns: server.allow
+      ? ["*"]
+      : [`${app.origin}/*`, own.host ? `${at.origin}/*` : `${at.protocol}//*${own.domain}${at.port && `:${at.port}`}/*`],
   };
+  /**
+   * Local development signs in a browser with no sign-in, as the dev login (server/identity/mount.ts). What this
+   * browser asks the network of Erga (a socket, a window that a page opens) is nobody's there too: it comes as a
+   * browser that signed out.
+   */
+  const signedOut = p.dev(app)
+    ? { name: cookieName(app, SIGNED_OUT), value: "1", url: `${app.origin}/`, path: "/", httpOnly: true, secure: false, sameSite: "Lax" }
+    : null;
   let how = "none";
   let opened = 0;
   // Each step, from the connection to the page's close, is in the RENDER_MS limit: a step that never answers (the
@@ -127,7 +203,7 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
     how = b.how;
     opened = Date.now();
     const context = await mine.context(b.browser, job.by);
-    await b.browser.send("Storage.setCookies", { cookies: [place.cookie], browserContextId: context });
+    if (signedOut) await b.browser.send("Storage.setCookies", { cookies: [signedOut], browserContextId: context });
     const made = await b.browser.newPage(context);
     if (over) {
       await closed(made);
@@ -166,14 +242,12 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
 /** Closes a page; the render goes on after CLOSE_MS without an answer. */
 const closed = (page: Page) => Promise.race([page.close().catch(() => {}), new Promise((r) => setTimeout(r, CLOSE_MS))]);
 
-/** Where code runs: the viewer's window, or the page's frame. */
-
 /**
  * The page's frame: its target, when it's on another site (its own process), else its execution context in the
  * viewer's process. Its errors and console's join `errors`. It runs code in the frame's page as it is now (a link in the
- * frame may have opened another).
+ * frame may have opened another). `each`: every target of the page, before any of its code runs.
  */
-async function watchFrame(page: Page, pages: string, scheme: string, errors: string[], guard: ((target: Page) => Promise<void>) | null) {
+async function watchFrame(page: Page, pages: string, scheme: string, errors: string[], each: (target: Page) => Promise<void>) {
   let target: Page | null = null;
   const contexts = new Map<string, number>();
   const onError = (message: string) => errors.push(message);
@@ -184,14 +258,13 @@ async function watchFrame(page: Page, pages: string, scheme: string, errors: str
     if (method == "Runtime.executionContextCreated" && e.context.auxData?.isDefault) contexts.set(e.context.auxData.frameId, e.context.id);
   });
   await page.onFrames(async (frame, url) => {
-    // (A guarded frame of another site keeps its listeners: they refuse its requests to private addresses.)
-    if (!url.startsWith(pages) && url != "about:blank" && url != "") return guard ? undefined : void frame.detach();
-    target?.detach();
+    // (Each frame keeps its listeners, the one before this one too: they answer its requests while it lives.)
+    if (!url.startsWith(pages) && url != "about:blank" && url != "") return;
     target = frame;
     frame.onErrors(onError, onConsole);
     await Promise.all(["Runtime.enable", "Log.enable"].map((m) => frame.send(m)));
     await frame.colorScheme(scheme);
-  }, guard ?? undefined);
+  }, each);
   const run: Runner = async <T>(expression: string) => {
     if (target) return target.evaluate<T>(expression);
     // The same process: the frame's own context, by its frame's id (the viewer's only frame, iframe#frame).
@@ -215,30 +288,94 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
     return { errors: [], error: `Give at most ${FRAMES.count} times, each from 0 to ${FRAMES.max} ms.` };
   if (req.editor && req.preview) return { errors: [], error: "A preview shows in the viewer only: leave out editor, or edits." };
   const errors: string[] = [];
-  const own = place.own;
-  /** Refuses a paused request to a private address; answers whether it did. */
-  const refused = (target: Page, e: { requestId: string; request: { url: string } }) => {
-    if (!own || reachable(e.request.url, own)) return false;
-    target.send("Fetch.failRequest", { requestId: e.requestId, errorReason: "AddressUnreachable" }).catch(() => {});
-    return true;
-  };
+  const served = { served: false };
+  const app = place.app.origin;
   /**
-   * Our own browser: each target of the page (a frame of another site, a frame in it, a worker) has every request
-   * paused, and one to a private address fails (private-address.ts). Before any of its code runs.
+   * The window's main frame, and the origin of the page in it now, as the browser says it (null: not said yet).
+   * `strayed`: a page of another origin was in the window. From then on nothing is the person's: a late request of
+   * that page could not be told from the app's own.
    */
-  const guard = own
-    ? async (target: Page): Promise<void> => {
-        target.on((method, e) => {
-          if (method == "Fetch.requestPaused" && !refused(target, e as never))
-            target.send("Fetch.continueRequest", { requestId: e.requestId }).catch(() => {});
+  let viewer: string | null = null;
+  let inWindow: string | null = null;
+  let strayed = false;
+  page.on((method, e) => {
+    if (method != "Page.frameNavigated" || e.frame.parentId) return;
+    inWindow = e.frame.securityOrigin;
+    if (inWindow != app) strayed = true;
+  });
+  const windowOrigin = async (): Promise<string> => inWindow ?? (await page.send("Page.getFrameTree")).frameTree.frame.securityOrigin;
+  const person = { login: job.by, doc: job.id };
+  /** The render is over: no request is answered any more, and none waits. */
+  let over = false;
+  /** AT_ONCE: an answer's turn, which the next in line gets when it is done. */
+  let busy = 0;
+  const waiting: (() => void)[] = [];
+  const turn = async <T>(make: () => Promise<T>): Promise<T> => {
+    if (busy < AT_ONCE) busy++;
+    else if (waiting.length < IN_LINE) await new Promise<void>((go) => waiting.push(go));
+    else throw new Error("too many requests at a time");
+    try {
+      if (over) throw new Error("the render is over");
+      return await make();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else busy--;
+    }
+  };
+  /** A paused request: Erga's own, answered here; one to a private address fails (our own browser); the rest go on. */
+  const answer = async (target: Page, e: Paused, top: boolean): Promise<unknown> => {
+    const url = new URL(e.request.url);
+    if (isOwn(place.own, url)) {
+      const window = top && e.frameId == viewer;
+      const goes = e.resourceType == "Document";
+      // The person's: a page of the app's, in the window's main frame, asks the app; or the window itself goes to it.
+      const theirs = window && !strayed && url.origin == app && (goes || (await windowOrigin()) == app);
+      // From where, as a browser says it of such a request: the app's own page; the render's own first address; and
+      // the window going on from a page, which any page in it may have asked for.
+      const site = !theirs ? null : !goes ? "same-origin" : inWindow == null ? "none" : "cross-site";
+      // (Its turn lasts until the browser has the answer.)
+      return turn(async () => {
+        const made = await ergaAnswer(place, job, e, { window, person: theirs ? person : null, site, served });
+        return target.send(made ? "Fetch.fulfillRequest" : "Fetch.failRequest", {
+          requestId: e.requestId,
+          ...(made ?? { errorReason: "Failed" }),
         });
-        await Promise.all([
-          target.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }),
-          target.onFrames(async () => {}, guard!),
-        ]).catch(() => {});
-      }
-    : null;
-  const frame = await watchFrame(page, place.pages, scheme, errors, guard);
+      });
+    }
+    if (place.server.allow && !reachable(e.request.url, place.server.allow))
+      return target.send("Fetch.failRequest", { requestId: e.requestId, errorReason: "AddressUnreachable" });
+    return target.send("Fetch.continueRequest", { requestId: e.requestId });
+  };
+  /** Pauses the requests of a target (the window, a frame of another site, a worker with requests of its own), and answers each. */
+  const pause = (target: Page, top: boolean) => {
+    target.on((method, e) => {
+      if (method != "Fetch.requestPaused") return;
+      answer(target, e as Paused, top).catch(() =>
+        target.send("Fetch.failRequest", { requestId: e.requestId, errorReason: "Failed" }).catch(() => {})
+      );
+    });
+    return target.send("Fetch.enable", { patterns: place.patterns.map((urlPattern) => ({ urlPattern, requestStage: "Request" })) });
+  };
+  /** The pages' sockets to Erga, answered here too (render-sockets.ts): the person's by the same rule. */
+  const sockets = pageSockets(place.own, (ask) => {
+    if (!isOwn(place.own, ask.url)) return null;
+    const theirs = ask.top && ask.frame == viewer && !strayed && ask.origin == app && ask.url.origin == app;
+    const headers = new Headers({ Upgrade: "websocket", Origin: ask.origin });
+    return place.server.erga(viewRequest(ask.url.href, { method: "GET", headers }, theirs ? person : null));
+  });
+  /**
+   * Each target of the page, and each of theirs, before any of its code runs. (A worker has no requests to pause, and
+   * no page: its requests pause in its page's target.)
+   */
+  const each = async (target: Page): Promise<void> => {
+    await Promise.all([
+      pause(target, false).catch(() => {}),
+      sockets.watch(target, false).catch(() => {}),
+      target.onFrames(async () => {}, each),
+    ]).catch(() => {});
+  };
+  const frame = await watchFrame(page, place.pages, scheme, errors, each);
   try {
     // The viewer's own errors too: in a frame of its own process, the page's are apart, and these say they're the viewer's.
     page.onErrors(
@@ -248,54 +385,93 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
       }
     );
     // The page's set-up, sent together: each is apart from the others, and all are done before the page opens.
-    await Promise.all([
+    const [tree] = await Promise.all([
+      page.send("Page.getFrameTree"),
       page.setViewport(width, height),
       page.colorScheme(scheme),
       // The person's agent stays closed (the agent that asked is beside it): the page has the window's whole width.
       page.send("Page.addScriptToEvaluateOnNewDocument", { source: AGENT_CLOSED }),
       // The viewer's Content-Security-Policy allows no eval, which the expression needs (client/page-tools/evaluate.ts).
       req.shell && req.evaluate != null ? page.send("Page.setBypassCSP", { enabled: true }) : null,
-      // The frame's page comes from the room's text (the agent's latest edits, or a preview): its first request is answered here.
-      // (Our own browser: every request of the window is paused, and one to a private address fails.)
-      page.send("Fetch.enable", {
-        patterns: [
-          own
-            ? { urlPattern: "*", requestStage: "Request" }
-            : { urlPattern: `${place.pages}/t/*`, resourceType: "Document", requestStage: "Request" },
-        ],
-      }),
+      pause(page, true),
+      sockets.watch(page, true),
     ]);
-    let served = false;
-    page.on((method, e) => {
-      if (method != "Fetch.requestPaused" || refused(page, e as never)) return;
-      void (async () => {
-        const mine = e.resourceType == "Document" && e.request.url.startsWith(`${place.pages}/t/`);
-        const [, token, file] = (mine ? /^\/t\/([^/]+)\/(.*)$/.exec(new URL(e.request.url).pathname) : null) ?? [];
-        const claims = !served && token ? await readPagesClaims(place.secret, token, job.owner, job.id) : null;
-        if (!claims || safeDecode(file) != job.path) return page.send("Fetch.continueRequest", { requestId: e.requestId });
-        served = true;
-        const html = readerPage(job.html, {
-          shell: place.app.origin,
-          prefix: `/t/${token}/`,
-          src: sourceDigest(job.html),
-          editor: !!claims.edit,
-        });
-        return page.send("Fetch.fulfillRequest", {
-          requestId: e.requestId,
-          responseCode: 200,
-          responseHeaders: [
-            { name: "Content-Type", value: "text/html; charset=utf-8" },
-            { name: "Cache-Control", value: "no-store" },
-            { name: "Content-Security-Policy", value: `frame-ancestors ${place.app.origin}` },
-          ],
-          body: base64(new TextEncoder().encode(html)),
-        });
-      })().catch(() => {});
-    });
+    viewer = tree.frameTree.frame.id;
     return await shown(page, place, job, { width, height, scheme, times, errors, run: frame.run });
   } finally {
+    over = true;
+    for (const go of waiting.splice(0)) go();
+    sockets.close();
     frame.detach();
   }
+}
+
+/**
+ * Erga's own answer to a request of the browser's, made in process, as CDP's Fetch.fulfillRequest takes it; null for
+ * one too large for the browser's connection, or whose body the browser gave no bytes of. `window`: the window's main frame asked. `person`: whose request it
+ * is, if anyone's (see the top of this file), and `site`: from where. `served`: whether the frame's page went out
+ * already.
+ */
+async function ergaAnswer(
+  place: Place,
+  job: Job,
+  e: Paused,
+  o: { window: boolean; person: { login: string; doc: string } | null; site: string | null; served: { served: boolean } }
+) {
+  const url = new URL(e.request.url);
+  const headers = new Headers(e.request.headers);
+  const fulfil = (responseCode: number, responseHeaders: [string, string][], body: Uint8Array) => ({
+    responseCode,
+    responseHeaders: responseHeaders.map(([name, value]) => ({ name, value })),
+    body: base64(body),
+  });
+  // What a request is for (the window's page, or a frame's) and from where, the browser says in headers that it adds
+  // after this pause. Erga reads them: these say it here.
+  for (const h of ["sec-fetch-dest", "sec-fetch-site"]) headers.delete(h);
+  if (e.resourceType == "Document") headers.set("sec-fetch-dest", o.window ? "document" : "iframe");
+  if (o.site) headers.set("sec-fetch-site", o.site);
+  // The frame's page, the first time: the job's text goes in the app's answer for it, which is asked for whole.
+  const [, token, file] =
+    (e.resourceType == "Document" && url.origin == place.pages ? /^\/t\/([^/]+)\/(.*)$/.exec(url.pathname) : null) ?? [];
+  const mine = !o.served.served && !!token && safeDecode(file) == job.path;
+  if (mine) for (const h of ["if-none-match", "if-modified-since"]) headers.delete(h);
+  const method = e.request.method;
+  // (Its bytes, where the browser gives them: its text alone loses what isn't text. A body that the browser gives no
+  // bytes of never goes on as an empty one: the request fails.)
+  const parts = e.request.postDataEntries?.map((x) => x.bytes) ?? [];
+  const whole = parts.length > 0 && parts.every((x) => x != null);
+  if (!whole && (parts.length || (e.request.hasPostData && e.request.postData == null))) return null;
+  const sent = whole ? new Blob(parts.map((x) => fromBase64(x!))) : (e.request.postData ?? null);
+  const answer = await place.server.erga(
+    viewRequest(e.request.url, { method, headers, body: /^(GET|HEAD)$/.test(method) ? null : sent }, o.person)
+  );
+  // Its bytes, read only up to the most that the browser gets.
+  const read: Uint8Array<ArrayBuffer>[] = [];
+  let size = 0;
+  for await (const chunk of (answer.body ?? []) as AsyncIterable<Uint8Array<ArrayBuffer>>) {
+    if ((size += chunk.length) > MAX_ANSWER) return (await answer.body?.cancel().catch(() => {}), null);
+    read.push(chunk);
+  }
+  let body: Uint8Array = new Uint8Array(await new Blob(read).arrayBuffer());
+  // (No cookie of Erga's: the browser would send it only to the network. And nothing that the app asks of the gate.)
+  let out = [...answer.headers].filter(([name]) => name != "set-cookie" && name != ASK);
+  const claims =
+    mine && answer.status == 200 && /^text\/html\b/i.test(answer.headers.get("content-type") ?? "")
+      ? await readPagesClaims(place.server.platform.secret, token, job.owner, job.id)
+      : null;
+  if (claims) {
+    o.served.served = true;
+    const html = readerPage(job.html, {
+      shell: claims.shell,
+      prefix: `/t/${token}/`,
+      src: sourceDigest(job.html),
+      editor: !!claims.edit,
+      worker: true,
+    });
+    body = new TextEncoder().encode(html);
+    out = [...out.filter(([name]) => !/^(etag|last-modified|content-length|cache-control)$/.test(name)), ["Cache-Control", "no-store"]];
+  }
+  return fulfil(answer.status, out, body);
 }
 
 /** The page in the viewer: loaded, and the editor started if asked for; then the job's pictures or expression. */

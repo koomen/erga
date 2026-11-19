@@ -82,7 +82,9 @@ export function documentsPage(
   hours: number | null,
   view: ListView = "documents",
   /** The requests for access to the person's documents that wait for an answer (server/directory/requests.ts). */
-  asks: AccessRequest[] = []
+  asks: AccessRequest[] = [],
+  /** A page of the documents' site to frame, hidden: a gate in front runs its hand-off there (server/identity, handOff). */
+  warm?: string
 ): string {
   // Each request: who asks, for which document, and the owner's two answers (client/inline/documents.ts: share_document).
   const asking = asks.length
@@ -126,7 +128,7 @@ export function documentsPage(
   <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows" data-live-kind="doc" data-live-view="${view == "documents" ? view : `documents-${view}`}" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
   <p class="empty"${docs.length ? " hidden" : ""}>${empty}</p>
-</main>
+</main>${warm ? `<iframe hidden src="${esc(warm)}" title=""></iframe>` : ""}
 <dialog id="share" aria-labelledby="share-title" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">

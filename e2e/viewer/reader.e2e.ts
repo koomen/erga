@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { editor, F, type Editor } from "../helpers/editor";
 import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { agentPrompt } from "../../client/common/agent-prompt";
 import { newToken } from "../helpers/new-token";
 import { runTool, textOf } from "../helpers/tools";
 import { diff, layout, layoutOk, type Layout } from "./band";
@@ -243,7 +244,7 @@ journey("a reader opens a document with several pages", () => {
     await clickOn(page, ".erga-agent-share");
     await clickOn(page, ".erga-agent-menu:not([hidden]) .am-mcp");
     await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
-    expect(await copied()).toBe(`Add Erga's MCP server, ${origin}/mcp, then open ${doc.address}.`);
+    expect(await copied()).toBe(agentPrompt(new URL(doc.address).pathname, origin));
     await clickOn(page, ".erga-agent-share");
     // The dev server's person is an admin: Admin comes as a choice.
     await expect
@@ -254,9 +255,9 @@ journey("a reader opens a document with several pages", () => {
     // (The button says so once the prompt is copied; the card closes a moment later.)
     await expect.poll(() => page.locator(".erga-agent-menu:not([hidden]) .am-copy").textContent()).toBe("Copied ✓");
     const prompt = await copied();
-    expect(prompt).toContain(`claude mcp add --transport http erga ${origin}/mcp --header "Authorization: Bearer erga_`);
+    expect(prompt).toContain(`claude mcp add --transport http erga ${origin}/mcp --header "Authorization: Bearer a.`);
     expect(prompt).toContain(`Then open ${doc.address}.`);
-    const token = prompt.match(/Token: (erga_\S+)/)![1];
+    const token = prompt.match(/Token: (\S+)/)![1];
     const mine = (await runTool(origin, "whoami", {}, { token })).result.token as { label: string; scope: string; expires: string };
     expect([mine.label, mine.scope]).toEqual(["Share with an agent", "documents"]);
     const left = Date.parse(mine.expires) - Date.now();
@@ -464,9 +465,7 @@ journey("a reader opens a document with several pages", () => {
     await clickOn(page, ".erga-agent-share");
     await clickOn(page, ".erga-agent-menu:not([hidden]) .am-mcp");
     await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-      `Add Erga's MCP server, ${s.root}/mcp, then open ${s.root}/documents.`
-    );
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(agentPrompt("/documents", s.root));
     // On an admin page, Admin is picked for the token.
     await page.goto(`${s.root}/admin`);
     await clickOn(page, "#btn-share");

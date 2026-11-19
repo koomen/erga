@@ -1,5 +1,5 @@
-// The whole app (server/app.ts) on a Platform in memory, for the tests of what the server answers over HTTP: the
-// directory and the tokens on bun:sqlite, each document a real DocumentHost (document/life/document.ts) on MemoryStorage with
+// The whole app (server/app.ts) behind the gate (server/identity/mount.ts), on a Platform in memory, for the tests of
+// what the server answers over HTTP: the directory and the grants on bun:sqlite, each document a real DocumentHost (document/life/document.ts) on MemoryStorage with
 // MemoryBlobs, as cloudflare/platform.ts and cloudflare/objects/document.ts wire them on Cloudflare. No socket, no
 // browser, no model. It is local development's server (DEV_LOGIN "tester", an admin; ?user=Ada and /auth/github?as=
 // sign anyone in), on http://localhost.
@@ -24,11 +24,13 @@ import { app } from "../../server/app.ts";
 import { Directory, type Route } from "../../server/directory/index.ts";
 import { forgetDecisions } from "../../server/documents/index.ts";
 import { respond } from "../../server/http.ts";
-import { sessionOf } from "../../server/identity/index.ts";
-import { Tokens } from "../../server/identity/tokens";
+import { gated, Grants, sessionOf } from "../../server/identity/index.ts";
 import { useAssets } from "../../server/pages/index.ts";
 import type { Platform } from "../../server/platform";
 import type { AssetManifest } from "../../shared/assets.ts";
+import { CALLER, type Caller } from "../../gate/core.ts";
+import { writeCaller } from "../../gate/mounts/web.ts";
+import { webPort } from "../../gate/port.ts";
 import { memory } from "./memory-sql";
 import { memorySite, type MemorySite } from "./sites";
 import { promised, type Promised } from "./promised";
@@ -79,11 +81,16 @@ const LANDING = { "index.html": "<!doctype html><html><head><title>Erga</title><
 
 export const ROOT = "http://localhost";
 
+/** The header the gate names a caller in: for a test that calls a route itself, with no gate in front of it. */
+export const calling = (caller: Caller) => ({ [CALLER]: writeCaller(caller, webPort) });
+
 export interface ServerOptions {
   /** The documents' timers (the versions' pause, the write delay): short unless said. */
   timing?: DocumentDeps["timing"];
   /** The server's custom domains (the deploy's --domain). */
   domains?: string[];
+  /** The documents' renderer (view_page: cloudflare/render.ts), made one time from the server's platform and its app behind the gate. */
+  render?: (server: { platform: Platform; erga: (request: Request) => Promise<Response> }) => NonNullable<DocumentDeps["render"]>;
 }
 
 /** A server in memory: `fetch` is its answer to a request (redirects not followed, as the old tests' `getter`). */
@@ -127,12 +134,14 @@ export function server(o: ServerOptions = {}) {
           blobs,
           viewChanged: (id) => forgetDecisions(id),
           pageTemplate: templatesOf().doc["index.html"],
+          ...(o.render ? { render: (job) => (render ??= o.render!({ platform: p, erga }))(job) } : {}),
         })
       );
       hosts.set(doc.id, (h = made));
     }
     return h;
   };
+  let render: DocumentDeps["render"];
   const hold = <A>(doc: Route, work: (d: DocumentHost) => Effect.Effect<A, unknown>): Promise<A> => {
     const d = host(doc).self;
     return Effect.runPromise(d.hold(work(d)));
@@ -166,7 +175,7 @@ export function server(o: ServerOptions = {}) {
     pagesDomain: () => "localhost",
     pagesShared: () => null,
     secret: "session-secret",
-    tokens: new Tokens(sql, "session-secret", dir),
+    grants: new Grants(sql, dir),
     deploy: { version: null, domains: o.domains ?? [], app: null },
     signIn: {
       mode: "oauth",
@@ -232,9 +241,11 @@ export function server(o: ServerOptions = {}) {
   // (server/documents/view.ts): a new server starts with none of the last one's answers.
   forgetDecisions();
   const route = app(() => Effect.succeed(null));
-  /** The app's answer to a request, at a path of this server or a whole address (a document's pages origin). */
-  const fetch = (at: string, init: RequestInit = {}) => respond(route, new Request(at.startsWith("/") ? ROOT + at : at, init), p);
-  return { root: ROOT, platform: p, dir, sql, hosts, host, blobs, log, fetch, sites };
+  /** The app's answer behind the gate: only the gate calls it, and the render of the server's own browser (cloudflare/render.ts). */
+  const erga = (request: Request) => respond(route, request, p);
+  /** The server's answer to a request (the gate's, or the app's behind it), at a path of this server or a whole address (a document's pages origin). */
+  const fetch = (at: string, init: RequestInit = {}) => gated(p, new Request(at.startsWith("/") ? ROOT + at : at, init), erga);
+  return { root: ROOT, platform: p, dir, sql, hosts, host, blobs, log, fetch, erga, sites };
 }
 export type Server = ReturnType<typeof server>;
 
@@ -299,7 +310,7 @@ export async function tool(s: Server, token: string, name: string, args: Record<
   return { status: r.status, ok: r.ok, text, data, result: r.result };
 }
 
-/** Makes a token as the Settings dialog does (POST /tokens/new), as `cookie`'s person (none: the dev login): the token, or "" and the error. */
+/** Makes a token as the Settings dialog does (POST /tokens/new: the token is in the answer's header), as `cookie`'s person (none: the dev login): the token, or "" and the error. */
 export async function mint(s: Server, cookie: string | null, fields: Record<string, string>) {
   const r = await s.fetch("/tokens/new", {
     method: "POST",
@@ -307,19 +318,19 @@ export async function mint(s: Server, cookie: string | null, fields: Record<stri
     body: JSON.stringify(fields),
   });
   const text = await r.text();
-  let body: { token?: string; error?: string } = {};
+  let body: { error?: string; info?: { id: string } } = {};
   try {
     body = JSON.parse(text);
   } catch {
     body = { error: text };
   }
-  return { token: body.token ?? "", error: body.error ?? "", status: r.status };
+  return { token: r.headers.get("x-erga-token") ?? "", error: body.error ?? "", status: r.status, id: body.info?.id ?? "" };
 }
 
-/** Signs in as `login` by local development's sign-in (none: the dev login, an admin): their session cookie. */
+/** Signs in as `login` by local development's sign-in (none: the dev login, an admin): the gate's cookie that names them. */
 export async function signIn(s: Server, login: string | null, next = "/documents") {
   const r = await s.fetch(`/auth/github?${login ? `as=${login}&` : ""}next=${encodeURIComponent(next)}`);
-  const cookie = cookieOf(r, /^erga_session(_\d+)?=/);
+  const cookie = cookieOf(r, /^erga=/);
   if (!cookie) throw new Error(`signing in as ${login}: ${r.status}`);
   return { cookie, location: r.headers.get("location") };
 }

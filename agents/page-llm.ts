@@ -118,9 +118,8 @@ function tooBig(a: Ask): string | null {
 const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | null>): Route =>
   Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
-  // Only this site's own pages, with the visitor's cookie: never a token, never another origin (the pages origin is one).
-  if (/^Bearer\s/i.test(request.headers.get("authorization") ?? ""))
-    return fail("error", "A page calls this as its visitor, in a browser.", 403);
+  // Only this site's own pages, with the visitor's sign-in: never another origin (the pages origin is one), and never
+  // an agent's token (the gate keeps the token, and names its agent: `visitorOf` takes an agent for nobody).
   // (A same-origin GET sends no Origin; another site's can't read the answer, which has no CORS.)
   const from = request.headers.get("origin");
   if (from != url.origin && !(request.method == "GET" && from == null)) return fail("error", "Forbidden", 403);

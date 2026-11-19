@@ -126,6 +126,9 @@ export const CODE = {
   viewer: `({ path: location.pathname, frame: new URL(document.getElementById("frame").src).origin != location.origin, crumbs: !!document.querySelector(".erga-crumbs") })`,
   /** In the page (e2e/fixtures/page): two clicks on its button, then its count, and where the code ran. */
   bump: `document.getElementById("bump").click(); document.getElementById("bump").click(); return { count: document.getElementById("count").textContent, framed: window.top !== window, origin: location.origin };`,
-  /** In the editor's own window (editor: true, shell: true): the editor's controls, and the answer to a request for the person's Share token. */
-  editor: `const r = await fetch(location.pathname + "/api/share", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); return { editing: document.body.classList.contains("erga-editing"), controls: !!document.getElementById("erga-editor"), share: !!document.querySelector("#erga-editor [aria-label*='Share' i], #erga-editor [title*='Share' i]"), status: r.status, body: await r.text() };`,
+  /**
+   * In the editor's own window (editor: true, shell: true): the editor's controls, the room's hello on its socket (the
+   * body's erga-listening class), and the answer to a request for a token of the person's (as Share with an agent asks).
+   */
+  editor: `const r = await fetch("/tokens/new", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "x", scope: "documents" }) }); const listening = await new Promise((done) => { const look = () => document.body.classList.contains("erga-listening") && done(true); new MutationObserver(look).observe(document.body, { attributes: true }); look(); }); return { editing: document.body.classList.contains("erga-editing"), controls: !!document.getElementById("erga-editor"), share: !!document.querySelector("#erga-editor [aria-label*='Share' i], #erga-editor [title*='Share' i]"), listening, status: r.status, body: await r.text(), token: r.headers.get("x-erga-token") };`,
 };

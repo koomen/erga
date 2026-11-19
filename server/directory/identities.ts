@@ -21,7 +21,7 @@ import { RESERVED } from "./model.ts";
 import { providerLabel } from "../../shared/sign-in.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
-/** A provider's id: an OAuth provider's ("github", "google"), or "proxy" (shared/sign-in.ts, SIGN_IN_PROVIDERS). */
+/** A provider's id: an OAuth provider's ("github", "google"), or "sso" (shared/sign-in.ts, SIGN_IN_PROVIDERS). */
 export type SignInProvider = string;
 
 /** An identity, as kept. */
@@ -39,15 +39,15 @@ export interface Identity {
 
 /**
  * Who a provider says someone is, at a sign-in: all the app knows of one, the same from every way to sign in. Each
- * mode of sign-in has one place that makes it (server/identity/providers.ts for an OAuth provider, proxy.ts for the
- * proxy in front); the steps after it are shared (accounts.ts). Always there: `subject`, which finds the account, and
+ * mode of sign-in has one place that makes it (server/identity/providers.ts for an OAuth provider, caller.ts for the
+ * gate in front); the steps after it are shared (accounts.ts). Always there: `subject`, which finds the account, and
  * `handle`, a name the person knows as theirs.
  */
 export interface Vouched {
   provider: SignInProvider;
-  /** The provider's stable id for them (GitHub's account id, as text; Google's sub; the proxy's sign-in's sub). */
+  /** The provider's stable id for them (GitHub's account id, as text; Google's sub; the organization's sign-in's sub). */
   subject: string;
-  /** What the provider calls them (a GitHub login; a Google email; the email the proxy's sign-in gives, "" when it gives none). */
+  /** What the provider calls them (a GitHub login; a Google email; the email the organization's sign-in gives, "" when it gives none). */
   handle: string;
   /** Their display name, if the provider gives one. */
   name: string | null;

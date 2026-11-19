@@ -11,7 +11,7 @@ import * as Result from "effect/Result";
 import { OWNER, type Route } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { sessionOf, type SignIn, signInOf } from "../server/identity/index.ts";
-import { directoryOf, factoryKey, tokensOf } from "./d1";
+import { directoryOf, factoryKey, grantsOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
 import { githubIssues } from "../server/feedback";
@@ -54,7 +54,9 @@ const SETTINGS = Config.all({
     google: Config.all({ clientId: text("GOOGLE_CLIENT_ID"), secret: text("GOOGLE_CLIENT_SECRET") }),
   }),
   origins: Config.all({ github: origin("ERGA_GITHUB_ORIGIN"), google: origin("ERGA_GOOGLE_ORIGIN") }),
-  /** The proxy mode's proxy (server/identity/proxy.ts); any value: this server's sign-in is the proxy's. */
+  /** A gate in front of the server (server/identity/mode.ts): the key it sends with each request; any value: its sign-in is the server's. */
+  gate: text("GATE_KEY"),
+  /** The old sign-in at a proxy, which the gate replaced: with no gate's key, the server refuses to come up (mode.ts). */
   proxy: text("PROXY_SIGN_IN"),
   /** How often a served site looks for a newer publish (ms); not a number: 0, every request. */
   siteRecheckMs: text("ERGA_SITE_RECHECK_MS").pipe(Config.map((v) => (v ? Number(v) || 0 : 5000))),
@@ -67,7 +69,12 @@ const settingsOf = (env: Env) => Effect.runSync(SETTINGS.parse(ConfigProvider.fr
 export const signInOfEnv = (env: Env): SignIn => {
   const s = settingsOf(env);
   const standIn = (value: string) => (env.DEV_LOGIN && value ? value : null);
-  return signInOf({ proxy: s.proxy, apps: s.apps, origins: { github: standIn(s.origins.github), google: standIn(s.origins.google) } });
+  return signInOf({
+    gate: s.gate,
+    proxy: s.proxy,
+    apps: s.apps,
+    origins: { github: standIn(s.origins.github), google: standIn(s.origins.google) },
+  });
 };
 
 /** The custom domains in the deploy facts (`bun erga deploy <host> --domain <domain>`). */
@@ -131,7 +138,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     pagesDomain: (url) => (isLocal(url) || !settings.pagesDomain ? "localhost" : settings.pagesDomain),
     pagesShared: (url) => (isLocal(url) ? null : settings.pagesHost || null),
     secret: env.SESSION_SECRET,
-    tokens: tokensOf(env),
+    grants: grantsOf(env),
     deploy: {
       version: settings.version || null,
       domains: domainsOf(settings.deployFacts),

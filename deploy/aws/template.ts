@@ -6,17 +6,21 @@
 //     NAT gateway), or a private subnet of a VPC the user names, which has its own way out;
 //   - the machine (celld and Chrome, deploy/aws/machine.ts): no public address, and only CloudFront may reach its port;
 //   - the bucket (celld's state, the releases, the programs), the KMS key (the bucket and the secrets), the role;
-//   - the edge (what answers the internet), one of two:
-//       CloudFront: two distributions, the app's and the pages', each with the machine as its VPC origin; with domains,
-//       a second stack in us-east-1 holds the ACM certificates, where CloudFront needs them (certificatesTemplate);
-//       a proxy (an Application Load Balancer, public): it signs each user in with the organization's OIDC sign-in before Erga, and
-//       lets pass without it only what Erga's own tokens guard (proxy, below). Its certificate is in this stack;
+//   - the edge (what answers the internet): CloudFront, two distributions, the app's and the pages', each with the
+//     machine as its VPC origin. With domains, a second stack in us-east-1 holds the ACM certificates, where CloudFront
+//     needs them (certificatesTemplate). One of two:
+//       cloudfront   nothing in front of Erga: the gate runs inside it (OAuth mode);
+//       gate         the gate in front, with the organization's OIDC sign-in (SSO: gate/mounts/cloudfront.ts): its four
+//                    CloudFront Functions on each distribution, and the key that only the distributions and the
+//                    machine know (GATE_KEY: the origin's header). The gate's code is in the us-east-1 stack: the
+//                    four functions, their KeyValueStore (the edge key), and the Lambda@Edge function, which
+//                    CloudFront takes only from there. It needs domains: the functions hold the app's host;
 //   - with domains: the Route 53 records of the app's name and the pages' wildcard name.
 //
 // The structure follows the answers (the way out, the domains); the sizes and the machine image are the template's
 // parameters, with defaults, which the user may change in the file.
 
-import { PROXY_FREE_PATHS } from "../proxy-paths";
+import { FRONT } from "../../gate/mounts/web.ts";
 
 /** The answers that shape an instance's stacks. */
 export interface AwsShape {
@@ -27,11 +31,11 @@ export interface AwsShape {
   /** The domains, each with its Route 53 hosted zone; none: CloudFront's own names (the pages on one shared name). */
   domains: { app: string; appZone: string; pages: string; pagesZone: string } | null;
   /**
-   * What answers the internet. CloudFront, with the region's origin-facing prefix list
-   * (com.amazonaws.global.cloudfront.origin-facing); or a proxy with a sign-in in front of Erga: it needs
-   * domains, and the stack's own network.
+   * What answers the internet: CloudFront, with the region's origin-facing prefix list
+   * (com.amazonaws.global.cloudfront.origin-facing). `gate`: the gate in front, built for this instance; it needs
+   * domains.
    */
-  edge: { kind: "cloudfront"; prefixList: string } | { kind: "proxy"; oidc: Oidc };
+  edge: { kind: "cloudfront"; prefixList: string } | { kind: "gate"; prefixList: string; code: GateCode };
 }
 
 /** The organization's OIDC sign-in, as its issuer publishes it (/.well-known/openid-configuration), and Erga's client there. */
@@ -39,8 +43,26 @@ export interface Oidc {
   issuer: string;
   authorize: string;
   token: string;
-  userInfo: string;
   clientId: string;
+}
+
+/** The gate's four CloudFront Functions, by the part of the gate each is (gate/build.ts). */
+export const GATE_PARTS = ["edge", "agents", "request", "response"] as const;
+/** Each one's name in the us-east-1 stack, and of the main stack's parameter that takes its ARN. */
+export const GATE_FUNCTIONS = { edge: "GateEdge", agents: "GateAgents", request: "GateRequest", response: "GateResponse" } as const;
+/**
+ * CloudFormation's limit on a template that a command sends (--template-body). The gate's code is most of the
+ * us-east-1 stack's template: four functions of 10 KB at most each. So that template is written with no indentation.
+ */
+export const TEMPLATE_MAX = 51_200;
+/**
+ * The gate's code for one instance (deploy/aws/gate.ts builds it: the settings are in the code, since nothing at the
+ * edge has environment variables): each CloudFront Function, and the Lambda@Edge function as CloudFormation takes it
+ * inline.
+ */
+export interface GateCode {
+  functions: Record<(typeof GATE_PARTS)[number], string>;
+  lambda: string;
 }
 
 /** The port celld answers on, on the machine. Only the edge reaches it. */
@@ -53,9 +75,13 @@ export const paramPath = (stack: string) => `/erga/${stack}/`;
  */
 export const paramFolder = (stack: string) => paramPath(stack).slice(0, -1);
 /**
- * The Secrets Manager secret that holds the OIDC client's secret, as plain text: the user who has the secret stores
- * it there, and the stack reads it by this name (a dynamic reference). It is never in a file, a command or a chat.
+ * The parameter (Parameter Store, a SecureString, in us-east-1) that holds the secret of Erga's client at the
+ * organization's sign-in: the user who has the secret stores it there (setup's page), and only the gate's
+ * Lambda@Edge function reads it. It is never in a file, a template or a chat. Trap: it is not in the stack's folder
+ * (paramFolder): the machine loads every parameter of that folder into the Worker's settings, and Erga never holds
+ * this secret.
  */
+export const idpSecretParam = (stack: string) => `/erga-gate/${stack}/idp-secret`;
 /**
  * What the NAT machine runs at each start (cloud-init runs a plain script at the first start only: then a change to
  * this script would do nothing, and a script that failed would never run again). Each step is safe to do again.
@@ -94,28 +120,23 @@ export const NAT_USER_DATA = [
   "",
 ].join("\n");
 
-export const oidcSecretName = (stack: string) => `erga/${stack}/oidc-client-secret`;
-
-/**
- * What passes the proxy without the sign-in, on the app's address (deploy/proxy-paths.ts says what and why),
- * as the listener's rules take them: three paths a rule (a rule takes five values, and the host is one).
- */
-export const TOKEN_PATHS: readonly (readonly string[])[] = Array.from({ length: Math.ceil(PROXY_FREE_PATHS.length / 3) }, (_, i) =>
-  PROXY_FREE_PATHS.slice(i * 3, i * 3 + 3)
-);
-/** What a document's own address answers (server/documents/pages-origin.ts): its files by their token, and the offline worker. */
-export const PAGES_PATHS = ["/t/*", "/erga-sw.js", "/erga-clear"] as const;
-
 /** CloudFront's managed origin request policy AllViewer: the viewer's Host, headers, cookies and query to the origin. */
 const ALL_VIEWER = "216adef6-5c7f-47e4-b989-5492eafa07d3";
+/** CloudFront's managed cache policy CachingDisabled: the gate's own answers are never a cache's. */
+const NO_CACHE = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad";
 /** Route 53's hosted zone of every CloudFront distribution, for an alias record. */
 const CLOUDFRONT_ZONE = "Z2FDTNDATAQYW2";
 
-/** The viewer-request function: X-Forwarded-Host is the Host the viewer asked for, X-Forwarded-Proto is https. */
+/**
+ * The viewer-request function: X-Forwarded-Host is the Host the viewer asked for.
+ * Trap: not X-Forwarded-Proto. CloudFront refuses a function that writes it, with a 502 for each request ("The
+ * CloudFront function tried to add a disallowed header": seen on a real distribution, 2026-11-18), and it removes
+ * that header from the viewer's request and from the origin's custom headers too. The server needs no header for the
+ * scheme: a deployed server's address is https (shared/http.ts, overHttps).
+ */
 const FORWARDED = `function handler(event) {
   var r = event.request;
   r.headers["x-forwarded-host"] = { value: r.headers.host.value };
-  r.headers["x-forwarded-proto"] = { value: "https" };
   return r;
 }
 `;
@@ -175,28 +196,6 @@ function network(s: AwsShape): { subnet: unknown; vpc: unknown; resources: Json 
       },
     },
   };
-  // A proxy needs two zones. Its rule for the server's own browser names the NAT's address: a fixed one.
-  if (s.edge.kind == "proxy") {
-    r.PublicSubnetB = {
-      Type: "AWS::EC2::Subnet",
-      Properties: {
-        VpcId: ref("Vpc"),
-        CidrBlock: "10.80.2.0/24",
-        AvailabilityZone: { "Fn::Select": [1, { "Fn::GetAZs": "" }] },
-        Tags: tags(s.stack, "public-b"),
-      },
-    };
-    r.PublicRoutesOfB = {
-      Type: "AWS::EC2::SubnetRouteTableAssociation",
-      Properties: { SubnetId: ref("PublicSubnetB"), RouteTableId: ref("PublicRoutes") },
-    };
-    if (s.egress.kind == "nat-instance")
-      r.NatAddress = {
-        Type: "AWS::EC2::EIP",
-        DependsOn: "GatewayAttachment",
-        Properties: { Domain: "vpc", InstanceId: ref("Nat"), Tags: tags(s.stack, "nat") },
-      };
-  }
   if (s.egress.kind == "nat-gateway") {
     r.NatAddress = { Type: "AWS::EC2::EIP", DependsOn: "GatewayAttachment", Properties: { Domain: "vpc", Tags: tags(s.stack, "nat") } };
     r.Nat = {
@@ -241,9 +240,48 @@ function network(s: AwsShape): { subnet: unknown; vpc: unknown; resources: Json 
   return { subnet: ref("PrivateSubnet"), vpc: ref("Vpc"), resources: r };
 }
 
-/** A distribution for the machine: the app's (its name, or CloudFront's own), or the pages' (a wildcard, or one shared name). */
-function distribution(s: AwsShape, which: "App" | "Pages"): Json {
+const ALL_METHODS = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"];
+const functionArn = (name: string) => att(name, "FunctionMetadata.FunctionARN");
+
+/**
+ * A behavior of a distribution with the gate in front: `request` is the gate's function on its viewer request (the
+ * main stack's parameter with its ARN), and the gate's response function is on every viewer response (it signs, and
+ * it removes Erga's own headers to the gate).
+ * `own`: one of the gate's own paths, whose answers no cache keeps. `lambda`: the Lambda@Edge function is its origin
+ * request (the callback's code exchange; with `body`, the token endpoint's form).
+ * Trap: CloudFront refuses an origin-request Lambda@Edge on a behavior whose origin is a VPC origin ("VPC origin with an
+ * origin Lambda@Edge association is not supported"). A behavior with the Lambda goes to the "gate" origin instead: an
+ * empty, private bucket that no request reaches, since the Lambda and the gate's functions answer each one. It never
+ * gets the machine's key (the origin's header).
+ */
+const gated = (part: "edge" | "agents" | "request", o: { own?: boolean; lambda?: boolean; body?: boolean } = {}): Json => ({
+  TargetOriginId: o.lambda ? "gate" : "machine",
+  ViewerProtocolPolicy: "redirect-to-https",
+  AllowedMethods: ALL_METHODS,
+  CachedMethods: ["GET", "HEAD"],
+  Compress: !o.own,
+  CachePolicyId: o.own ? NO_CACHE : ref("CachePolicy"),
+  // (CloudFront refuses the all-viewer policy for a bucket origin: the Lambda gets only the header it reads.)
+  OriginRequestPolicyId: o.lambda ? ref("GateOriginPolicy") : ALL_VIEWER,
+  FunctionAssociations: [
+    { EventType: "viewer-request", FunctionARN: ref(GATE_FUNCTIONS[part]) },
+    { EventType: "viewer-response", FunctionARN: ref(GATE_FUNCTIONS.response) },
+  ],
+  ...(o.lambda
+    ? { LambdaFunctionAssociations: [{ EventType: "origin-request", LambdaFunctionARN: ref("EdgeVersion"), IncludeBody: !!o.body }] }
+    : {}),
+});
+
+/**
+ * A distribution for the machine: the app's (its name, or CloudFront's own), or the pages' (a wildcard, or one shared
+ * name). `gate`: with the gate in front. Each of its parts has its own paths (gate/mounts/cloudfront.ts); the token
+ * endpoint and the callback are the app's only, and so is the Lambda. Each request that goes on to the machine
+ * carries the key that only the distributions and the machine know (the origin's header, which replaces any header
+ * of that name from a viewer): CloudFormation reads it from the stack's secret, and it is in no file.
+ */
+function distribution(s: AwsShape, which: "App" | "Pages", gate: boolean): Json {
   const alias = s.domains ? (which == "App" ? s.domains.app : `*.${s.domains.pages}`) : null;
+  const app = which == "App";
   return {
     Type: "AWS::CloudFront::Distribution",
     Properties: {
@@ -268,18 +306,39 @@ function distribution(s: AwsShape, which: "App" | "Pages"): Json {
             Id: "machine",
             DomainName: att("Machine", "PrivateDnsName"),
             VpcOriginConfig: { VpcOriginId: att("Origin", "Id"), OriginReadTimeout: 60, OriginKeepaliveTimeout: 5 },
+            ...(gate
+              ? { OriginCustomHeaders: [{ HeaderName: FRONT, HeaderValue: sub("{{resolve:secretsmanager:${GateKey}:SecretString}}") }] }
+              : {}),
           },
+          ...(gate && app
+            ? [{ Id: "gate", DomainName: att("GateOrigin", "RegionalDomainName"), S3OriginConfig: { OriginAccessIdentity: "" } }]
+            : []),
         ],
-        DefaultCacheBehavior: {
-          TargetOriginId: "machine",
-          ViewerProtocolPolicy: "redirect-to-https",
-          AllowedMethods: ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"],
-          CachedMethods: ["GET", "HEAD"],
-          Compress: true,
-          CachePolicyId: ref("CachePolicy"),
-          OriginRequestPolicyId: ALL_VIEWER,
-          FunctionAssociations: [{ EventType: "viewer-request", FunctionARN: att("Forwarded", "FunctionMetadata.FunctionARN") }],
-        },
+        ...(gate
+          ? {
+              DefaultCacheBehavior: gated("request"),
+              CacheBehaviors: [
+                { PathPattern: "/_edge/*", ...gated("edge", { own: true, lambda: app }) },
+                ...(app
+                  ? [
+                      { PathPattern: "/oauth/token", ...gated("agents", { own: true, lambda: true, body: true }) },
+                      { PathPattern: "/.well-known/oauth-*", ...gated("agents", { own: true }) },
+                    ]
+                  : []),
+              ],
+            }
+          : {
+              DefaultCacheBehavior: {
+                TargetOriginId: "machine",
+                ViewerProtocolPolicy: "redirect-to-https",
+                AllowedMethods: ALL_METHODS,
+                CachedMethods: ["GET", "HEAD"],
+                Compress: true,
+                CachePolicyId: ref("CachePolicy"),
+                OriginRequestPolicyId: ALL_VIEWER,
+                FunctionAssociations: [{ EventType: "viewer-request", FunctionARN: functionArn("Forwarded") }],
+              },
+            }),
       },
       Tags: [{ Key: "erga", Value: s.stack }],
     },
@@ -289,7 +348,7 @@ function distribution(s: AwsShape, which: "App" | "Pages"): Json {
 /** The main stack's template. */
 export function stackTemplate(s: AwsShape): Json {
   const net = network(s);
-  const edge = s.edge.kind == "proxy" ? proxy(s, s.edge.oidc, net.vpc) : cloudFront(s, s.edge.prefixList);
+  const edge = cloudFront(s, s.edge.prefixList, s.edge.kind == "gate");
   const role = att("Role", "Arn");
   const resources: Json = {
     ...net.resources,
@@ -366,6 +425,37 @@ export function stackTemplate(s: AwsShape): Json {
         Tags: [{ Key: "erga", Value: s.stack }],
       },
     },
+    ...(s.edge.kind == "gate"
+      ? {
+          // What the behaviors with the Lambda pass it: only what the request function wrote for it (the callback's
+          // code, gate/mounts/cloudfront.ts EXCHANGE); the token endpoint's form is the request's body.
+          GateOriginPolicy: {
+            Type: "AWS::CloudFront::OriginRequestPolicy",
+            Properties: {
+              OriginRequestPolicyConfig: {
+                Name: `${s.stack}-gate`,
+                HeadersConfig: { HeaderBehavior: "whitelist", Headers: ["x-erga-exchange"] },
+                CookiesConfig: { CookieBehavior: "none" },
+                QueryStringsConfig: { QueryStringBehavior: "none" },
+              },
+            },
+          },
+          // The origin of the behaviors with the Lambda (gated): empty, private, and reached by no request.
+          GateOrigin: {
+            Type: "AWS::S3::Bucket",
+            Properties: {
+              PublicAccessBlockConfiguration: {
+                BlockPublicAcls: true,
+                IgnorePublicAcls: true,
+                BlockPublicPolicy: true,
+                RestrictPublicBuckets: true,
+              },
+              OwnershipControls: { Rules: [{ ObjectOwnership: "BucketOwnerEnforced" }] },
+              Tags: [{ Key: "erga", Value: s.stack }],
+            },
+          },
+        }
+      : {}),
     // Only the machine reads what is in it: the documents, the database, the secrets in a release's settings.
     BucketPolicy: {
       Type: "AWS::S3::BucketPolicy",
@@ -424,6 +514,7 @@ export function stackTemplate(s: AwsShape): Json {
                   Action: "ssm:GetParametersByPath",
                   Resource: sub(`arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter${paramFolder(s.stack)}`),
                 },
+                ...edge.role,
               ],
             },
           },
@@ -436,7 +527,7 @@ export function stackTemplate(s: AwsShape): Json {
     Firewall: {
       Type: "AWS::EC2::SecurityGroup",
       Properties: {
-        GroupDescription: `Erga ${s.stack}: celld, from ${s.edge.kind == "proxy" ? "the proxy" : "CloudFront"} only`,
+        GroupDescription: `Erga ${s.stack}: celld, from CloudFront only`,
         VpcId: net.vpc,
         SecurityGroupIngress: [{ IpProtocol: "tcp", FromPort: CELLD_PORT, ToPort: CELLD_PORT, ...edge.ingress }],
         Tags: tags(s.stack, "machine"),
@@ -460,7 +551,7 @@ export function stackTemplate(s: AwsShape): Json {
   };
   return {
     AWSTemplateFormatVersion: "2010-09-09",
-    Description: `Erga ${s.stack}: one celld machine, its bucket, and ${s.edge.kind == "proxy" ? "a proxy with the sign-in" : "CloudFront"} in front (written by bun erga setup)`,
+    Description: `Erga ${s.stack}: one celld machine, its bucket, and CloudFront in front${s.edge.kind == "gate" ? ", with the gate and the organization's sign-in" : ""} (written by bun erga setup)`,
     Parameters: {
       MachineType: {
         Type: "String",
@@ -483,16 +574,25 @@ export function stackTemplate(s: AwsShape): Json {
   };
 }
 
-/** An edge's part of the stack: who may reach the machine's port, and its own resources, parameters and outputs. */
+/**
+ * The edge's part of the stack: who may reach the machine's port, what more the machine's role may do, and its own
+ * resources, parameters and outputs.
+ */
 interface Edge {
   ingress: Json;
+  role: Json[];
   resources: Json;
   parameters: Json;
   outputs: Json;
 }
 
-/** CloudFront in front: two distributions with the machine as their VPC origin, and with domains their names in Route 53. */
-function cloudFront(s: AwsShape, prefixList: string): Edge {
+/**
+ * CloudFront in front: two distributions with the machine as their VPC origin, and with domains their names in
+ * Route 53. `gate`: with the gate in front (its functions are the us-east-1 stack's, and their ARNs this stack's
+ * parameters), else with the function that says the viewer's host.
+ */
+function cloudFront(s: AwsShape, prefixList: string, gate: boolean): Edge {
+  if (gate && !s.domains) throw new Error("The gate in front needs domains: its functions hold the app's host.");
   const machineArn = sub("arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Machine}");
   const resources: Json = {
     Origin: {
@@ -522,19 +622,36 @@ function cloudFront(s: AwsShape, prefixList: string): Edge {
         },
       },
     },
-    // The address the viewer asked for, as celld reads it (CELLD_TRUST_FORWARDED_HEADERS): set here on each request,
-    // over any value the viewer sent, since celld takes the last one.
-    Forwarded: {
-      Type: "AWS::CloudFront::Function",
-      Properties: {
-        Name: `${s.stack}-forwarded`,
-        AutoPublish: true,
-        FunctionConfig: { Comment: "Erga: the viewer's host and https, for celld", Runtime: "cloudfront-js-2.0" },
-        FunctionCode: FORWARDED,
-      },
-    },
-    AppDistribution: distribution(s, "App"),
-    PagesDistribution: distribution(s, "Pages"),
+    // The host the viewer asked for, as celld reads it (CELLD_TRUST_FORWARDED_HEADERS): set on each request that goes
+    // on, over any value the viewer sent, since celld takes the last one. With the gate in front, its request
+    // function writes it (gate/mounts/cloudfront-request.ts: a behavior has one viewer-request function).
+    ...(gate
+      ? {
+          // The key that the distributions send the machine with each request, and that the machine's deploy gives
+          // Erga (GATE_KEY): AWS makes it, and it is in no file and no command. CloudFormation names the secret (a
+          // new name for each stack: a deleted secret's name stays taken for a time).
+          GateKey: {
+            Type: "AWS::SecretsManager::Secret",
+            Properties: {
+              Description: `Erga ${s.stack}: the key that the gate in front proves itself to Erga with (GATE_KEY)`,
+              GenerateSecretString: { PasswordLength: 64, ExcludePunctuation: true },
+              Tags: [{ Key: "erga", Value: s.stack }],
+            },
+          },
+        }
+      : {
+          Forwarded: {
+            Type: "AWS::CloudFront::Function",
+            Properties: {
+              Name: `${s.stack}-forwarded`,
+              AutoPublish: true,
+              FunctionConfig: { Comment: "Erga: the viewer's host, for celld", Runtime: "cloudfront-js-2.0" },
+              FunctionCode: FORWARDED,
+            },
+          },
+        }),
+    AppDistribution: distribution(s, "App", gate),
+    PagesDistribution: distribution(s, "Pages", gate),
   };
   if (s.domains) {
     for (const [name, zone, distro, record] of [
@@ -554,195 +671,129 @@ function cloudFront(s: AwsShape, prefixList: string): Edge {
   }
   return {
     ingress: { SourcePrefixListId: prefixList, Description: "CloudFront" },
+    // The machine reads the gate's key at each deploy (deploy/aws/machine.ts, deployScript), for Erga's GATE_KEY.
+    role: gate ? [{ Effect: "Allow", Action: "secretsmanager:GetSecretValue", Resource: ref("GateKey") }] : [],
     resources,
-    parameters: s.domains
-      ? {
-          AppCertificate: { Type: "String", Description: `The ACM certificate of ${s.domains.app}, in us-east-1` },
-          PagesCertificate: { Type: "String", Description: `The ACM certificate of *.${s.domains.pages}, in us-east-1` },
-        }
-      : {},
+    parameters: {
+      ...(s.domains
+        ? {
+            AppCertificate: { Type: "String", Description: `The ACM certificate of ${s.domains.app}, in us-east-1` },
+            PagesCertificate: { Type: "String", Description: `The ACM certificate of *.${s.domains.pages}, in us-east-1` },
+          }
+        : {}),
+      ...(gate
+        ? {
+            EdgeVersion: { Type: "String", Description: "The gate's Lambda@Edge function, in us-east-1: its version's ARN" },
+            ...Object.fromEntries(
+              GATE_PARTS.map((part) => [
+                GATE_FUNCTIONS[part],
+                { Type: "String", Description: `The gate's ${part} function (CloudFront Functions), of the us-east-1 stack: its ARN` },
+              ])
+            ),
+          }
+        : {}),
+    },
     outputs: {
       AppHost: { Value: s.domains ? s.domains.app : att("AppDistribution", "DomainName") },
       PagesHost: { Value: s.domains ? s.domains.pages : att("PagesDistribution", "DomainName") },
+      // The secret of the gate's key: the machine reads it at each deploy.
+      ...(gate ? { GateKey: { Value: ref("GateKey") } } : {}),
     },
   };
 }
 
 /**
- * A proxy in front (an Application Load Balancer, public), with the organization's sign-in. Its listener's rules, first match wins:
- *
- *    1  a request that brings X-Forwarded-Host: refused. celld trusts that header (CELLD_TRUST_FORWARDED_HEADERS) for
- *       https (the proxy's X-Forwarded-Proto), and the proxy passes a caller's own; without it celld reads Host.
- *    2  a document's own address (*.<pages>), its files and its worker only: no sign-in. The page's token is the pass
- *       (a frame can't follow a sign-in, and that address has no cookie).
- *   10+ the app's address, what Erga's tokens guard (TOKEN_PATHS): no sign-in.
- *   20  the app's address, a request with a key (?key=): what a document's page asks of its room, from its own address.
- *   30  the app's address, from the NAT's address: the server's own browser (view_page), which holds Erga's view cookie.
- *  100  the app's address, anything else: the sign-in (OIDC) first. The proxy then adds x-amzn-oidc-data, which says
- *       who signed in, signed by AWS (server/identity/proxy.ts reads it).
- * Any other host: 404. The machine lets in only the proxy.
+ * The gate's code, in the us-east-1 stack:
+ *   - its four CloudFront Functions, as built, each with the KeyValueStore. The edge key is not here: CloudFormation
+ *     can't write a store's key, so the deploy puts it there after this stack, before a distribution exists
+ *     (deploy/aws/gate.ts, putEdgeKey);
+ *   - its Lambda@Edge function (gate/mounts/lambda.ts), which CloudFront takes only from us-east-1: its role, the
+ *     function, and one version of it (a distribution names a version). The version's name in the template has the
+ *     code's hash: CloudFormation makes a new version only for a new resource. The role reads the one secret
+ *     (idpSecretParam).
  */
-function proxy(s: AwsShape, oidc: Oidc, vpc: unknown): Edge {
-  if (!s.domains || s.egress.kind == "vpc") throw new Error("A proxy in front needs domains, and the stack's own network.");
-  const d = s.domains;
-  const forward = { Type: "forward", TargetGroupArn: ref("Targets") };
-  const host = (name: string) => ({ Field: "host-header", HostHeaderConfig: { Values: [name] } });
-  const paths = (values: readonly string[]) => ({ Field: "path-pattern", PathPatternConfig: { Values: [...values] } });
-  const rule = (priority: number, conditions: Json[], actions: Json[]): Json => ({
-    Type: "AWS::ElasticLoadBalancingV2::ListenerRule",
-    Properties: { ListenerArn: ref("Listener"), Priority: priority, Conditions: conditions, Actions: actions },
-  });
-  const alias = (zone: string, name: string) => ({
-    Type: "AWS::Route53::RecordSet",
-    Properties: {
-      HostedZoneId: zone,
-      Name: name,
-      Type: "A",
-      AliasTarget: { DNSName: att("Proxy", "DNSName"), HostedZoneId: att("Proxy", "CanonicalHostedZoneID") },
-    },
-  });
-  const resources: Json = {
-    Certificate: {
-      Type: "AWS::CertificateManager::Certificate",
-      Properties: {
-        DomainName: d.app,
-        SubjectAlternativeNames: [`*.${d.pages}`],
-        ValidationMethod: "DNS",
-        DomainValidationOptions: [
-          { DomainName: d.app, HostedZoneId: d.appZone },
-          { DomainName: `*.${d.pages}`, HostedZoneId: d.pagesZone },
-        ],
-        Tags: [{ Key: "erga", Value: s.stack }],
-      },
-    },
-    ProxyFirewall: {
-      Type: "AWS::EC2::SecurityGroup",
-      Properties: {
-        GroupDescription: `Erga ${s.stack}: the proxy, from the internet`,
-        VpcId: vpc,
-        SecurityGroupIngress: [443, 80].map((port) => ({ IpProtocol: "tcp", FromPort: port, ToPort: port, CidrIp: "0.0.0.0/0" })),
-        Tags: tags(s.stack, "proxy"),
-      },
-    },
-    Proxy: {
-      Type: "AWS::ElasticLoadBalancingV2::LoadBalancer",
-      DependsOn: "PublicDefault",
-      Properties: {
-        Type: "application",
-        Scheme: "internet-facing",
-        Subnets: [ref("PublicSubnet"), ref("PublicSubnetB")],
-        SecurityGroups: [ref("ProxyFirewall")],
-        LoadBalancerAttributes: [
-          // A quiet socket of the editor stays open.
-          { Key: "idle_timeout.timeout_seconds", Value: "3600" },
-          { Key: "routing.http.preserve_host_header.enabled", Value: "true" },
-          { Key: "routing.http.drop_invalid_header_fields.enabled", Value: "true" },
-        ],
-        Tags: tags(s.stack, "proxy"),
-      },
-    },
-    // The health check goes to the machine itself: no rule, so no sign-in.
-    Targets: {
-      Type: "AWS::ElasticLoadBalancingV2::TargetGroup",
-      Properties: {
-        VpcId: vpc,
-        Protocol: "HTTP",
-        Port: CELLD_PORT,
-        TargetType: "instance",
-        Targets: [{ Id: ref("Machine") }],
-        HealthCheckPath: "/api/health",
-        HealthCheckIntervalSeconds: 15,
-        HealthyThresholdCount: 2,
-        Matcher: { HttpCode: "200" },
-        TargetGroupAttributes: [{ Key: "deregistration_delay.timeout_seconds", Value: "30" }],
-        Tags: tags(s.stack, "machine"),
-      },
-    },
-    Listener: {
-      Type: "AWS::ElasticLoadBalancingV2::Listener",
-      Properties: {
-        LoadBalancerArn: ref("Proxy"),
-        Port: 443,
-        Protocol: "HTTPS",
-        SslPolicy: "ELBSecurityPolicy-TLS13-1-2-2021-06",
-        Certificates: [{ CertificateArn: ref("Certificate") }],
-        DefaultActions: [
-          { Type: "fixed-response", FixedResponseConfig: { StatusCode: "404", ContentType: "text/plain", MessageBody: "Not found" } },
-        ],
-      },
-    },
-    PlainListener: {
-      Type: "AWS::ElasticLoadBalancingV2::Listener",
-      Properties: {
-        LoadBalancerArn: ref("Proxy"),
-        Port: 80,
-        Protocol: "HTTP",
-        DefaultActions: [{ Type: "redirect", RedirectConfig: { Protocol: "HTTPS", Port: "443", StatusCode: "HTTP_301" } }],
-      },
-    },
-    RefuseForwardedHost: rule(
-      1,
-      [{ Field: "http-header", HttpHeaderConfig: { HttpHeaderName: "X-Forwarded-Host", Values: ["?*"] } }],
-      [{ Type: "fixed-response", FixedResponseConfig: { StatusCode: "400", ContentType: "text/plain", MessageBody: "Bad request" } }]
-    ),
-    PagesRule: rule(2, [host(`*.${d.pages}`), paths(PAGES_PATHS)], [forward]),
-    ...Object.fromEntries(TOKEN_PATHS.map((group, i) => [`TokenRule${i + 1}`, rule(10 + i, [host(d.app), paths(group)], [forward])])),
-    KeyRule: rule(
-      20,
-      [host(d.app), paths(["/d/*/api/*"]), { Field: "query-string", QueryStringConfig: { Values: [{ Key: "key", Value: "*" }] } }],
-      [forward]
-    ),
-    OwnBrowserRule: rule(
-      30,
-      [host(d.app), { Field: "source-ip", SourceIpConfig: { Values: [sub("${NatAddress.PublicIp}/32")] } }],
-      [forward]
-    ),
-    SignInRule: rule(
-      100,
-      [host(d.app)],
-      [
-        {
-          Type: "authenticate-oidc",
-          Order: 1,
-          AuthenticateOidcConfig: {
-            Issuer: oidc.issuer,
-            AuthorizationEndpoint: oidc.authorize,
-            TokenEndpoint: oidc.token,
-            UserInfoEndpoint: oidc.userInfo,
-            ClientId: oidc.clientId,
-            // Read from Secrets Manager when the stack is made: the secret is in no file.
-            ClientSecret: sub("{{resolve:secretsmanager:${OidcSecret}:SecretString}}"),
-            Scope: "openid email",
-            OnUnauthenticatedRequest: "authenticate",
-          },
-        },
-        { ...forward, Order: 2 },
-      ]
-    ),
-    AppRecord: alias(d.appZone, d.app),
-    PagesRecord: alias(d.pagesZone, `*.${d.pages}`),
-  };
+function gateCodeResources(stack: string, code: GateCode): { resources: Json; version: string } {
+  const version = `EdgeVersion${new Bun.CryptoHasher("sha256").update(code.lambda).digest("hex").slice(0, 12)}`;
   return {
-    ingress: { SourceSecurityGroupId: ref("ProxyFirewall"), Description: "The proxy" },
-    resources,
-    parameters: {
-      OidcSecret: {
-        Type: "String",
-        Default: oidcSecretName(s.stack),
-        Description: "The Secrets Manager secret (its name) that holds the OIDC client's secret, as plain text",
+    version,
+    resources: {
+      Store: {
+        Type: "AWS::CloudFront::KeyValueStore",
+        Properties: { Name: stack, Comment: "Erga: the gate's edge key, and its deny list" },
       },
-    },
-    outputs: {
-      AppHost: { Value: d.app },
-      PagesHost: { Value: d.pages },
-      // Who signs x-amzn-oidc-data: Erga takes the header only from this proxy.
-      Proxy: { Value: ref("Proxy") },
+      ...Object.fromEntries(
+        GATE_PARTS.map((part) => [
+          GATE_FUNCTIONS[part],
+          {
+            Type: "AWS::CloudFront::Function",
+            Properties: {
+              Name: `${stack}-${part}`,
+              AutoPublish: true,
+              FunctionCode: code.functions[part],
+              FunctionConfig: {
+                Comment: `Erga: the gate's ${part} function`,
+                Runtime: "cloudfront-js-2.0",
+                KeyValueStoreAssociations: [{ KeyValueStoreARN: att("Store", "Arn") }],
+              },
+            },
+          },
+        ])
+      ),
+      EdgeRole: {
+        Type: "AWS::IAM::Role",
+        Properties: {
+          AssumeRolePolicyDocument: {
+            Version: "2012-10-17",
+            Statement: [
+              { Effect: "Allow", Principal: { Service: ["lambda.amazonaws.com", "edgelambda.amazonaws.com"] }, Action: "sts:AssumeRole" },
+            ],
+          },
+          ManagedPolicyArns: [sub("arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole")],
+          Policies: [
+            {
+              PolicyName: "secret",
+              PolicyDocument: {
+                Version: "2012-10-17",
+                Statement: [
+                  {
+                    Effect: "Allow",
+                    Action: "ssm:GetParameter",
+                    Resource: sub(`arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter${idpSecretParam(stack)}`),
+                  },
+                ],
+              },
+            },
+          ],
+          Tags: [{ Key: "erga", Value: stack }],
+        },
+      },
+      Edge: {
+        Type: "AWS::Lambda::Function",
+        Properties: {
+          Description: `Erga ${stack}: the gate's Lambda@Edge function (the sign-in's code exchange, the token endpoint's form)`,
+          Runtime: "nodejs22.x",
+          Handler: "index.handler",
+          Timeout: 10,
+          MemorySize: 128,
+          Role: att("EdgeRole", "Arn"),
+          Code: { ZipFile: code.lambda },
+          Tags: [{ Key: "erga", Value: stack }],
+        },
+      },
+      // (Kept when a new build replaces it: the distributions still name it until the main stack has the new one,
+      // and Lambda refuses to delete a version that CloudFront uses. It goes with the function.)
+      [version]: { Type: "AWS::Lambda::Version", DeletionPolicy: "Retain", Properties: { FunctionName: ref("Edge") } },
     },
   };
 }
 
-/** The certificates' stack, in us-east-1 (CloudFront's): the app's name and the pages' wildcard, checked in Route 53. */
-export function certificatesTemplate(stack: string, d: NonNullable<AwsShape["domains"]>): Json {
+/**
+ * The us-east-1 stack (CloudFront's region): the certificates of the app's name and the pages' wildcard, checked in
+ * Route 53; and, with the gate in front, the gate's code (`gate`). The main stack takes its outputs as parameters;
+ * `Store` is where the deploy writes the edge key.
+ */
+export function certificatesTemplate(stack: string, d: NonNullable<AwsShape["domains"]>, gate?: GateCode): Json {
+  const edge = gate ? gateCodeResources(stack, gate) : null;
   const cert = (name: string, zone: string) => ({
     Type: "AWS::CertificateManager::Certificate",
     Properties: {
@@ -754,8 +805,18 @@ export function certificatesTemplate(stack: string, d: NonNullable<AwsShape["dom
   });
   return {
     AWSTemplateFormatVersion: "2010-09-09",
-    Description: `Erga ${stack}: the certificates CloudFront serves (written by bun erga setup)`,
-    Resources: { AppCertificate: cert(d.app, d.appZone), PagesCertificate: cert(`*.${d.pages}`, d.pagesZone) },
-    Outputs: { AppCertificate: { Value: ref("AppCertificate") }, PagesCertificate: { Value: ref("PagesCertificate") } },
+    Description: `Erga ${stack}: the certificates CloudFront serves${edge ? ", and the gate's code" : ""} (written by bun erga setup)`,
+    Resources: { AppCertificate: cert(d.app, d.appZone), PagesCertificate: cert(`*.${d.pages}`, d.pagesZone), ...edge?.resources },
+    Outputs: {
+      AppCertificate: { Value: ref("AppCertificate") },
+      PagesCertificate: { Value: ref("PagesCertificate") },
+      ...(edge
+        ? {
+            EdgeVersion: { Value: ref(edge.version) },
+            Store: { Value: att("Store", "Arn") },
+            ...Object.fromEntries(GATE_PARTS.map((part) => [GATE_FUNCTIONS[part], { Value: functionArn(GATE_FUNCTIONS[part]) }])),
+          }
+        : {}),
+    },
   };
 }

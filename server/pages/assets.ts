@@ -59,10 +59,10 @@ export function fontTags(preload = false): string {
 }
 
 /**
- * The templates' typefaces for a document's page, on its own origin: their @font-face rules, with the files on the
- * app's origin `shell` (a font is fetched only by a page that uses it).
+ * The templates' typefaces for a document's page, on its own origin: their @font-face rules, with the files there too
+ * (a font is fetched only by a page that uses it).
  */
-export const pageFonts = (shell: string) => (manifest?.fonts.page ?? "").replace(/url\(\//g, `url(${shell}/`);
+export const pageFonts = () => manifest?.fonts.page ?? "";
 
 /** The editor's shell (client/editor.html, as the build split it): its styles and its controls, for a document's page. */
 export const editorShell = () => manifest?.shell ?? { style: "", body: "" };
@@ -103,12 +103,13 @@ export const serveLibrary = (name: string) => {
 };
 
 /**
- * The editor's half for a document's own page (pages/reader.ts), at the app's origin `shell`: its address, its chunks,
+ * The editor's half for a document's own page (pages/reader.ts), on the page's own origin (a document's page calls
+ * only its own origin: every pages origin serves these files, server/app.ts): its address, its chunks,
  * Erga's page tools (tools.js) and theirs, and the integrity of every script they may load, which an editor's page gives the browser (an import map), so a script
  * that isn't this build's doesn't run there.
  */
-export function frameScripts(shell: string): NonNullable<ReaderConfig["editor"]> {
-  const at = (u: string) => `${shell}${u}`;
+export function frameScripts(): NonNullable<ReaderConfig["editor"]> {
+  const at = (u: string) => u;
   const m = manifest;
   const script = (name: string) => {
     const src = m?.files[name] ?? `${ASSET_PREFIX}${name}`;

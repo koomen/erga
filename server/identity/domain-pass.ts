@@ -20,7 +20,7 @@ import * as Effect from "effect/Effect";
 import { safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
 import { call, ctx, redirect, text } from "../http.ts";
-import { sessionOf } from "./session.ts";
+import { sessionOf } from "./admit.ts";
 import * as Schema from "effect/Schema";
 import { signed } from "../signed.ts";
 import { cookies, withCookie } from "./cookies.ts";

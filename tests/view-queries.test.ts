@@ -29,6 +29,7 @@ async function server(id: string) {
     secret: "secret-".repeat(6),
     dev: () => false,
     pagesDomain: () => "erga-pages.test",
+    signIn: { mode: "oauth" },
     edge: { cache: null, background: (work: Promise<unknown>) => void work.catch(() => {}) },
     docs: {
       // The document's host decides on its own copy of the permissions: no question to the database.

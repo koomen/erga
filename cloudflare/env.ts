@@ -51,7 +51,10 @@ export interface Env {
   /** Sign-in's Google OAuth client: the deploy's values; an admin's on /admin/auth win while set. */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  /** Signs session cookies. */
+  /**
+   * The server's secret: it signs what the server hands out and trusts when it comes back (server/signed.ts), and the
+   * key of the gate inside this Worker comes from it (server/identity/caller.ts).
+   */
   SESSION_SECRET: string;
   /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin/agents (server/directory/api-keys.ts; read by agents/models.ts). */
   ANTHROPIC_API_KEY: string;
@@ -87,8 +90,14 @@ export interface Env {
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
   /**
-   * The proxy mode (server/identity/mode.ts): the proxy in front of the server that signs each person in, as the
-   * deploy writes it: JSON, a `Proxy` (server/identity/proxy.ts). Any value: that sign-in is the server's only one.
+   * A gate in front of the server (server/identity/mode.ts; gate/mounts/): the key that it sends with each request
+   * (the header x-erga-front), a secret of 32 characters or more that the deploy gives both. Any value: this Worker
+   * runs no gate of its own, trusts the caller that the gate names, and refuses every request without the key.
+   */
+  GATE_KEY?: string;
+  /**
+   * The setting of the sign-in at a proxy in front, from before the gate. The server reads nothing from it: a server
+   * that still has it, and no GATE_KEY, refuses every request with an error that says so (server/identity/mode.ts).
    */
   PROXY_SIGN_IN?: string;
   /** On celld (deploy/aws/machine.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */

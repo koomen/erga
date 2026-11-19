@@ -1,22 +1,20 @@
-// Who is asking, and how they got here: sessions, agent tokens, users, sign-in
-// in its two modes (mode.ts) and its settings, the other of Erga's servers. The rest of the
-// app imports identity through this file.
+// Who is asking, and how they got here: the gate's caller and Erga's part around the gate (sign-in, agents' grants,
+// the settings), in its two modes (mode.ts). The rest of the app imports identity through this file.
 
-export { actingAdmin, SESSION_COOKIE, sessionCookie, sessionOf, viewCookie } from "./session.ts";
-export { chooseSignIn, signOut } from "./sign-in.ts";
-export { finishOAuth, startOAuth } from "./oauth.ts";
+export { actingAdmin, refusedAgent, sessionOf, signedOut, viewRequest } from "./admit.ts";
+export { handOff, SIGNED_OUT, WARM_PATH } from "./caller.ts";
+export { gated } from "./mount.ts";
+export { chooseSignIn, signOut, ssoSignIn, SSO_PATH, startSignIn } from "./sign-in.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";
 export { Claim } from "./claim-link.ts";
 export { claimRoute } from "./claim.ts";
 export { providersOf, type SignIn, signInOf } from "./mode.ts";
-export { proxySignIn, type ProxyStatus } from "./proxy.ts";
 export { accountLookup, authOps, signInChoices } from "./settings.ts";
 export { DOMAIN_ERGA, DOMAIN_SIGN_OUT, domainPass, domainSignIn, domainVisitor } from "./domain-pass.ts";
-export { isOAuthPath, oauthRoutes, resourceMetadataUrl } from "./mcp-oauth.ts";
-
-export { expiryOf, tokensRoutes } from "./tokens-page.ts";
+export { authorize } from "./authorize.ts";
+export { tokensRoutes } from "./tokens-page.ts";
 export { cookieName, cookies, setCookie } from "./cookies.ts";
 
-export { REQUEST_MINUTES, SCOPES, ScopeError, Tokens, type AgentToken, type Scope } from "./tokens.ts";
+export { type Grant, Grants, ScopeError } from "./grants.ts";
 export { AuthError, type AuthOps, type AuthStatus, type AuthStorage, type ProvidersOn, type SignInStatus } from "./apps.ts";
 export { type AppValues, type CheckState, type Provider, providerOf, PROVIDERS } from "./providers.ts";

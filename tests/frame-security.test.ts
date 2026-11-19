@@ -52,13 +52,27 @@ test("the document's page is in one frame on its pages origin, for everyone: nev
 });
 
 test("the viewer's script goes first in the page's head, and nothing in the page or its config can close its element", () => {
-  const page = readerPage("<!DOCTYPE html><html><head><title>x</title><script>own()</script></head><body></body></html>", { shell: "https://erga.dev", prefix: "/t/x/", src: "s", editor: false });
-  expect(page.startsWith('<!DOCTYPE html><html><head><script data-erga>')).toBe(true);
+  const page = readerPage("<!DOCTYPE html><html><head><title>x</title><script>own()</script></head><body></body></html>", {
+    shell: "https://erga.dev",
+    prefix: "/t/x/",
+    src: "s",
+    editor: false,
+    worker: true,
+  });
+  expect(page.startsWith("<!DOCTYPE html><html><head><script data-erga>")).toBe(true);
   expect(page.indexOf("own()")).toBeGreaterThan(page.indexOf("erga-hello"));
-  const hostile = readerPage("<p>x</p>", { shell: "https://erga.dev", prefix: "/t/</script><script>alert(1)</script>/", src: "s", editor: true });
+  const hostile = readerPage("<p>x</p>", {
+    shell: "https://erga.dev",
+    prefix: "/t/</script><script>alert(1)</script>/",
+    src: "s",
+    editor: true,
+    worker: true,
+  });
   expect(hostile).not.toContain("</script><script>alert(1)");
   // No head of its own, no <html>, only a doctype: still first, and the page keeps its mode.
-  expect(readerPage("<!doctype html><p>x</p>", { shell: "https://erga.dev", prefix: "/t/x/", src: "s", editor: false })).toStartWith("<!doctype html><script data-erga>");
+  expect(
+    readerPage("<!doctype html><p>x</p>", { shell: "https://erga.dev", prefix: "/t/x/", src: "s", editor: false, worker: true })
+  ).toStartWith("<!doctype html><script data-erga>");
 });
 
 test("a page's report for the agent is a block of its own, which nothing in the report can close", () => {

@@ -43,7 +43,7 @@ export async function signIn(server: Server, as: string): Promise<string> {
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
-    .find((c) => /^erga_session(_\d+)?=/.test(c));
+    .find((c) => /^erga_\d+=/.test(c));
   if (!cookie) throw new Error(`signing in as ${as}: ${r.status}`);
   return cookie;
 }

@@ -209,13 +209,21 @@ test("AWS: the profile, the region from it, the stack as the plan, and the organ
     email: { claim: "preferred_username", prefix: "corp|" },
   });
   expect(planText({ ...r.answers, emailClaim: "preferred_username:corp|" }, seen(AWS))).toContain(
-    '• your organization\'s sign-in, at a load balancer in front (you type its client secret on a page that opens); the email address in preferred_username, after "corp|"'
+    '• your organization\'s sign-in, at the gate in front of Erga (you type its client secret on a page that opens); the email address in preferred_username, after "corp|"'
   );
   expect(options("--email-claim", "preferred_username corp|").problems).toEqual([
     '--email-claim: "preferred_username corp|" isn\'t <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".',
   ]);
   expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), emailClaim: "upn" })).toEqual([
     "--email-claim is only for --sign-in sso on AWS: leave it out.",
+  ]);
+  // How long a sign-in at the gate lasts: the deploy's to say, from 1 to 90 days.
+  expect(options("--sign-in-days", "7").answers.signInDays).toBe("7");
+  for (const bad of ["0", "91", "1.5", "week"])
+    expect(options("--sign-in-days", bad).problems).toEqual([`--sign-in-days: "${bad}" isn't a whole number of days from 1 to 90.`]);
+  expect(planText({ ...r.answers, signInDays: "7" }, seen(AWS)).join("\n")).toContain("; a sign-in lasts 7 days");
+  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), signInDays: "7" })).toEqual([
+    "--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page.",
   ]);
   // The client's secret is the page's alone: the app step.
   expect(run(r.answers, AWS).state).toEqual({ at: "app", kind: "oidc" });
@@ -257,7 +265,7 @@ test("--remote: the user's steps need their terminal; an agent's shell, with non
   expect(run(a, { ...AWS, ...LIVE, app: true, terminal: true }).state).toEqual({ at: "admin" });
   expect(run({ ...a, remote: false }, AWS).state).toEqual({ at: "app", kind: "oidc" });
   expect(planText(a, seen(AWS))).toContain(
-    "• your organization's sign-in, at a load balancer in front (you type its client secret in your terminal)"
+    "• your organization's sign-in, at the gate in front of Erga (you type its client secret in your terminal)"
   );
   // The terminal is /dev/tty, the user's own: never stdin, stdout or stderr. None (an agent's shell): null.
   const asked: string[] = [];
@@ -288,7 +296,7 @@ test("--repo and --branch: the instance's entry tracks them, and the plan says s
   expect(githubManifest(a, "http://127.0.0.1:5000/created")).toMatchObject({
     name: `Erga ${HOST}`,
     redirect_url: "http://127.0.0.1:5000/created",
-    callback_urls: [`https://${HOST}/auth/github/callback`],
+    callback_urls: [`https://${HOST}/_edge/callback`],
     default_permissions: {},
     public: false,
   });

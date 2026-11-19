@@ -2,11 +2,14 @@
 // GitHub's dark with its mark): on the sign-in page (server/identity/sign-in.ts) and in the sign-in dialog
 // (client/common/sign-in-dialog.ts). Each goes to that provider's sign-in, and back to `next`.
 
-import { esc } from "./html";
+import { esc } from "./html.ts";
+
+/** The provider of everyone a gate in front of the server signs in (server/identity/mode.ts): the organization's own sign-in. */
+export const SSO = "sso";
 
 /**
  * Each way to sign in, as the app names it. The app reads this table by a provider's id and never asks which provider it
- * is: an OAuth provider (server/identity/providers.ts), or the proxy in front of the server (server/identity/proxy.ts).
+ * is: an OAuth provider (server/identity/providers.ts), or the gate in front of the server (server/identity/mode.ts).
  * `name`: its name in a list; `label`: what its sign-in is called, in a sentence to the user who signs in.
  * `handle`: what an admin adds a user by before their first sign-in: a login (its account is looked up at once), or an
  * email address (the first sign-in with that verified address matches). `profile`: a profile's address, pasted for a
@@ -37,7 +40,7 @@ export const SIGN_IN_PROVIDERS: Record<
     handle: "email",
     groups: { kind: "workspace" },
   },
-  proxy: { name: "Proxy", label: "your organization's sign-in", handle: "email", only: true },
+  [SSO]: { name: "Single sign-on", label: "your organization's sign-in", handle: "email", only: true },
 };
 
 /** What a provider's sign-in is called, in a sentence to the user who signs in. */

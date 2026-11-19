@@ -65,8 +65,8 @@ export interface User {
   lastSeen: number | null;
   /** Their picture (users.avatar, shared/avatars.ts), from their last sign-in; null: none, so their initial shows. */
   avatar: string | null;
-  /** Their sign-in number (users.sessions): a session cookie works only while it carries this number (endSessions). */
-  sessions: number;
+  /** When they last signed out (users.sessions, milliseconds; 0: never): a sign-in made before it works no more (endSessions). */
+  ended: number;
 }
 
 /**
@@ -96,7 +96,7 @@ export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { messa
 }
 
 /** What an admin acting through a token without the admin scope is told, wherever they try. */
-export const LOCKED = "This token has no admin power: make a token with the admin scope at /tokens.";
+export const LOCKED = "This token has no admin power: make a token with the admin scope in Settings.";
 
 const LOGIN = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
 /** How long a looked-up user is trusted before asking again. */
@@ -163,12 +163,12 @@ export class Users {
   }
 
   /**
-   * Sign-out: every session cookie of `login` made until now stops (their sign-in number goes up), on every device.
-   * Another server instance remembers the old number for REMEMBER_MS at most.
+   * Sign-out: every sign-in of `login` made until now stops, on every device (the gate's caller says when each was
+   * made: server/identity/admit.ts). Another server instance remembers the old time for REMEMBER_MS at most.
    */
-  async endSessions(login: string): Promise<void> {
+  async endSessions(login: string, now = Date.now()): Promise<void> {
     login = login.toLowerCase();
-    await this.sql.run("UPDATE users SET sessions = sessions + 1 WHERE login = ?1", login);
+    await this.sql.run("UPDATE users SET sessions = ?2 WHERE login = ?1", login, now);
     this.known.delete(login);
   }
 
@@ -405,7 +405,7 @@ export class Users {
       addedVia: r.added_via ?? null,
       lastSeen: r.last_seen == null ? null : Number(r.last_seen),
       avatar: safeAvatar(r.avatar),
-      sessions: Number(r.sessions ?? 0),
+      ended: Number(r.sessions ?? 0),
     };
   }
 
@@ -421,7 +421,7 @@ export class Users {
       addedBy: null,
       lastSeen: null,
       avatar: null,
-      sessions: 0,
+      ended: 0,
     };
   }
 }

@@ -237,6 +237,15 @@ test("server config: defaults, admins set and reset, the deploy locks", async ()
   expect(() => fresh({ locked: { nope: 1 } })).toThrow(ConfigError);
 });
 
+test("sign_in_days: 30 days until an admin sets it, a whole number of days from 1 to 90", async () => {
+  const { config } = fresh({ admins: ["root"] });
+  const admin = { login: "root", admin: true };
+  expect(await config.get("sign_in_days")).toBe(30);
+  for (const bad of [0, 91, 1.5, -1, "7", null]) await expect(config.set(admin, "sign_in_days", bad)).rejects.toBeInstanceOf(ConfigError);
+  for (const days of [1, 90]) expect((await config.set(admin, "sign_in_days", days)).value).toBe(days);
+  expect((await config.reset(admin, "sign_in_days")).value).toBe(30);
+});
+
 test("server config: each change is a version, with who, when, and from what to what", async () => {
   const dir = fresh({ admins: ["root", "ada"] });
   const root = { login: "Root", admin: true }, ada = { login: "ada", admin: true }, user = { login: "bo" };

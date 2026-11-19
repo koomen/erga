@@ -16,8 +16,8 @@ import { setAt, shown } from "./parts.ts";
  * control of its own on its page (OWN): tests/settings.test.ts holds this, so a new setting gets a place.
  */
 export const PAGE_SETTINGS = {
-  /** Sign-in: what a new account gets. */
-  auth: ["auto_usernames"],
+  /** Sign-in: what a new account gets, and how long a sign-in lasts. */
+  auth: ["auto_usernames", "sign_in_days"],
   /** Documents: new documents, and the files' limits. */
   documents: ["delete_docs_after_hours", "max_file_mb", "max_project_gb"],
   /** Agents and models: the agents on the server's keys, then pages' models. */
@@ -74,9 +74,9 @@ function valueInput(e: ConfigEntry, never: boolean): string {
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
 
-/** The unit of a number setting, from the end of its key: "_hours", "_mb", "_gb", "_tokens". */
+/** The unit of a number setting, from the end of its key: "_hours", "_days", "_mb", "_gb", "_tokens". */
 const unitOf = (key: string) =>
-  ({ hours: "hours", mb: "MB", gb: "GB", usd: "US$", tokens: "tokens" })[key.slice(key.lastIndexOf("_") + 1)] ?? "";
+  ({ hours: "hours", days: "days", mb: "MB", gb: "GB", usd: "US$", tokens: "tokens" })[key.slice(key.lastIndexOf("_") + 1)] ?? "";
 
 /** How a setting is set: "switch" and "choice" save as soon as they change; the rest when the typing pauses, or the focus leaves. */
 function controlOf(e: ConfigEntry): "switch" | "choice" | "users" | "typed" {

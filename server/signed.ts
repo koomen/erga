@@ -6,8 +6,8 @@
 //                     mac: HMAC-SHA256 of "<purpose>.<claims>", keyed with the server's secret
 //
 // The purpose is in what is signed: a string sealed as one kind never opens as another. `mac` is the one place that
-// computes a signature; an agent token and an OAuth client id use it directly, with keys of their own, in the formats
-// they always had (their strings are kept by agents and apps for a long time).
+// computes a signature. (The gate's values are apart: a sign-in's cookie and an agent's token are the gate's to sign,
+// gate/core.ts, under a key of its own.)
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";

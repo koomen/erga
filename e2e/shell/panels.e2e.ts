@@ -8,6 +8,7 @@ import { openNew, SETTLED_ZOOM } from "../editor/caret-helpers";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, journey, servers, test } from "../helpers/fixtures";
 import { pointerOnPage, pressOn } from "../helpers/press";
+import { agentPrompt } from "../../client/common/agent-prompt";
 import { atRest, soon } from "./shell";
 
 const s = await servers.main();
@@ -45,7 +46,7 @@ journey("the panels and the bars over a page", () => {
   /** The page's scripts from Erga's origin: the library's address, and its build. */
   const library = () =>
     ed.frame<string[]>(
-      `[...${F}.querySelectorAll("script[src]")].map((x) => x.src).filter((u) => u.startsWith(${JSON.stringify(`${s.root}/erga/`)}))`
+      `[...${F}.querySelectorAll("script[src]")].map((x) => new URL(x.src)).filter((u) => u.pathname.startsWith("/erga/")).map((u) => (u.origin == ${F}.location.origin ? "own origin" : u.origin) + u.pathname)`
     );
   /** The page's scale, and the h1's box as the tab draws it. */
   const zoomed = () =>
@@ -123,13 +124,20 @@ journey("the panels and the bars over a page", () => {
     ed = await openEditor(tab, s, "page");
     page = tab.page;
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(ed.address).origin });
-    expect(await library(), "Erga adds erga/text by its one address").toEqual([`${s.root}/erga/text/editor.js`]);
+    expect(await library(), "Erga adds erga/text by its one address, on the page's own origin").toEqual(["own origin/erga/text/editor.js"]);
+    // A document's page calls only its own origin: its scripts, its start, its fonts (the gate checks one cookie there).
+    expect(
+      await ed.frame<string[]>(
+        `[...new Set(${F}.defaultView.performance.getEntriesByType("resource").map((e) => new URL(e.name).origin))].filter((o) => o != ${F}.location.origin)`
+      ),
+      "the origins the page's requests went to, besides its own"
+    ).toEqual([]);
     await ed.clickEnd("h1");
     await ed.idle();
     await clickOn("#btn-agent-share");
     await clickOn("#btn-agent-share-menu .am-mcp");
     await soon(agentTip).toBe("Copied ✓");
-    expect(await clipboard()).toBe(`Add Erga's MCP server, ${new URL(ed.address).origin}/mcp, then open ${ed.address}.`);
+    expect(await clipboard()).toBe(agentPrompt(new URL(ed.address).pathname, new URL(ed.address).origin));
     // Its icon stays; the menu closed, and the Share card stays closed.
     expect(
       await ed.eval<boolean>(
@@ -391,7 +399,7 @@ journey("the panels and the bars over a page", () => {
     await ed.press("ControlOrMeta+Equal");
     await soon(scale).toBeCloseTo(1.1, 2);
     // The page imports the library itself: Erga adds nothing, and the page's own import runs the editor.
-    ed.write(ed.disk().replace("</head>", `<script type="module" src="${s.root}/erga/text/editor.js"></script>\n</head>`));
+    ed.write(ed.disk().replace("</head>", `<script type="module" src="/erga/text/editor.js"></script>\n</head>`));
     await soon(() => ed.source(), DISK_MS).toContain("/erga/text/editor.js");
     expect(await ed.eval<boolean>(`document.body.classList.contains("agent-open")`), "on a desktop the agent is open").toBe(true);
     // (A page of text stays beside the agent's pane, where nothing covers it: only a canvas goes under it, below.)
@@ -408,7 +416,7 @@ journey("the panels and the bars over a page", () => {
     await soon(scale).toBeCloseTo(1.1, 2);
     await ed.press("ControlOrMeta+Digit0");
     await soon(scale).toBe(1);
-    expect(await library()).toEqual([`${s.root}/erga/text/editor.js`]);
+    expect(await library()).toEqual(["own origin/erga/text/editor.js"]);
     await ed.clickEnd("h2");
     await ed.type(" today");
     await soon(() => ed.disk(), DISK_MS).toContain("<h2>What changed today</h2>");

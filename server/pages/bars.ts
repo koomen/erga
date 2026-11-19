@@ -121,7 +121,7 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
  * of the buttons' bar, for a page whose settings save by themselves (the admin pages). Share with an agent is on every page, before
  * Documents (`share`: a page's own, as the admin pages' with its admin token). The account corner goes in `corner`, or where the
  * Worker puts it (ACCOUNT_SLOT: withAccount). Your agent comes with them (server/pages/agent.ts), except where
- * `agent` is false: a page where the person grants access (/tokens/approve), which the agent must not see or act on.
+ * `agent` is false: a page where the person grants access (/oauth/authorize), which the agent must not see or act on.
  */
 export function pageBars(
   session: Session | null,

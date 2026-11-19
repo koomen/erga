@@ -4,6 +4,7 @@
 // the agent's person may not open.
 import { expect, journey, servers, test, until } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
+import { newToken } from "../helpers/new-token";
 import { idOf, runTool } from "../helpers/tools";
 import { fromBase64 } from "../../shared/bytes";
 import { pictureSize } from "../../shared/picture";
@@ -151,19 +152,10 @@ journey("the agents' tools on a page that a person has open", () => {
     await expect.poll(() => ed.textOf("h1")).toBe("Dee's notes, revised");
   });
 
-  test("an outside agent with Ada's Share token edits as Ada's agent, and she can undo it", async () => {
+  test("an outside agent with a token that Ada's Share menu made edits as Ada's agent, and she can undo it", async () => {
     const path = new URL(ed.address).pathname;
-    const share = async (rotate = false) => {
-      const r = await ada.get(`${path}/api/share`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rotate }),
-      });
-      return ((await r.json()) as { token: string }).token;
-    };
-    const token = await share();
-    expect(token, "the share button gets a token").toMatch(/^erga_[\w-]{40,}$/);
-    expect(await share(), "asking again gives the same one").toBe(token);
+    const { token } = await newToken(s.root, { label: "Share with an agent", scope: "documents" }, ada.cookie);
+    expect(token, "Share with an agent gets a token").toMatch(/^a\.[\w-]+\.[\w-]+$/);
     const ext = (at: string, init: RequestInit = {}, as = token) =>
       fetch(s.root + at, { ...init, headers: { Authorization: `Bearer ${as}`, "Content-Type": "application/json" } });
     expect((await ext("/api/tools/whoami", { method: "POST", body: "{}" }, "erga_forged")).status, "the API needs a real token").toBe(401);
@@ -186,8 +178,8 @@ journey("the agents' tools on a page that a person has open", () => {
     const before = await undoable();
     await out.ok("edit", edit("<h1>Dee's notes", "<h1>Dee's notes EXT").args);
     await until(() => bo.str().includes("Dee's notes EXT"), 3000, "Bo sees the outside agent's edit");
-    // (A share token's edits are its person's, via it, under its label: document/room/participants.ts.)
-    expect(bo.seen.at(-1)?.author).toBe(`${ADA}, via a shared agent (Share button)`);
+    // (A token's edits are its person's, via it, under its label: document/room/participants.ts.)
+    expect(bo.seen.at(-1)?.author).toBe(`${ADA}, via a shared agent (Share with an agent)`);
     await expect.poll(() => ed.textOf("h1")).toBe("Dee's notes EXT, revised");
     const bad = await out.call("edit", { path: "index.html" });
     expect([bad.status, /edits/.test(bad.text)], `bad arguments say what is wrong: ${bad.text}`).toEqual([400, true]);
@@ -195,10 +187,10 @@ journey("the agents' tools on a page that a person has open", () => {
     expect(await undoable(), "Ada can undo it").toBe(before + 1);
     await ada.get(`${path}/api/undo`, { method: "POST" });
     await until(() => !bo.str().includes("EXT"), 3000, "the undo takes it back");
-    const next = await share(true);
-    expect([(await ext("/api/tools")).status, (await ext("/api/tools", {}, next)).status], "a new token turns the old one off").toEqual([
-      401, 200,
-    ]);
+    // Revoked (as Settings does it), the token stops at once.
+    const { tokens } = (await ada.run<{ tokens: { id: string; label: string }[] }>("whoami")).result!;
+    await ada.run("revoke", { token: tokens.find((x) => x.label == "Share with an agent")!.id });
+    expect((await ext("/api/tools")).status, "a revoked token").toBe(401);
     bo.leave();
     // (The outside agent's edit keeps the document's lock for some seconds more: document/room/participants.ts, IDLE_MS. No
     // step after this one edits this document's page as a person.)
@@ -283,18 +275,21 @@ journey("the agents' tools on a page that a person has open", () => {
       expression: CODE.editor,
     });
     const got = valueOf<{ body: string }>(shell.text);
-    expect(got.body).not.toContain("erga_");
-    // The server's browser is an agent: an agent never makes a token.
+    // The server's browser is an agent: an agent never makes a token. Its window is in the room: the server answers
+    // its socket itself, as it answers its requests (cloudflare/render.ts).
     expect(got).toEqual({
       editing: true,
       controls: true,
       share: true,
+      listening: true,
       status: 403,
-      body: JSON.stringify({ ok: false, error: "An agent can't make tokens." }),
+      body: JSON.stringify({ ok: false, error: "Tokens are made by people, signed in." }),
+      token: null,
     });
+    // The page's editor is in the room too, by its own socket: it shows the caret of the person's open tab.
     const page = await t.ok("eval_in_page", {
       editor: true,
-      expression: `!!window.ergaFrame?.page && document.documentElement.hasAttribute("data-erga-editing")`,
+      expression: `await new Promise((done) => { const look = () => document.querySelector("erga-peer-name") && done(true); new MutationObserver(look).observe(document, { childList: true, subtree: true }); look(); }); return !!window.ergaFrame?.page && document.documentElement.hasAttribute("data-erga-editing");`,
     });
     expect(page.text.split("\n\n")[0]).toBe("true");
   });

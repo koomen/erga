@@ -4,14 +4,18 @@
 // the same interface as Cloudflare's. Its session stays open between renders (keep_alive), so a render after the first is fast.
 
 import { connect, launch, sessions, type Browser, type BrowserBinding } from "./cdp";
-import type { Env } from "./env";
 import { step, type Hold, type HoldEvent } from "./browser-hold";
 
 /** How long Cloudflare keeps a browser session with no activity, in ms (its most). */
 const KEEP_ALIVE = 600_000;
 
-/** The browser binding: Cloudflare's, the machine's Chrome or the dev server's; null where there's none. */
-export function browserBinding(env: Env): BrowserBinding | null {
+/** The browser binding, from the Worker's bindings (cloudflare/env.ts): Cloudflare's, the machine's Chrome or the dev server's; null where there's none. */
+export function browserBinding(env: {
+  BROWSER?: BrowserBinding;
+  ERGA_CHROME?: string;
+  ERGA_DEV_ORIGIN?: string;
+  ERGA_LINK_SECRET?: string;
+}): BrowserBinding | null {
   if (env.BROWSER) return env.BROWSER;
   if (env.ERGA_CHROME) return chrome(() => machineChrome(env.ERGA_CHROME!));
   if (env.ERGA_DEV_ORIGIN && env.ERGA_LINK_SECRET) return chrome(() => devChrome(env.ERGA_DEV_ORIGIN!, env.ERGA_LINK_SECRET!));
@@ -65,7 +69,7 @@ export function browsers(binding: BrowserBinding) {
   /** The connection on its way, while `starting`. */
   let starting: Promise<{ browser: Browser; how: "connected" | "launched" }> | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  /** Each connection's browser contexts, one for each person: their cookies apart, their cache kept between renders. */
+  /** Each connection's browser contexts, one for each person: their storage apart, their cache kept between renders. */
   const contexts = new WeakMap<Browser, Map<string, Promise<string>>>();
   const start = async (): Promise<{ browser: Browser; how: "connected" | "launched" }> => {
     const idle = (await sessions(binding).catch(() => [])).find((s) => !s.connectionId);
@@ -96,8 +100,9 @@ export function browsers(binding: BrowserBinding) {
       return state.at == "in use" ? Promise.resolve({ browser: state.browser, how: "reused" }) : starting!;
     },
     /**
-     * The person's browser context on this connection (made the first time): it holds their view cookie, apart from
-     * anyone else's, and the files a render loaded, for the next. It goes with the connection (disposeOnDetach).
+     * The person's browser context on this connection (made the first time): what a page keeps there (its storage)
+     * is apart from anyone else's, and other sites' files that a render loaded stay for the next. It goes with the
+     * connection (disposeOnDetach).
      */
     context(browser: Browser, person: string): Promise<string> {
       let mine = contexts.get(browser);

@@ -1,5 +1,5 @@
 // The addresses the server's own browser refuses (cloudflare/private-address.ts): the machine, private networks, a
-// cloud's metadata service; and Erga's own two addresses, which it always reaches.
+// cloud's metadata service; and the origins a server allows it (a test's own, on this machine), which it reaches.
 
 import { expect, test } from "bun:test";
 import { privateHost, reachable } from "../cloudflare/private-address";
@@ -39,7 +39,7 @@ test("the machine itself, private networks and the metadata service are refused,
     expect([url, reachable(url, OWN)]).toEqual([url, false]);
 });
 
-test("public addresses, addresses of no network, and Erga's own two addresses are reached", () => {
+test("public addresses, addresses of no network, and the allowed origins are reached", () => {
   for (const url of [
     "https://example.com/",
     "http://93.184.216.34/",
@@ -51,13 +51,13 @@ test("public addresses, addresses of no network, and Erga's own two addresses ar
     "data:text/html,hi",
     "blob:http://abc-ada.localhost:4712/1234",
     "about:blank",
-    // Erga's app and the document's pages: private addresses in local development, and its own.
+    // The allowed origins: private addresses, and named.
     "http://127.0.0.1:4712/d/abc",
     "http://abc-ada.localhost:4712/t/token/index.html",
     "ws://127.0.0.1:4712/d/abc/api/room",
   ])
     expect([url, reachable(url, OWN)]).toEqual([url, true]);
-  // Another port of the same machine is not Erga's own.
+  // Another port of the same machine is not one of them.
   expect(reachable("http://127.0.0.1:4713/", OWN)).toBe(false);
   expect(reachable("http://other-bo.localhost:4712/", OWN)).toBe(false);
   expect(privateHost("erga.dev")).toBe(false);

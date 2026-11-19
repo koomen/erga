@@ -34,7 +34,7 @@ export async function person(s: Server, login = freshLogin()) {
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
-    .find((c) => /^erga_session(_\d+)?=/.test(c));
+    .find((c) => /^erga_\d+=/.test(c));
   if (!cookie) throw new Error(`signing in at ${base}: ${r.status}`);
   const get = (path: string, init: RequestInit = {}) =>
     fetch(base + path, { redirect: "manual", ...init, headers: { Cookie: cookie, ...(init.headers as Record<string, string>) } });

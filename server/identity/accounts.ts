@@ -24,22 +24,22 @@
 // (The routes /auth/username and /auth/dev are rows of server/app.ts's list.)
 
 import * as Effect from "effect/Effect";
-import * as Base64Url from "effect/encoding/Base64Url";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import type { Platform, Session } from "../platform.ts";
+import { HttpServerResponse } from "effect/http";
+import type { Identity } from "../../gate/core.ts";
+import type { Platform } from "../platform.ts";
 import { inlineScript, inlineStyle, notFound, page, safeNext } from "../pages/index.ts";
-import { call, ctx, Field, form, json, plainJson, redirect, text, type Route } from "../http.ts";
+import { call, ctx, Field, form, fromWeb, json, plainJson, redirect, text, type Route } from "../http.ts";
 import { esc } from "../../shared/html.ts";
-import { type Directory, groupOf, label, NotAllowed, type RuleKind, type Vouched } from "../directory/index.ts";
+import { type Directory, groupOf, label, NotAllowed, type RuleKind, type Vouched, vouchedEmails } from "../directory/index.ts";
 import { safeAvatar } from "../../shared/avatars.ts";
 import { SIGN_IN_PROVIDERS, signedInWith } from "../../shared/sign-in.ts";
-import { cookies, withCookie } from "./cookies.ts";
+import { callerOf, providerFor, SIGNED_OUT, signInCookiesFor } from "./caller.ts";
+import { cookies, setCookie, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { signed } from "../signed.ts";
 import { signInChoices } from "./settings.ts";
 import { claims } from "./claim.ts";
-import { clearState, signIn } from "./sign-in.ts";
 import type { TestEnd } from "./app-test.ts";
 
 const JOIN = "erga_join";
@@ -101,35 +101,48 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
 // ------------------------------------------------------------ after a provider's answer
 
 /**
- * A provider vouched for someone: sign them in to their account, or on to the username step, or say why not.
- * `tested`: a test sign-in's result (app-test.ts), at each end. `after`: what runs once they're in, with their login.
+ * How a sign-in ends: the person the gate signs in (`next`: where they go first, when not where they were going;
+ * `cookies`: Erga's own, to set with the gate's), or a page that says why not.
+ */
+export type Ended = { identity: Identity; next?: string; cookies?: string[] } | HttpServerResponse.HttpServerResponse;
+
+/** A vouched-for person as the gate names them: by the provider's subject, with the address it verified. */
+const identityOf = (v: Vouched): Identity => ({ p: v.provider, sub: v.subject, email: vouchedEmails(v)[0] ?? "", name: v.name ?? "" });
+
+/**
+ * A provider vouched for someone: their account, or the username step first (the gate signs them in, and their
+ * account comes with the username), or a page that says why not. `next`: where they were going. `tested`: a test
+ * sign-in's result (app-test.ts), at each end.
  */
 export const vouchedSignIn = Effect.fnUntraced(function* (
   platform: Platform,
   request: Request,
   v: Vouched,
   next: string,
-  o: { onlyAdmins?: boolean; tested?: (end: TestEnd) => Promise<unknown> },
-  after?: (login: string) => Promise<void>
+  o: { onlyAdmins?: boolean; tested?: (end: TestEnd) => Promise<unknown> }
 ) {
   const tested = (end: TestEnd) => (o.tested ? call(() => o.tested!(end)) : Effect.void);
   const url = new URL(request.url);
   const dev = platform.dev(url);
+  const identity = identityOf(v);
   // A new server's first person comes by setup's one-time link (claim.ts): they may join, to become its admin.
   const join = !o.onlyAdmins && ((yield* call(() => mayJoin(platform, url, v))) || (yield* call(() => claims(platform, request))));
   const outcome = yield* call(() => resolve(platform.directory, v, { join, create: dev, onlyAdmins: o.onlyAdmins }));
   if (outcome.kind == "refused") {
     yield* tested({ kind: "refused", who: outcome.login ?? v.handle });
-    return refusedPage(v);
+    return refusedPage(v) as Ended;
   }
   if (outcome.kind == "new") {
     yield* tested({ kind: "new", handle: v.handle });
     // One way in: Erga names the account, and they go on at once. A name it can't have: they choose one.
     const named =
       outcome.suggestion && (yield* call(() => namesItself(platform, v))) ? yield* makeAccount(platform, outcome.suggestion, v) : null;
-    if (typeof named != "string") return yield* toUsernameStep(platform, request, v, next, outcome.taken);
-    if (after) yield* call(() => after(named));
-    return yield* signIn(platform, request, sessionFor(named, v), safeNext(next));
+    if (typeof named == "string") return { identity } as Ended;
+    // On to the username step, with its cookie: who they are, signed, for half an hour.
+    const value = yield* call(() =>
+      Join.seal(platform.secret, { v, next: safeNext(next), ...(outcome.taken ? { taken: outcome.taken } : {}) })
+    );
+    return { identity, next: "/auth/username", cookies: [setCookie(request, JOIN, value, JOIN_SECONDS, "/auth")] } as Ended;
   }
   const admin = yield* call(() => platform.directory.users.isAdmin(outcome.login));
   yield* tested({ kind: "in", login: outcome.login, admin });
@@ -139,18 +152,36 @@ export const vouchedSignIn = Effect.fnUntraced(function* (
       `${label(v.provider)} sign-in is off`,
       `This server doesn't take sign-in with ${esc(label(v.provider))}. <a href="/auth/sign-in?next=${encodeURIComponent(safeNext(next))}">Sign in another way</a>.`,
       403
-    );
-  if (after) yield* call(() => after(outcome.login));
-  return yield* signIn(platform, request, sessionFor(outcome.login, v), safeNext(next));
+    ) as Ended;
+  return { identity } as Ended;
 });
 
-const sessionFor = (login: string, v: Vouched): Session => ({ login, name: v.name?.trim().split(/\s+/)[0] || login });
+/**
+ * A sign-in's end as an answer, for someone the gate signed in already (a gate in front): on to `next`, or the page.
+ * `more`: cookies to set with Erga's own.
+ */
+export const ended = (end: Ended, request: Request, next: string, more: string[] = []) => {
+  if (HttpServerResponse.isHttpServerResponse(end)) return end;
+  const headers = new Headers({ Location: end.next ?? safeNext(next), "Cache-Control": "no-store" });
+  for (const c of [...more, ...(end.cookies ?? [])]) headers.append("set-cookie", c);
+  if (cookies(request).has(SIGNED_OUT)) headers.append("set-cookie", setCookie(request, SIGNED_OUT, "", 0));
+  return fromWeb(new Response(null, { status: 302, headers }));
+};
+
+/**
+ * Local development's sign-in, which has no issuer: a sign-in's end as an answer, with the gate's cookies for the
+ * person, made here (caller.ts).
+ */
+export const devSignedIn = Effect.fnUntraced(function* (platform: Platform, request: Request, end: Ended, next: string) {
+  if (HttpServerResponse.isHttpServerResponse(end)) return end;
+  return ended(end, request, next, yield* call(() => signInCookiesFor(platform, new URL(request.url), end.identity)));
+});
 
 /**
  * Whether Erga names a new account itself, with no username step: this sign-in is the server's one way in, and what it
  * calls people is one person's each. A provider's logins are. Its email addresses are only when one group rule lets
  * people in, of this provider's kind (one Google Workspace), and this person is in that group: the part before the @
- * is then one person's. The server's only sign-in (the proxy) names nobody: its people choose. With the setting
+ * is then one person's. The server's only sign-in (a gate in front) names nobody: its people choose. With the setting
  * auto_usernames, any sign-in that vouches for its email address names the account by it.
  */
 async function namesItself(platform: Pick<Platform, "own" | "signIn" | "directory">, v: Vouched): Promise<boolean> {
@@ -233,13 +264,16 @@ type Pending = typeof Join.seal extends (secret: string, value: infer A, ...rest
 const withJoin = (response: Parameters<typeof withCookie>[0], request: Request, value: string, maxAge: number) =>
   withCookie(response, request, JOIN, value, maxAge, "/auth");
 
-/** On to the username step, with its cookie: who they are, signed, for half an hour. */
-const toUsernameStep = Effect.fnUntraced(function* (platform: Platform, request: Request, v: Vouched, next: string, taken?: string) {
-  const value = yield* call(() => Join.seal(platform.secret, { v, next: safeNext(next), ...(taken ? { taken } : {}) }));
-  return clearState(withJoin(redirect("/auth/username", 302, { "Cache-Control": "no-store" }), request, value, JOIN_SECONDS), request);
-});
-
-const pendingOf = (platform: Platform, request: Request): Promise<Pending | null> => Join.open(platform.secret, cookies(request).get(JOIN));
+/**
+ * Who waits at the username step, if this browser's sign-in is still theirs: the gate signed them in at their sign-in
+ * (accounts come by the provider's subject), and the cookie is of that sign-in.
+ */
+async function pendingOf(platform: Platform, request: Request): Promise<Pending | null> {
+  const pending = await Join.open(platform.secret, cookies(request).get(JOIN));
+  const who = callerOf(request);
+  const same = !!pending && who.kind == "person" && providerFor(platform, who) == pending.v.provider && who.sub == pending.v.subject;
+  return same ? pending : null;
+}
 
 /** /auth/username: choose a username, for a new account. */
 export const usernameStep: Route = Effect.gen(function* () {
@@ -271,7 +305,8 @@ export const usernameStep: Route = Effect.gen(function* () {
     return redirect("/auth/username", 303);
   const login = yield* makeAccount(platform, wanted, v);
   if (login instanceof NotAllowed) return yield* seeOther(platform, request, "/auth/username", { error: login.message, value: wanted });
-  return withJoin(yield* signIn(platform, request, sessionFor(login, v), pending.next), request, "", 0);
+  // They are signed in already (the gate's cookie names them): the account is theirs from now.
+  return withJoin(redirect(pending.next, 302, { "Cache-Control": "no-store" }), request, "", 0);
 });
 
 const UsernameForm = Schema.Struct({ username: Field });
@@ -308,7 +343,7 @@ export const devSignIn: Route = Effect.gen(function* () {
   const provider = q.get("provider") ?? "";
   const info = SIGN_IN_PROVIDERS[provider];
   const subject = q.get("subject")?.trim();
-  // (handle= with nothing: a sign-in that names nobody, as the proxy's with no email address.)
+  // (handle= with nothing: a sign-in that names nobody, as a gate's in front with no email address.)
   const handle = q.get("handle")?.trim();
   if (!info || !subject || handle == null) return page("Not enough", "Give the pretend identity's provider=, subject= and handle=.", 400);
   const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
@@ -321,7 +356,8 @@ export const devSignIn: Route = Effect.gen(function* () {
         .map((g) => groupOf(kind, g))
     : [];
   const picture = safeAvatar(q.get("picture"));
-  return yield* vouchedSignIn(
+  const next = safeNext(q.get("next"));
+  const end = yield* vouchedSignIn(
     platform,
     request,
     {
@@ -334,7 +370,8 @@ export const devSignIn: Route = Effect.gen(function* () {
       picture,
       ...(info.handle == "login" ? { oldLogin: handle.toLowerCase() } : {}),
     },
-    q.get("next") ?? "/",
+    next,
     {}
   );
+  return yield* devSignedIn(platform, request, end, next);
 });

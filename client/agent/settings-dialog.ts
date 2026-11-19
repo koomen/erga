@@ -8,7 +8,8 @@
 //     whoami (its apiKeys) and revoke. The agent's panel hears "erga:agent-keys" and reads its models again.
 //   - Tokens: the person's agent tokens (whoami's tokens), newest first: the first SHOWN, then "N more" and Show 10
 //     more, which asks whoami for the next MORE. Each has Revoke (revoke). An expired token isn't listed (whoami). New
-//     token makes one (POST /tokens/new), shown once, with the lines to give an agent.
+//     token makes one (POST /tokens/new: the token comes in the answer's header x-erga-token), shown once, with the
+//     lines to give an agent.
 //
 // A key or a token is never in the page's address, its storage or the conversation. Its class names stay clear of the
 // app pages' own (client/inline/app.css: header, .new, .empty): the dialog is on all of them.
@@ -28,7 +29,6 @@ interface Key {
 interface Token {
   id: string;
   label: string;
-  kind: string;
   scope: string;
   document?: string;
   expires: string | null;
@@ -67,7 +67,7 @@ function make(): HTMLDialogElement {
 <p class="sub">Your own API keys, for your agent only. A saved key is never shown again.</p>
 <ul class="rows"></ul></section>
 <section class="tokens" aria-labelledby="erga-settings-tokens"><h3 id="erga-settings-tokens">Tokens</h3>
-<p class="sub">A token lets an outside agent or script act as you.</p>
+<p class="sub">A token lets an outside agent or script act as you, for 30 days at most.</p>
 <div class="made" hidden></div><ul class="rows"></ul>
 <p class="more" hidden><span></span> <button type="button" class="pill">Show 10 more</button></p>
 <form class="make"><label>Name <input name="label" maxlength="80" placeholder="Claude Code on my laptop" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore></label>
@@ -229,7 +229,7 @@ function addTokens(rows: Token[]): HTMLElement | null {
   for (const t of rows) {
     list.insertAdjacentHTML(
       "beforeend",
-      `<li data-id="${esc(t.id)}"><div class="what"><b>${esc(t.label)}</b> <span class="state">${esc(SCOPES[t.scope] ?? t.scope)}${t.kind == "share" ? " · Share button" : ""} · expires ${esc(day(t.expires))} · last used ${esc(day(t.lastUsed))}</span></div>
+      `<li data-id="${esc(t.id)}"><div class="what"><b>${esc(t.label)}</b> <span class="state">${esc(SCOPES[t.scope] ?? t.scope)} · expires ${esc(day(t.expires))} · last used ${esc(day(t.lastUsed))}</span></div>
 <button type="button" class="pill revoke">Revoke</button></li>`
     );
     const li = list.lastElementChild as HTMLElement;
@@ -263,15 +263,17 @@ async function makeToken(form: HTMLFormElement) {
       expires: f.get("expires"),
     }),
   }).catch(() => null);
-  const body = (r ? await r.json().catch(() => ({})) : {}) as { ok?: boolean; error?: string; token?: string; info?: Token };
-  if (!r?.ok || !body.ok || !body.token || !body.info) {
+  const body = (r ? await r.json().catch(() => ({})) : {}) as { ok?: boolean; error?: string; info?: Pick<Token, "label" | "scope"> };
+  // The token itself is the gate's to make: it comes in a header of the answer, one time.
+  const token = r?.headers.get("x-erga-token");
+  if (!r?.ok || !body.ok || !token || !body.info) {
     hint.textContent = body.error ?? "Couldn't reach the server: try again.";
     return;
   }
   hint.textContent = "";
   form.reset();
   const o = location.origin,
-    t = body.token;
+    t = token;
   const made = $("section.tokens .made");
   made.innerHTML = `<p><b>${esc(body.info.label)}</b>: ${esc(SCOPES[body.info.scope] ?? body.info.scope)}. Copy it now: it isn't shown again.</p>
 <pre class="secret">${esc(t)}</pre><p>Add Erga to Claude Code:</p>

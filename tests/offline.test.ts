@@ -21,13 +21,15 @@ test("the page made again from another text is the page the pages origin makes f
     html = `<html><body><p>Milk</p></body></html>`;
   for (const editor of [false, true])
     for (const from of [before, bare, doctype, html]) {
-      const served = readerPage(from, { shell: SHELL, prefix: PREFIX, src: sourceDigest(from), editor });
+      const served = readerPage(from, { shell: SHELL, prefix: PREFIX, src: sourceDigest(from), editor, worker: true });
       const head = headIn(served);
       expect(head).not.toBeNull();
-      expect(pageAgain(head!, after, SHELL)).toBe(readerPage(after, { shell: SHELL, prefix: PREFIX, src: sourceDigest(after), editor }));
+      expect(pageAgain(head!, after)).toBe(
+        readerPage(after, { shell: SHELL, prefix: PREFIX, src: sourceDigest(after), editor, worker: true })
+      );
     }
   expect(headIn(before), "a page Erga didn't make").toBeNull();
-  expect(pageAgain("<script data-erga>x</script>", after, SHELL), "a head that names no text").toBeNull();
+  expect(pageAgain("<script data-erga>x</script>", after), "a head that names no text").toBeNull();
 });
 
 test("a page is kept under its address without the editor's marks or its hash, apart from the file as a script fetches it", () => {

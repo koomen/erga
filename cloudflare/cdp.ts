@@ -163,19 +163,17 @@ export class Page {
   }
 
   /**
-   * Each frame of the page on another site (its own target, its own process): `f` gets it as a Page, before its
-   * scripts run (it starts paused, and goes on once `f` is done). Another kind of target (a worker) just goes on,
-   * after `each`, which gets every target.
+   * Each target of the page (a frame on another site, in its own process; a worker), as a Page, before its code runs:
+   * it starts paused, and goes on once `each` is done, and `f` for a frame. It stops hearing them when the page does.
    */
-  async onFrames(f: (frame: Page, url: string) => Promise<void>, each?: (target: Page) => Promise<void>): Promise<void> {
+  async onFrames(f: (frame: Page, url: string) => Promise<void>, each: (target: Page) => Promise<void>): Promise<void> {
     this.on((method, p) => {
       if (method != "Target.attachedToTarget") return;
       const child = new Page(this.browser, p.targetInfo.targetId, p.sessionId);
+      this.offs.push(() => child.detach());
       void (async () => {
-        // `each`: every target of the page (a frame, a worker), before any of its code runs.
-        await each?.(child).catch(() => {});
+        await each(child).catch(() => {});
         if (p.targetInfo.type == "iframe") await f(child, p.targetInfo.url).catch(() => {});
-        else if (!each) child.detach();
         await child.send("Runtime.runIfWaitingForDebugger").catch(() => {});
       })();
     });

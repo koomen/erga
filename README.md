@@ -35,7 +35,8 @@ git. Give your coding agent this prompt:
       which profile, if `aws configure list-profiles` shows several.
    4. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
       your organization: which GitHub organization or email domain?
-      3. Your organization's single sign-on:
+      3. Your organization's single sign-on (not available in this
+      version: setup refuses it, and says so):
       - Cloudflare: the Zero Trust team name, and the Application Audience
         (AUD) tag of a self-hosted Access application that the user adds
         for the address, with a Bypass policy for the

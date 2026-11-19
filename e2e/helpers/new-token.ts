@@ -1,5 +1,5 @@
-// Makes an agent token as the Settings dialog does (POST /tokens/new, client/agent/settings-dialog.ts): with a session
-// cookie, else as DEV_LOGIN. The token, or "" and the server's error.
+// Makes an agent token as the Settings dialog does (POST /tokens/new, client/agent/settings-dialog.ts: the token is in
+// the answer's header x-erga-token): with a sign-in's cookie, else as DEV_LOGIN. The token, or "" and the server's error.
 export async function newToken(
   root: string,
   fields: Record<string, string>,
@@ -11,11 +11,11 @@ export async function newToken(
     body: JSON.stringify(fields),
   });
   const text = await r.text();
-  let body: { token?: string; error?: string } = {};
+  let body: { error?: string } = {};
   try {
     body = JSON.parse(text);
   } catch {
     body = { error: text };
   }
-  return { token: body.token ?? "", error: body.error ?? "", status: r.status };
+  return { token: r.headers.get("x-erga-token") ?? "", error: body.error ?? "", status: r.status };
 }

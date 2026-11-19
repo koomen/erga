@@ -326,7 +326,15 @@ function sizeInput() {
   if (!fieldSizing) { input.style.height = "auto"; input.style.height = input.scrollHeight + 2 + "px"; }
   renderBusy();
 }
-new ResizeObserver(() => { const h = input.offsetHeight; if (h) field.style.height = h + "px"; }).observe(input);
+// (In the next frame, not in the observer's own call: the wrapper's height changes the log's, which has an observer too
+// (agent-chat.ts), and a size that an observer's call changes gives the window an error event, "ResizeObserver loop
+// completed with undelivered notifications", in every browser.)
+new ResizeObserver(() =>
+  requestAnimationFrame(() => {
+    const h = input.offsetHeight;
+    if (h) field.style.height = h + "px";
+  })
+).observe(input);
 
 // An unsent message survives a reload (kept in this browser only).
 const DRAFT = "erga:factory-agent-draft:v1"; // its old name, so a draft from before survives

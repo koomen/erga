@@ -11,6 +11,7 @@ import { expect, journey, servers, test, until, type Tab } from "../helpers/fixt
 import { DISK_MS, F, openEditor, TIMESCALE, type Editor } from "../helpers/editor";
 import { dragAt, dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
 import { clickOn, pointerOnPage, pressOn } from "../helpers/press";
+import { newToken } from "../helpers/new-token";
 import { runTool } from "../helpers/tools";
 import { WAIT_MS } from "../../client/common/frame-swap";
 import { FIX_REPORTED } from "../../shared/page-report";
@@ -633,15 +634,7 @@ journey("files dropped and pasted on a page in a folder", () => {
     // (The alerts' times, ten times as fast, from here to the journey's end: the quiet second, and how long a line
     // that is done stays.)
     await ed.eval(`window.__ergaTimescale = ${TIMESCALE}`);
-    const token = (
-      (await (
-        await fetch(`${s.root}${address}/api/share`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Origin: s.root },
-          body: "{}",
-        })
-      ).json()) as { token: string }
-    ).token;
+    const { token } = await newToken(s.root, { label: "An agent", scope: "documents" });
     const bytes = readFileSync(onDisk("chart.png"));
     const hash = createHash("sha256").update(bytes).digest("hex");
     const agent = (name: string, args: Record<string, unknown>) => runTool(s.root, name, { document: id, ...args }, { token });

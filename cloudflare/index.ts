@@ -1,7 +1,7 @@
 // The app's Worker: the entry point. It builds the app's Platform from the
-// Worker's bindings (platform.ts), hands every request to the app
-// (server/app.ts, the one route table), answers the few routes that run only
-// here, runs the server's scheduled work each minute (its Cron Trigger, which the deploy sets: server/health.ts,
+// Worker's bindings (platform.ts), hands every request to the gate and then the app
+// (server/identity/mount.ts; app.ts: server/app.ts, the one route table, and the few routes that run only
+// here), runs the server's scheduled work each minute (its Cron Trigger, which the deploy sets: server/health.ts,
 // tick), and exports the Durable Objects. The same Worker runs in local
 // development, under Vite.
 //
@@ -13,12 +13,10 @@
 // Trap: Cloudflare refuses an upload that marks a Durable Object class deleted (cloudflare.config.ts, `state:
 // "deleted"`) while the bundle still exports it. Never export a deleted class here.
 
-import * as Effect from "effect/Effect";
-import { app } from "../server/app.ts";
 import { tick } from "../server/health.ts";
-import { respond } from "../server/http.ts";
-import { deploysRoutes, isDeploysPath } from "./deploy-routes";
-import { devRoutes } from "./dev";
+import { overHttps } from "../shared/http.ts";
+import { gated } from "../server/identity/index.ts";
+import { ergaOf } from "./app";
 import type { Env } from "./env";
 import { platform } from "./platform";
 import { simulateLatency, tallied } from "./timing";
@@ -34,7 +32,11 @@ export default {
     const started = Date.now();
     if (env.ERGA_REMOTE_LATENCY_MS) simulateLatency(Number(env.ERGA_REMOTE_LATENCY_MS));
     const p = platform(env, ctx);
-    const { value: answer, timing } = await tallied(() => respond(app(outside(env)), request, p));
+    // The address as the browser asked it (shared/http.ts: celld behind CloudFront hears http). A socket's request too.
+    const https = overHttps(request.url);
+    const asked = https ? new Request(https, request) : request;
+    // The gate first (server/identity/mount.ts): the app hears only who calls.
+    const { value: answer, timing } = await tallied(() => gated(p, asked, ergaOf(env, p)));
     if (answer.status == 101) return answer;
     return timed(answer, [`worker;dur=${Date.now() - started}`, ...timing]);
   },
@@ -43,14 +45,6 @@ export default {
     await tick(platform(env, ctx));
   },
 } satisfies ExportedHandler<Env>;
-
-/** The routes outside the app (server/app.ts, Outside): the deploys', the dev server's. */
-const outside = (env: Env) => (url: URL) =>
-  Effect.gen(function* () {
-    const path = url.pathname;
-    if (isDeploysPath(path)) return yield* deploysRoutes(env);
-    return yield* devRoutes(env);
-  });
 
 /**
  * How long the Worker took over a response (Server-Timing, which the browser's

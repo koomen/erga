@@ -21,6 +21,7 @@ import type { Sql, Statement } from "./model.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
 import { isModelChoice, MODELS } from "../../shared/models.ts";
+import { SIGN_IN_DAYS, SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 /** A write another write came in on the middle of: it tries again. */
 class Interleaved extends Data.TaggedError("Interleaved") {}
@@ -153,6 +154,14 @@ export const SETTINGS = {
     values: "true: only for a verified address; a taken name gets a number (pete2). false: each new user chooses their username.",
     default: false,
     parse: boolean,
+  }),
+  sign_in_days: setting<number>({
+    label: "A sign-in lasts",
+    description:
+      "How long a person stays signed in. A change applies to new sign-ins. With single sign-on, the gate's deploy sets it instead.",
+    values: `Days, from 1 to ${SIGN_IN_DAYS_MAX}. A person who is signed in keeps the end they have. An agent's grant is apart: 30 days.`,
+    default: SIGN_IN_DAYS,
+    parse: integer(1, SIGN_IN_DAYS_MAX),
   }),
   agent_keys: setting<"server" | "own">({
     label: "Whose keys the agents use",
