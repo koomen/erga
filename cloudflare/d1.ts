@@ -1,7 +1,7 @@
 // The directory, with the server's users and
 // settings, on D1, through D1's API. A batch is one transaction.
 
-import { Directory, parseDeployed, type Param, type Permission, type Sql } from "../server/directory/index.ts";
+import { Directory, keyCheck, parseDeployed, type Param, type Permission, type Sql } from "../server/directory/index.ts";
 import { accountLookup, Grants, providersOf } from "../server/identity/index.ts";
 import { forgetDecisions } from "../server/documents/index.ts";
 
@@ -101,6 +101,8 @@ export function directoryOf(env: Env): Directory {
       },
       credentialSecret: factoryKey(env),
       fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim(),
+      // A new API key is checked with its provider; locally (the tests), with the dev server's stand-in for the four.
+      keyCheck: keyCheck(env.DEV_LOGIN?.trim() && env.ERGA_DEV_ORIGIN ? `${env.ERGA_DEV_ORIGIN}/__providers` : null),
     });
     directory = { db: env.DB, dir };
   }

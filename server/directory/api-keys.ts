@@ -21,7 +21,10 @@
 // key that doesn't open is shown as such (`unreadable`), and the agents
 // say so. The last four characters are kept in plain text, for the page.
 
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { changeLogEntry } from "../../shared/attribution.ts";
@@ -29,40 +32,53 @@ import type { Sql, Statement } from "./model.ts";
 import type { Actor, Users } from "./index.ts";
 import { randomBytes, sha256 } from "../../shared/bytes.ts";
 
+/** A request to a provider: its address, and its headers (the key is in one). */
+type Ask = { url: string; headers: Record<string, string> };
+
 /**
- * The keys there are, by name: the Worker secret each stands in for, the
- * service it is for, and how a real one starts (any start, if none).
+ * The keys there are, by name: the Worker secret each stands in for, the service it is for, and the request that
+ * checks a key with that service before it is kept (keyCheck): a free one that works with any key the service knows.
+ * Nothing here looks at a key's shape: a provider changes it (Google's keys of 2026 start in a new way).
+ * The requests and the refusals were read on 2026-11-19: Anthropic's, OpenAI's and Google's list of models
+ * (platform.claude.com/docs/en/api/models/list, developers.openai.com/api/reference/resources/models/methods/list,
+ * ai.google.dev/api/models), and OpenRouter's own facts of a key (its list of models asks for no key).
  */
 export const CREDENTIALS = {
   anthropic: {
     env: "ANTHROPIC_API_KEY",
     label: "Anthropic API key",
     service: "Anthropic",
-    prefixes: ["sk-ant-"],
+    ask: (key: string): Ask => ({
+      url: "https://api.anthropic.com/v1/models?limit=1",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+    }),
     description: "Each user's agent can use Claude with it, and the descriptions of versions call Anthropic's API with it.",
   },
   openai: {
     env: "OPENAI_API_KEY",
     label: "OpenAI API key",
     service: "OpenAI",
-    prefixes: ["sk-"],
+    ask: (key: string): Ask => ({ url: "https://api.openai.com/v1/models", headers: { Authorization: `Bearer ${key}` } }),
     description: "Each user's agent can use OpenAI's GPT models with it.",
   },
   google: {
     env: "GEMINI_API_KEY",
     label: "Google Gemini API key",
     service: "Google",
-    prefixes: ["AIza"],
+    ask: (key: string): Ask => ({
+      url: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+      headers: { "x-goog-api-key": key },
+    }),
     description: "Each user's agent can use Google's Gemini models with it.",
   },
   openrouter: {
     env: "OPENROUTER_API_KEY",
     label: "OpenRouter API key",
     service: "OpenRouter",
-    prefixes: ["sk-or-"],
+    ask: (key: string): Ask => ({ url: "https://openrouter.ai/api/v1/key", headers: { Authorization: `Bearer ${key}` } }),
     description: "Each user's agent can use the models Erga lists from OpenRouter (Grok, Kimi, DeepSeek) with it.",
   },
-} as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
+} as const satisfies Record<string, { env: string; label: string; service: string; ask: (key: string) => Ask; description: string }>;
 
 /**
  * The secrets only the deploy sets (Worker secrets). Each admin page lists those for what it governs (server/admin/),
@@ -101,7 +117,6 @@ export const DEPLOY_SECRETS = [
 /** A deploy-time secret as an admin sees it: only whether the deploy has it. */
 export interface DeploySecretEntry { env: string; service: string; description: string; why: string; set: boolean; /** Not set, but something stands in for it (FACTORY_KEY: the session secret, locally). */ standIn: boolean }
 
-const aOrAn = (label: string) => `${/^[AEIOU]/.test(label) ? "an" : "a"} ${label}`;
 export type CredentialName = keyof typeof CREDENTIALS;
 export const isCredentialName = (s: string): s is CredentialName => Object.hasOwn(CREDENTIALS, s);
 
@@ -138,24 +153,46 @@ interface Row { name: string; iv: string; data: string; last4: string; updated: 
 const enc = new TextEncoder();
 const NO_FACTORY_KEY = "This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts makes it.";
 
-/** Checks and tidies a key as pasted: its own provider's, one line, no spaces. */
+/** Tidies a key as pasted, and refuses what no request can carry. Whether it is a key, its provider says (keyCheck). */
 export function checkKey(name: CredentialName, value: string): string {
-  const c = CREDENTIALS[name], key = value.trim();
-  if (!key) throw new CredentialError({ message: `Paste the ${c.label}, or use Clear to remove it.` });
-  if (name == "anthropic" && key.startsWith("sk-ant-oat"))
-    throw new CredentialError({ message: `That is a Claude plan token (sk-ant-oat…), not an API key. An API key starts with sk-ant-api.` });
-  // An OpenAI key starts with sk-, as Anthropic's and OpenRouter's do: one of those is pasted in the wrong row.
-  const other = (Object.keys(CREDENTIALS) as CredentialName[]).find(
-    (n) => n != name && CREDENTIALS[n].prefixes.some((p) => p.length > 3 && key.startsWith(p))
-  );
-  if (other) throw new CredentialError({ message: `That is ${aOrAn(CREDENTIALS[other].label)}, not ${aOrAn(c.label)}.` });
-  const prefixes: readonly string[] = c.prefixes;
-  if (prefixes.length && !prefixes.some((p) => key.startsWith(p)))
-    throw new CredentialError({ message: `That isn't ${aOrAn(c.label)}: one starts with ${prefixes.join(" or ")}.` });
-  if (!/^[\x21-\x7e]{20,400}$/.test(key))
-    throw new CredentialError({ message: `That isn't ${aOrAn(c.label)}: a key is 20 to 400 characters, with no spaces.` });
+  const key = value.trim();
+  if (!key) throw new CredentialError({ message: `Paste the ${CREDENTIALS[name].label}, or use Clear to remove it.` });
+  if (!/^[\x21-\x7e]{1,400}$/.test(key))
+    throw new CredentialError({ message: "A key is one line of 400 characters at most, with no spaces." });
   return key;
 }
+
+/** A key's check with its provider, before the key is kept: it throws what the provider says (a CredentialError). */
+export type KeyCheck = (name: CredentialName, key: string) => Promise<void>;
+
+/** A provider's refusal: all four say why in error.message. */
+const Refusal = Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }));
+
+/**
+ * The provider says whether a key is one: one request (CREDENTIALS, `ask`), with 8 s for the answer. Refused, or no
+ * answer: the key is not kept, and the page says the provider's own reason. `standIn`: an origin that answers in each
+ * provider's place, at /<name> (local development and the tests: dev/vite-plugin.ts).
+ */
+export const keyCheck =
+  (standIn: string | null, f: typeof fetch = fetch): KeyCheck =>
+  async (name, key) => {
+    const { service, ask } = CREDENTIALS[name];
+    const { url, headers } = ask(key);
+    const answer = await Effect.runPromise(
+      Effect.tryPromise({ try: (signal) => f(standIn ? `${standIn}/${name}` : url, { headers, signal }), catch: () => null }).pipe(
+        Effect.timeoutOption(Duration.seconds(8)),
+        Effect.map(Option.getOrNull),
+        Effect.catch(() => Effect.succeed(null))
+      )
+    );
+    if (answer?.ok) return;
+    if (!answer) throw new CredentialError({ message: `${service} gave no answer, so the key isn't checked or saved. Try again.` });
+    const said = Option.match(Schema.decodeOption(Refusal)(await answer.text().catch(() => "")), {
+      onNone: () => `HTTP ${answer.status}`,
+      onSome: (a) => a.error.message.replaceAll(key, "…"),
+    });
+    throw new CredentialError({ message: `${service} refuses this key, so it isn't saved. ${service} says: ${said}` });
+  };
 
 /**
  * AES-GCM under a key derived from the deploy-time secret: a value sealed with a fresh IV, bound to its `label` (the
@@ -197,9 +234,15 @@ export class Credentials {
   /**
    * `secret`: the deploy-time secret the keys are encrypted with (null: this
    * server can't store any). `fallback`: the Worker secrets the deploy has,
-   * by name (e.g. ANTHROPIC_API_KEY), so the page can say one stands in.
+   * by name (e.g. ANTHROPIC_API_KEY), so the page can say one stands in. `check`: a new key's check with its provider.
    */
-  constructor(private sql: Sql, private users: Users, secret: string | null, private fallback: (env: string) => boolean = () => false) {
+  constructor(
+    private sql: Sql,
+    private users: Users,
+    secret: string | null,
+    private fallback: (env: string) => boolean = () => false,
+    private check: KeyCheck = async () => {}
+  ) {
     this.box = secret ? new KeyBox(secret, "erga-credentials") : null;
   }
 
@@ -246,6 +289,7 @@ export class Credentials {
     const n = nameOf(name);
     const key = checkKey(n, value);
     if (!this.box) throw new CredentialError({ message: NO_FACTORY_KEY });
+    await this.check(n, key);
     const { iv, data } = await this.box.seal(n, key);
     const had = await this.has(n), at = Date.now(), login = by.login.toLowerCase();
     await this.sql.batch([
@@ -335,7 +379,8 @@ export class PersonKeys {
   private box: KeyBox | null;
   constructor(
     private sql: Sql,
-    secret: string | null
+    secret: string | null,
+    private check: KeyCheck = async () => {}
   ) {
     this.box = secret ? new KeyBox(secret, "erga-credentials") : null;
   }
@@ -376,6 +421,7 @@ export class PersonKeys {
     const n = nameOf(name),
       key = checkKey(n, value);
     if (!this.box) throw new CredentialError({ message: NO_FACTORY_KEY });
+    await this.check(n, key);
     const { iv, data } = await this.box.seal(this.label(by.login, n), key);
     await this.sql.run(
       `INSERT INTO person_keys (login, name, iv, data, last4, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)

@@ -21,6 +21,7 @@
 //   POST /__erga/open    path=<file or folder>: links it for whoever's signed in and goes to it
 //   POST /__erga/flush   ?link=<secret>: every linked document writes what it holds to disk now (dev/start.ts, before stopping)
 //   /__github/...        a stand-in for GitHub's sign-in and API (github-mock.ts)
+//   /__providers/<name>  a stand-in for each model provider's answer to an API key's check
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -43,6 +44,14 @@ import { ROOT } from "../deploy/root.ts";
 
 /** The largest file a document on disk takes: the room reads each whole when it opens, over a WebSocket. */
 const MAX_FILE = 10_000_000;
+
+/** What each model provider answers to a key it doesn't know (error.message, read on 2026-11-19). */
+const REFUSALS: Record<string, string> = {
+  anthropic: "invalid x-api-key",
+  openai: "Incorrect API key provided: refused-********0000. You can find your API key at https://platform.openai.com/account/api-keys.",
+  google: "API key not valid. Please pass a valid API key.",
+  openrouter: "User not found.",
+};
 
 /** A file or folder on disk, linked to one of `owner`'s documents (at /<owner>/<slug>). */
 interface Link { owner: string; id: string; slug: string; folder: string; index: string; only: boolean }
@@ -143,6 +152,16 @@ export function ergaDev(opts: DevOptions): Plugin {
         const url = new URL(req.url ?? "/", "http://localhost");
         if (req.method == "POST" && url.pathname == "/__erga/open") return void open(req, res, url).catch(next);
         if (url.pathname.startsWith("/__github/")) return void pretendGithub(req, res, url).catch(next);
+        // The pretend model providers, for an API key's check (server/directory/api-keys.ts, keyCheck). Each takes any
+        // key but one with "refused" in it, which it refuses in the provider's own words (read on 2026-11-19).
+        const refusal = REFUSALS[url.pathname.replace("/__providers/", "")];
+        if (refusal) {
+          const key = ["x-api-key", "x-goog-api-key", "authorization"].map((h) => String(req.headers[h] ?? "")).join("");
+          const refused = key.includes("refused");
+          return void res
+            .writeHead(refused ? 401 : 200, { "Content-Type": "application/json" })
+            .end(JSON.stringify(refused ? { error: { message: refusal } } : { data: [] }));
+        }
         // The server's browser, for view_page (dev/browser.ts): the Worker asks for it with the link secret.
         if (req.method == "POST" && url.pathname == "/__erga/browser" && url.searchParams.get("link") == opts.secret) {
           return void localBrowser().then(

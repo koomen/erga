@@ -228,8 +228,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     }
   });
 
-  test("Settings: the wrong provider's key is refused; their own key gives their agent its models, and the page never shows it again", async () => {
-    const OPENROUTER = "sk-or-v1-" + "e".repeat(60) + "E2e9";
+  test("Settings: a key that its provider refuses isn't kept, with the provider's reason; their own key gives their agent its models, and the page never shows it again", async () => {
     // Their tokens, for the steps after: made as Settings makes them, the oldest first, while this step goes on.
     tokens = (async () => {
       for (let i = 1; i <= 17; i++)
@@ -238,11 +237,14 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     tokens.catch(() => {});
     await page.goto(`${root}/auth/github?as=${login}&next=/documents`);
     await openSettings(page);
-    await page.fill("#erga-settings li[data-name=openai] input", OPENROUTER);
+    // (The dev server stands in for the providers, and refuses a key with "refused" in it: dev/vite-plugin.ts.)
+    await page.fill("#erga-settings li[data-name=openai] input", "refused-" + "e".repeat(40));
     await page.press("#erga-settings li[data-name=openai] input", "Enter");
-    await soon(() => page.textContent("#erga-settings li[data-name=openai] .hint")).toContain("That is an OpenRouter API key");
-    // Their Google key: Gemini's models, in Google's order.
-    const GOOGLE = "AIza" + "g".repeat(31) + "G4e0";
+    await soon(() => page.textContent("#erga-settings li[data-name=openai] .hint")).toContain(
+      "OpenAI refuses this key, so it isn't saved. OpenAI says: Incorrect API key provided"
+    );
+    // Their Google key, with a start of no known kind (Google says that it is one): Gemini's models, in Google's order.
+    const GOOGLE = "Ab." + "g".repeat(32) + "G4e0";
     await page.fill("#erga-settings li[data-name=google] input", GOOGLE);
     await page.press("#erga-settings li[data-name=google] input", "Enter");
     await soon(() => page.textContent("#erga-settings li[data-name=google] .state")).toBe("Set · ends in …G4e0");

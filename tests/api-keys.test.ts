@@ -5,7 +5,7 @@
 
 import { afterAll, expect, test } from "bun:test";
 import { adminRoutes } from "../server/admin/index.ts";
-import { checkKey, CredentialError, Credentials, Directory, NotAllowed } from "../server/directory/index.ts";
+import { checkKey, CredentialError, Credentials, Directory, keyCheck, NotAllowed } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 import { respond } from "../server/http.ts";
@@ -16,10 +16,21 @@ quietConsole();
 const ANTHROPIC = "sk-ant-api03-" + "x".repeat(80) + "Ab12";
 const OPENAI = "sk-proj-" + "y".repeat(60) + "Zz90";
 
+/** In the providers' place (no test asks a real one): it knows every key but "nope". */
+const provider = (async (_: RequestInfo | URL, init?: RequestInit) =>
+  JSON.stringify(init?.headers).includes("nope")
+    ? Response.json({ error: { message: "invalid x-api-key" } }, { status: 401 })
+    : Response.json({ data: [] })) as typeof fetch;
+
 function fresh(secret: string | null = "the factory key", fallback: string[] = []) {
   const sql = memory();
   const db = sql.db;
-  const dir = new Directory(sql, { admins: ["ada"], credentialSecret: secret, fallback: (env) => fallback.includes(env) });
+  const dir = new Directory(sql, {
+    admins: ["ada"],
+    credentialSecret: secret,
+    fallback: (env) => fallback.includes(env),
+    keyCheck: keyCheck(null, provider),
+  });
   return { db, sql, dir };
 }
 const ada = { login: "ada", admin: true };
@@ -65,16 +76,81 @@ test("admins only, with admin power; a key that isn't one, or a server with no s
   await expect(dir.credentials.set({ login: "mallory" }, "anthropic", ANTHROPIC)).rejects.toThrow(NotAllowed);
   await expect(dir.credentials.list({ login: "ada" })).rejects.toThrow(/no admin power/);
   await expect(dir.credentials.set(ada, "gemini", ANTHROPIC)).rejects.toThrow(/no key "gemini"/);
-  // An OpenAI key starts with sk-, as Anthropic's does: one pasted in the wrong row is named.
-  await expect(dir.credentials.set(ada, "openai", ANTHROPIC)).rejects.toThrow(/That is an Anthropic API key, not an OpenAI API key/);
-  expect(checkKey("openai", OPENAI)).toBe(OPENAI);
-  expect(() => checkKey("anthropic", "sk-ant-oat01-" + "z".repeat(40))).toThrow(/Claude plan token/);
-  expect(() => checkKey("anthropic", OPENAI)).toThrow(/starts with sk-ant-/);
+  // The server looks at no key's shape (its provider says whether it is one): only at what no request can carry.
+  expect(checkKey("openai", `  ${OPENAI}\n`)).toBe(OPENAI);
+  expect(checkKey("anthropic", "any-start.2026")).toBe("any-start.2026");
   expect(() => checkKey("anthropic", "sk-ant-has a space in it xxxxxxxxxxxx")).toThrow(CredentialError);
   expect(() => checkKey("anthropic", "")).toThrow(/Paste/);
   const none = fresh(null, ["ANTHROPIC_API_KEY"]).dir;
   await expect(none.credentials.set(ada, "anthropic", ANTHROPIC)).rejects.toThrow(/no FACTORY_KEY/);
   expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])[0]).toEqual(["anthropic", false, true]);
+});
+
+test("a key's provider says whether it is one, before it is kept: one request each, and the provider's own reason on the page", async () => {
+  const asked: { url: string; headers: Record<string, string> }[] = [];
+  let answer = (): Response => Response.json({ data: [] });
+  const provider = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const r = new Request(input, init);
+    const sent = ["x-api-key", "anthropic-version", "x-goog-api-key", "authorization"].flatMap((h) =>
+      r.headers.has(h) ? [[h, r.headers.get(h)!]] : []
+    );
+    asked.push({ url: r.url, headers: Object.fromEntries(sent) });
+    return answer();
+  }) as typeof fetch;
+  const dir = new Directory(memory(), { admins: ["ada"], credentialSecret: "the factory key", keyCheck: keyCheck(null, provider) });
+  const last4 = async (name: string) => (await dir.credentials.list(ada)).find((c) => c.name == name)!.last4;
+  // A key of no known start (Google AI Studio's keys of 2026 don't start with AIza): the server's, and a person's own.
+  const KEY = "Ab." + "k".repeat(50) + "Qq77";
+  for (const name of ["anthropic", "openai", "google", "openrouter"])
+    expect((await dir.credentials.set(ada, name, KEY)).last4).toBe("Qq77");
+  expect(await dir.personKeys.set({ login: "bob" }, "google", KEY)).toMatchObject({ set: true, last4: "Qq77" });
+  expect(asked).toEqual([
+    { url: "https://api.anthropic.com/v1/models?limit=1", headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01" } },
+    { url: "https://api.openai.com/v1/models", headers: { authorization: `Bearer ${KEY}` } },
+    { url: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", headers: { "x-goog-api-key": KEY } },
+    { url: "https://openrouter.ai/api/v1/key", headers: { authorization: `Bearer ${KEY}` } },
+    { url: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", headers: { "x-goog-api-key": KEY } },
+  ]);
+  // Each provider refuses a key as it answered a made-up one on 2026-11-19: its words, and the key before stays.
+  const OTHER = KEY.replace("Qq77", "Rr88");
+  const refusals: [string, number, object | string, string][] = [
+    [
+      "anthropic",
+      401,
+      { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } },
+      "Anthropic says: invalid x-api-key",
+    ],
+    [
+      "openai",
+      401,
+      { error: { message: "Incorrect API key provided: Ab.kkkkk****Rr88.", type: "invalid_request_error", code: "invalid_api_key" } },
+      "OpenAI says: Incorrect API key provided: Ab.kkkkk****Rr88.",
+    ],
+    [
+      "google",
+      400,
+      { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } },
+      "Google refuses this key, so it isn't saved. Google says: API key not valid. Please pass a valid API key.",
+    ],
+    ["openrouter", 401, { error: { message: "User not found.", code: 401 } }, "OpenRouter says: User not found."],
+    // A key in the provider's words is cut out; an answer with no words: its status.
+    ["openai", 401, { error: { message: `The key ${OTHER} is wrong.` } }, "OpenAI says: The key … is wrong."],
+    ["openai", 502, "<html>Bad gateway</html>", "OpenAI says: HTTP 502"],
+  ];
+  for (const [name, status, body, said] of refusals) {
+    answer = () => (typeof body == "string" ? new Response(body, { status }) : Response.json(body, { status }));
+    await expect(dir.credentials.set(ada, name, OTHER)).rejects.toThrow(said);
+    expect(await last4(name)).toBe("Qq77");
+  }
+  await expect(dir.personKeys.set({ login: "bob" }, "openrouter", OTHER)).rejects.toThrow("OpenRouter says: HTTP 502");
+  // No answer from the provider: not saved, and the page says to try again.
+  answer = () => {
+    throw new Error("offline");
+  };
+  await expect(dir.credentials.set(ada, "google", OTHER)).rejects.toThrow(
+    "Google gave no answer, so the key isn't checked or saved. Try again."
+  );
+  expect(await last4("google")).toBe("Qq77");
 });
 
 test("the deploy's own secrets only as set or not", async () => {
@@ -120,7 +196,12 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   const text = await r.text();
   expect(text).not.toContain(ANTHROPIC.slice(0, 20));
   expect(JSON.parse(text).credential).toMatchObject({ name: "anthropic", set: true, last4: "Ab12" });
-  expect((await post({ name: "anthropic", value: "nope" })).status).toBe(400);
+  // A key that Anthropic refuses: its reason, for the row.
+  const refused = await post({ name: "anthropic", value: "nope" });
+  expect([refused.status, await refused.text()]).toEqual([
+    400,
+    JSON.stringify({ error: "Anthropic refuses this key, so it isn't saved. Anthropic says: invalid x-api-key" }),
+  ]);
   expect((await post({ name: "gemini", value: OPENAI })).status).toBe(400);
   const html = await (await fetch(`${origin}/admin/agents`)).text();
   expect(html).not.toContain(ANTHROPIC.slice(0, 20));

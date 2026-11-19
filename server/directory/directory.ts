@@ -43,7 +43,7 @@ import { type Access, AccessRules, type Facts, higher } from "./access.ts";
 import { type AccountLookup, People, type Person, personHandle } from "./people.ts";
 import { type Actor, NotAllowed, NotFound, type User, type UserRole, Users } from "./users.ts";
 
-import { Credentials, PersonKeys } from "./api-keys.ts";
+import { Credentials, PersonKeys, type KeyCheck } from "./api-keys.ts";
 import { PageLlm } from "./page-llm.ts";
 import { Feedback } from "./feedback.ts";
 import { Activity } from "./activity.ts";
@@ -155,6 +155,7 @@ export class Directory {
       changed?: (key: string) => Promise<void>;
       credentialSecret?: string | null;
       fallback?: (env: string) => boolean;
+      keyCheck?: KeyCheck;
       permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void>;
       news?: (news: News[]) => Promise<void>;
     } = {}
@@ -174,8 +175,8 @@ export class Directory {
     this.users.gate = async (user) => (await this.accessOf(user)) != "none";
     this.users.accessChanged = () => this.rules.forget();
     this.users.pagesChanged = (keys) => this.adminChanged(keys);
-    this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
-    this.personKeys = new PersonKeys(sql, opts.credentialSecret ?? null);
+    this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback, opts.keyCheck);
+    this.personKeys = new PersonKeys(sql, opts.credentialSecret ?? null, opts.keyCheck);
     this.pageLlm = new PageLlm(sql);
     this.feedback = new Feedback(sql, this.users);
     this.activity = new Activity(sql, this.users);

@@ -170,7 +170,7 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     run: (a) =>
       Effect.gen(function* () {
         const b = yield* body(a.request, KeyBody, {});
-        // A key that isn't one (the wrong provider's, a plan token) is refused, saying why.
+        // A key that its provider refuses isn't kept: the answer has the provider's own reason.
         return yield* Effect.tryPromise({
           try: () => a.platform.directory.personKeys.set({ login: a.me.login }, b.name ?? "", b.value ?? ""),
           catch: (e) => (e instanceof Error ? e.message : String(e)),

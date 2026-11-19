@@ -5,7 +5,7 @@
 
 import { afterAll, expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
-import { Directory } from "../server/directory/index.ts";
+import { Directory, keyCheck } from "../server/directory/index.ts";
 import { agentSettingsFrom, keyFor, usable, type AgentConfig, type KeySource } from "../agents/models.ts";
 import { agentApi } from "../agents/person/routes.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
@@ -19,10 +19,16 @@ quietConsole();
 const OPENAI = "sk-proj-" + "q".repeat(60) + "Ow42";
 const OPENROUTER = "sk-or-v1-" + "r".repeat(60) + "Rt77";
 
+/** In the providers' place (no test asks a real one): it knows every key but "nope". */
+const provider = (async (_: RequestInfo | URL, init?: RequestInit) =>
+  JSON.stringify(init?.headers).includes("nope")
+    ? Response.json({ error: { message: "invalid x-api-key" } }, { status: 401 })
+    : Response.json({ data: [] })) as typeof fetch;
+
 function fresh(secret: string | null = "the factory key") {
   const sql = memory();
   const db = sql.db;
-  return { db, sql, dir: new Directory(sql, { admins: ["ada"], credentialSecret: secret }) };
+  return { db, sql, dir: new Directory(sql, { admins: ["ada"], credentialSecret: secret, keyCheck: keyCheck(null, provider) }) };
 }
 
 const ada = { login: "ada", admin: true },
@@ -56,9 +62,10 @@ test("a person's key is stored encrypted, bound to them: never answered, never a
   expect(await dir.personKeys.opened("bob")).toEqual({});
 });
 
-test("a wrong key is refused, saying why; a server with no FACTORY_KEY can't store one", async () => {
+// (A key that its provider refuses: tests/api-keys.test.ts.)
+test("no key, or a provider there isn't, is refused, saying why; a server with no FACTORY_KEY can't store one", async () => {
   const { dir } = fresh();
-  await expect(dir.personKeys.set(bob, "openai", OPENROUTER)).rejects.toThrow(/That is an OpenRouter API key, not an OpenAI API key/);
+  await expect(dir.personKeys.set(bob, "openai", " ")).rejects.toThrow(/Paste the OpenAI API key/);
   await expect(dir.personKeys.set(bob, "mistral", OPENAI)).rejects.toThrow(/no key "mistral"/);
   await expect(fresh(null).dir.personKeys.set(bob, "openai", OPENAI)).rejects.toThrow(/no FACTORY_KEY/);
 });
@@ -142,7 +149,12 @@ test("POST /api/agent/keys: from the person's own page only; the answer never ho
   expect(r.status).toBe(200);
   expect(text).not.toContain(OPENAI.slice(0, 20));
   expect(JSON.parse(text).key).toMatchObject({ name: "openai", set: true, last4: "Ow42" });
-  expect((await post({ name: "openai", value: "nope" })).status).toBe(400);
+  // A key that OpenAI refuses: its reason, for the row.
+  const refused = await post({ name: "openai", value: "nope" });
+  expect([refused.status, await refused.text()]).toEqual([
+    400,
+    JSON.stringify({ ok: false, error: "OpenAI refuses this key, so it isn't saved. OpenAI says: invalid x-api-key" }),
+  ]);
   // An agent can't set one: the route knows an agent by its session (the gate keeps its token, and names the agent).
   session = { login: "bob", name: "Bob", agent: {} } as unknown as Partial<Session>;
   expect((await post({ name: "openai", value: OPENAI })).status).toBe(403);
