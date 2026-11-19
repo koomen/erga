@@ -230,7 +230,7 @@ test("the commits are the chosen instance's branch, in one column: green where i
   expect(rowOf(staging, "5")).toContain(
     `<span class="deps here show"><span class="tip"><button class="btn" type="button" data-deploy data-host="staging.example.net" data-sha="${"5".repeat(40)}" data-ask="Deploy 5555555 Change 5 to staging.example.net?"`
   );
-  // An older commit: its button shows under the mouse or with the focus (ops-page.css, .deps.here).
+  // An older commit: its button shows under the mouse or with the focus (assets/ops/ops-view.css, .deps.here).
   expect(rowOf(staging, "3")).toContain('<span class="deps here"><span class="tip"><button class="btn" type="button" data-deploy');
   expect(rowOf(staging, "3")).toContain('data-note="staging.example.net tracks staging. No branch moves."');
   expect(staging.match(/data-deploy /g)?.length).toBe(4);

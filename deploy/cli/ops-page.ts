@@ -116,6 +116,7 @@ export interface OpsPageOptions {
 const AWS_JOBS_MS = 60_000;
 
 const FILES: Record<string, [string, string]> = {
+  "/ops-view.css": ["assets/ops/ops-view.css", "text/css"],
   "/ops-page.css": ["deploy/cli/ops-page.css", "text/css"],
   "/bars.css": ["client/inline/bars.css", "text/css"],
 };

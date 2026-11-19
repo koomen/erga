@@ -1,22 +1,23 @@
 /* The look of the ops page (`bun erga`, deploy/cli/ops-view.ts): the app's tokens (client/style.css), the glass bars
-   (client/inline/bars.css, which the page also loads), a sidebar of the instances, and the chosen instance's
-   Deploys, Logs and History tabs. */
+   (client/inline/bars.css, which the page also loads), a sidebar of the instances, and the verify suite. The chosen
+   instance's Deploys, Logs and History tabs are assets/ops/ops-view.css, which the page loads before this file: a
+   rule here is under .ops (the element around the page's live part), so that it wins over a rule of that file. */
 
 :root {
   --bg: #ffffff; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #a1a1a9; --rule: #e6e6ea; --code-bg: #f4f4f6;
-  --sel: #f4f4f6; --font-text: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-text: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  --ok: #1f7a4d; --off: #c26a00; --bad: #c2410c; --live: #22b35e; --row: 32px;
+  --ok: #1f7a4d; --bad: #c2410c;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #18181b; --fg: #cacad2; --fg-strong: #ececf1; --soft: #8f8f99; --chrome: #5f5f68; --rule: #2c2c31; --code-bg: #232327;
-    --sel: #232327; --ok: #4cc38a; --off: #f0a742; --bad: #ff8a65; --live: #4cc38a;
+    --ok: #4cc38a; --bad: #ff8a65;
   }
 }
 :root[data-theme="dark"] {
   --bg: #18181b; --fg: #cacad2; --fg-strong: #ececf1; --soft: #8f8f99; --chrome: #5f5f68; --rule: #2c2c31; --code-bg: #232327;
-  --sel: #232327; --ok: #4cc38a; --off: #f0a742; --bad: #ff8a65; --live: #4cc38a;
+  --ok: #4cc38a; --bad: #ff8a65;
 }
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--bg); -webkit-text-size-adjust: 100%; }
@@ -31,226 +32,85 @@ code { font-family: var(--font-mono); }
 
 /* The sidebar: each instance, the branch it tracks under it, and one word at the right when it is not at its branch's
    head. Under the list: whether auto-deploy is on, for the whole page. */
-.side { position: sticky; top: calc(var(--bars-bottom) + 12px); align-self: start; min-width: 0; }
-.side-head { margin: 6px 10px 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
-.instances { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.group { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; color: var(--fg); text-decoration: none; }
-.group:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
-.group.sel { background: var(--sel); box-shadow: 0 0 0 1px var(--rule); }
-.group > span { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.group > span > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group .host { font-size: 14px; font-weight: 600; color: var(--fg-strong); }
-.group .tracks { padding-left: 16px; font: 12px var(--font-mono); color: var(--soft); }
-.group .tracks { justify-content: space-between; }
-.group .g-state { flex: none; font: 500 11.5px var(--font-text); color: var(--soft); }
-.g-state.behind, .g-state.unread { color: var(--off); }
-.g-state.failed { color: var(--bad); }
-.g-state.deploying { color: var(--fg); }
-.side-auto { display: flex; align-items: center; gap: 8px; margin: 14px 10px 0; padding-top: 12px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--soft); }
-.side-auto .light { width: 7px; height: 7px; }
-.light { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
-.light.ok { background: var(--ok); }
-.light.bad { background: var(--bad); }
-.none { margin: 6px 10px; font-size: 13.5px; color: var(--soft); }
-
-/* The chosen instance: its name, what it tracks, its tabs and the job line. */
-.main { min-width: 0; container-type: inline-size; }
-.title { margin: 4px 0 2px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
-.tracks-line { margin: 0 0 8px; font-size: 13px; color: var(--soft); }
-.tracks-line code { font: 12px var(--font-mono); color: var(--fg); }
-.tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--rule); }
-.tab { padding: 6px 0 8px; margin-bottom: -1px; font-size: 14px; color: var(--soft); text-decoration: none; }
-.tab:hover { color: var(--fg-strong); }
-.tab[aria-selected="true"] { color: var(--fg-strong); font-weight: 600; border-bottom: 2px solid var(--fg-strong); }
-.job { text-decoration: none; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; margin: 12px 0 16px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 10px; font-size: 13px; color: var(--soft); }
-.job code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); }
-.job > span { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.job .light { width: 10px; height: 10px; }
-.job.running .light, .h-row.running .light, .state.running::before { background: var(--live); animation: pulse 1.1s ease-in-out infinite; }
-.job.ok .light { background: var(--chrome); }
-.job.failed .light { background: var(--bad); }
-.job.failed > span { color: var(--bad); }
-.job.none { color: var(--soft); }
-a.job:hover { border-color: var(--chrome); }
-@keyframes pulse { 50% { opacity: .25; } }
-.note { margin: 6px 4px; font-size: 13.5px; color: var(--soft); }
-.note.bad { color: var(--bad); }
-.note code { font-size: 12.5px; }
-
-.light.stale { background: var(--off); }
-/* Deploys: the checks of the instance's own sources, in one line under the commits. */
-.checked { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; margin: 16px 4px 0; font-size: 12px; color: var(--soft); }
-.checked > span { display: inline-flex; align-items: center; gap: 6px; }
-.checked .light { width: 7px; height: 7px; }
-.s-stale { padding: 0 6px; border-radius: 6px; font-size: 12px; color: var(--off); border: 1px solid currentColor; }
-.s-err { color: var(--bad); }
-.err { flex-basis: 100%; color: var(--bad); font-size: 13px; }
-.err:empty { display: none; }
-
-/* The buttons: Deploy and its question. */
-.btn { display: inline-block; padding: 3px 12px; border: 0; border-radius: 8px; background: var(--fg-strong); color: var(--bg); font: inherit; font-size: 12.5px;
-  font-weight: 600; line-height: 1.5; white-space: nowrap; cursor: pointer; }
-.btn:hover { background: color-mix(in srgb, var(--fg-strong) 82%, var(--bg)); }
-.btn:focus-visible { outline: 2px solid var(--fg-strong); outline-offset: 2px; }
-.btn.quiet { background: transparent; color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--rule); }
-.btn.quiet:hover { background: var(--sel); }
-.btn:disabled { cursor: not-allowed; background: var(--code-bg); color: var(--chrome); box-shadow: inset 0 0 0 1px var(--rule); }
-.tip { display: inline-flex; }
-.deps .tip, .deps .btn { width: 100%; }
-.deps .btn { height: 22px; padding: 0 6px; font-size: 12px; line-height: 22px; }
-/* A row's Deploy button shows only in the cell under the mouse, or in the cell whose button has the keyboard's focus;
-   the head's button shows always while the head is not live (.show). */
-.deps.here .tip { opacity: 0; }
-.deps.here:hover .tip, .deps.here:focus-within .tip, .deps.here.show .tip { opacity: 1; }
-/* The live row: Roll back takes the place of the "live" mark under the mouse, or with the keyboard's focus. */
-.deps.back { position: relative; }
-.deps.back .tip { position: absolute; inset: 0 6px 0 2px; width: auto; align-items: center; }
-.deps.back:hover .dep, .deps.back:focus-within .dep { visibility: hidden; }
-.confirm { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 16px 18px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg);
-  color: var(--fg); font-size: 14px; box-shadow: 0 12px 40px rgb(0 0 0 / 18%); }
-.confirm::backdrop { background: rgb(0 0 0 / 18%); }
-.confirm p { margin: 0 0 8px; overflow-wrap: anywhere; }
-.confirm b { color: var(--fg-strong); }
-.confirm code { font-size: 12.5px; padding: 1px 4px; border-radius: 4px; background: var(--code-bg); }
-.confirm .soft { font-size: 13px; color: var(--soft); }
-.confirm .acts { display: flex; gap: 8px; margin-top: 12px; }
-.confirm .btn { padding: 5px 14px; font-size: 13.5px; }
-
-/* Deploys: the instance's commits, in one column. */
-.c-head { margin: 0; padding: 0 0 6px 6px; border-bottom: 1px solid var(--rule); font-size: 11.5px; font-weight: 600; color: var(--soft); }
-/* A tag at a branch's head: the instance's branch, and its upstream. And the line for an upstream's commits past the list's. */
-.ref { margin-right: 8px; padding: 2px 7px; border-radius: 6px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--rule); font: 11px var(--font-mono); color: var(--fg); }
-.grid > .more { grid-column: 1 / -1; padding: 0 6px 0 28px; font-size: 12.5px; line-height: var(--row); color: var(--soft); }
-.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.dot.off { background: var(--bg); border: 2px solid var(--off); }
-.dot.on { background: var(--ok); border: 2px solid var(--ok); }
-.grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 104px 124px; align-items: center; }
-.row { display: contents; }
-.row > * { height: var(--row); display: flex; align-items: center; }
-.row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent); }
-.rail { position: relative; justify-content: center; }
-.rail::before, .rail::after { content: ""; position: absolute; left: calc(50% - 1px); width: 2px; height: 50%; display: none; opacity: .4; background: var(--off); }
-.rail.on::before, .rail.on::after { background: var(--ok); }
-.rail::before { top: 0; }
-.rail::after { bottom: 0; }
-.rail.up::before, .rail.down::after { display: block; }
-.rail .dot { position: relative; z-index: 1; }
-.subj { min-width: 0; padding: 0 8px 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); display: block !important; line-height: var(--row); }
-.row.on .subj { color: var(--fg); }
-.row .who, .row .sha, .row time { white-space: nowrap; }
-.row .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
-.row .sha { padding: 0 6px; font-size: 11.5px; color: var(--chrome); }
-.row time { justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
-.deps { min-width: 0; padding: 0 6px 0 2px; }
-.dep { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; height: 22px; padding: 0 6px; border-radius: 5px; font-size: 12px; white-space: nowrap; }
-.dep.live { background: color-mix(in srgb, var(--ok) 11%, transparent); color: var(--ok); font-weight: 600; }
-.dep .at { font-size: 11.5px; color: color-mix(in srgb, var(--ok) 70%, var(--soft)); font-variant-numeric: tabular-nums; }
-.grid > .none { grid-column: 1 / -1; padding: 18px 4px; margin: 0; }
-@container (max-width: 680px) {
-  .grid { grid-template-columns: 22px minmax(0, 1fr) 104px; }
-  .grid .who, .grid .sha, .grid .time, .grid time { display: none !important; }
-}
-
-/* Logs: a job's output. */
-.logs { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
-.log-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; padding: 10px 14px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--soft); }
-.log-head code { min-width: 0; overflow-wrap: anywhere; font-size: 13.5px; color: var(--fg-strong); }
-.log-head .state { margin-left: auto; font-weight: 600; }
-.state.ok { color: var(--ok); }
-.state.failed { color: var(--bad); }
-.state.running { color: var(--live); display: inline-flex; align-items: center; gap: 6px; }
-.state.running::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--live); }
-.log { margin: 0; max-height: calc(100vh - var(--bars-bottom) - 230px); min-height: 160px; overflow: auto; padding: 10px 14px; background: var(--code-bg);
-  font: 12.5px/1.55 var(--font-mono); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
-.log .bad { color: var(--bad); font-weight: 600; }
-
-/* History: the jobs. */
-.history { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto auto auto; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
-.h-row { display: contents; color: var(--fg); text-decoration: none; }
-.h-row > * { display: flex; align-items: center; min-width: 0; padding: 7px 10px; border-top: 1px solid var(--rule); font-size: 13px; white-space: nowrap; }
-.h-head > * { border-top: 0; font-size: 11.5px; font-weight: 600; color: var(--soft); }
-a.h-row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent); }
-.h-state { gap: 7px; color: var(--soft); }
-.h-row.ok .light { background: var(--ok); }
-.h-row.failed .light { background: var(--bad); }
-.h-row.failed .h-state { color: var(--bad); }
-.h-cmd { display: block !important; overflow: hidden; text-overflow: ellipsis; line-height: 1.6; font-size: 12.5px; color: var(--fg-strong); }
-.h-from, .history time, .h-took { color: var(--soft); }
-.h-took { justify-content: flex-end; font-variant-numeric: tabular-nums; }
-@container (max-width: 560px) {
-  .history { grid-template-columns: 80px minmax(0, 1fr) auto; }
-  .h-from, .h-took { display: none !important; }
-}
-
-/* A button whose job runs: "Deploying…", with a small spinner; its cell stays shown. */
-.spin { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 1.5px solid currentColor; border-right-color: transparent;
-  border-radius: 50%; animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; border-right-color: currentColor; opacity: .5; } }
-.btn[aria-busy="true"]:disabled { cursor: progress; color: var(--soft); }
-.deps.here.busy .tip { opacity: 1; }
+.ops .side { position: sticky; top: calc(var(--bars-bottom) + 12px); align-self: start; min-width: 0; }
+.ops .side-head { margin: 6px 10px 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
+.ops .instances { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ops .group { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; color: var(--fg); text-decoration: none; }
+.ops .group:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
+.ops .group.sel { background: var(--sel); box-shadow: 0 0 0 1px var(--rule); }
+.ops .group > span { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ops .group > span > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops .group .host { font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+.ops .group .tracks { padding-left: 16px; font: 12px var(--font-mono); color: var(--soft); }
+.ops .group .tracks { justify-content: space-between; }
+.ops .group .g-state { flex: none; font: 500 11.5px var(--font-text); color: var(--soft); }
+.ops .g-state.behind, .ops .g-state.unread { color: var(--off); }
+.ops .g-state.failed { color: var(--bad); }
+.ops .g-state.deploying { color: var(--fg); }
+.ops .side-auto { display: flex; align-items: center; gap: 8px; margin: 14px 10px 0; padding-top: 12px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--soft); }
+.ops .side-auto .light { width: 7px; height: 7px; }
 
 /* The verify suite (#verify, verify-view.ts): its entry under the instances; one line that says how much is set up and
    what passed; the prerequisites, the settings and the leftovers as lists; and a setting's last run, each check in
    each browser. */
-.side-more { margin-top: 22px; }
-.v-checked { justify-content: space-between; }
-.v-checked > span { margin-left: 0; }
-.v-head { margin: 0 0 18px; padding: 10px 14px; border-radius: 10px; background: var(--code-bg); font-size: 14.5px; font-weight: 600; color: var(--fg-strong); }
-.verify .c-head { margin-top: 22px; }
-.v-list { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; align-items: start; }
-.v-list.units { grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1fr) auto; }
-.v-row, .u-row { display: contents; }
-.v-row > *, .u-row > * { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--rule); min-height: 100%; }
-.v-row > .light { margin: 15px 0 0 6px; padding: 0; min-height: 0; border: 0; }
-.v-row > .light.stale { background: var(--off); }
-.v-what, .u-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; color: var(--soft); overflow-wrap: anywhere; }
-.v-what b, .u-what b { font-size: 13.5px; font-weight: 600; color: var(--fg-strong); }
-.v-row.ok .v-what b { font-weight: 500; color: var(--fg); }
+.ops .side-more { margin-top: 22px; }
+.ops .v-checked { justify-content: space-between; }
+.ops .v-checked > span { margin-left: 0; }
+.ops .v-head { margin: 0 0 18px; padding: 10px 14px; border-radius: 10px; background: var(--code-bg); font-size: 14.5px; font-weight: 600; color: var(--fg-strong); }
+.ops .verify .c-head { margin-top: 22px; }
+.ops .v-list { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; align-items: start; }
+.ops .v-list.units { grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1fr) auto; }
+.ops .v-row, .ops .u-row { display: contents; }
+.ops .v-row > *, .ops .u-row > * { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--rule); min-height: 100%; }
+.ops .v-row > .light { margin: 15px 0 0 6px; padding: 0; min-height: 0; border: 0; }
+.ops .v-row > .light.stale { background: var(--off); }
+.ops .v-what, .ops .u-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; color: var(--soft); overflow-wrap: anywhere; }
+.ops .v-what b, .ops .u-what b { font-size: 13.5px; font-weight: 600; color: var(--fg-strong); }
+.ops .v-row.ok .v-what b { font-weight: 500; color: var(--fg); }
 /* A prerequisite that is done takes one line. */
-.v-row.ok .v-what { flex-direction: row; flex-wrap: wrap; gap: 0 10px; }
-.v-row.ok > :not(.light) { padding-top: 6px; padding-bottom: 6px; }
-.v-row.ok > .light { margin-top: 12px; }
-.v-do { color: var(--fg); }
-.v-do b { font-size: 12.5px; color: var(--off); }
-.v-row.opt .v-do b { color: var(--soft); }
-.v-what a, .v-run a, .v-earlier a, .job a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-.v-for, .v-state { font-size: 12px; color: var(--soft); white-space: nowrap; padding-left: 12px !important; }
-.v-row.ok .v-state { color: var(--ok); font-weight: 600; }
-.v-row.todo .v-state { color: var(--off); font-weight: 600; }
-.u-id { font: 600 13.5px var(--font-mono); color: var(--fg-strong); text-decoration: none; padding: 9px 14px 9px 6px !important; }
-.u-what a { text-decoration: none; }
-.u-what a:hover b { text-decoration: underline; }
-.u-row.sel > * { background: var(--sel); }
-.u-state.ready { color: var(--ok); }
-.u-state.blocked { color: var(--off); }
-.u-state.kept { color: var(--off); font-weight: 600; }
-.u-last { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--soft); }
-.u-res.passed { color: var(--ok); font-weight: 600; }
-.u-res.failed, .u-res.stopped { color: var(--bad); font-weight: 600; }
-.u-res.running { color: var(--live); font-weight: 600; }
-.chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.chip { padding: 1px 7px; border-radius: 6px; font: 11.5px var(--font-mono); white-space: nowrap; box-shadow: inset 0 0 0 1px var(--rule); color: var(--soft); }
-.chip.ok { color: var(--ok); }
-.chip.bad { color: var(--bad); box-shadow: inset 0 0 0 1px currentColor; }
-.u-act { display: flex; justify-content: flex-end; align-items: flex-start; padding-right: 6px !important; }
-.u-act .btn { padding: 3px 14px; }
-.v-run { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 4px; font-size: 13px; color: var(--soft); }
-.v-run code { font-size: 12px; }
-.matrix { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.matrix th { padding: 6px 8px; text-align: left; font-size: 11.5px; font-weight: 600; color: var(--soft); border-bottom: 1px solid var(--rule); white-space: nowrap; }
-.matrix td { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; white-space: nowrap; color: var(--soft); }
-.matrix td.m-check { white-space: normal; color: var(--fg); overflow-wrap: anywhere; }
-.matrix td.ok { color: var(--ok); }
-.matrix td.bad { color: var(--bad); font-weight: 700; }
-.m-note { display: block; margin-top: 3px; font-size: 12px; color: var(--bad); }
-.v-earlier { list-style: none; margin: 0; padding: 0; }
-.v-earlier li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 7px 6px; border-bottom: 1px solid var(--rule); font-size: 12.5px; color: var(--soft); }
+.ops .v-row.ok .v-what { flex-direction: row; flex-wrap: wrap; gap: 0 10px; }
+.ops .v-row.ok > :not(.light) { padding-top: 6px; padding-bottom: 6px; }
+.ops .v-row.ok > .light { margin-top: 12px; }
+.ops .v-do { color: var(--fg); }
+.ops .v-do b { font-size: 12.5px; color: var(--off); }
+.ops .v-row.opt .v-do b { color: var(--soft); }
+.ops .v-what a, .ops .v-run a, .ops .v-earlier a, .ops .job a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ops .v-for, .ops .v-state { font-size: 12px; color: var(--soft); white-space: nowrap; padding-left: 12px !important; }
+.ops .v-row.ok .v-state { color: var(--ok); font-weight: 600; }
+.ops .v-row.todo .v-state { color: var(--off); font-weight: 600; }
+.ops .u-id { font: 600 13.5px var(--font-mono); color: var(--fg-strong); text-decoration: none; padding: 9px 14px 9px 6px !important; }
+.ops .u-what a { text-decoration: none; }
+.ops .u-what a:hover b { text-decoration: underline; }
+.ops .u-row.sel > * { background: var(--sel); }
+.ops .u-state.ready { color: var(--ok); }
+.ops .u-state.blocked { color: var(--off); }
+.ops .u-state.kept { color: var(--off); font-weight: 600; }
+.ops .u-last { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--soft); }
+.ops .u-res.passed { color: var(--ok); font-weight: 600; }
+.ops .u-res.failed, .ops .u-res.stopped { color: var(--bad); font-weight: 600; }
+.ops .u-res.running { color: var(--live); font-weight: 600; }
+.ops .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ops .chip { padding: 1px 7px; border-radius: 6px; font: 11.5px var(--font-mono); white-space: nowrap; box-shadow: inset 0 0 0 1px var(--rule); color: var(--soft); }
+.ops .chip.ok { color: var(--ok); }
+.ops .chip.bad { color: var(--bad); box-shadow: inset 0 0 0 1px currentColor; }
+.ops .u-act { display: flex; justify-content: flex-end; align-items: flex-start; padding-right: 6px !important; }
+.ops .u-act .btn { padding: 3px 14px; }
+.ops .v-run { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 4px; font-size: 13px; color: var(--soft); }
+.ops .v-run code { font-size: 12px; }
+.ops .matrix { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ops .matrix th { padding: 6px 8px; text-align: left; font-size: 11.5px; font-weight: 600; color: var(--soft); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.ops .matrix td { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; white-space: nowrap; color: var(--soft); }
+.ops .matrix td.m-check { white-space: normal; color: var(--fg); overflow-wrap: anywhere; }
+.ops .matrix td.ok { color: var(--ok); }
+.ops .matrix td.bad { color: var(--bad); font-weight: 700; }
+.ops .m-note { display: block; margin-top: 3px; font-size: 12px; color: var(--bad); }
+.ops .v-earlier { list-style: none; margin: 0; padding: 0; }
+.ops .v-earlier li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 7px 6px; border-bottom: 1px solid var(--rule); font-size: 12.5px; color: var(--soft); }
 @container (max-width: 680px) {
   /* (dense: a row's button goes back up beside its name, over its last run's line.) */
-  .v-list.units { grid-template-columns: auto minmax(0, 1fr) auto; grid-auto-flow: dense; }
-  .v-list.units .u-last { grid-column: 1 / -1; border-bottom: 1px solid var(--rule); }
-  .v-list.units .u-what, .v-list.units .u-id, .v-list.units .u-act { border-bottom: 0; }
-  .v-for { display: none; }
-  .v-list { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .ops .v-list.units { grid-template-columns: auto minmax(0, 1fr) auto; grid-auto-flow: dense; }
+  .ops .v-list.units .u-last { grid-column: 1 / -1; border-bottom: 1px solid var(--rule); }
+  .ops .v-list.units .u-what, .ops .v-list.units .u-id, .ops .v-list.units .u-act { border-bottom: 0; }
+  .ops .v-for { display: none; }
+  .ops .v-list { grid-template-columns: 22px minmax(0, 1fr) auto; }
 }

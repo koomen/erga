@@ -1,0 +1,154 @@
+/* The look of one instance's deploys (shared/ops-view.ts): its tabs, its job line, and its Deploys, Logs and History.
+   Two pages load it: the ops page of a machine (`bun erga`, with deploy/cli/ops-page.css around it) and the instance's
+   own page in the app. Every rule is under .ops-view, the element around the view, so that it changes nothing else of
+   a page. It reads the app's tokens (client/style.css; the machine's page has the same names), and adds its own. */
+
+.ops-view { --sel: var(--code-bg); --off: #c26a00; --live: #22b35e; --row: 32px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ops-view { --off: #f0a742; --live: #4cc38a; }
+}
+:root[data-theme="dark"] .ops-view { --off: #f0a742; --live: #4cc38a; }
+
+/* A light (a job's state, a check's), and words where a list has nothing. */
+.ops-view .light { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
+.ops-view .light.ok { background: var(--ok); }
+.ops-view .light.bad { background: var(--bad); }
+.ops-view .none { margin: 6px 10px; font-size: 13.5px; color: var(--soft); }
+
+/* The chosen instance: its name, what it tracks, its tabs and the job line. */
+.ops-view .main { min-width: 0; container-type: inline-size; }
+.ops-view .title { margin: 4px 0 2px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
+.ops-view .tracks-line { margin: 0 0 8px; font-size: 13px; color: var(--soft); }
+.ops-view .tracks-line code { font: 12px var(--font-mono); color: var(--fg); }
+.ops-view .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--rule); }
+.ops-view .tab { padding: 6px 0 8px; margin-bottom: -1px; font-size: 14px; color: var(--soft); text-decoration: none; }
+.ops-view .tab:hover { color: var(--fg-strong); }
+.ops-view .tab[aria-selected="true"] { color: var(--fg-strong); font-weight: 600; border-bottom: 2px solid var(--fg-strong); }
+.ops-view .job { text-decoration: none; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; margin: 12px 0 16px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 10px; font-size: 13px; color: var(--soft); }
+.ops-view .job code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); }
+.ops-view .job > span { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops-view .job .light { width: 10px; height: 10px; }
+.ops-view .job.running .light, .ops-view .h-row.running .light, .ops-view .state.running::before { background: var(--live); animation: ops-pulse 1.1s ease-in-out infinite; }
+.ops-view .job.ok .light { background: var(--chrome); }
+.ops-view .job.failed .light { background: var(--bad); }
+.ops-view .job.failed > span { color: var(--bad); }
+.ops-view .job.none { color: var(--soft); }
+.ops-view a.job:hover { border-color: var(--chrome); }
+@keyframes ops-pulse { 50% { opacity: .25; } }
+.ops-view .note { margin: 6px 4px; font-size: 13.5px; color: var(--soft); }
+.ops-view .note.bad { color: var(--bad); }
+.ops-view .note code { font-size: 12.5px; }
+
+.ops-view .light.stale { background: var(--off); }
+/* Deploys: the checks of the instance's own sources, in one line under the commits. */
+.ops-view .checked { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; margin: 16px 4px 0; font-size: 12px; color: var(--soft); }
+.ops-view .checked > span { display: inline-flex; align-items: center; gap: 6px; }
+.ops-view .checked .light { width: 7px; height: 7px; }
+.ops-view .s-stale { padding: 0 6px; border-radius: 6px; font-size: 12px; color: var(--off); border: 1px solid currentColor; }
+.ops-view .s-err { color: var(--bad); }
+.ops-view .err { flex-basis: 100%; color: var(--bad); font-size: 13px; }
+.ops-view .err:empty { display: none; }
+
+/* The buttons: Deploy and its question. */
+.ops-view .btn { display: inline-block; padding: 3px 12px; border: 0; border-radius: 8px; background: var(--fg-strong); color: var(--bg); font: inherit; font-size: 12.5px;
+  font-weight: 600; line-height: 1.5; white-space: nowrap; cursor: pointer; }
+.ops-view .btn:hover { background: color-mix(in srgb, var(--fg-strong) 82%, var(--bg)); }
+.ops-view .btn:focus-visible { outline: 2px solid var(--fg-strong); outline-offset: 2px; }
+.ops-view .btn.quiet { background: transparent; color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--rule); }
+.ops-view .btn.quiet:hover { background: var(--sel); }
+.ops-view .btn:disabled { cursor: not-allowed; background: var(--code-bg); color: var(--chrome); box-shadow: inset 0 0 0 1px var(--rule); }
+.ops-view .tip { display: inline-flex; }
+.ops-view .deps .tip, .ops-view .deps .btn { width: 100%; }
+.ops-view .deps .btn { height: 22px; padding: 0 6px; font-size: 12px; line-height: 22px; }
+/* A row's Deploy button shows only in the cell under the mouse, or in the cell whose button has the keyboard's focus;
+   the head's button shows always while the head is not live (.show). */
+.ops-view .deps.here .tip { opacity: 0; }
+.ops-view .deps.here:hover .tip, .ops-view .deps.here:focus-within .tip, .ops-view .deps.here.show .tip { opacity: 1; }
+/* The live row: Roll back takes the place of the "live" mark under the mouse, or with the keyboard's focus. */
+.ops-view .deps.back { position: relative; }
+.ops-view .deps.back .tip { position: absolute; inset: 0 6px 0 2px; width: auto; align-items: center; }
+.ops-view .deps.back:hover .dep, .ops-view .deps.back:focus-within .dep { visibility: hidden; }
+.ops-view .confirm { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 16px 18px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg);
+  color: var(--fg); font-size: 14px; box-shadow: 0 12px 40px rgb(0 0 0 / 18%); }
+.ops-view .confirm::backdrop { background: rgb(0 0 0 / 18%); }
+.ops-view .confirm p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.ops-view .confirm b { color: var(--fg-strong); }
+.ops-view .confirm code { font-size: 12.5px; padding: 1px 4px; border-radius: 4px; background: var(--code-bg); }
+.ops-view .confirm .soft { font-size: 13px; color: var(--soft); }
+.ops-view .confirm .acts { display: flex; gap: 8px; margin-top: 12px; }
+.ops-view .confirm .btn { padding: 5px 14px; font-size: 13.5px; }
+
+/* Deploys: the instance's commits, in one column. */
+.ops-view .c-head { margin: 0; padding: 0 0 6px 6px; border-bottom: 1px solid var(--rule); font-size: 11.5px; font-weight: 600; color: var(--soft); }
+/* A tag at a branch's head: the instance's branch, and its upstream. And the line for an upstream's commits past the list's. */
+.ops-view .ref { margin-right: 8px; padding: 2px 7px; border-radius: 6px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--rule); font: 11px var(--font-mono); color: var(--fg); }
+.ops-view .grid > .more { grid-column: 1 / -1; padding: 0 6px 0 28px; font-size: 12.5px; line-height: var(--row); color: var(--soft); }
+.ops-view .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.ops-view .dot.off { background: var(--bg); border: 2px solid var(--off); }
+.ops-view .dot.on { background: var(--ok); border: 2px solid var(--ok); }
+.ops-view .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 104px 124px; align-items: center; }
+.ops-view .row { display: contents; }
+.ops-view .row > * { height: var(--row); display: flex; align-items: center; }
+.ops-view .row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent); }
+.ops-view .rail { position: relative; justify-content: center; }
+.ops-view .rail::before, .ops-view .rail::after { content: ""; position: absolute; left: calc(50% - 1px); width: 2px; height: 50%; display: none; opacity: .4; background: var(--off); }
+.ops-view .rail.on::before, .ops-view .rail.on::after { background: var(--ok); }
+.ops-view .rail::before { top: 0; }
+.ops-view .rail::after { bottom: 0; }
+.ops-view .rail.up::before, .ops-view .rail.down::after { display: block; }
+.ops-view .rail .dot { position: relative; z-index: 1; }
+.ops-view .subj { min-width: 0; padding: 0 8px 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); display: block !important; line-height: var(--row); }
+.ops-view .row.on .subj { color: var(--fg); }
+.ops-view .row .who, .ops-view .row .sha, .ops-view .row time { white-space: nowrap; }
+.ops-view .row .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.ops-view .row .sha { padding: 0 6px; font-size: 11.5px; color: var(--chrome); }
+.ops-view .row time { justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
+.ops-view .deps { min-width: 0; padding: 0 6px 0 2px; }
+.ops-view .dep { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; height: 22px; padding: 0 6px; border-radius: 5px; font-size: 12px; white-space: nowrap; }
+.ops-view .dep.live { background: color-mix(in srgb, var(--ok) 11%, transparent); color: var(--ok); font-weight: 600; }
+.ops-view .dep .at { font-size: 11.5px; color: color-mix(in srgb, var(--ok) 70%, var(--soft)); font-variant-numeric: tabular-nums; }
+.ops-view .dep.wait { display: block; padding: 0; color: var(--soft); line-height: 22px; overflow: hidden; text-overflow: ellipsis; }
+.ops-view .grid > .none { grid-column: 1 / -1; padding: 18px 4px; margin: 0; }
+@container (max-width: 680px) {
+  .ops-view .grid { grid-template-columns: 22px minmax(0, 1fr) 104px; }
+  .ops-view .grid .who, .ops-view .grid .sha, .ops-view .grid .time, .ops-view .grid time { display: none !important; }
+}
+
+/* Logs: a job's output. */
+.ops-view .logs { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
+.ops-view .log-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; padding: 10px 14px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--soft); }
+.ops-view .log-head code { min-width: 0; overflow-wrap: anywhere; font-size: 13.5px; color: var(--fg-strong); }
+.ops-view .log-head .state { margin-left: auto; font-weight: 600; }
+.ops-view .state.ok { color: var(--ok); }
+.ops-view .state.failed { color: var(--bad); }
+.ops-view .state.running { color: var(--live); display: inline-flex; align-items: center; gap: 6px; }
+.ops-view .state.running::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--live); }
+.ops-view .log { margin: 0; max-height: calc(100vh - var(--bars-bottom) - 230px); min-height: 160px; overflow: auto; padding: 10px 14px; background: var(--code-bg);
+  font: 12.5px/1.55 var(--font-mono); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ops-view .log .bad { color: var(--bad); font-weight: 600; }
+
+/* History: the jobs. */
+.ops-view .history { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto auto auto; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
+.ops-view .h-row { display: contents; color: var(--fg); text-decoration: none; }
+.ops-view .h-row > * { display: flex; align-items: center; min-width: 0; padding: 7px 10px; border-top: 1px solid var(--rule); font-size: 13px; white-space: nowrap; }
+.ops-view .h-head > * { border-top: 0; font-size: 11.5px; font-weight: 600; color: var(--soft); }
+.ops-view a.h-row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent); }
+.ops-view .h-state { gap: 7px; color: var(--soft); }
+.ops-view .h-row.ok .light { background: var(--ok); }
+.ops-view .h-row.failed .light { background: var(--bad); }
+.ops-view .h-row.failed .h-state { color: var(--bad); }
+.ops-view .h-cmd { display: block !important; overflow: hidden; text-overflow: ellipsis; line-height: 1.6; font-size: 12.5px; color: var(--fg-strong); }
+.ops-view .h-from, .ops-view .history time, .ops-view .h-took { color: var(--soft); }
+.ops-view .h-took { justify-content: flex-end; font-variant-numeric: tabular-nums; }
+@container (max-width: 560px) {
+  .ops-view .history { grid-template-columns: 80px minmax(0, 1fr) auto; }
+  .ops-view .h-from, .ops-view .h-took { display: none !important; }
+}
+
+/* A button whose job runs: "Deploying…", with a small spinner; its cell stays shown. */
+.ops-view .spin { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 1.5px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: ops-spin .8s linear infinite; }
+@keyframes ops-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ops-view .spin { animation: none; border-right-color: currentColor; opacity: .5; } }
+.ops-view .btn[aria-busy="true"]:disabled { cursor: progress; color: var(--soft); }
+.ops-view .deps.here.busy .tip { opacity: 1; }
