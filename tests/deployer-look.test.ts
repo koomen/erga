@@ -9,12 +9,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import type { AwsApi } from "../deploy/deployer/aws";
 import { d1Sql } from "../deploy/deployer/cloudflare";
 import { Cloudflare, DeployError, type Fetch } from "../deploy/deployer/cloudflare-api";
 import { readControl } from "../deploy/deployer/control";
 import { commitsAtGitHub, headAtGitHub, TryLater } from "../deploy/deployer/github";
 import { LEASE_MS, NoTable, openJob, readJobs, readLog, type Sql, writeSpec } from "../deploy/deployer/instance";
 import { due, look, type LookPorts } from "../deploy/deployer/look";
+import { rollback } from "../deploy/deployer/rollback";
 import type { Spec } from "../deploy/deployer/spec";
 import { deployer } from "../deploy/deployer/worker";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
@@ -68,6 +70,15 @@ async function logOf(sql: Sql, id: number) {
   for (let part = await run(readLog(sql, id, 0)); part.length; part = await run(readLog(sql, id, size()))) parts.push(part);
   return Buffer.concat(parts).toString("utf8");
 }
+
+/** An admin's ask, as the app writes it on the instance's row: 'deploy <commit>' or 'rollback'. */
+const asks = (sql: Sql, ask: string, by = "ada") =>
+  run(
+    sql(
+      "INSERT INTO deploy_control (id, ask, ask_by, ask_at) VALUES (1, ?, ?, 1) ON CONFLICT (id) DO UPDATE SET ask = excluded.ask, ask_by = excluded.ask_by, ask_at = excluded.ask_at",
+      [ask, by]
+    )
+  );
 
 describe("a look", () => {
   /** An instance with its spec and no Cloudflare behind it: a deploy that starts fails at once, in its job. */
@@ -178,6 +189,71 @@ describe("a look", () => {
     expect(await run(readJobs(sql))).toEqual([]);
   });
 
+  test("an ask of the app runs one time, as a job from the app; it waits while another job runs", async () => {
+    const { sql, hub, clock, once } = await instance({ auto: false });
+    hub.state.releases.set(SHA1, bundleOf(SHA1));
+    await asks(sql, `deploy ${SHA1}`);
+    const other = await run(
+      Effect.provideService(
+        openJob(sql, { kind: "deploy", command: "bun erga deploy next.example.com", source: "terminal" }),
+        Clock.Clock,
+        clock.clock
+      )
+    );
+    const held = await once();
+    expect(held.line).toContain("A job runs on the instance (bun erga deploy next.example.com): the ask of ada waits.");
+    expect((await run(readControl(sql)))?.ask).toMatchObject({ kind: "deploy", sha: SHA1, by: "ada" });
+    expect(await other.end({ at: "done" })).toBeNull();
+
+    // The instance is free: the ask runs, with auto-deploy off, for a commit that is not the head. The look saw the
+    // commit on the branch, so it does not ask GitHub's API. (This deployer has no Cloudflare API: the deploy fails.)
+    const ran = await once();
+    expect(ran.calls).toEqual(["refs", `manifest ${short(SHA2)}`, `manifest ${short(SHA1)}`, `bundle ${short(SHA1)}`]);
+    expect(ran.line).toBe(
+      `main on github.com/example/erga is at ${short(SHA2)}. The deploy that ada asked for failed: The instance is on Cloudflare, and this deploy has no Cloudflare API.`
+    );
+    const [job] = await run(readJobs(sql));
+    expect(job).toMatchObject({
+      kind: "deploy",
+      command: `deploy ${short(SHA1)}`,
+      source: "app, by ada",
+      sha: SHA1,
+      state: { at: "failed" },
+    });
+    // The ask is off the row: the next look starts no job.
+    expect((await run(readControl(sql)))?.ask).toBeNull();
+    expect((await once()).line).toContain("Auto-deploy is off.");
+    expect(await run(readJobs(sql))).toHaveLength(2);
+  });
+
+  test("an ask that another one replaces while its job starts does nothing; the new ask runs at the next look", async () => {
+    const { sql, once } = await instance({ auto: false });
+    await asks(sql, `deploy ${SHA1}`);
+    // The app writes a new ask between the look's read and its lock.
+    let replaced = false;
+    const racing: Sql = (text, params) =>
+      Effect.flatMap(sql(text, params), (rows) => {
+        if (replaced || !text.startsWith("INSERT INTO deploy_jobs")) return Effect.succeed(rows);
+        replaced = true;
+        return Effect.as(
+          Effect.promise(() => asks(sql, "rollback", "grace")),
+          rows
+        );
+      });
+    const first = await once({ sql: racing });
+    expect(first.line).toContain("The deploy that ada asked for failed: The ask changed before its job started: nothing is done.");
+    expect((await run(readControl(sql)))?.ask).toMatchObject({ kind: "rollback", by: "grace" });
+    const second = await once();
+    expect(second.line).toContain(
+      "The rollback that grace asked for failed: The instance is on Cloudflare, and this rollback has no Cloudflare API."
+    );
+    expect((await run(readJobs(sql))).map((j) => `${j.kind} ${j.source} ${j.state.at}`)).toEqual([
+      "rollback app, by grace failed",
+      "deploy app, by ada failed",
+    ]);
+    expect((await run(readControl(sql)))?.ask).toBeNull();
+  });
+
   test("a job that runs on the instance holds the look off; one that stopped with no end still counts as a try", async () => {
     const { sql, hub, clock, once } = await instance();
     hub.state.releases.set(SHA2, bundleOf(SHA2));
@@ -253,6 +329,47 @@ describe("a look", () => {
     );
     expect(hub.state.calls).toEqual([]);
     expect(empty.db.query("SELECT count(*) AS n FROM deploy_control").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("a rollback on AWS", () => {
+  const target = {
+    kind: "aws",
+    account: "123456789012",
+    region: "us-east-1",
+    stack: "erga",
+    bucket: "erga-bucket",
+    machine: "i-0123456789abcdef0",
+    app: "erga.example.com",
+    pages: { kind: "domain", domain: "pages.example.com" },
+  } as const;
+  /** AWS's four calls, with the releases that the machine ran. */
+  function machine(ran: string[]) {
+    const calls: string[] = [];
+    const aws: AwsApi = {
+      putRelease: () => Effect.sync(() => (calls.push("putRelease"), 1)),
+      deployed: Effect.sync(() => ran),
+      load: (version) => Effect.sync(() => (calls.push(`load ${version}`), "loaded\nhealth ok\n")),
+      setLive: (version) => Effect.sync(() => void calls.push(`setLive ${version}`)),
+    };
+    return { aws, calls };
+  }
+  test("the machine loads the release before the one that it runs; with none before, nothing is done", async () => {
+    const log: string[] = [];
+    const { aws, calls } = machine(["aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"]);
+    await run(rollback({ target }, { aws, log: (line) => log.push(line) }));
+    expect(calls).toEqual(["load bbbbbbbbbbbb", "setLive bbbbbbbbbbbb"]);
+    expect(log).toEqual([
+      "The machine runs release cccccccccccc. The rollback goes to the release before it: bbbbbbbbbbbb. The database stays as it is.",
+      "The machine runs release bbbbbbbbbbbb again: health ok",
+    ]);
+    const first = machine(["aaaaaaaaaaaa"]);
+    const none = await run(Effect.flip(rollback({ target }, { aws: first.aws, log: () => {} })));
+    expect(none.message).toBe("The machine has no release before aaaaaaaaaaaa to go back to.");
+    expect(first.calls).toEqual([]);
+    expect((await run(Effect.flip(rollback({ target }, { log: () => {} })))).message).toBe(
+      "The instance is on AWS, and this rollback has no AWS API."
+    );
   });
 });
 
@@ -350,7 +467,7 @@ describe("the deployer on Cloudflare", () => {
     const ports: LookPorts = { sql, fetch, cloud: { cloudflare: cf }, mine: (t) => t.kind == "cloudflare" && t.worker == "erga-next" };
     const once = () => run(Effect.provideService(look(ports), Clock.Clock, clock.clock));
     expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA1));
-    expect(await once()).toBe(`main on github.com/example/erga is at ${short(SHA2)}. It is deployed.`);
+    expect(await once()).toBe(`main on github.com/example/erga is at ${short(SHA2)}. Its deploy is done.`);
     expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA2));
     const [job, ...more] = await run(readJobs(sql));
     expect(more).toEqual([]);
@@ -378,6 +495,57 @@ describe("the deployer on Cloudflare", () => {
     expect(hub.state.calls.slice(from)).toEqual(["refs"]);
     expect(mock.state.calls.filter((c) => c.startsWith("PUT ")).length).toBe(uploads);
     expect(await run(readJobs(sql))).toHaveLength(1);
+  });
+
+  test("asks: a rollback goes to the version before, and auto-deploy leaves it; a commit must be on the branch", async () => {
+    const { mock, clock, hub, fetch, cf, sql } = await instance();
+    await run(sql("INSERT INTO deploy_control (id, auto) VALUES (1, 1)", []));
+    const ports: LookPorts = { sql, fetch, cloud: { cloudflare: cf }, mine: () => true };
+    const once = async () => {
+      const from = hub.state.calls.length;
+      const line = await run(Effect.provideService(look(ports), Clock.Clock, clock.clock));
+      return { line, calls: hub.state.calls.slice(from) };
+    };
+    const runs = () => bindingsOf(mock.state, "erga-next").ERGA_VERSION.text;
+    const at = `main on github.com/example/erga is at ${short(SHA2)}.`;
+    await once();
+    expect(runs()).toBe(short(SHA2));
+
+    // An admin rolls back in the app. The Worker runs the release before again; the head has its job, so auto-deploy
+    // does not deploy it again.
+    await asks(sql, "rollback");
+    expect((await once()).line).toBe(`${at} The rollback that ada asked for is done.`);
+    expect(runs()).toBe(short(SHA1));
+    const [job] = await run(readJobs(sql));
+    expect(job).toMatchObject({ kind: "rollback", command: "rollback", source: "app, by ada", sha: null, state: { at: "done" } });
+    const log = await logOf(sql, job.id);
+    expect(log).toContain(`The Worker erga-next runs release ${short(SHA2)}, version `);
+    expect(log).toContain(`(release ${short(SHA1)}). The database stays as it is.`);
+    expect(log).toContain(`Release ${short(SHA1)} is healthy.`);
+    expect((await once()).line).toBe(`${at} The instance has ${short(SHA2)}: nothing to deploy.`);
+    expect(runs()).toBe(short(SHA1));
+
+    // A commit that the branch does not have (as GitHub's API says) is refused, though GitHub has a release of it.
+    hub.state.releases.set(SHA3, builtBundle(SHA3));
+    await asks(sql, `deploy ${SHA3}`);
+    const refused = await once();
+    expect(refused.calls).toEqual(["refs", `manifest ${short(SHA3)}`, `bundle ${short(SHA3)}`, `compare ${short(SHA3)}`]);
+    expect(refused.line).toBe(
+      `${at} The deploy that ada asked for failed: Release ${short(SHA3)} is not a commit of main on github.com/example/erga: the instance deploys only a commit of that branch.`
+    );
+    expect(runs()).toBe(short(SHA1));
+
+    // An older commit of the branch, from before the commits that the look saw: GitHub's API says that the branch has it.
+    hub.state.older.push(SHA3);
+    await asks(sql, `deploy ${SHA3}`);
+    expect((await once()).line).toBe(`${at} The deploy that ada asked for is done.`);
+    expect(runs()).toBe(short(SHA3));
+    expect((await run(readJobs(sql))).map((j) => `${j.kind} ${j.source} ${j.state.at}`)).toEqual([
+      "deploy app, by ada done",
+      "deploy app, by ada failed",
+      "rollback app, by ada done",
+      "deploy auto-deploy done",
+    ]);
   });
 
   test("the Worker's schedule runs one look, for its own instance only; it has no address", async () => {

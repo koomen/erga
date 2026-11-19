@@ -51,6 +51,8 @@ export function github(shas: string[] = [SHA2, SHA1]) {
     releases: new Map<string, Uint8Array | "not a release">(),
     /** What the bundle's bytes are when the registry serves them, if not the bundle. */
     served: null as Uint8Array | null,
+    /** Commits of the branch from before the feed's: GitHub's API says that the branch has them. */
+    older: [] as string[],
     /** GitHub's answer in place of its own (not the registry's). */
     down: null as number | null,
     calls: [] as string[],
@@ -58,6 +60,12 @@ export function github(shas: string[] = [SHA2, SHA1]) {
   const fetch: Fetch = async (input) => {
     const url = String(input);
     const said = (word: string) => void state.calls.push(word);
+    const compared = /^https:\/\/api\.github\.com\/repos\/example\/erga\/compare\/main\.\.\.([0-9a-f]{40})\?per_page=1$/.exec(url)?.[1];
+    if (compared) {
+      said(`compare ${short(compared)}`);
+      const has = state.older.includes(compared) || state.commits.some((c) => c.sha == compared);
+      return Response.json({ ahead_by: has ? 0 : 1 });
+    }
     if (url.startsWith("https://github.com/")) {
       const refs = url == "https://github.com/example/erga.git/info/refs?service=git-upload-pack";
       const feed = url == "https://github.com/example/erga/commits/main.atom";

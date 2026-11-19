@@ -140,18 +140,6 @@ export function releaseNotes(last: string | null, commits: Commit[]): string {
   return `${last ? `Changes since ${last}:` : "Changes:"}\n\n${lines.join("\n")}\n`;
 }
 
-/** A Worker's deployments, newest first, as Cloudflare lists them: the version each sent most traffic to. */
-export function previousVersion(
-  deployments: { versions: { version_id: string; percentage: number }[] }[]
-): { now: string; before: string } | null {
-  const top = deployments
-    .map((d) => [...d.versions].sort((a, b) => b.percentage - a.percentage)[0]?.version_id)
-    .filter(Boolean) as string[];
-  const now = top[0];
-  const before = top.find((v) => v != now);
-  return now && before ? { now, before } : null;
-}
-
 /**
  * Where a server's deploy is: its run waits for a runner, runs (`job`: the job that runs now), or ended. `note`: what
  * GitHub still says when the server already runs the run's commit (GitHub's status can lag; the server's answer wins).

@@ -51,7 +51,7 @@ import {
   withEntry,
   writeConfig,
 } from "./config";
-import { previousVersion } from "./flow";
+import { previousVersion } from "../deployer/rollback";
 import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
 import { heldSecrets, putSpec, specDiff, specOf, specOn, sqlOf, startInstanceJob } from "./instance";

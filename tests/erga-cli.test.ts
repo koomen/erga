@@ -11,7 +11,6 @@ import {
   mergeArgs,
   mergeRefusal,
   nextVersion,
-  previousVersion,
   pushRefusal,
   releaseNotes,
   releaseRefusal,
@@ -19,6 +18,7 @@ import {
   stateOf,
   statusText,
 } from "../deploy/cli/flow";
+import { previousVersion } from "../deploy/deployer/rollback";
 
 /** The workflow's file, as far as these tests read it. */
 type Job = {
