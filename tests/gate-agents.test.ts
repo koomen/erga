@@ -73,6 +73,14 @@ describe("MCP's authorization server", () => {
       JSON.parse(responded(await asks({ client_name: '<script>é&"x"</script>'.repeat(9), redirect_uris: ["http://[::1]/"] })).body)
         .client_id
     ).toMatch(/^[A-Za-z0-9-]{1,40}\.[a-z0-9]{6}$/);
+    // An app that names its hosted redirects too (VS Code, Cursor) keeps this computer's only.
+    const mixed = responded(
+      await asks({
+        redirect_uris: ["https://vscode.example/redirect", "http://127.0.0.1/", "app://callback", "http://127.0.0.1:33418/", 7],
+      })
+    );
+    expect(mixed.status).toBe(201);
+    expect(JSON.parse(mixed.body).redirect_uris).toEqual(["http://127.0.0.1/", "http://127.0.0.1:33418/"]);
     // Refused: another site's redirect, none, too many, a fragment, a secret, and a body that isn't JSON.
     for (const bad of [
       { redirect_uris: ["https://elsewhere.example/callback"] },

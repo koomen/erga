@@ -615,8 +615,8 @@ export async function agents(q: Req, c: Config, p: Port): Promise<Answer | null>
 /**
  * POST /oauth/register (its body in x-erga-form): an agent's app registers itself (OAuth Dynamic Client Registration,
  * RFC 7591), as MCP's clients expect when a server names no client of theirs (Claude Code asks no --client-id then).
- * Nothing is kept: the answer is a client ID made here, and the redirects the app asked for, if each is one that
- * `asked` takes anyway (this computer's, or the deploy's list). A client ID proves nothing, as before: authorize
+ * Nothing is kept: the answer is a client ID made here, and those of the redirects the app asked for that `asked`
+ * takes anyway (this computer's, or the deploy's list). A client ID proves nothing, as before: authorize
  * checks the redirect again, the code binds it with the client and the PKCE challenge. The client ID carries the app's
  * own name (client_name, readable: "Claude-Code.x1y2z3"), the label of its approval page and its grant in Settings.
  */
@@ -638,9 +638,13 @@ async function register(q: Req, c: Config, p: Port, now: number): Promise<Answer
   } catch {}
   const uris = m && Array.isArray(m.redirect_uris) ? m.redirect_uris : null;
   if (!uris || !uris.length || uris.length > 10) return bad("redirect_uris: one to ten addresses");
-  for (const u of uris)
-    if (typeof u != "string" || u.length > 500 || u.includes("#") || !(LOOPBACK.test(u) || !!c.redirects?.includes(u)))
-      return json(400, { error: "invalid_redirect_uri", error_description: "Only this computer's addresses (http://localhost)." });
+  // An app names every redirect that it has in one request, its hosted ones too (VS Code: vscode.dev's; Cursor:
+  // cursor://). The answer keeps the ones that `asked` takes, as RFC 7591 lets a server do, and refuses when none is.
+  const mine = uris.filter(
+    (u): u is string => typeof u == "string" && u.length <= 500 && !u.includes("#") && (LOOPBACK.test(u) || !!c.redirects?.includes(u))
+  );
+  if (!mine.length)
+    return json(400, { error: "invalid_redirect_uri", error_description: "Only this computer's addresses (http://localhost)." });
   if (m!.token_endpoint_auth_method != null && m!.token_endpoint_auth_method != "none")
     return bad("token_endpoint_auth_method: none only (a public client)");
   const name = typeof m!.client_name == "string" ? m!.client_name : "";
@@ -660,7 +664,7 @@ async function register(q: Req, c: Config, p: Port, now: number): Promise<Answer
     client_id: `${label}.${tail}`,
     client_id_issued_at: now,
     ...(name ? { client_name: name.slice(0, 100) } : {}),
-    redirect_uris: uris,
+    redirect_uris: mine,
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
     token_endpoint_auth_method: "none",
