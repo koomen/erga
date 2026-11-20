@@ -125,7 +125,7 @@ export function tar(files: Record<string, Uint8Array>, seconds: number): Uint8Ar
 }
 
 /** The release's celld project as the machine loads it: one .tgz, with `vars` over the release's own settings. */
-export const celldTgz = (release: Release, vars: Record<string, string>): Effect.Effect<Uint8Array, DeployError> =>
+export const celldTgz = (release: Release, vars: Record<string, string>): Effect.Effect<Uint8Array<ArrayBuffer>, DeployError> =>
   Effect.gen(function* () {
     const files = yield* celldProject(release, vars);
     const now = yield* Clock.currentTimeMillis;

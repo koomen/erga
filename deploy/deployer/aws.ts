@@ -27,6 +27,19 @@ export function awsVars(target: AwsTarget, settings: Record<string, string>, ver
   };
 }
 
+/**
+ * The parameter (Parameter Store, a plain String) that holds the release an instance runs: each deploy and rollback
+ * writes it, and `bun erga status` reads it there. Trap: it is not in the stack's folder (/erga/<stack>): the machine
+ * loads every parameter of that folder into the Worker's settings.
+ */
+export const liveParam = (stack: string) => `/erga-live/${stack}`;
+
+/**
+ * The parameter (a plain String, in the instance's region) that holds the hash of the gate that setup installed in
+ * front of the instance (a release's `gate`): the deployer in the cloud reads it. Not in the stack's folder either.
+ */
+export const gateParam = (stack: string) => `/erga-gate/${stack}/installed`;
+
 /** AWS's calls of a deploy, for one instance. A call that AWS refuses is a DeployError, in words for a person. */
 export interface AwsApi {
   /**

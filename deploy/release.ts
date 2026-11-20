@@ -13,10 +13,10 @@
 // them) and migrations/ (server/migrations/).
 // (The landing project is built into the Worker itself.)
 
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { ReleaseIndex } from "./deployer/release-format.ts";
-import { gateHash } from "./aws/gate.ts";
 import { releaseBindings } from "./deployer/bindings.ts";
 import { ROOT } from "./root.ts";
 
@@ -35,6 +35,23 @@ function files(dir: string): string[] {
   };
   walk(dir);
   return out.sort();
+}
+
+/**
+ * The SHA-256 of the gate's source in this checkout (every file of gate/, by its path): which gate a commit has. The
+ * release carries it, and setup on AWS records the one that it installed (deploy/aws/gate.ts, putGateHash). The source,
+ * not the build: the same commit gives the same hash on every machine, whatever its Bun.
+ * Trap: this file imports nothing of the gate's build (gate/build.ts needs Babel): a release's build stays small.
+ */
+export function gateHash(dir = join(ROOT, "gate")): string {
+  const hash = createHash("sha256");
+  const paths = (readdirSync(dir, { recursive: true }) as string[]).map((p) => p.split("\\").join("/")).sort();
+  for (const path of paths.filter((p) => /\.(ts|jsonc?)$/.test(p)))
+    hash
+      .update(`${path}\0`)
+      .update(readFileSync(join(dir, path)))
+      .update("\0");
+  return hash.digest("hex");
 }
 
 export async function makeRelease(): Promise<ReleaseIndex> {

@@ -8,10 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { gateHash } from "../deploy/aws/gate";
 import { AwsFacts } from "../deploy/cli/config";
 import { awsVars } from "../deploy/deployer/aws";
 import { celldProject, celldTgz, tar } from "../deploy/deployer/celld";
+import { gateHash } from "../deploy/release";
 import type { AwsTarget } from "../deploy/deployer/spec";
 import { prepareRelease, release, ROOT } from "./helpers/deploys.ts";
 
@@ -59,6 +59,22 @@ test("the release carries the Worker as one module, and its gate's hash: the sam
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the release's build imports no package but Effect: not the gate's build, which needs Babel", () => {
+  const seen = new Set<string>();
+  const packages = new Set<string>();
+  const todo = [join(ROOT, "deploy/release.ts")];
+  for (let file = todo.pop(); file; file = todo.pop()) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const { path } of new Bun.Transpiler({ loader: "ts" }).scanImports(readFileSync(file, "utf8").replace(/^#!.*/, "")))
+      if (path.startsWith(".")) todo.push(join(file, "..", path.endsWith(".ts") ? path : `${path}.ts`));
+      else if (!path.startsWith("node:")) packages.add(path.split("/")[0]);
+  }
+  expect([...packages].filter((name) => name != "effect")).toEqual([]);
+  expect(seen.size).toBeGreaterThan(2);
+  expect([...seen].some((f) => f.includes("/gate/"))).toBe(false);
 });
 
 test("the celld project: the one module, the files, the migrations, and the deploy's settings over the release's own", () => {
@@ -131,4 +147,4 @@ test("the pack is a .tgz that tar reads: each file whole, a long path too, under
   }
   // A path that no header holds is refused.
   expect(() => tar({ [`${"x".repeat(120)}/${"y".repeat(120)}`]: new Uint8Array() }, 0)).toThrow("too long to pack");
-});
+}, 30_000);

@@ -219,7 +219,9 @@ const healthCurl = (gate: boolean) =>
  * wrangler.json: server/health.ts). `first`: SQL to run after it answers (setup's first admin). `gateKey`: with the
  * gate in front (deploy/aws/template.ts), the stack's secret that holds the key the distributions send with each
  * request: the machine reads it, and it is Erga's GATE_KEY (server/identity/mode.ts). A deploy whose machine can't
- * read it stops here: without the key Erga would take itself for a server with no gate in front.
+ * read it stops here: without the key Erga would take itself for a server with no gate in front. `version`: the
+ * release's name, or the shell's own word for it ("$SSM_version", in the deployer's document): the script reads it
+ * only as its variable `version`.
  */
 export function deployScript(o: {
   bucket: string;
@@ -231,8 +233,9 @@ export function deployScript(o: {
 }): string {
   return `set -euo pipefail
 export AWS_REGION=${o.region}
+export version="${o.version}"
 live=$(mktemp -d) && trap 'rm -rf "$live"' EXIT && cd "$live"
-aws s3 cp s3://${o.bucket}/releases/${o.version}.tgz - --quiet | tar -xz
+aws s3 cp "s3://${o.bucket}/releases/$version.tgz" - --quiet | tar -xz
 ${
   // (Each on a line of its own: `set -e` does not stop at a command that fails before an `&&`.)
   o.gateKey
@@ -258,15 +261,15 @@ else
   migrate
 fi
 health() { ${healthCurl(!!o.gateKey)}; }
-healthy() { health | python3 -c 'import json, sys
+healthy() { health | python3 -c 'import json, os, sys
 h = json.load(sys.stdin)
-sys.exit(0 if h.get("ok") is True and h.get("version") == "${o.version}" else 1)' 2>/dev/null; }
+sys.exit(0 if h.get("ok") is True and h.get("version") == os.environ["version"] else 1)' 2>/dev/null; }
 for i in $(seq 1 90); do healthy && break; sleep 2; done
-healthy || { echo "release ${o.version} is not healthy: $(health | head -c 400)" >&2; exit 1; }
+healthy || { echo "release $version is not healthy: $(health | head -c 400)" >&2; exit 1; }
 ${o.first ? `celld d1 execute erga . --bucket ${fleet(o.bucket)} --command "${o.first.replace(/"/g, '\\"')}" 2>&1 | quiet | tail -1` : ""}
-mkdir -p /var/lib/erga && touch /var/lib/erga/deployed && sed -i '/^${o.version}$/d' /var/lib/erga/deployed
-echo '${o.version}' >> /var/lib/erga/deployed
-echo "runs ${o.version}"
+mkdir -p /var/lib/erga && touch /var/lib/erga/deployed && sed -i "/^$version\\$/d" /var/lib/erga/deployed
+echo "$version" >> /var/lib/erga/deployed
+echo "runs $version"
 `;
 }
 
@@ -317,6 +320,36 @@ celld d1 execute erga . --bucket ${fleet(o.bucket)} --json --command "${o.sql}"
 
 /** The releases the machine ran, oldest first (the last one runs now). */
 export const deployedScript = () => "cat /var/lib/erga/deployed 2>/dev/null || true";
+
+/**
+ * The script of the instance's own document (Systems Manager), which the deployer in the cloud sends to the machine
+ * (deploy/deployer/aws-cloud.ts): the only thing that its role may run there. It is fixed when setup installs it: the
+ * bucket, the stack and the gate's secret are in it. A command gives three parameters, which the document checks and
+ * which the agent gives the script as environment variables (SSM_action, SSM_version, SSM_sql: never as text of the
+ * script), and the script checks the release's name again:
+ *
+ *   load      loads the release `version` from the bucket (deployScript, with no first SQL): a deploy, or the way back
+ *   deployed  the releases that the machine ran (deployedScript)
+ *   sql       one statement of the instance's record of its deploys (recordScript)
+ *
+ * Trap: an agent older than 3.3.2746.0 gives no such variable: the script stops at its second line, and runs nothing.
+ */
+export function documentScript(o: { bucket: string; region: string; stack: string; gateKey?: string }): string {
+  const body = (script: string) => script.trim().replace(/^set -euo pipefail\n/, "");
+  return `set -euo pipefail
+: "\${SSM_action:?The Systems Manager agent of the machine gave the script no parameter. It must be 3.3.2746.0 or newer.}"
+if [ "$SSM_action" = load ]; then
+[[ "\${SSM_version:-}" =~ ^[0-9a-f]{12}$ ]] || { echo "not a release's name" >&2; exit 2; }
+${body(deployScript({ ...o, version: "$SSM_version" }))}
+elif [ "$SSM_action" = deployed ]; then
+${deployedScript()}
+elif [ "$SSM_action" = sql ]; then
+${body(recordScript({ bucket: o.bucket, region: o.region, sql: "$SSM_sql" }))}
+else
+echo "not an action of this document" >&2; exit 2
+fi
+`;
+}
 
 /** Puts a release's packed celld project (deploy/deployer/celld.ts) in the bucket: its size, in bytes. */
 export async function putRelease(aws: Aws, bucket: string, tgz: Uint8Array, version: string): Promise<number> {

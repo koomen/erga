@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Aws } from "../deploy/aws/cli";
-import { liveOnAws, liveParam } from "../deploy/aws/deploy";
+import { liveOnAws } from "../deploy/aws/deploy";
 import { gateCode, gateSettings, INLINE_MAX, putEdgeKey } from "../deploy/aws/gate";
 import { deployScript, factsScript, healthScript, provisionScript, putObject, sqlScript } from "../deploy/aws/machine";
 import { ADMIN_SQL, adminIn, awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
@@ -22,6 +22,7 @@ import {
   TEMPLATE_MAX,
 } from "../deploy/aws/template";
 import { instanceReader } from "../deploy/cli/running";
+import { liveParam } from "../deploy/deployer/aws";
 import { signInOf } from "../deploy/own/facts";
 import { noAnswers, pagesProblem, varsOf } from "../deploy/own/plan";
 

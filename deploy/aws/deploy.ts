@@ -8,22 +8,17 @@
 
 import * as Effect from "effect/Effect";
 import type { AwsEntry } from "../cli/config";
-import type { AwsApi } from "../deployer/aws";
+import { type AwsApi, liveParam } from "../deployer/aws";
 import { celldTgz } from "../deployer/celld";
-import { DeployError, tried } from "../deployer/cloudflare-api";
+import { machineSql } from "../deployer/aws-cloud";
+import { tried } from "../deployer/cloudflare-api";
 import { deploy } from "../deployer/deploy";
-import { NoTable, type Sql } from "../deployer/instance";
+import type { Sql } from "../deployer/instance";
 import type { Release } from "../deployer/release-format";
 import { type Aws, awsCli } from "./cli";
 import { deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease, recordScript } from "./machine";
 
 const awsOf = (e: AwsEntry) => awsCli({ profile: e.profile, region: e.aws.region });
-
-/**
- * The parameter (Parameter Store, a plain String) that holds the release an instance runs. Trap: it is not in the
- * stack's folder (template.ts, paramFolder): the machine loads every parameter of that folder into the Worker's settings.
- */
-export const liveParam = (stack: string) => `/erga-live/${stack}`;
 
 const putLive = (aws: Aws, stack: string, version: string) =>
   aws("ssm", "put-parameter", "--name", liveParam(stack), "--type", "String", "--overwrite", "--value", version);
@@ -77,7 +72,6 @@ export async function factsOnAws(
   return { version, facts: JSON.parse(out.trim().split("\n").at(-1) ?? "null") };
 }
 
-/** The releases the machine ran, oldest first: the last one runs now. */
 /**
  * AWS's calls of a deploy or a rollback, for one instance, with the AWS CLI. `first`: SQL that the machine runs once
  * that release answers (setup's first admin): it goes with that release only, never with one that a rollback loads.
@@ -117,31 +111,9 @@ export async function deployToAws(
   });
 }
 
-const SSM_OUTPUT = 24_000;
-
-/** A value in a statement that the machine runs: text as hex, so that no value can end the statement or the script. */
-const literal = (v: string | number | null) =>
-  v == null ? "NULL" : typeof v == "number" ? String(Math.trunc(v)) : `CAST(X'${Buffer.from(v, "utf8").toString("hex")}' AS TEXT)`;
-
 /**
  * The instance's database, for its own record of its deploys (deploy/deployer/instance.ts): each statement is one
  * command on the machine (Systems Manager), which takes some seconds. The rows are the marked texts in celld's output.
  */
-export function awsSql(aws: Aws, o: { bucket: string; region: string; machine: string }): Sql {
-  return (sql, params) => {
-    const parts = sql.split("?");
-    const statement = parts.map((part, i) => (i ? literal(params[i - 1] ?? null) : "") + part).join("");
-    // Only plain characters go into the machine's script: no quote that ends its text, nothing that the shell reads.
-    if (parts.length != params.length + 1 || !/^[A-Za-z0-9_ ,()=<>|'*.:]*$/.test(statement))
-      return Effect.fail(new DeployError({ message: "A statement of the deploys' record is not one that the machine may run." }));
-    return Effect.tryPromise({
-      try: async () => {
-        const out = await onMachine(aws, o.machine, recordScript({ bucket: o.bucket, region: o.region, sql: statement }), 120);
-        // Systems Manager gives back the first 24,000 characters of the output: more than that is a row that is cut.
-        if (out.length >= SSM_OUTPUT) throw new Error("The machine's answer is longer than Systems Manager gives back.");
-        return out.match(/erga:(?:[0-9A-F]{2})+/g) ?? [];
-      },
-      catch: (e) => (/no such table/.test((e as Error).message) ? new NoTable() : new DeployError({ message: (e as Error).message })),
-    });
-  };
-}
+export const awsSql = (aws: Aws, o: { bucket: string; region: string; machine: string }): Sql =>
+  machineSql((sql) => tried(() => onMachine(aws, o.machine, recordScript({ bucket: o.bucket, region: o.region, sql }), 120)));

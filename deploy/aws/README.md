@@ -17,6 +17,7 @@ name or domain: each instance takes its names from its name in setup, and the AW
 | `stack.ts` | The templates in `.erga/aws/`, AWS's change sets, the stacks |
 | `machine.ts` | celld and Chrome in the bucket and on the machine; the commands the CLI runs there (Systems Manager) |
 | `deploy.ts` | `bun erga deploy` and `rollback` of an instance on AWS |
+| `deployer.ts` | The deployer in the cloud: its stack (role, function, schedule, the instance's document) and its install |
 | `setup.ts` | `bun erga setup` on AWS: what it observes, the plan, the stacks, the first deploy |
 | `cli.ts` | The AWS CLI with the instance's profile and region |
 | `check.ts` | Checks a live server feature by feature, in a browser and through the tools API |
@@ -107,6 +108,33 @@ authority, and no Caddy.
   in the project's wrangler.json, each minute; celld's Cron Triggers are not tested on a real machine yet).
 - `bun erga rollback <name>`: the release before the one that runs, from the bucket. The database stays as it is.
 - The secrets go into the settings on the machine only, at each deploy: the bucket's release holds none.
+
+## The deployer in the cloud
+
+`installDeployer` (`deployer.ts`) installs it with the person's own login: one more stack, `<stack>-deployer`, and the
+function's code. Setup's cloud choice calls it. After that, no person's login is in a deploy.
+
+- **The function** (`deploy/deployer/lambda.ts`, Node, 512 MB). It has no URL. Its schedule starts it each minute, one
+  time. A run is one look (`deploy/deployer/look.ts`): the instance's spec, the branch's head at GitHub, and with
+  auto-deploy on the deploy of the head's release, with the same steps as `bun erga deploy`. It fetches the release
+  from GitHub, checks its digest, and packs the celld project itself.
+- **The role** is its only credential: AWS changes its keys, and no person holds them. Its statements, each for this
+  one instance: `s3:PutObject` on `releases/*` of the bucket; `kms:GenerateDataKey` on the stack's key, through S3
+  only; `ssm:SendCommand` with the instance's document to the instance's machine; `ssm:GetCommandInvocation` (AWS has
+  no narrower form than `*`); `ssm:PutParameter` on `/erga-live/<stack>`; with the gate in front, `ssm:GetParameter`
+  on `/erga-gate/<stack>/installed`; and its own log group. It cannot read the bucket, run a shell, read a secret, or
+  change IAM, a stack, a distribution, the document or its own code.
+- **The instance's document** (`<stack>-deploy`, Systems Manager) is the fixed script (`machine.ts`, `documentScript`)
+  with three actions: `load` a release, list the `deployed` releases, and one `sql` statement of the deploys' record.
+  Systems Manager checks each parameter (a release is 12 hex characters; a statement is a read, or a write of the
+  deploys' own tables, of plain characters only), and
+  the agent gives them to the script as environment variables, never as text of the script. That needs the agent
+  3.3.2746.0 or newer: with an older one the script stops at its start.
+- **The gate.** Only setup installs the gate's code, and it records the hash of the gate's source
+  (`/erga-gate/<stack>/installed`). A release carries the hash of its own gate. With the gate in front, the deployer
+  deploys no release whose hash differs: it stops before any change and says to run setup (plan decision D7).
+- **Each look is four commands on the machine** (the spec, the control row, the look's row, the jobs), each some
+  seconds. Not deployed to a real account yet.
 
 ## Cost (us-west-2, each month)
 

@@ -14,39 +14,18 @@
 // client secret of the organization's sign-in is a parameter that the user's own page writes (setup.ts,
 // putOidcSecret), and only the Lambda reads it.
 
-import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildFunction, buildLambda } from "../../gate/build.ts";
 import { type Config, SIGN_IN_DAYS } from "../../gate/core.ts";
-import { ROOT } from "../root";
+import { gateParam } from "../deployer/aws";
+import { gateHash } from "../release";
 import type { Aws } from "./cli";
 import { type AwsShape, GATE_PARTS, type GateCode, idpSecretParam, type Oidc } from "./template";
 
-/**
- * The SHA-256 of the gate's source in this checkout (every file of gate/, by its path): which gate a commit has. The
- * release carries it (deploy/release.ts), and setup records the one that it installed (putGateHash). The source, not
- * the build: the same commit gives the same hash on every machine, whatever its Bun.
- */
-export function gateHash(dir = join(ROOT, "gate")): string {
-  const hash = createHash("sha256");
-  const files = (readdirSync(dir, { recursive: true }) as string[]).map((p) => p.split("\\").join("/")).sort();
-  for (const path of files.filter((p) => /\.(ts|jsonc?)$/.test(p)))
-    hash
-      .update(`${path}\0`)
-      .update(readFileSync(join(dir, path)))
-      .update("\0");
-  return hash.digest("hex");
-}
-
-/**
- * The parameter (Parameter Store, a plain String, in the instance's region) that holds the hash of the gate that setup
- * installed: the deployer in the cloud reads it. Trap: it is not in the machine's folder (template.ts, paramFolder).
- */
-export const gateParam = (stack: string) => `/erga-gate/${stack}/installed`;
-
-/** Records which gate the stacks have now (gateHash), after setup applied them. */
+/** Records which gate the stacks have now (deploy/release.ts, gateHash), after setup applied them. */
 export const putGateHash = (aws: Aws, stack: string, hash = gateHash()) =>
   aws("ssm", "put-parameter", "--name", gateParam(stack), "--type", "String", "--overwrite", "--value", hash);
 
