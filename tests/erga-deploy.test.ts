@@ -63,7 +63,7 @@ const fresh = (...entries: Entry[]) => {
 };
 type Mock = ReturnType<typeof mockCloudflare>;
 /** An instance's jobs, as its own database has them in the mock Cloudflare: the newest first. */
-const jobsOn = (mock: Mock, entry: Entry) => jobsReader({ net: mock.fetch })(entry);
+const jobsOn = async (mock: Mock, entry: Entry) => (await jobsReader({ net: mock.fetch })(entry)).jobs;
 /** The instance's database in the mock Cloudflare, for its record of its deploys. */
 const sqlOn = (mock: Mock, entry: Entry) => sqlOf(entry, { cf: new Cloudflare("mock-machine-token", mock.fetch) });
 /** The calls that change what an instance runs: no read, and no statement on its database. */
@@ -232,19 +232,29 @@ describe("bun erga deploy", () => {
     const read = jobsReader({ net: mock.fetch });
     const calls = () => mock.state.calls.length;
     // While it runs, the page shows it as running.
-    expect((await read(next)).map((j) => j.phase)).toEqual(["running"]);
+    expect((await read(next)).jobs.map((j) => j.phase)).toEqual(["running"]);
     await job.end();
     let before = calls();
-    expect((await read(next)).map((j) => [j.phase, j.out])).toEqual([["ok", ["one"]]]);
-    // Nothing new in the log: the read is the list of the jobs alone.
-    expect(mock.state.calls.slice(before)).toEqual([expect.stringMatching(/^POST .*\/d1\/database\/[^/]+\/query$/)]);
+    expect((await read(next)).jobs.map((j) => [j.phase, j.out])).toEqual([["ok", ["one"]]]);
+    // Nothing new in the log: the read is the list of the jobs, and the row that says who deploys the instance.
+    const query = expect.stringMatching(/^POST .*\/d1\/database\/[^/]+\/query$/);
+    expect(mock.state.calls.slice(before)).toEqual([query, query]);
     // More in the log: the list, and the part of the log that is new.
     await Effect.runPromise(sql("UPDATE deploy_jobs SET log = log || ?", ["two\nthree\n"]));
     before = calls();
-    expect((await read(next))[0].out).toEqual(["one", "two", "three"]);
-    expect(calls() - before).toBe(2);
+    expect((await read(next)).jobs[0].out).toEqual(["one", "two", "three"]);
+    expect(calls() - before).toBe(3);
+    // Who deploys the instance: a deployer in its own account, when its row says that one looked in the last minutes
+    // with auto-deploy on. An old look, or the switch off, is no deployer.
+    expect((await read(next)).cloud).toBe(false);
+    await Effect.runPromise(sql("INSERT INTO deploy_control (id, auto, looked) VALUES (1, 1, ?)", [Date.now() - 60_000]));
+    expect((await read(next)).cloud).toBe(true);
+    await Effect.runPromise(sql("UPDATE deploy_control SET looked = ?", [Date.now() - 10 * 60_000]));
+    expect((await read(next)).cloud).toBe(false);
+    await Effect.runPromise(sql("UPDATE deploy_control SET looked = ?, auto = 0", [Date.now()]));
+    expect((await read(next)).cloud).toBe(false);
     // An instance whose database has no table for its jobs has none.
-    expect(await read(fleet)).toEqual([]);
+    expect(await read(fleet)).toEqual({ jobs: [], cloud: false });
   }, 60_000);
 
   test("the tests' gate: a commit with no record runs the tests, and a failure stops before the build; --no-tests is in the record", async () => {

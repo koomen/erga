@@ -304,7 +304,14 @@ describe("the row that the app and the deployer share", () => {
     expect(await run(readControl(sql))).toBeNull();
     const before = Date.now();
     await run(writeLook(sql, { head: commit(1).sha, error: null, commits: [commit(1), commit(0, "none")] }));
-    expect(await run(readControl(sql))).toEqual({ auto: false, ask: null, head: commit(1).sha, commits: [commit(1), commit(0, "none")] });
+    expect(await run(readControl(sql))).toMatchObject({
+      auto: false,
+      ask: null,
+      head: commit(1).sha,
+      commits: [commit(1), commit(0, "none")],
+    });
+    // The look's time is in the row, and its reader gives it: the ops page of a machine reads who deploys the instance.
+    expect((await run(readControl(sql)))?.looked).toBeGreaterThanOrEqual(before);
     const row = db.query("SELECT looked, error FROM deploy_control").get() as { looked: number; error: string | null };
     expect(row.looked).toBeGreaterThanOrEqual(before);
     expect(row.error).toBeNull();
@@ -312,7 +319,7 @@ describe("the row that the app and the deployer share", () => {
     appAsk(db, "rollback", "ada", 5);
     // A look that failed says why, with the head and the commits that the deployer still has.
     await run(writeLook(sql, { head: commit(1).sha, error: "GitHub answered 503.", commits: [commit(1)] }));
-    expect(await run(readControl(sql))).toEqual({
+    expect(await run(readControl(sql))).toMatchObject({
       auto: true,
       ask: { kind: "rollback", by: "ada", at: 5 },
       head: commit(1).sha,
@@ -431,7 +438,7 @@ describe("AWS's way to the instance's database", () => {
       release: "released",
     };
     await run(writeLook(sql, { head: seen.sha, error: null, commits: [seen] }));
-    expect(await run(readControl(sql))).toEqual({ auto: false, ask: null, head: seen.sha, commits: [seen] });
+    expect(await run(readControl(sql))).toMatchObject({ auto: false, ask: null, head: seen.sha, commits: [seen] });
     expect(await run(takeAsk(sql, { kind: "rollback", by: "$(id)", at: 1 }))).toBe(false);
     // What the machine ran: plain characters only. No value's text is in a script.
     for (const script of scripts) {

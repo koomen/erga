@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import type { Aws, Where } from "../aws/cli";
 import { d1Api, healthRow, liveDeployment, liveRelease, readHealth } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
+import { readControl } from "../deployer/control";
 import { holds, type Job, readJobs, readLog, type Sql } from "../deployer/instance";
 import { AwsFacts, CloudflareFacts, type Entry, isAws } from "./config";
 import { netOf } from "./deploy";
@@ -117,12 +118,24 @@ export const recordOf = (host: string, job: Job, text: string, now: number): Job
   out: text.split("\n").slice(0, -1).slice(-OUT_LINES),
 });
 
+/** How long after its last look a deployer in the instance's account still counts as there: it looks each minute. */
+const DEPLOYER_MS = 5 * 60_000;
+
 /**
- * A reader of the instances' jobs, newest first: each instance's last deploys and rollbacks, from its own database.
- * It keeps each job's log as far as it read it, and a read asks only for what the log has more. An instance with no
- * table for its jobs yet has none.
+ * What an instance's own database says of its deploys: its jobs, newest first, and `cloud`: a deployer in its own
+ * account deploys it now (it looked in the last minutes, and its auto-deploy is on).
  */
-export function jobsReader(o: ReaderOptions = {}): (e: Entry) => Promise<JobRecord[]> {
+export interface OnInstance {
+  jobs: JobRecord[];
+  cloud: boolean;
+}
+
+/**
+ * A reader of the instances' jobs, newest first: each instance's last deploys and rollbacks, from its own database,
+ * and whether a deployer in its account deploys it. It keeps each job's log as far as it read it, and a read asks
+ * only for what the log has more. An instance with no table for its jobs yet has none, and no deployer.
+ */
+export function jobsReader(o: ReaderOptions = {}): (e: Entry) => Promise<OnInstance> {
   const client = clientOf(o);
   /** By host and job: the log's text as far as it is read, how many bytes of the log that is, and the reader of its next bytes. */
   const logs = new Map<string, { text: string; have: number; decoder: TextDecoder }>();
@@ -138,9 +151,10 @@ export function jobsReader(o: ReaderOptions = {}): (e: Entry) => Promise<JobReco
         : { cf, entry, sql: await sqlOf(e, { cf: cf ?? new Cloudflare("", globalThis.fetch), aws: o.aws }) };
     ways.set(e.host, way);
     const sql = way.sql;
-    const jobs = await Effect.runPromise(
+    const { jobs, control } = await Effect.runPromise(
       Effect.gen(function* () {
         const jobs = yield* readJobs(sql);
+        const control = yield* readControl(sql);
         for (const job of jobs) {
           const key = `${e.host} ${job.id}`;
           const log = logs.get(key) ?? { text: "", have: 0, decoder: new TextDecoder() };
@@ -153,15 +167,18 @@ export function jobsReader(o: ReaderOptions = {}): (e: Entry) => Promise<JobReco
             log.have += more.length;
           }
         }
-        return jobs;
-      }).pipe(Effect.catchTag("NoTable", () => Effect.succeed([] as Job[])))
+        return { jobs, control };
+      }).pipe(Effect.catchTag("NoTable", () => Effect.succeed({ jobs: [] as Job[], control: null })))
     ).catch((err) => {
       client.drop();
       throw new Error(err instanceof Error ? err.message : String(err));
     });
     for (const key of logs.keys()) if (key.startsWith(`${e.host} `) && !jobs.some((j) => key == `${e.host} ${j.id}`)) logs.delete(key);
     const now = Date.now();
-    return jobs.map((job) => recordOf(e.host, job, logs.get(`${e.host} ${job.id}`)?.text ?? "", now));
+    return {
+      jobs: jobs.map((job) => recordOf(e.host, job, logs.get(`${e.host} ${job.id}`)?.text ?? "", now)),
+      cloud: !!control?.auto && control.looked != null && control.looked > now - DEPLOYER_MS,
+    };
   };
 }
 

@@ -181,9 +181,14 @@ function checked(e: Entry, f: Facts, now: number): string {
   return items ? `<p class="checked" aria-label="Checks"><span>Checked:</span>${items}</p>` : "";
 }
 
-/** Auto-deploy stopped for the instance: at which commit, why, and what starts it again. No other place says that it does not try again. */
+/**
+ * Auto-deploy stopped for the instance: at which commit, why, and what starts it again. No other place says that it
+ * does not try again. Or it leaves the instance to the deployer in the instance's own account.
+ */
 function stopped(g: Entry, f: Facts): string {
   const a = f.auto?.[g.host];
+  if (a?.at == "cloud")
+    return `<p class="note">${esc("A deployer in this instance's own account deploys it: this page's auto-deploy leaves it. Deploy and Roll back here still work.")}</p>`;
   if (a?.at != "failed") return "";
   const next =
     a.why == REWRITTEN

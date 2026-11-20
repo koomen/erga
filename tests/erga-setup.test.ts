@@ -42,8 +42,8 @@ afterAll(() => {
 });
 
 /** An instance's jobs, as its own database has them in the mock Cloudflare: the newest first. */
-const jobsOn = (mock: { fetch: First["net"] }, host: string) =>
-  jobsReader({ net: mock.fetch })(readConfig(dir).instances.find((e) => e.host == host)!);
+const jobsOn = async (mock: { fetch: First["net"] }, host: string) =>
+  (await jobsReader({ net: mock.fetch })(readConfig(dir).instances.find((e) => e.host == host)!)).jobs;
 
 /** What the build takes from the flow, for `host`: the answers, and what the command saw in the mock account. */
 const first = (mock: { state: MockState; fetch: First["net"] }, host: string, more: Partial<First["answers"]> = {}): First => ({

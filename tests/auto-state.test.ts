@@ -10,12 +10,17 @@ const A = "a".repeat(40),
   B = "b".repeat(40),
   C = "c".repeat(40);
 /** What the page sees: the branch's head, and the commit that the instance runs (as it answers: 12 characters). */
-const seen = (head: string | null, runs: string | null, more: { tried?: boolean; rewritten?: boolean } = {}): AutoEvent => ({
+const seen = (
+  head: string | null,
+  runs: string | null,
+  more: { tried?: boolean; rewritten?: boolean; cloud?: boolean } = {}
+): AutoEvent => ({
   type: "seen",
   head,
   runs: runs?.slice(0, 12) ?? null,
   tried: false,
   rewritten: false,
+  cloud: false,
   ...more,
 });
 /** The states after each event, and each deploy that a step asked for. */
@@ -105,4 +110,18 @@ test("a branch that was written again stops: the new head does not have the comm
   expect(r.deploys).toEqual([]);
   // A deploy by hand accepts it.
   expect(run(r.auto, seen(B, B)).auto).toEqual({ at: "idle", done: B });
+});
+
+test("an instance that a deployer in its own account deploys is left to it; when that deployer is gone, the page has it again", () => {
+  // The head is new, and the instance's own row says that its deployer looked a moment ago, with auto-deploy on.
+  const left = run(IDLE, seen(B, A, { cloud: true }), { type: "free" });
+  expect(left.auto).toEqual({ at: "cloud" });
+  expect(left.deploys).toEqual([]);
+  // A deploy that this page started before ends first.
+  const mine = run(IDLE, seen(B, A), { type: "free" }, seen(B, A, { cloud: true }));
+  expect(mine.auto).toEqual({ at: "deploying", head: B, newer: null });
+  // The deployer stopped looking, or its switch is off: the head is due here.
+  const back = run(left.auto, seen(B, A), { type: "free" });
+  expect(back.auto).toEqual({ at: "deploying", head: B, newer: null });
+  expect(back.deploys).toEqual([B]);
 });

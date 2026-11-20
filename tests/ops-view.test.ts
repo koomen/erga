@@ -517,7 +517,7 @@ test("the page's server: Deploy and Roll back start their `bun erga` command, on
     heads: async () => ({ heads: { main: c1, staging: c3 }, error: null }),
     ask: async (e) => ({ version: version[e.host as keyof typeof version], healthy: true }),
     // Each instance's own record of its jobs: the page reads it from the instance, never from this machine's files.
-    jobs: async (e) => onInstance[e.host] ?? [],
+    jobs: async (e) => ({ jobs: onInstance[e.host] ?? [], cloud: false }),
     run: (args) => {
       runs.push(args);
       return { pid: 999_999, done: new Promise((done) => (end = done)) };
@@ -645,7 +645,7 @@ test("the page's server asks for each upstream's head, and compares each instanc
       return { heads, error: null };
     },
     ask: async () => ({ version: c1.slice(0, 12), healthy: true }),
-    jobs: async () => [],
+    jobs: async () => ({ jobs: [], cloud: false }),
   });
   const view = async (host: string) => (await fetch(`http://127.0.0.1:${page.server.port}/view?hash=${host}`)).text();
   const until = async (host: string, ok: (html: string) => boolean) => {
@@ -718,7 +718,7 @@ test("the page's server checks its sources at start, not on a page load, and the
     fetch: async () => (calls.push("fetch"), "fatal: unable to access GitHub"),
     heads: async () => (calls.push("heads"), { heads: {}, error: "fatal: could not read from the repository" }),
     ask: async () => (calls.push("ask"), { version: "1".repeat(12), healthy: true }),
-    jobs: async () => [],
+    jobs: async () => ({ jobs: [], cloud: false }),
   });
   const at = `http://127.0.0.1:${page.server.port}`;
   const view = async () => (await fetch(`${at}/view?hash=example.net`)).text();
@@ -782,7 +782,7 @@ test("the page's server works the tests' queue: each branch's merge runs one tim
     cwd: dir,
     port: 0,
     ask: async () => ({ version: null, healthy: null }),
-    jobs: async () => [],
+    jobs: async () => ({ jobs: [], cloud: false }),
     fetch: async () => null,
     test: (branch) => {
       started.push(branch);

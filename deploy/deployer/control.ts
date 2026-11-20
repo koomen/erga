@@ -40,9 +40,10 @@ const Commits = Schema.Array(Commit).check(Schema.isMaxLength(COMMITS));
 /** What an admin asked for in the app: this commit's deploy, or the rollback. `by`: who asked. `at`: when, in ms. */
 export type Ask = ({ kind: "deploy"; sha: string } | { kind: "rollback" }) & { by: string; at: number };
 
-/** The row. `head`, `commits`: the last look's (newest first). */
+/** The row. `looked`: when the deployer last looked (ms), or null: none did. `head`, `commits`: the last look's (newest first). */
 export interface Control {
   auto: boolean;
+  looked: number | null;
   ask: Ask | null;
   head: string | null;
   commits: readonly Commit[];
@@ -57,6 +58,7 @@ const Row = Schema.Struct({
   // One line, since it goes into the job's row as where the job came from.
   by: Schema.NullOr(Schema.String.check(Schema.isMaxLength(100).abort(), Schema.isPattern(/^[^\n\r]+$/))),
   at: Schema.NullOr(Schema.Number),
+  looked: Schema.NullOr(Schema.Number),
   head: Schema.NullOr(Sha),
   commits: Commits,
 });
@@ -65,12 +67,12 @@ const Row = Schema.Struct({
 export const readControl = (sql: Sql): Effect.Effect<Control | null, DeployError | NoTable> =>
   Effect.gen(function* () {
     const rows = yield* sql(
-      `SELECT ${row("json_object('auto', auto, 'ask', ask, 'by', ask_by, 'at', ask_at, 'head', head, 'commits', json(commits))")} FROM deploy_control WHERE id = 1`,
+      `SELECT ${row("json_object('auto', auto, 'ask', ask, 'by', ask_by, 'at', ask_at, 'looked', looked, 'head', head, 'commits', json(commits))")} FROM deploy_control WHERE id = 1`,
       []
     );
     const [r] = yield* rowsAs(Row, rows);
     if (!r) return null;
-    const control = { auto: r.auto == 1, head: r.head, commits: r.commits };
+    const control = { auto: r.auto == 1, looked: r.looked, head: r.head, commits: r.commits };
     if (r.ask == null) return { ...control, ask: null };
     if (r.by == null || r.at == null)
       return yield* new DeployError({ message: "The ask on the instance does not say who asked, and when." });

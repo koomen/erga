@@ -224,7 +224,7 @@ if (opsArg != undefined) {
       port: 0,
       autoDeploy: true,
       ask: async (e) => ({ version: runs[e.host].slice(0, 12), healthy: true }),
-      jobs: async (e) => jobs.filter((j) => j.host == e.host),
+      jobs: async (e) => ({ jobs: jobs.filter((j) => j.host == e.host), cloud: false }),
       fetch: async () => null,
       heads: async (_cwd, _repo, branches) => ({
         heads: Object.fromEntries(branches.map((b) => [b, b == "staging" ? staging : main])),

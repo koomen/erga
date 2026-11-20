@@ -40,9 +40,9 @@ function world() {
   return { dir, c1, c2, c3, side };
 }
 
-test("auto-deploy: each instance behind its branch's head deploys it, one job at a time; failed, tried and rewritten ones stop", async () => {
+test("auto-deploy: each instance behind its branch's head deploys it, one job at a time; failed, tried and rewritten ones stop; one with a deployer of its own is left", async () => {
   const { dir, c1, c2, c3, side } = world();
-  const hosts = ["a", "b", "tried", "rewritten", "silent", "current"].map((n) => `${n}.example.net`);
+  const hosts = ["a", "b", "tried", "rewritten", "silent", "current", "cloud"].map((n) => `${n}.example.net`);
   writeFileSync(
     join(dir, ".erga/config.json"),
     JSON.stringify({ instances: [entry(hosts[0], "main"), entry(hosts[1], "staging"), ...hosts.slice(2).map((h) => entry(h, "main"))] })
@@ -69,6 +69,8 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     "rewritten.example.net": side,
     "silent.example.net": null,
     "current.example.net": c3,
+    // Behind main's head, but a deployer in its own account deploys it (its own row says so).
+    "cloud.example.net": c1,
   };
   const asked: string[][] = [];
   const started: string[][] = [];
@@ -81,7 +83,7 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     fetch: async () => null,
     heads: async (_cwd, repo, branches) => (asked.push([repo, ...branches]), { heads: { main: c3, staging: c2 }, error: null }),
     ask: async (e) => ({ version: runs[e.host]?.slice(0, 12) ?? null, healthy: runs[e.host] ? true : null }),
-    jobs: async (e) => (e.host == tried.host ? [tried] : []),
+    jobs: async (e) => ({ jobs: e.host == tried.host ? [tried] : [], cloud: e.host == "cloud.example.net" }),
     run: (args, from) => {
       started.push([...args, from]);
       return { pid: 999_000 + started.length, done: new Promise((done) => (end = done)) };
@@ -106,7 +108,15 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     const first = await until((h) => h.includes(">deploying<"));
     expect(asked).toEqual([["example.net/team/erga", "main", "staging"]]);
     expect(started).toEqual([["deploy", c3.slice(0, 12), "a.example.net", "auto-deploy"]]);
-    expect(words(first)).toEqual({ a: "deploying", b: "1 behind", tried: "1 behind", rewritten: "failed", silent: "", current: "" });
+    expect(words(first)).toEqual({
+      a: "deploying",
+      b: "1 behind",
+      tried: "1 behind",
+      rewritten: "failed",
+      silent: "",
+      current: "",
+      cloud: "2 behind",
+    });
     expect(first).toContain("<span>Auto-deploy is on</span>");
     // An instance whose auto-deploy stopped says why on its own page, and no other page does.
     expect(await view("rewritten.example.net")).toContain(
@@ -128,8 +138,13 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     runs["b.example.net"] = c2;
     end({ code: 0, out: "" });
     const last = await until((h) => !h.includes(">deploying<"));
-    expect(words(last)).toMatchObject({ a: "failed", tried: "1 behind" });
+    expect(words(last)).toMatchObject({ a: "failed", tried: "1 behind", cloud: "2 behind" });
     expect(started.length).toBe(2);
+    // The page never deployed the instance that has a deployer of its own, and its page says why.
+    expect(started.some((s) => s.includes("cloud.example.net"))).toBe(false);
+    expect(await view("cloud.example.net")).toContain(
+      "A deployer in this instance&#39;s own account deploys it: this page&#39;s auto-deploy leaves it."
+    );
   } finally {
     page.stop();
     rmSync(dir, { recursive: true, force: true });
@@ -148,7 +163,7 @@ test("without --auto-deploy, the page deploys nothing: it asks the repository fo
     fetch: async () => null,
     heads: async () => (asked++, { heads: { main: c3 }, error: null }),
     ask: async () => ({ version: c1.slice(0, 12), healthy: true }),
-    jobs: async () => [],
+    jobs: async () => ({ jobs: [], cloud: false }),
     run: (args) => (started.push(args), { pid: 1, done: new Promise(() => {}) }),
   });
   try {

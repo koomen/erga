@@ -31,7 +31,7 @@ import { busyWith, type Facts, type JobRecord, jobOf, pageHtml, repoSource, view
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
-import { instanceReader, jobsReader } from "./running";
+import { instanceReader, jobsReader, type OnInstance } from "./running";
 import { ROOT, sh } from "../root";
 import { readKept, readRuns as readVerifyRuns, readState as readVerifyState, verifyDir } from "../../dev/verify/cli";
 import { readiness, resultOf, units } from "../../dev/verify/suite";
@@ -98,8 +98,8 @@ export interface OpsPageOptions {
   port: number;
   /** What an instance runs, and its health (running.ts, instanceReader), or a fake in the tests. */
   ask?: (e: Entry) => Promise<Answer>;
-  /** An instance's deploys and rollbacks, from its own record (running.ts, jobsReader), or a fake in the tests. */
-  jobs?: (e: Entry) => Promise<JobRecord[]>;
+  /** An instance's deploys and rollbacks, and whether a deployer in its account deploys it, from its own record (running.ts, jobsReader), or a fake in the tests. */
+  jobs?: (e: Entry) => Promise<OnInstance>;
   /** fetchGitHub (null: it worked, else why not), or a fake in the tests. */
   fetch?: (cwd: string) => Promise<string | null>;
   /** Runs `bun erga <args>` for the Deploy and Roll back buttons and for auto-deploy (default: the CLI, in a process of its own), or a fake. */
@@ -151,6 +151,8 @@ export function serveOpsPage(o: OpsPageOptions) {
   /** The jobs of this machine's records, and each instance's own, by its host: together, the facts' jobs. */
   let local: JobRecord[] = [];
   const onInstance: Record<string, JobRecord[]> = {};
+  /** By host: a deployer in the instance's own account deploys it (its own row says so): auto-deploy leaves it. */
+  const cloud: Record<string, boolean> = {};
   const setJobs = () => {
     facts.jobs = [...local, ...entries().flatMap((e) => onInstance[e.host] ?? [])];
   };
@@ -164,9 +166,10 @@ export function serveOpsPage(o: OpsPageOptions) {
       reading.get(e.host) ??
       askJobs(e)
         .then(
-          (jobs) => {
+          (got) => {
             if (stopped) return;
-            onInstance[e.host] = jobs;
+            onInstance[e.host] = got.jobs;
+            cloud[e.host] = got.cloud;
             setJobs();
           },
           () => {}
@@ -257,7 +260,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       // A job of this instance has the head: it was tried. Else its history must have the commit that runs.
       const tried = behind && facts.jobs.some((j) => j.kind == "deploy" && j.host == e.host && j.commit == head);
       const rewritten = behind && !tried && !inHistory(o.cwd, runs!, head!);
-      step(e.host, { type: "seen", head, runs, tried, rewritten });
+      step(e.host, { type: "seen", head, runs, tried, rewritten, cloud: !!cloud[e.host] });
     }
     if (busyWith(facts)) return;
     for (const e of entries()) {
