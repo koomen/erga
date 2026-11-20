@@ -46,6 +46,36 @@ journey("a document that is slow to open", () => {
   /** Each of the page's frames whose editor has the room's start (GET /api/start). */
   const started = new Set<Frame>();
 
+  /**
+   * The viewer hears each new version, at most every 2 s (document/api/view.ts). The last edit's comes after the eye,
+   * most times: then the viewer loads the page again in a new frame, and that page's editor joins the room ahead
+   * (GET /api/start). Back once that is over: the viewer has the last version, and the one page it shows is in the
+   * room. (Before it, the old page's frame can go under a step that reads it: "Frame was detached".)
+   */
+  const rested = async () => {
+    await until(
+      async () => (await page.evaluate<string>("ergaPage.collab.current()")).includes(">X</h2>"),
+      5000,
+      "the room has the last edit"
+    );
+    const ver = /name="erga-ver" content="([^"]+)"/.exec(await (await fetch(ed.address)).text())?.[1];
+    await until(
+      () => !!ver && heard.at(-1) == ver,
+      10_000,
+      "the viewer hears the last edit's version",
+      () => ({ ver, heard })
+    );
+    await until(
+      async () => {
+        const shown = page.frames().filter((f) => f.parentFrame() == page.mainFrame() && /\/t\//.test(f.url()));
+        const frame = await (await page.$("#frame"))?.contentFrame();
+        return shown.length == 1 && shown[0] == frame && started.has(shown[0]);
+      },
+      10_000,
+      "one page shows, and its editor has the room's start"
+    );
+  };
+
   // Before, the editor gave the room's hello 8 s, then said "Nothing to edit here" for good.
   test("a room that stays silent: the editor says the document is still opening, offers a reload, and starts when the hello comes", async ({
     tab,
@@ -151,6 +181,8 @@ journey("a document that is slow to open", () => {
       await soon(() => viewing(page)).toBe(true);
     });
     expect(out, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+    // (The page of the last edit, if the viewer loads it now: it has the same view.)
+    await rested();
     expect(await more(), "the eye does not move the page").toBeCloseTo(at, 0);
     // The page's editor stays in the room, for the pencil; nobody there sees a person who views.
     await soon(() => page.evaluate<number>("ergaPage.collab.others().length")).toBe(0);
@@ -179,30 +211,8 @@ journey("a document that is slow to open", () => {
 
   // Before, the page's editor left the room at the eye, and the pencil waited for the room again (250 ms on a real network).
   test("the pencil, down the page: the page's editor is in the room already, and every frame the tab paints shows the page where it was", async () => {
-    // The viewer hears each new version, at most every 2 s (document/api/view.ts). The last edit's comes after the eye,
-    // most times: then the viewer loads the page again, and that page's editor joins the room ahead (GET /api/start).
-    // The pencil's part starts after that: the viewer has the last version, and the one page it shows is in the room.
-    await until(
-      async () => (await page.evaluate<string>("ergaPage.collab.current()")).includes(">X</h2>"),
-      5000,
-      "the room has the last edit"
-    );
-    const ver = /name="erga-ver" content="([^"]+)"/.exec(await (await fetch(ed.address)).text())?.[1];
-    await until(
-      () => !!ver && heard.at(-1) == ver,
-      10_000,
-      "the viewer hears the last edit's version",
-      () => ({ ver, heard })
-    );
-    await until(
-      async () => {
-        const shown = page.frames().filter((f) => f.parentFrame() == page.mainFrame() && /\/t\//.test(f.url()));
-        const frame = await (await page.$("#frame"))?.contentFrame();
-        return shown.length == 1 && shown[0] == frame && started.has(shown[0]);
-      },
-      10_000,
-      "one page shows, and its editor has the room's start"
-    );
+    // (The pencil's part: the page of the last edit shows, and its editor is in the room.)
+    await rested();
     const starts: string[] = [];
     const asked = (r: { url(): string }) => void (/\/api\/start\b/.test(r.url()) && starts.push(r.url()));
     page.on("request", asked);

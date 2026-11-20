@@ -170,6 +170,7 @@ export async function pointerOnPage(page: Page, x: number, y: number) {
     return n;
   };
   const was = await heard();
+  const viewer = await page.evaluate<number>(MOVES);
   let tries = 0;
   await until(
     async () => {
@@ -179,7 +180,33 @@ export async function pointerOnPage(page: Page, x: number, y: number) {
       return (await heard()) > was;
     },
     5000,
-    `the pointer is on the page at ${x},${y}`
+    `the pointer is on the page at ${x},${y}`,
+    // What the viewer has at the point, and whether it heard the moves itself: this failed only on GitHub's machine.
+    async () => ({
+      tries,
+      viewerHeard: (await page.evaluate<number>(MOVES)) - viewer,
+      ...(await page.evaluate(
+        ([x, y]) => {
+          const el = document.elementFromPoint(x, y),
+            f = document.getElementById("frame"),
+            r = f?.getBoundingClientRect();
+          return {
+            under: el ? `<${el.tagName.toLowerCase()} id="${el.id}" class="${el.getAttribute("class") ?? ""}">` : null,
+            frame: r ? [r.left, r.top, r.width, r.height].map(Math.round) : null,
+            transform: f ? getComputedStyle(f).transform : null,
+            html: document.documentElement.className,
+            focus: document.hasFocus(),
+          };
+        },
+        [x, y]
+      )),
+      frames: page.frames().map((f) =>
+        f
+          .url()
+          .replace(/\/t\/[^/]+/, "/t/…")
+          .slice(0, 80)
+      ),
+    })
   );
 }
 

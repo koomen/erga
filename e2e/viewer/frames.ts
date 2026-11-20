@@ -1,6 +1,9 @@
 // What the tab paints while a document opens in the editor: where the document's frame is on every animation frame,
 // the document's layout shifts, and how much of the document each painted frame shows (a DevTools screencast).
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ROOT } from "../helpers/env";
 import { expect, type Page } from "../helpers/fixtures";
 
 /** The document's frame: its left and right edges in the tab. */
@@ -136,8 +139,12 @@ export function still(r: Painted, want: Spot, what: string) {
   ).toEqual([]);
 }
 
-/** What the tab painted while something ran: how many frames, those with another view of the document, those without it. */
-export type Views = { frames: number; moved: number[]; empty: number };
+/**
+ * What the tab painted while something ran: how many frames, those with another view of the document, those without
+ * it. `kept`: where the pictures of those frames are, with the picture before (in the journeys' artifacts, which a
+ * failed run keeps: some of these fail only on GitHub's machine).
+ */
+export type Views = { frames: number; moved: number[]; empty: number; kept?: string };
 
 /**
  * Records every frame that the tab paints while `act` runs, and compares each with the picture before `act`: inside
@@ -206,9 +213,21 @@ export async function views(page: Page, act: () => Promise<void>): Promise<Views
     { before, frames }
   );
   const other = seen.filter((f) => f.diff > 0.004);
+  let kept: string | undefined;
+  if (other.length) {
+    kept = join(".e2e", "artifacts", "views", String(Date.now()));
+    mkdirSync(join(ROOT, kept), { recursive: true });
+    const keep = (name: string, png: string) => writeFileSync(join(ROOT, kept!, `${name}.png`), Buffer.from(png, "base64"));
+    keep("before", before);
+    // (Each frame that differs, by its place among the frames; the frame before the first of them too.)
+    seen.forEach((f, i) => {
+      if (f.diff > 0.004 || seen[i + 1]?.diff > 0.004) keep(`frame-${String(i).padStart(3, "0")}-of-${seen.length}`, frames[i]);
+    });
+  }
   return {
     frames: seen.length,
     moved: other.filter((f) => f.flat <= 0.985).map((f) => Math.round(f.diff * 1000)),
     empty: other.filter((f) => f.flat > 0.985).length,
+    ...(kept ? { kept } : {}),
   };
 }
