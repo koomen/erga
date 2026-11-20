@@ -106,7 +106,7 @@ export default defineConfig(({ mode }) => ({
         ERGA_ROOM_IDLE_MS: local(process.env.ERGA_ROOM_IDLE_MS ?? ""),
         // The deploy facts a deploy would set (deploy/deployer/cloudflare.ts, deployFacts): tests of `bun erga register`.
         ERGA_DEPLOY: local(process.env.ERGA_DEPLOY ?? ""),
-        // The release that a deploy would name (deploy/deployer/cloudflare.ts): tests of the Ops page, whose live row is the commit that runs.
+        // The release that a deploy would name (deploy/deployer/cloudflare.ts): tests of the Deploy page, whose live row is the commit that runs.
         ERGA_VERSION: local(process.env.ERGA_VERSION ?? ""),
         // e2e/bench/run.ts --latency: each call to the database or a document waits this long first.
         ERGA_REMOTE_LATENCY_MS: local(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),

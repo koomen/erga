@@ -1,4 +1,4 @@
-// The server's side of its own deploys (server/directory/deploys.ts, server/operations/deploys.ts, /admin/ops), on the
+// The server's side of its own deploys (server/directory/deploys.ts, server/operations/deploys.ts, /admin/deploy), on the
 // whole app in memory, with the deployer's side played by the deployer's own code (deploy/deployer/instance.ts,
 // control.ts) on the same database: what one side writes, the other reads. A server with no deployer says so and has
 // no ask; with one, an admin's ask becomes the deployer's job, and the page and the operations show it as it goes.
@@ -55,7 +55,7 @@ async function world(o: { deployer?: boolean } = {}) {
   await run(writeSpec(sql, SPEC));
   if (o.deployer !== false) await run(writeLook(sql, { head: sha(4), error: null, commits: COMMITS }));
   /** The page's live part, as the page's script reads it again. */
-  const page = async (query = "") => ((await (await s.fetch(`/admin/ops/view${query}`)).json()) as { html: string }).html;
+  const page = async (query = "") => ((await (await s.fetch(`/admin/deploy/view${query}`)).json()) as { html: string }).html;
   return { s, sql, page };
 }
 
@@ -70,15 +70,26 @@ test("a server with no deployer: the page and the read say that its deploys come
   const html = await page();
   expect(html).toContain(`<div class="none">${none}</div>`);
   expect(html).toContain("<code>bun erga deploy localhost</code>");
-  expect(await (await s.fetch("/admin/ops")).text()).toContain("localhost runs 222222222222.");
+  // Auto-deploy is a machine's then, which the server can't ask: it says what its job log knows, and how to get the switch.
+  const how = "Install the cloud deployer to control it here (bun erga setup, with --deploys cloud).";
+  const byHand = `Auto-deploy: not known. It runs on a machine (bun erga --auto-deploy), which this server can't ask: its last deploy came from a terminal, just now. ${how}`;
+  expect(html).toContain(`<p class="lede">${byHand.replace("can't", "can&#39;t")}</p>`);
+  expect(await (await s.fetch("/admin/deploy")).text()).toContain("localhost runs 222222222222.");
   expect(html).not.toMatch(/data-deploy|data-rollback|id="auto-deploy"/);
   expect(await page("?tab=logs")).toContain("<span>Worker: done</span>");
   const read = await runTool(s, "deploys");
   expect(read.result).toMatchObject({ runs: "222222222222", tracks: { repo: SPEC.repo, branch: "main" }, deployer: none, commits: [] });
+  expect(read.result.autoDeploy).toBe(byHand);
   expect(read.result.jobs).toMatchObject([{ id: 1, kind: "deploy", from: "terminal", commit: sha(2), state: "done" }]);
   for (const action of ["deploy", "rollback", "auto"])
     expect(await runTool(s, "deploy", { action, on: true })).toMatchObject({ status: 403, error: none });
   expect(await run(readControl(sql))).toBeNull();
+  // A deploy that a machine's auto-deploy started: it was on then, and the server does not say more.
+  const auto = await run(openJob(sql, { kind: "deploy", command: "bun erga deploy localhost", source: "auto-deploy" }));
+  expect(await auto.end({ at: "done" })).toBeNull();
+  expect((await runTool(s, "deploys")).result.autoDeploy).toBe(
+    `Auto-deploy: on at the last deploy (just now), from a machine (bun erga --auto-deploy). This server can't know whether it is on now. ${how}`
+  );
   // An admin's agent has the read, and not the ask.
   const ops = (await toolsFor({ dir: s.dir, who: { login: "tester", admin: true } })).flatMap(opsOf);
   expect([ops.includes("deploys"), ops.includes("deploy")]).toEqual([true, false]);
@@ -92,11 +103,11 @@ test("a server with no deployer: the page and the read say that its deploys come
 
 test("a server with no spec yet says so; only an admin reads the page or the operations", async () => {
   const s = server();
-  expect(await (await s.fetch("/admin/ops")).text()).toContain("localhost has no deploy spec yet");
+  expect(await (await s.fetch("/admin/deploy")).text()).toContain("localhost has no deploy spec yet");
   expect((await runTool(s, "deploys")).result).toMatchObject({ tracks: null, jobs: [] });
   const { s: w } = await world();
-  expect((await w.fetch("/admin/ops?user=ada")).status).toBe(404);
-  expect((await w.fetch("/admin/ops/view?user=ada")).status).toBe(404);
+  expect((await w.fetch("/admin/deploy?user=ada")).status).toBe(404);
+  expect((await w.fetch("/admin/deploy/view?user=ada")).status).toBe(404);
   expect((await runTool(w, "deploys", {}, { user: "ada" })).status).toBe(403);
   expect((await runTool(w, "deploy", { action: "rollback" }, { user: "ada" })).status).toBe(403);
 });
@@ -117,9 +128,9 @@ test("with a deployer: the page lists the commits that its look saw, and Deploy 
   expect(html).toContain('id="ops" data-wait="10000"');
   // The whole page has the live part in it, and its script, which draws that part again.
   expect(html).toStartWith('<ol class="rows" aria-label="Auto-deploy">');
-  const whole = await (await s.fetch("/admin/ops")).text();
-  expect(whole).toContain(`<div id="ops-live">${html}</div>`);
-  expect(whole).toContain('<a href="/admin/ops" aria-current="page">');
+  const whole = await (await s.fetch("/admin/deploy")).text();
+  expect(whole).toContain(`<div id="deploy-live">${html}</div>`);
+  expect(whole).toContain('<a href="/admin/deploy" aria-current="page">');
   const read = (await runTool(s, "deploys")).result;
   expect(read.commits.map((c: { commit: string; release: string; live?: boolean }) => [c.commit[0], c.release, !!c.live])).toEqual([
     ["4", "none", false],
@@ -152,7 +163,7 @@ test("an admin's ask is the deployer's job: asked, taken, run, done; the page an
   job.line("Worker...");
   // (A line is in the row once a write ended: the job's end waits for them all, so the read below sees both.)
   const runs = await page("?tab=logs");
-  expect(runs).toContain('<a class="job running" href="/admin/ops?tab=logs&amp;job=1" title="from the app, by tester">');
+  expect(runs).toContain('<a class="job running" href="/admin/deploy?tab=logs&amp;job=1" title="from the app, by tester">');
   expect(runs).toContain('id="ops" data-wait="1000"');
   // While it runs, no other ask.
   expect(await runTool(s, "deploy", { action: "rollback" })).toMatchObject({

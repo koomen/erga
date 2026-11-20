@@ -45,7 +45,7 @@ import { authPage } from "./auth.ts";
 import { accessPage } from "./access.ts";
 import { changesPage } from "./changes.ts";
 import { feedbackPage } from "./feedback.ts";
-import { opsLive, opsPage } from "./ops.ts";
+import { deployLive, deployPage } from "./deploy.ts";
 
 /** Who asks, checked: an admin, in their browser. */
 interface Asked {
@@ -121,19 +121,19 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   },
   {
     method: "GET",
-    path: "/admin/ops",
+    path: "/admin/deploy",
     // ?tab=logs or history, &job=<id>: the tab, and the job whose log Logs shows.
-    run: (a) => opsPage(a.platform, a.session, a.url),
-    action: "Read this server's deploys: its branch's last commits, each job's log, the history (Ops)",
+    run: (a) => deployPage(a.platform, a.session, a.url),
+    action: "Read this server's deploys: its branch's last commits, each job's log, the history (Deploy)",
     domain: "admin",
     tool: "deploys",
   },
   {
     method: "GET",
-    path: "/admin/ops/view",
+    path: "/admin/deploy/view",
     // {html}: the page's live part, as it is now. The page's script draws it again.
-    run: async (a) => json({ html: await opsLive(a.platform, a.session, a.url) }),
-    action: "Read the same again, for the open page (Ops)",
+    run: async (a) => json({ html: await deployLive(a.platform, a.session, a.url) }),
+    action: "Read the same again, for the open page (Deploy)",
     domain: "admin",
     tool: "deploys",
   },

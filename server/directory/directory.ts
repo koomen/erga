@@ -116,7 +116,7 @@ export class Directory {
   readonly pageLlm: PageLlm;
   /** The feedback people sent, and the GitHub issue of each. */
   readonly feedback: Feedback;
-  /** The instance's deploys and rollbacks, and what it and its deployer tell each other (the Ops page). */
+  /** The instance's deploys and rollbacks, and what it and its deployer tell each other (the Deploy page). */
   readonly deploys: Deploys;
   /** What people did each day: the Analytics page (/admin). */
   readonly activity: Activity;

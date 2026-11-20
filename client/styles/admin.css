@@ -350,5 +350,5 @@ ol.people-rows .facts .soft, ol.people-rows .facts time { color: var(--soft); }
   ol.people-rows .facts { grid-column: 2; justify-content: flex-start; }
 }
 
-/* The Ops page: its view (assets/ops/ops-view.css, which the build puts after this file) under the Auto-deploy row. */
+/* The Deploy page: its view (assets/ops/ops-view.css, which the build puts after this file) under the Auto-deploy row. */
 .admin-main .ops-view { margin-top: 20px; }

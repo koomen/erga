@@ -1,9 +1,9 @@
 // The layout every admin page shares (/admin, /admin/auth, /admin/access, /admin/documents, /admin/agents,
-// /admin/feedback, /admin/ops, /admin/changes): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
+// /admin/feedback, /admin/deploy, /admin/changes): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
 // left; upper right the quick actions, with Share with an agent, whose menu is admin-share.js, built from
 // client/admin/admin-share.ts, and left of them the save mark: every setting saves by itself, and the mark says how far
 // it is, client/common/admin-save.ts), the person's agent in the lower left (server/pages/agent.ts, as on every page),
-// and, on the left, a sidebar that links to Analytics, Sign-in, Access, Documents, Agents and models, Feedback, Ops and
+// and, on the left, a sidebar that links to Analytics, Sign-in, Access, Documents, Agents and models, Feedback, Deploy and
 // the Changelog.
 //
 // The sidebar collapses to a rail of icons and expands again, with an animation, and this browser remembers which
@@ -27,7 +27,7 @@ import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
 import { actingAdmin } from "../identity/index.ts";
 
-export type AdminSection = "analytics" | "auth" | "access" | "documents" | "agents" | "feedback" | "ops" | "changes";
+export type AdminSection = "analytics" | "auth" | "access" | "documents" | "agents" | "feedback" | "deploy" | "changes";
 
 /**
  * The admin pages, in the sidebar's order. But for Analytics and the Changelog, each is one thing an admin governs,
@@ -72,9 +72,9 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/><path d="M8 10h8M8 13h5"/></svg>`,
   },
   {
-    key: "ops",
-    label: "Ops",
-    path: "/admin/ops",
+    key: "deploy",
+    label: "Deploy",
+    path: "/admin/deploy",
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6"/><path d="M6.5 11.5 12 6l5.5 5.5"/><path d="M5 3.5h14"/></svg>`,
   },
   {

@@ -634,7 +634,7 @@ journey("the agent on the documents' list", () => {
     expect(await at(`${b.address}?user=${LISA}`), "document B").toEqual([false]);
     expect(await at(`${d.address}?user=${LISA}`), "a new document after B").toEqual([false]);
     expect(await at(`${c.address}?user=${LISA}`), "document C").toEqual([true]);
-    expect(await at(`${s.root}/admin/ops`), "another admin page").toEqual([true]);
+    expect(await at(`${s.root}/admin/deploy`), "another admin page").toEqual([true]);
     expect(await at(docs()), "the list").toEqual([true]);
     await agentOn(page);
   });

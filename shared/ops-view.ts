@@ -1,6 +1,6 @@
 // The view of one instance's deploys: pure, the facts in and HTML out. Two pages draw with it, so an instance looks
 // the same on both: the ops page of a machine (`bun erga`, deploy/cli/ops-view.ts, which adds the list of instances)
-// and the instance's own page in the app (/admin/ops). Its look is assets/ops/ops-view.css.
+// and the instance's own page in the app (/admin/deploy). Its look is assets/ops/ops-view.css.
 //
 // Its tabs, its job line (the command that runs, or its last one), and the chosen tab. Deploys: the commits of its
 // branch, green where it is live and orange where it is not yet, with a Deploy button on a row; the live row has Roll

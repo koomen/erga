@@ -1,4 +1,4 @@
-// The server's own deploys (the Ops page, /admin/ops): what it runs, the last commits of the branch that it tracks,
+// The server's own deploys (the Deploy page, /admin/deploy): what it runs, the last commits of the branch that it tracks,
 // and its deploys and rollbacks (read); and an ask to its deployer: deploy a commit, roll back, or turn auto-deploy on
 // or off. The server deploys nothing itself. A deployer in the instance's own cloud account does (deploy/deployer/),
 // and it has no address: an ask goes into the instance's database (server/directory/deploys.ts), and the deployer
@@ -6,7 +6,7 @@
 // deploy`): then nobody has the ask, and the read says so.
 
 import * as Schema from "effect/Schema";
-import { noDeployer } from "../admin/index.ts";
+import { machineAuto, noDeployer } from "../admin/index.ts";
 import type { DeployJob, DeployState } from "../directory/index.ts";
 import { type Caller, iso, type Operation, OperationError, said } from "./operation.ts";
 
@@ -31,7 +31,7 @@ const running = (s: DeployState) => s.jobs.find((j) => j.phase == "running");
 export const DEPLOY_OPERATIONS: Operation[] = [
   {
     name: "deploys",
-    ui: "Ops (/admin/ops): Deploys, Logs and History",
+    ui: "Deploy (/admin/deploy): Deploys, Logs and History",
     label: "Read the server's deploys",
     activity: "reading the server's deploys",
     admin: true,
@@ -57,7 +57,8 @@ export const DEPLOY_OPERATIONS: Operation[] = [
         deployer: state.look
           ? { looked: iso(state.look.at), head: state.look.head, ...(state.look.error ? { error: state.look.error } : {}) }
           : noDeployer(hostOf(caller)),
-        autoDeploy: state.auto,
+        // With no deployer the switch is nobody's: auto-deploy is a machine's, and the read says what the server knows of it.
+        autoDeploy: state.look ? state.auto : machineAuto(state.jobs, Date.now()),
         ...(state.ask
           ? {
               asked: {
@@ -82,7 +83,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
   },
   {
     name: "deploy",
-    ui: "Ops (/admin/ops): Deploy on a commit's row, Roll back on the live row, and the Auto-deploy switch",
+    ui: "Deploy (/admin/deploy): Deploy on a commit's row, Roll back on the live row, and the Auto-deploy switch",
     label: "Deploy the server",
     activity: "asking the deployer",
     admin: true,

@@ -1,5 +1,5 @@
 // The view of one instance's deploys (shared/ops-view.ts), as a page with no list of instances draws it (the app's
-// /admin/ops): no heading of its own, a commit whose release GitHub does not have takes no deploy, and a job that the
+// /admin/deploy): no heading of its own, a commit whose release GitHub does not have takes no deploy, and a job that the
 // app asked for says so. tests/ops-view.test.ts covers the rest, through the ops page of a machine. And its
 // stylesheet: every rule is under .ops-view, so that a page that loads it keeps its own look.
 
@@ -41,7 +41,7 @@ const view = (more: Partial<InstanceView> = {}): InstanceView => ({
   deploying: [],
   rolling: false,
   rollbackNote: "No branch moves.",
-  href: (tab, id) => `/admin/ops?tab=${tab}${id ? `&job=${id}` : ""}`,
+  href: (tab, id) => `/admin/deploy?tab=${tab}${id ? `&job=${id}` : ""}`,
   ...more,
 });
 /** The row of a commit: its cell's text, and whether it has a button. */
@@ -51,8 +51,8 @@ test("a page with its own heading: no heading here, and each tab and job at the 
   const html = instanceHtml(view(), "", "", NOW);
   expect(html).not.toContain("<h2");
   expect(html).toContain('<p class="tracks-line">Tracks <code>github.com/example/erga</code> <code>main</code>.</p>');
-  expect(html).toContain('<a class="tab" role="tab" href="/admin/ops?tab=history" aria-selected="false">History</a>');
-  expect(html).toContain('<a class="job ok" href="/admin/ops?tab=logs&amp;job=1" title="done 59 minutes ago · from the app, by ada">');
+  expect(html).toContain('<a class="tab" role="tab" href="/admin/deploy?tab=history" aria-selected="false">History</a>');
+  expect(html).toContain('<a class="job ok" href="/admin/deploy?tab=logs&amp;job=1" title="done 59 minutes ago · from the app, by ada">');
   expect(instanceHtml(view({ heading: true }), "", "", NOW)).toContain('<h2 class="title">erga.example.com</h2>');
 });
 

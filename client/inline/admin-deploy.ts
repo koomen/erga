@@ -1,4 +1,4 @@
-// The Ops page's script (server/admin/ops.ts). It draws the page's live part again (GET /admin/ops/view) while the page
+// The Deploy page's script (server/admin/deploy.ts). It draws the page's live part again (GET /admin/deploy/view) while the page
 // is open and shown: each second while a job runs or an ask waits, else each 10 seconds (the server says which), and
 // only when it changed. So a deploy that the deployer runs shows as it goes. A job's log that was scrolled to its end
 // stays at its end, and an open question stays open.
@@ -11,8 +11,8 @@ import { runTool, say } from "../common/admin-post";
 import { saveMark } from "../common/admin-save";
 import { asUser } from "../common/tools";
 
-export default function adminOps(): void {
-  const live = document.getElementById("ops-live")!;
+export default function adminDeploy(): void {
+  const live = document.getElementById("deploy-live")!;
   const view = window.ergaView;
   const mark = saveMark();
   /** The live part's HTML as the server last gave it. */
@@ -42,7 +42,7 @@ export default function adminOps(): void {
     }
   }
   async function drawNow(n: number) {
-    const r = await fetch(asUser(`/admin/ops/view${location.search}`), { headers: { Accept: "application/json" } }).catch(() => null);
+    const r = await fetch(asUser(`/admin/deploy/view${location.search}`), { headers: { Accept: "application/json" } }).catch(() => null);
     const html = r?.ok ? ((await r.json().catch(() => null)) as { html?: string } | null)?.html : null;
     if (html == null || view.signal.aborted || n != asked || html == last) return;
     last = html;

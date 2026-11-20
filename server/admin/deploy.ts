@@ -1,12 +1,12 @@
-// /admin/ops, the Ops page: this server's own deploys, for this server only. It draws the view that the ops page of a
+// /admin/deploy, the Deploy page: this server's own deploys, for this server only. It draws the view that the ops page of a
 // machine draws for an instance (shared/ops-view.ts; `bun erga`): the last commits of the branch that the server
 // tracks, with Deploy on a row and Roll back on the live one, each job's log, and the history. The facts are the
 // instance's own (server/directory/deploys.ts): its job log, and what its deployer in the cloud wrote at its last
 // look. The server deploys nothing: Deploy, Roll back and the Auto-deploy switch are the operation deploy
 // (server/operations/deploys.ts), an ask that the deployer starts within a minute.
 //
-// A server with no deployer deploys from a machine: the page says so, and shows its jobs, with no commits and no
-// button. The page's script (client/inline/admin-ops.ts) draws the live part again (GET /admin/ops/view) while the
+// A server with no deployer deploys from a machine: the page says so, and what it knows of that machine's
+// auto-deploy, and shows its jobs, with no commits and no button. The page's script (client/inline/admin-deploy.ts) draws the live part again (GET /admin/deploy/view) while the
 // page is open.
 
 import { esc } from "../../shared/html.ts";
@@ -24,6 +24,21 @@ const IDLE_MS = 10_000;
 /** What a server with no deployer says: here, and in the operations (server/operations/deploys.ts). */
 export const noDeployer = (host: string) =>
   `No deployer in the cloud deploys ${host}: its deploys come from a machine (bun erga deploy ${host}).`;
+
+/**
+ * Where auto-deploy runs for a server with no deployer, here and in the read (server/operations/deploys.ts). It is
+ * then a machine's (`bun erga --auto-deploy`), which the server can't ask: all that the server knows is where its
+ * last deploy came from (its job log).
+ */
+export function machineAuto(jobs: DeployState["jobs"], now: number): string {
+  const last = jobs.find((j) => j.kind == "deploy");
+  const how = "Install the cloud deployer to control it here (bun erga setup, with --deploys cloud).";
+  if (last?.from == "auto-deploy")
+    return `Auto-deploy: on at the last deploy (${timeAgo(last.started, now)}), from a machine (bun erga --auto-deploy). This server can't know whether it is on now. ${how}`;
+  const from = last?.from == "page" ? "the ops page of a machine" : last?.from.startsWith("app") ? "the app" : `a ${last?.from}`;
+  const seen = last ? `its last deploy came from ${from}, ${timeAgo(last.started, now)}` : "its job log has no deploy";
+  return `Auto-deploy: not known. It runs on a machine (bun erga --auto-deploy), which this server can't ask: ${seen}. ${how}`;
+}
 
 /** The Auto-deploy switch, as a setting's row. */
 const autoRow = (state: DeployState) =>
@@ -43,7 +58,7 @@ function looked(look: NonNullable<DeployState["look"]>, now: number): string {
 }
 
 /** The page's live part: the Auto-deploy switch and the view, as they are now. */
-export async function opsLive(platform: Platform, session: Session, url: URL, now = Date.now()): Promise<string> {
+export async function deployLive(platform: Platform, session: Session, url: URL, now = Date.now()): Promise<string> {
   const who = whoOf(session);
   const deploys = platform.directory.deploys;
   const state = await deploys.state(who, now);
@@ -91,22 +106,23 @@ export async function opsLive(platform: Platform, session: Session, url: URL, no
     rolling: running.some((j) => j.kind == "rollback") || ask?.kind == "rollback",
     rollbackNote: "No branch moves. The next deploy goes forward again.",
     bottom: state.look ? looked(state.look, now) : "",
-    href: (to, job) => `/admin/ops${to == "deploys" ? "" : `?tab=${to}${job ? `&job=${encodeURIComponent(job)}` : ""}`}`,
+    href: (to, job) => `/admin/deploy${to == "deploys" ? "" : `?tab=${to}${job ? `&job=${encodeURIComponent(job)}` : ""}`}`,
   };
   const wait = view.busy ? BUSY_MS : IDLE_MS;
-  return `${state.look ? autoRow(state) : ""}<div class="ops-view" id="ops" data-wait="${wait}">${instanceHtml(view, tab, id, now)}</div>`;
+  const auto = state.look ? autoRow(state) : `<p class="lede">${esc(machineAuto(state.jobs, now))}</p>`;
+  return `${auto}<div class="ops-view" id="ops" data-wait="${wait}">${instanceHtml(view, tab, id, now)}</div>`;
 }
 
-/** /admin/ops. */
-export async function opsPage(platform: Platform, session: Session, url: URL) {
+/** /admin/deploy. */
+export async function deployPage(platform: Platform, session: Session, url: URL) {
   const runs = platform.deploy.version;
   return adminPage({
     session,
-    title: "Ops",
-    here: "ops",
+    title: "Deploy",
+    here: "deploy",
     lede: `${url.host} runs ${runs ?? "no release that it knows"}.`,
     body: `
-  <div id="ops-live">${await opsLive(platform, session, url)}</div>
-<script>${inlineCall("admin-ops")}</script>`,
+  <div id="deploy-live">${await deployLive(platform, session, url)}</div>
+<script>${inlineCall("admin-deploy")}</script>`,
   });
 }

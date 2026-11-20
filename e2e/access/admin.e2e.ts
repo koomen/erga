@@ -2,7 +2,7 @@
 // the list of users, the settings and the access rules of the whole server, and reads the whole server's counts.
 // The path: the admin pages as one page. A link shows the next page in place, styled. Users, Settings, Access and the
 // Changelog follow changes that an agent makes with an admin token, with no reload. Feedback sent from the account
-// menu comes to the Feedback page, with its issue on the pretend GitHub; the page's switch turns Send feedback off and on. Ops
+// menu comes to the Feedback page, with its issue on the pretend GitHub; the page's switch turns Send feedback off and on. Deploy
 // shows the server's own deploys: Deploy on a commit asks the server's deployer, played here by the deployer's own code,
 // and its job shows as it runs. Analytics shows the day's counts. Then the
 // editor (the admin pages' bars look as its bars, and Send feedback works from a document), and the pages in dark mode.
@@ -20,7 +20,7 @@ import { clickOn } from "../helpers/press";
 import { markCard, markOf, marksSeen, markThere, watchMark } from "../helpers/save-mark";
 
 // (The scripted model: the agent's pane is on the pages.)
-// (It runs the release 222222222222: the Ops page's live commit.)
+// (It runs the release 222222222222: the Deploy page's live commit.)
 const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script", ERGA_VERSION: "2".repeat(12) } });
 
 interface Issue {
@@ -151,7 +151,7 @@ journey("an admin on the admin pages", () => {
       "Documents",
       "Agents and models",
       "Feedback",
-      "Ops",
+      "Deploy",
       "Changelog",
     ]);
     // A mark on this window, for the steps after: still here after the links, so the pages came in place.
@@ -410,7 +410,7 @@ journey("an admin on the admin pages", () => {
     expect(await stayed()).toBe(true);
   });
 
-  test("Ops: Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch turns auto-deploy on", async () => {
+  test("Deploy: Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch turns auto-deploy on", async () => {
     const sql = deployerSql(own!);
     const run = Effect.runPromise;
     const sha = (n: number) => String(n).repeat(40);
@@ -439,7 +439,7 @@ journey("an admin on the admin pages", () => {
       release: "released" as const,
     }));
     await run(writeLook(sql, { head: sha(3), error: null, commits }));
-    await go("/admin/ops", `.ops-view .row[data-sha="${sha(3)}"]`);
+    await go("/admin/deploy", `.ops-view .row[data-sha="${sha(3)}"]`);
     const text = (selector: string) => page.evaluate((s) => document.querySelector<HTMLElement>(s)?.innerText ?? "", selector);
     expect(await text(`.row[data-sha="${sha(2)}"] .dep.live`)).toContain("live");
     // The head's Deploy asks first; its answer goes to the deployer, which has no address: the page says that it waits.
@@ -459,7 +459,7 @@ journey("an admin on the admin pages", () => {
     await clickOn(page, "a.job.ok");
     await soon(() => text(".logs")).toContain("Worker: done");
     // The switch saves by itself, and the deployer reads it at its next look.
-    await clickOn(page, 'a.tab[href="/admin/ops"]');
+    await clickOn(page, 'a.tab[href="/admin/deploy"]');
     await page.waitForSelector("#auto-deploy");
     await clickOn(page, "li:has(#auto-deploy) .switch .track");
     await soon(async () => (await run(readControl(sql)))?.auto).toBe(true);
