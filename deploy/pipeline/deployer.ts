@@ -154,7 +154,9 @@ export async function checkToken(
   const databases = await statusOf(cf, `${acc}/d1/database?per_page=1`, "list the account's D1 databases");
   if (databases == 200)
     refused.push("The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.");
-  else if (databases != 403) unclear("Whether the token can read the account's D1 databases", databases);
+  // 401 too is a no: Cloudflare knows the token (the read above), and answers 401 for D1 to a token for one Worker
+  // (recorded 2026-11-20, with a real one).
+  else if (databases != 403 && databases != 401) unclear("Whether the token can read the account's D1 databases", databases);
 
   const others = ((await own.call<{ id: string }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? []).filter(
     (s) => s.id != target.worker

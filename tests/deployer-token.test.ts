@@ -37,8 +37,19 @@ async function account() {
 
 describe("the check of the deployer's token", () => {
   test("a token for the instance's Worker only is taken, and the check says what it could not confirm", async () => {
-    const { check, calls } = await account();
-    expect(await check("mock-only-erga-next")).toEqual({ refused: [], unconfirmed: NEVER_SHOWN });
+    const { mock, check, calls } = await account();
+    // Cloudflare's no to the D1 list is a 401 (the mock answers as a real token got it): a clear no, as a 403 is.
+    const statuses: number[] = [];
+    const seen: Fetch = async (input, init) => {
+      const answer = await mock.fetch(input, init);
+      if (String(input).includes("/d1/database")) statuses.push(answer.status);
+      return answer;
+    };
+    expect(await check("mock-only-erga-next", seen)).toEqual({ refused: [], unconfirmed: NEVER_SHOWN });
+    expect(statuses).toEqual([401]);
+    const forbidden: Fetch = (input, init) =>
+      String(input).includes("/d1/database") ? Promise.resolve(new Response("{}", { status: 403 })) : mock.fetch(input, init);
+    expect(await check("mock-only-erga-next", forbidden)).toEqual({ refused: [], unconfirmed: NEVER_SHOWN });
     // Reads only: the check changes nothing.
     expect(calls().every((c) => c.startsWith("GET "))).toBe(true);
   });
