@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import { d1Sql } from "../deploy/deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deploy/deployer/cloudflare-api";
 import { readControl } from "../deploy/deployer/control";
+import { keptLogin } from "../deploy/local-credential";
 import { deployerToken } from "../deploy/own/browser";
 import { checkToken, hasDeployer, installDeployer, installWithToken, removeDeployer } from "../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
@@ -98,6 +99,52 @@ describe("the check of the deployer's token", () => {
       "That the token is for the Worker erga-next only: the account has no other Worker to try it on.",
       ...NEVER_SHOWN,
     ]);
+  });
+});
+
+describe("the person's own login, in a setup that waits for the token", () => {
+  // What the setup of staging showed on 2026-11-20: a good token for one Worker, and Cloudflare's 401 [code 10000] to
+  // "list your Workers". That list is a call with the person's own login, which the setup had read at its start.
+  test("a login that ends while the person makes the token is read again: the check goes on", async () => {
+    const { mock } = await account();
+    const HOUR = 3_600_000;
+    let now = 0;
+    const reads: string[] = [];
+    const login = keptLogin(
+      () => {
+        reads.push(`mock-login-${reads.length + 1}`);
+        return { token: reads.at(-1)!, from: "the cf CLI's login", expires: now + HOUR };
+      },
+      () => now
+    );
+    // Cloudflare takes a login until its end only.
+    const net: Fetch = (input, init) =>
+      new Headers(init?.headers).get("authorization") == "Bearer mock-login-1" && now >= HOUR
+        ? Promise.resolve(Response.json({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }, { status: 401 }))
+        : mock.fetch(input, init);
+    const own = new Cloudflare(() => login()!.token, net);
+    const list = () => own.call<{ id: string }[]>("GET", `/accounts/${FLEET_ACCOUNT}/workers/scripts`, "list your Workers");
+    expect((await list())?.map((s) => s.id)).toContain("erga-next");
+    now = HOUR - 1;
+    await list();
+    expect(reads).toEqual(["mock-login-1"]);
+
+    now = HOUR + 1;
+    expect(await checkToken(net, own, TARGET, "mock-only-erga-next")).toEqual({ refused: [], unconfirmed: NEVER_SHOWN });
+    expect(reads).toEqual(["mock-login-1", "mock-login-2"]);
+    // With the login as it was at the start, the check stops at Cloudflare's no to the person's own list.
+    expect(await checkToken(net, new Cloudflare("mock-login-1", net), TARGET, "mock-only-erga-next").catch((e: Error) => e.message)).toBe(
+      "Cloudflare didn't accept the credential when it tried to list your Workers: the token may be expired or revoked. (Cloudflare said: Authentication error [code 10000])"
+    );
+  });
+
+  test("a credential without an end (CLOUDFLARE_API_TOKEN) is read one time", () => {
+    let reads = 0;
+    const login = keptLogin(
+      () => ({ token: `mock-${++reads}`, from: "CLOUDFLARE_API_TOKEN" }),
+      () => Number.MAX_SAFE_INTEGER
+    );
+    expect([login()?.token, login()?.token, reads]).toEqual(["mock-1", "mock-1", 1]);
   });
 });
 

@@ -139,7 +139,8 @@ async function installWithToken(a: Answers): Promise<string | null> {
       (e: Error) => e.message
     );
     if (!refused) return "";
-    tellUser(`Erga does not take this token:\n${refused}`);
+    // Not always the token's fault (the user's own login, or Cloudflare): the reason says which.
+    tellUser(`The deployer is not installed:\n${refused}`);
   }
 }
 

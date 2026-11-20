@@ -61,10 +61,11 @@ const envelopeOf = Schema.decodeUnknownOption(Schema.fromJsonString(Envelope));
  * The Cloudflare API with one token. Every call says what it's for (`what`,
  * "make the database"), so a refusal reads as what couldn't be done and why:
  * a token without the permission, a bad token, or Cloudflare's own message.
+ * The token may be a function: each call asks it, for a login that ends and is renewed while a command runs.
  */
 export class Cloudflare {
   constructor(
-    private token: string,
+    private token: string | (() => string),
     private fetch: Fetch = globalThis.fetch
   ) {}
 
@@ -85,7 +86,9 @@ export class Cloudflare {
       need?: string;
     } = {}
   ): Effect.Effect<A | null, DeployError> {
-    const headers: Record<string, string> = { Authorization: `Bearer ${opts.bearer ?? this.token}` };
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${opts.bearer ?? (typeof this.token == "string" ? this.token : this.token())}`,
+    };
     let payload: BodyInit | undefined;
     if (body instanceof FormData) payload = body;
     else if (body instanceof Blob) { payload = body; headers["Content-Type"] = body.type || "application/null"; }

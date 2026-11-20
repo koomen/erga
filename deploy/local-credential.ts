@@ -35,10 +35,20 @@ export function cfLogin(): { token: string; scopes: string[]; expires: number } 
   } catch { return null; }
 }
 
-/** This machine's credential for the account: CLOUDFLARE_API_TOKEN, else the cf CLI's login. */
-export function machineCredential(): { token: string; from: string; scopes?: string[] } | null {
+/** This machine's credential for the account: CLOUDFLARE_API_TOKEN, else the cf CLI's login (`expires`: its end, in ms). */
+export function machineCredential(): { token: string; from: string; scopes?: string[]; expires?: number } | null {
   const env = process.env.CLOUDFLARE_API_TOKEN?.trim();
   if (env) return { token: env, from: "CLOUDFLARE_API_TOKEN" };
   const login = cfLogin();
-  return login ? { token: login.token, from: "the cf CLI's login", scopes: login.scopes } : null;
+  return login ? { token: login.token, from: "the cf CLI's login", scopes: login.scopes, expires: login.expires } : null;
+}
+
+/**
+ * The machine's credential for a command that waits for a person: the same one until its end, then read again (which
+ * renews the cf CLI's login). A login lasts an hour, and Cloudflare answers an ended one with 401 "Authentication
+ * error [code 10000]": a command that reads it one time only fails after its wait.
+ */
+export function keptLogin(read = machineCredential, now: () => number = Date.now): () => ReturnType<typeof machineCredential> {
+  let held: ReturnType<typeof machineCredential> = null;
+  return () => (held && (held.expires == null || now() < held.expires) ? held : (held = read()));
 }

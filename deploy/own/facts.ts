@@ -7,7 +7,7 @@ import { entryOf, readConfig } from "../cli/config";
 import { mocked, netOf } from "../cli/deploy";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { d1Api, healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
-import { machineCredential } from "../local-credential";
+import { keptLogin } from "../local-credential";
 import { DEPLOYER_TAG, deployerName } from "../pipeline/deployer";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, varsOf, zoneOf } from "./plan";
@@ -15,23 +15,26 @@ import { adminOn } from "./first";
 import { DIR, githubIdOf, loadSecrets, namesAt } from "./store";
 
 export interface Connection {
+  /** The API with the login as it is at each call: a login that ends during a wait for the user is read again. */
   cf: Cloudflare;
   /** The Cloudflare API: fetch, or the mock's. */
   net: Fetch;
+  /** The login's token now: a step takes its connection when it starts, not before a wait. */
   token: string;
 }
-let connection: Connection | null = null;
+let mock: Connection | null = null;
+const login = keptLogin();
 
 /** The Cloudflare API with this machine's login, or why there's none. One mock for the whole process, under ERGA_DEPLOY_MOCK. */
 export async function cloudflare(): Promise<Connection | { why: string }> {
-  if (connection) return connection;
+  if (mock) return mock;
   if (mocked()) {
     const m = await netOf({});
-    return (connection = { cf: new Cloudflare(m.token, m.net), net: m.net, token: m.token });
+    return (mock = { cf: new Cloudflare(m.token, m.net), net: m.net, token: m.token });
   }
-  const c = machineCredential();
+  const c = login();
   if (!c) return { why: "Not logged in to Cloudflare: run `bunx cf auth login`." };
-  return (connection = { cf: new Cloudflare(c.token), net: globalThis.fetch.bind(globalThis), token: c.token });
+  return { cf: new Cloudflare(() => login()?.token ?? c.token), net: globalThis.fetch.bind(globalThis), token: c.token };
 }
 
 type SignIn = NonNullable<Seen["live"]>["signIn"];
