@@ -1,12 +1,15 @@
-// Feedback (server/directory/feedback.ts, server/operations/feedback.ts): kept in the database, unresolved, for the
-// admins and their agents only; an admin says that one is resolved, or not after all. Nothing leaves the server.
+// Feedback (server/directory/feedback.ts, server/operations/feedback.ts): only from someone signed in, kept in the
+// database with who sent it, unresolved, for the admins and their agents only; an admin says that one is resolved, or
+// not after all. Nothing leaves the server.
 
+import { readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, NotAllowed } from "../server/directory/index.ts";
 import { opsOf, toolsFor } from "../agents/tools.ts";
 import { systemPrompt } from "../agents/person/prompt.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
 import { accountMarkup, accountOf } from "../server/pages/index.ts";
+import { person, server, signedOut } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -25,8 +28,9 @@ function setup() {
   return { sql, dir: new Directory(sql, { admins: ["ada"] }) };
 }
 
-test("send_feedback keeps the text, the page and how it was sent, unresolved, and answers thanks; only admins read it, never with a name", async () => {
+test("send_feedback keeps the text, the page, who sent it and how, unresolved, and answers thanks; only admins read it, with the sender's name and login", async () => {
   const { dir } = setup();
+  await dir.users.add(ada, "bob", { name: "Bob Builder" });
   await expect(runOperation(send, { text: "  " }, { dir, who: bob })).rejects.toThrow("Write the feedback first.");
   await expect(runOperation(send, { text: "x".repeat(5001) }, { dir, who: bob })).rejects.toThrow(/at most 5000/);
   const answer = (await runOperation(
@@ -37,17 +41,51 @@ test("send_feedback keeps the text, the page and how it was sent, unresolved, an
   expect(answer).toMatchObject({
     sent: true,
     id: expect.stringMatching(/^fb-[a-z0-9]{8}$/),
-    message: expect.stringContaining("Thanks, sent."),
+    message: "Thanks, sent. This server's admins read it, and see that it is from you.",
   });
   expect(await dir.feedback.list(ada)).toMatchObject([
-    { id: answer.id, text: "Love it", login: "bob", page: "/bob/plan", via: "their agent", status: "unresolved" },
+    { id: answer.id, text: "Love it", login: "bob", name: "Bob Builder", page: "/bob/plan", via: "their agent", status: "unresolved" },
   ]);
-  // An admin's agent reads the text, the page, the time and the status: not who sent it.
+  // An admin's agent reads who sent it: the name, the login and how.
   const read = (await runOperation(list, {}, { dir, who: ada })) as { feedback: object[] };
-  expect(read.feedback).toEqual([{ id: answer.id, text: "Love it", page: "/bob/plan", at: expect.any(String), status: "unresolved" }]);
-  expect(JSON.stringify(read)).not.toMatch(/bob"|their agent/i);
+  expect(read.feedback).toEqual([
+    {
+      id: answer.id,
+      text: "Love it",
+      from: { login: "bob", name: "Bob Builder", via: "their agent" },
+      page: "/bob/plan",
+      at: expect.any(String),
+      status: "unresolved",
+    },
+  ]);
   await expect(runOperation(list, {}, { dir, who: bob })).rejects.toThrow(/admins only/);
   await expect(dir.feedback.list(bob)).rejects.toThrow(NotAllowed);
+});
+
+test("only someone signed in sends feedback: the API and the operation refuse anyone else; the admins' page names the sender", async () => {
+  const s = server();
+  const call = (headers: Record<string, string>) =>
+    s.fetch("/api/tools/send_feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json", Origin: s.root, ...headers },
+      body: JSON.stringify({ text: "The tree is too narrow" }),
+    });
+  const out = await call(signedOut());
+  expect([out.status, await out.json()]).toEqual([401, { ok: false, error: "Sign in first." }]);
+  expect(await s.platform.directory.feedback.list({ login: "tester", admin: true })).toEqual([]);
+  // The operation, for a caller that is nobody or anyone.
+  for (const login of ["", "*"])
+    await expect(runOperation(send, { text: "Hello" }, { dir: s.platform.directory, who: { login } })).rejects.toMatchObject({
+      message: "Sign in to send feedback.",
+      status: 401,
+    });
+  // Someone signed in: sent, and the admins' page has their name beside the text.
+  const cy = await person(s);
+  expect((await call({ Cookie: cy.cookie })).status).toBe(200);
+  const page = await (await s.fetch("/admin/feedback")).text();
+  const row = /<li class="feedback-row"[^]*?<\/li>/.exec(page)![0];
+  expect(row).toContain(`<span class="name">${cy.login}</span>`);
+  expect(row).toContain("The tree is too narrow");
 });
 
 test("a feedback is unresolved until an admin resolves it, and unresolved again when they say so; each list has its own, newest first", async () => {
@@ -65,7 +103,13 @@ test("a feedback is unresolved until an admin resolves it, and unresolved again 
   expect(await texts("resolved")).toEqual([]);
   // The agent of an admin asks first, in words; then the feedback is in the other list.
   expect(set.asks!({ id: b, status: "resolved" })).toBe(`Mark the feedback ${b} as resolved`);
-  expect(await runOperation(set, { id: b, status: "resolved" }, { dir, who: ada })).toMatchObject({ id: b, text: "B", status: "resolved" });
+  expect(await runOperation(set, { id: b, status: "resolved" }, { dir, who: ada })).toMatchObject({
+    id: b,
+    text: "B",
+    // (A sender with no account's name: their login.)
+    from: { login: "bob", name: "bob" },
+    status: "resolved",
+  });
   await runOperation(set, { id: a, status: "resolved" }, { dir, who: ada });
   expect(await texts()).toEqual(["C"]);
   expect(await texts("resolved")).toEqual(["B", "A"]);
@@ -84,13 +128,21 @@ test("a feedback is unresolved until an admin resolves it, and unresolved again 
   expect(await texts()).toEqual(["C", "B"]);
 });
 
-test("a feedback kept before it had a status is unresolved", async () => {
+test("a feedback kept before the admins saw names is unresolved, and stays without a name", async () => {
   const { sql, dir } = setup();
-  // (As the server before wrote it: the columns of then, and no status.)
+  // (As the server before wrote it, under the words "without your name": then the migration that keeps that.)
   sql.db
-    .query("INSERT INTO feedback (id, text, login, target, at, issue, tried) VALUES ('fb-old00000', 'Old', 'bob', '', 500, 7, 600)")
+    .query(
+      "INSERT INTO feedback (id, text, login, via, target, at, issue, tried) VALUES ('fb-old00000', 'Old', 'bob', 'their agent', '', 500, 7, 600)"
+    )
     .run();
-  expect(await dir.feedback.list(ada)).toMatchObject([{ id: "fb-old00000", text: "Old", status: "unresolved" }]);
+  sql.db.exec(readFileSync(new URL("../server/migrations/0520_feedback_names.sql", import.meta.url), "utf8"));
+  expect(await dir.feedback.list(ada)).toMatchObject([
+    { id: "fb-old00000", text: "Old", login: "", name: null, via: null, status: "unresolved" },
+  ]);
+  const read = (await runOperation(list, {}, { dir, who: ada })) as { feedback: { from: unknown }[] };
+  expect(read.feedback[0].from).toBeNull();
+  expect(JSON.stringify(read)).not.toMatch(/bob|their agent/);
 });
 
 test("the setting feedback, off: no menu link, no tool and no word of it in the prompt, a message is refused; the admin still reads the kept ones", async () => {

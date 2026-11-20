@@ -74,8 +74,12 @@ journey("an admin on the admin pages", () => {
   };
   /** The feedback an admin's agent reads: the unresolved ones, or the resolved. */
   const feedback = async (status?: "resolved") =>
-    (await agent<{ feedback: { id: string; text: string; page: string | null; status: string }[] }>("feedback", status ? { status } : {}))
-      .feedback;
+    (
+      await agent<{ feedback: { id: string; text: string; from: object | null; page: string | null; status: string }[] }>(
+        "feedback",
+        status ? { status } : {}
+      )
+    ).feedback;
   /** A link of the sidebar shows another admin page in place: its path, and what the page has. */
   const go = async (path: string, shows: string) => {
     await page.click(`.admin-side a[href="${path}"]`);
@@ -334,18 +338,18 @@ journey("an admin on the admin pages", () => {
     await soon(top).toContain(`${group} added: Can view documents`);
   });
 
-  test("Send feedback in the account menu: type, Send, thanks; the Feedback page lists it, unresolved; Resolve saves by itself and moves it to Resolved; the agent reopens it", async () => {
+  test("Send feedback in the account menu: type, Send, thanks; the Feedback page lists it with the sender's name, unresolved; Resolve saves by itself and moves it to Resolved; the agent reopens it", async () => {
     await clickOn(page, "[data-erga-account] button");
     await clickOn(page, "#erga-account-menu a[href='#feedback']");
     await page.waitForSelector("#erga-feedback[open]");
     // The menu closes behind it.
     expect(await page.evaluate(() => document.getElementById("erga-account-menu")!.hidden)).toBe(true);
-    expect(await page.textContent("#erga-feedback")).toContain("Your text goes to this server's admins, without your name.");
+    expect(await page.textContent("#erga-feedback")).toContain("Your text goes to this server's admins, who see that it is from you.");
     const first = `The documents list should sort by name, and keep the order I chose ${Date.now()}`,
       text = `${first}\nAnd remember it.`;
     await sendFeedback(text.split("\n"));
 
-    // The admins' Feedback page: the text and the page it came from, under Unresolved, with no name; nothing is resolved.
+    // The admins' Feedback page: the text and the page it came from, under Unresolved, with who sent it; nothing is resolved.
     await go("/admin/feedback", `.feedback li:has-text("${first}")`);
     const lists = () =>
       page.evaluate(() => {
@@ -354,6 +358,7 @@ journey("an admin on the admin pages", () => {
             // (The words, also of a row in the closed list.)
             text: li.querySelector(".text")!.textContent,
             page: li.querySelector(".page")?.textContent,
+            from: li.querySelector(".from .name")!.textContent,
             button: li.querySelector("button")!.textContent,
           }));
         const resolved = document.querySelector<HTMLDetailsElement>("details.resolved")!;
@@ -365,12 +370,15 @@ journey("an admin on the admin pages", () => {
             : null,
         };
       });
-    expect(await lists()).toEqual({ unresolved: [{ text, page: "/admin/changes", button: "Resolve" }], none: false, resolved: null });
-    expect(await page.innerText(".feedback-lists")).not.toContain("tester");
-    // The admin's agent reads the same, with no name.
+    expect(await lists()).toEqual({
+      unresolved: [{ text, page: "/admin/changes", from: "tester", button: "Resolve" }],
+      none: false,
+      resolved: null,
+    });
+    // The admin's agent reads the same, with who sent it.
     const [sent] = await feedback();
     expect([sent.text, sent.page, sent.status]).toEqual([text, "/admin/changes", "unresolved"]);
-    expect(JSON.stringify(sent)).not.toContain("tester");
+    expect(sent.from).toEqual({ login: "tester", name: "tester" });
 
     // Resolve: it saves by itself (the save mark), and the message goes under Resolved, which is closed until a click.
     await watchMark(page);
@@ -378,7 +386,7 @@ journey("an admin on the admin pages", () => {
     await soon(lists).toEqual({
       unresolved: [],
       none: true,
-      resolved: { line: "Resolved (1)", open: false, rows: [{ text, page: "/admin/changes", button: "Reopen" }] },
+      resolved: { line: "Resolved (1)", open: false, rows: [{ text, page: "/admin/changes", from: "tester", button: "Reopen" }] },
     });
     await soon(() => markOf(page)).toBe("saved");
     expect(await marksSeen(page)).toEqual(["saving", "saved"]);
@@ -391,7 +399,11 @@ journey("an admin on the admin pages", () => {
     expect(await agent<object>("set_feedback", { id: sent.id, status: "unresolved" })).toEqual(sent);
     await go("/admin/changes", "ol.changes");
     await go("/admin/feedback", `.feedback[data-status=unresolved] li:has-text("${first}")`);
-    expect(await lists()).toEqual({ unresolved: [{ text, page: "/admin/changes", button: "Resolve" }], none: false, resolved: null });
+    expect(await lists()).toEqual({
+      unresolved: [{ text, page: "/admin/changes", from: "tester", button: "Resolve" }],
+      none: false,
+      resolved: null,
+    });
     expect(await stayed()).toBe(true);
   });
 

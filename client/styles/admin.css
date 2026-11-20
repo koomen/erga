@@ -254,9 +254,9 @@ section.everyone li.off .switch { cursor: default; }
 .changes .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .changes .who .by { color: var(--fg-strong); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .changes .who .via { flex: none; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
-:is(.changes, ol.users, ol.people-rows) .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
+:is(.changes, ol.users, ol.people-rows, .feedback) .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
   background: var(--c, var(--chrome)); color: #fff; font: 600 12.5px var(--font-text); }
-:is(.changes, ol.users, ol.people-rows) .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+:is(.changes, ol.users, ol.people-rows, .feedback) .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .changes .avatar.system { background: color-mix(in srgb, var(--chrome) 25%, transparent); color: var(--soft); }
 .changes .what { list-style: none; margin: 0; padding: 3px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .changes .what > li { overflow-wrap: anywhere; color: var(--fg); }
@@ -271,14 +271,17 @@ section.everyone li.off .switch { cursor: default; }
 .changes .title { color: var(--fg-strong); }
 .changes-empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--rule); border-radius: 12px; text-align: center; font-size: 13.5px; color: var(--soft); }
 
-/* The Feedback page: each feedback's text, then when, the page and its id; at its right, Resolve or Reopen. The
+/* The Feedback page: who sent each feedback, its text, then when, the page and its id; at its right, Resolve or Reopen. The
    resolved ones are under the unresolved, closed until a click on their line. */
 .feedback { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--rule); }
 .feedback[hidden] { display: none; }
 .feedback > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; padding: 12px 4px; border-top: 1px solid var(--rule); }
-.feedback .text { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--fg-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
+.feedback .from { grid-column: 1; margin: 0 0 8px; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.feedback .from .name { font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedback .from :is(.login, .via), .feedback .from.none { font-size: 12.5px; color: var(--soft); white-space: nowrap; }
+.feedback .text { grid-column: 1; margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--fg-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
 .feedback .meta { grid-column: 1; margin: 6px 0 0; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; }
-.feedback .resolve { grid-column: 2; grid-row: 1 / span 2; }
+.feedback .resolve { grid-column: 2; grid-row: 1 / span 3; }
 .feedback-lists { margin-top: 32px; }
 .feedback-lists .resolved { margin: 20px 0 0; }
 .feedback-lists .resolved[hidden] { display: none; }

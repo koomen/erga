@@ -1,7 +1,7 @@
 // Send feedback: a small dialog on every page of someone signed in (the agent's bundle loads it when it's first asked
 // for, client/agent/person-agent.ts). The account menu's Send feedback opens it, and so does any link to "#feedback".
 // A text box and Send: Send calls the operation send_feedback with the text and this page's path, then says
-// "Thanks, sent." The server keeps it for its admins, who read it with no name (server/operations/feedback.ts).
+// "Thanks, sent." The server keeps it for its admins, who see who sent it (server/operations/feedback.ts).
 
 import { runTool } from "../common/tools";
 
@@ -30,7 +30,7 @@ function make(): HTMLDialogElement {
   d.id = "erga-feedback";
   d.setAttribute("aria-labelledby", "erga-feedback-title");
   d.innerHTML = `<header><h2 id="erga-feedback-title">Send feedback</h2><button type="button" class="close" aria-label="Close">✕</button></header>
-<form><p class="sub">What works, what doesn't, what you want. Your text goes to this server's admins, without your name.</p>
+<form><p class="sub">What works, what doesn't, what you want. Your text goes to this server's admins, who see that it is from you.</p>
 <textarea name="text" rows="6" maxlength="5000" required aria-label="Your feedback" placeholder="Your feedback" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore></textarea>
 <div class="row"><p class="hint" role="status"></p><button class="pill send">Send</button></div></form>
 <div class="thanks" hidden><p role="status">Thanks, sent.</p><button type="button" class="pill done">Close</button></div>`;

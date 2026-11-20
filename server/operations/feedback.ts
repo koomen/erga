@@ -1,10 +1,10 @@
 // Feedback: a person sends it from any page (the account menu's Send feedback) or asks their agent to (send_feedback),
-// while the setting feedback is on. The server keeps it, and only the admins and their agents read it (feedback, and
-// /admin/feedback), also when the setting is off: each one is unresolved until an admin says that it is resolved
-// (set_feedback, the page's Resolve).
+// while the setting feedback is on: only someone signed in, and it is theirs, with their name. The server keeps it, and
+// only the admins and their agents read it (feedback, and /admin/feedback), also when the setting is off: each one is
+// unresolved until an admin says that it is resolved (set_feedback, the page's Resolve).
 
 import * as Schema from "effect/Schema";
-import { FEEDBACK_MAX, FEEDBACK_STATUSES, type FeedbackRow, type FeedbackStatus } from "../directory/index.ts";
+import { ANYONE, FEEDBACK_MAX, FEEDBACK_STATUSES, type FeedbackRow, type FeedbackStatus } from "../directory/index.ts";
 import { iso, type Operation, OperationError, said, str } from "./operation.ts";
 
 /** The path of the page it was sent from: a path on this site, short; a URL gives its path. */
@@ -28,8 +28,15 @@ function statusOf(status: unknown, or?: FeedbackStatus): FeedbackStatus {
   return found;
 }
 
-/** A feedback as an admin's agent reads it: never who sent it. */
-const answerOf = (f: FeedbackRow) => ({ id: f.id, text: f.text, page: f.page, at: iso(f.at), status: f.status });
+/** A feedback as an admin's agent reads it, with who sent it (`from` null: sent before the admins saw names). */
+const answerOf = (f: FeedbackRow) => ({
+  id: f.id,
+  text: f.text,
+  from: f.login ? { login: f.login, name: f.name ?? f.login, ...(f.via ? { via: f.via } : {}) } : null,
+  page: f.page,
+  at: iso(f.at),
+  status: f.status,
+});
 
 export const FEEDBACK_OPERATIONS: Operation[] = [
   {
@@ -39,12 +46,14 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
     activity: "sending feedback",
     wide: true,
     off: async (caller) => ((await caller.dir.config.get("feedback")) ? null : "Feedback is off on this server."),
-    description: "Sends feedback about Erga to this server's admins, without your name.",
+    description: "Sends feedback about Erga to this server's admins, who see that it is from you.",
     parameters: Schema.Struct({
       text: str(`The feedback, in the user's words (at most ${FEEDBACK_MAX} characters).`),
       page: Schema.optionalKey(str("The page it is about (a path or URL); your own agent may leave it out: the open one.")),
     }),
     run: async (args, caller) => {
+      // (Every caller is someone signed in, or their agent: the API takes no other. This holds it here too.)
+      if (!caller.who.login || caller.who.login == ANYONE) throw new OperationError({ message: "Sign in to send feedback.", status: 401 });
       const text = String(args.text ?? "").trim();
       if (!text) throw new OperationError({ message: "Write the feedback first.", status: 400 });
       if (text.length > FEEDBACK_MAX)
@@ -53,7 +62,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
         text,
         page: pageOf(args.page ?? caller.here),
       });
-      return { sent: true, id, message: "Thanks, sent. This server's admins read it, without your name." };
+      return { sent: true, id, message: "Thanks, sent. This server's admins read it, and see that it is from you." };
     },
   },
   {
@@ -62,7 +71,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
     label: "Read the feedback",
     activity: "reading the feedback",
     admin: true,
-    description: "The feedback people sent, newest first: the unresolved ones, or the resolved.",
+    description: "The feedback people sent, newest first, each with who sent it: the unresolved ones, or the resolved.",
     parameters: Schema.Struct({
       status: Schema.optionalKey(STATUS.annotate({ description: "Which ones: unresolved (the default) or resolved." })),
     }),

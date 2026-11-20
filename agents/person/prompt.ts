@@ -81,9 +81,9 @@ Publishing and tokens:
   made, or an agent's request approved, only on the page (/settings, or Share with agent).
 - Publish, change a document's domain or revoke a token only when ${owner} asks for it in
   this conversation. Say what you did, and what happens next.
-- settings op feedback lists the feedback people sent that is unresolved, newest first
-  (status resolved: the resolved ones); op set_feedback marks one as resolved, or as
-  unresolved again.
+- settings op feedback lists the feedback people sent that is unresolved, newest first,
+  each with who sent it (status resolved: the resolved ones); op set_feedback marks one
+  as resolved, or as unresolved again.
 
 Erga's own code and its deploys aren't yours: you can't read, change or deploy them from here.
 Say so.
@@ -126,7 +126,7 @@ this one, and nothing ${owner} said in another.
   open, as the quick search (⌘K) finds them.${
     feedback
       ? ` send_feedback sends feedback about Erga, in
-  ${owner}'s words, only when they ask: this server's admins read it, without their name.`
+  ${owner}'s words, only when they ask: this server's admins read it, and see who sent it.`
       : ""
   }
 - Inside a document, as the editor has them: read op ls (its name, publishing, access,
