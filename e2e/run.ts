@@ -4,6 +4,9 @@
 //   bun run test               the suite, all at once: the format check and lint, the typecheck, the unit tests (a process
 //                              for each file, dev/unit.ts) and the browser tests (e2e/COVERAGE.md has the map). One run
 //                              at a time on this machine (dev/turn.ts): a second run waits for its turn.
+//   bun run test --journeys-first   the same suite, on a small machine: the browser tests alone, then the rest.
+//                              GitHub's runner has 4 cores (.github/workflows/release.yml), and there the unit tests
+//                              beside the journeys made journeys fail on time (e2e/COVERAGE.md).
 //   bun run test:e2e [ARGS]    browser tests only, with no turn; ARGS go to `e2e run`: files or folders, --grep,
 //                              --workers 2, --headed, --trace on ...; with no files, the suite's
 //
@@ -31,6 +34,7 @@ const LIMIT_S = Number(process.env.ERGA_TEST_LIMIT_S) || (availableParallelism()
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); if (i < 0) return false; args.splice(i, 1); return true; };
 const e2eOnly = flag("--e2e");
+const journeysFirst = flag("--journeys-first");
 const named = args.filter((a) => !a.startsWith("-") && /^e2e\//.test(a));
 const flags = args.filter((a) => !named.includes(a));
 const mark = `run-${process.pid}-${Date.now()}`;
@@ -169,9 +173,9 @@ const unit = async (): Promise<Step> => {
   const out = r.failed.length ? r.failed.map((f) => f.out).join("\n\n") : `${r.passed} pass in ${files.length} files`;
   return { name: "unit tests", ok: !r.failed.length, seconds: seconds(t), out };
 };
-const steps = await Promise.all([
-  browserTests(),
-  ...(e2eOnly
+/** The steps that are not the browser tests, all at once. */
+const others = (): Promise<Step>[] =>
+  e2eOnly
     ? []
     : [
         // The formatter on the lines this change touches (dev/format.ts), and the linter (biome.json) on everything.
@@ -185,8 +189,8 @@ const steps = await Promise.all([
         // then the three projects (tsconfig.json).
         fast(step("typecheck", tsc, VITE_CONFIG)),
         unit(),
-      ]),
-]);
+      ];
+const steps = journeysFirst ? [await browserTests(), ...(await Promise.all(others()))] : await Promise.all([browserTests(), ...others()]);
 // The browser tests' output is above: their end first, then the other steps, the failed ones last.
 steps.sort((a, b) => Number(!a.ok) - Number(!b.ok));
 for (const s of steps) {

@@ -63,9 +63,9 @@ jobs:
           package-manager-cache: false
       - run: bun install --frozen-lockfile
       - run: bun run test:browsers --with-deps
-      # One journey at a time, so that each step has the machine: with two at once, its slow runs failed journeys on
-      # time (e2e/COVERAGE.md).
-      - run: bun run test
+      # One journey at a time, and the unit tests and the typecheck after the journeys, so that each step of a
+      # journey has the machine: with more at once, its slow runs failed journeys on time (e2e/COVERAGE.md).
+      - run: bun run test --journeys-first
         env:
           TEST_JOBS: "1"
       # What each failed journey showed (its screen, as text and as a picture): this machine is the only place where

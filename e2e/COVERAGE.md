@@ -21,7 +21,11 @@ next step needs. Measured there with two journeys at a time (2026-11-19, 5 runs)
 on time; four took 233 to 253 s, and three of those failed 2 or 3 journeys on time, never the same ones (an upload
 that took over a second, a frame without the page, a typed letter that did not arrive). So there one journey runs at a
 time (TEST_JOBS=1 in the workflow): its first run took 271 s, with 2 journeys over their budget, not 15 to 23, and one
-failed journey. A failed run keeps what each failed journey showed (the run's artifact failed-journeys).
+failed journey. The unit tests ran beside the journeys then, and they grew (1575 tests, 109 s there): in 13 runs
+(2026-11-20) the suite took 247 to 371 s, and journeys still failed on time, each a different one. So there the
+journeys run first, alone, and the other steps after them (`bun run test --journeys-first`): 2 runs took 294 and 288 s
+(the journeys 234 and 230 s, the unit tests 55 and 54 s), with no failure and 3 journeys over their budget, by 3 s at
+most. A failed run keeps what each failed journey showed (the run's artifact failed-journeys).
 
 The browser has a process for each site, as a person's browser has (e2e/helpers/engine.ts). Measured beside the same
 suite without it (2026-11-13, 4 runs of each in turn, on a busy machine): 216 s of test time with it and 208 s
