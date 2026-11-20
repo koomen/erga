@@ -70,7 +70,7 @@ function askOf(m: Record<string, unknown>): { ask: Ask | null; place: Place | nu
 export function mountCommentBox(doc: string, page: () => string, on: () => boolean = () => true) {
   const host = document.createElement("erga-comment-box");
   const root = host.attachShadow({ mode: "open" });
-  root.innerHTML = `<style>${STYLE}</style><div class="c" id="c"><div class="reply" id="box" hidden><textarea rows="1"></textarea><button type="button" class="go" aria-label="Send (Enter)" title="Send  Enter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/></svg></button></div></div>`;
+  root.innerHTML = `<style>${STYLE}</style><div class="c" id="c"><div class="reply" id="box" hidden><textarea rows="1" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore></textarea><button type="button" class="go" aria-label="Send (Enter)" title="Send  Enter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/></svg></button></div></div>`;
   const look = root.getElementById("c")!,
     box = root.getElementById("box")!,
     area = box.querySelector("textarea")!;

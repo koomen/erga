@@ -183,12 +183,12 @@ const HTML = `
     <div class="pane link" id="link" role="group" aria-label="Link" hidden>
       <div class="row">
         <span class="lead t" aria-hidden="true">Aa</span>
-        <input id="link-text" type="text" aria-label="Link text" placeholder="Text" autocomplete="off">
+        <input id="link-text" type="text" aria-label="Link text" placeholder="Text" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore>
         <button type="button" class="x" data-link="close" aria-label="Close the link bar (Esc)" title="Close  Esc">${svg(ICON.close)}</button>
       </div>
       <div class="row">
         <span class="lead" id="link-icon" aria-hidden="true">${svg(ICON.link)}</span>
-        <input id="link-url" type="url" aria-label="Link address" placeholder="Paste a link, Enter to apply" spellcheck="false" autocomplete="off">
+        <input id="link-url" type="url" aria-label="Link address" placeholder="Paste a link, Enter to apply" spellcheck="false" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore>
         <button type="button" data-link="open" aria-label="Open the link in a new tab" title="Open link in a new tab">${svg(ICON.open)}</button>
         <button type="button" data-link="remove" aria-label="Remove the link" title="Remove link">${svg(ICON.unlink)}</button>
       </div>

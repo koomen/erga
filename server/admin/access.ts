@@ -90,7 +90,7 @@ function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; 
       <select name="kind" aria-label="Who">
         ${kinds.map((k) => `<option value="${k}" data-placeholder="${esc(GROUP[k].like)}">${esc(GROUP[k].name)}</option>`).join("\n        ")}
       </select>
-      <input class="input" name="value" list="suggest-${kinds[0]}" placeholder="${esc(GROUP[kinds[0]].like)}" aria-label="The domain or the organization" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <input class="input" name="value" list="suggest-${kinds[0]}" placeholder="${esc(GROUP[kinds[0]].like)}" aria-label="The domain or the organization" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required>
       <select name="access" aria-label="Access">${accessOptions("write")}</select>
       <button class="new">Add group</button>
     </form>

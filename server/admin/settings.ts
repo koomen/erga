@@ -66,13 +66,13 @@ function valueInput(e: ConfigEntry, never: boolean): string {
     // A time (hours) is "After" or "Never"; another amount (a limit) is "At most" or "No limit".
     const [some, none] = unit == "hours" ? ["After", "Never"] : ["At most", "No limit"];
     return `<select class="mode" name="mode" aria-label="${esc(e.label ?? e.key)}: ${some.toLowerCase()}, or ${none.toLowerCase()}"${locked ? " disabled" : ""}><option value="after"${off ? "" : " selected"}>${some}</option><option value="never"${off ? " selected" : ""}>${none}</option></select>
-      <span class="amount"${off ? " hidden" : ""}><input class="input" type="number" step="1" min="1" ${attrs} data-kind="number-or-never" value="${esc(String(off ? e.default : e.value))}"${off ? "" : " required"}>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
+      <span class="amount"${off ? " hidden" : ""}><input class="input" type="number" step="1" min="1" ${attrs} data-kind="number-or-never" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore value="${esc(String(off ? e.default : e.value))}"${off ? "" : " required"}>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
   }
   if (typeof e.default == "number")
-    return `<span class="amount"><input class="input" type="number" step="${unit == "US$" ? "0.01" : "1"}" min="0" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
+    return `<span class="amount"><input class="input" type="number" step="${unit == "US$" ? "0.01" : "1"}" min="0" ${attrs} data-kind="number" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore value="${esc(String(e.value))}" required>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
   if (typeof e.default == "string")
-    return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}"${e.placeholder ? ` placeholder="${esc(e.placeholder)}"` : ""} autocomplete="off" spellcheck="false">`;
-  return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
+    return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}"${e.placeholder ? ` placeholder="${esc(e.placeholder)}"` : ""} autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false">`;
+  return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false">`;
 }
 
 /** The unit of a number setting, from the end of its key: "_hours", "_days", "_mb", "_gb", "_tokens". */

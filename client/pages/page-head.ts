@@ -92,8 +92,8 @@ export function openPageHead(host: PageHeadHost): void {
     const value = esc(was[f] ?? "");
     const control =
       f == "description"
-        ? `<textarea id="ph-${f}" name="${f}" rows="3" aria-describedby="ph-${f}-hint">${value}</textarea>`
-        : `<input id="ph-${f}" name="${f}" value="${value}" autocomplete="off" spellcheck="${f == "title"}"${f == "icon" || f == "image" ? ` list="ph-images" placeholder="favicon.png, or https://…"` : f == "title" ? ` placeholder="${esc(host.docTitle)}"` : ""} aria-describedby="ph-${f}-hint">`;
+        ? `<textarea id="ph-${f}" name="${f}" rows="3" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore aria-describedby="ph-${f}-hint">${value}</textarea>`
+        : `<input id="ph-${f}" name="${f}" value="${value}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="${f == "title"}"${f == "icon" || f == "image" ? ` list="ph-images" placeholder="favicon.png, or https://…"` : f == "title" ? ` placeholder="${esc(host.docTitle)}"` : ""} aria-describedby="ph-${f}-hint">`;
     return `<label class="ph-field" for="ph-${f}"><span>${label}<small id="ph-${f}-count"></small></span>${control}<p class="ph-hint" id="ph-${f}-hint">${hint}</p></label>`;
   };
   d.innerHTML = `<form method="dialog">

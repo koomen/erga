@@ -120,7 +120,7 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
     el.hidden = true;
     el.innerHTML =
       '<div class="erga-qs-card" role="dialog" aria-label="Quick search">' +
-      '<input class="erga-qs-input" type="text" placeholder="Go to a document or page…" aria-label="Go to a document or page" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="erga-qs-list">' +
+      '<input class="erga-qs-input" type="text" placeholder="Go to a document or page…" aria-label="Go to a document or page" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false" role="combobox" aria-expanded="true" aria-controls="erga-qs-list">' +
       '<ul class="erga-qs-list" id="erga-qs-list" role="listbox"></ul></div>';
     document.body.append(el);
     const input = el.querySelector("input")!;
