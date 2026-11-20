@@ -537,7 +537,8 @@ describe("a look for an instance on Cloudflare, with the core's own steps", () =
     hub.state.releases.set(SHA3, builtBundle(SHA3));
     await asks(sql, `deploy ${SHA3}`);
     const refused = await once();
-    expect(refused.calls).toEqual(["refs", `manifest ${short(SHA3)}`, `bundle ${short(SHA3)}`, `compare ${short(SHA3)}`]);
+    // The branch is asked first: nothing is fetched of a commit that the branch does not have.
+    expect(refused.calls).toEqual(["refs", `compare ${short(SHA3)}`]);
     expect(refused.line).toBe(
       `${at} The deploy that ada asked for failed: Release ${short(SHA3)} is not a commit of main on github.com/example/erga: the instance deploys only a commit of that branch.`
     );

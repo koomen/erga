@@ -179,14 +179,17 @@ export interface Checked {
 /**
  * What a health row says of the release `want` (null: any) at `now`: healthy, not healthy (the checks that failed), or
  * nothing: no row, a row older than three minutes, or the row of another release (the one before, in the first minute
- * after a deploy).
+ * after a deploy). `after`: the time of the row that was there before a deploy (the server's own time): only a newer
+ * row is the deploy's. Without it, a deploy of the release that runs already, with other settings, would pass on the
+ * row that the version before wrote.
  */
-export function readHealth(row: HealthRow | null, want: string | null, now: number): Checked {
+export function readHealth(row: HealthRow | null, want: string | null, now: number, after?: number): Checked {
   const no = (why: string): Checked => ({ healthy: null, why, summary: "" });
   if (!row) return no("the server wrote no health row yet");
   const age = now - row.at;
   if (age > HEALTH_FRESH_MS) return no(`the server's last health row is ${Math.round(age / 60_000)} minutes old`);
   if (want && row.version != want) return no(`the health row is of release ${row.version ?? "?"}, not ${want}`);
+  if (after != null && row.at <= after) return no("the server wrote no health row since the deploy");
   const failed = Object.entries(row.checks)
     .filter(([, c]) => !c.ok)
     .map(([n, c]) => `${n}: ${c.error ?? "failed"}`);
@@ -203,13 +206,13 @@ export function readHealth(row: HealthRow | null, want: string | null, now: numb
  * Cloudflare gives a Durable Object the new code seconds to minutes after the Worker: a first row can say that a
  * document does not open (2026-11-14: 42 seconds), and the next one that it does.
  */
-export const settledHealth = (db: Database, want: string, ms: number): Effect.Effect<Checked, DeployError> => {
+export const settledHealth = (db: Database, want: string, ms: number, after?: number): Effect.Effect<Checked, DeployError> => {
   const read = Effect.gen(function* () {
     const row = yield* Effect.tryPromise({
       try: () => healthRow(db),
       catch: (e) => (e instanceof DeployError ? e : new DeployError({ message: String(e) })),
     });
-    return readHealth(row, want, yield* Clock.currentTimeMillis);
+    return readHealth(row, want, yield* Clock.currentTimeMillis, after);
   });
   return read.pipe(
     Effect.repeat({ schedule: Schedule.spaced("5 seconds").pipe(Schedule.upTo({ duration: ms })), until: (h) => h.healthy === true })
@@ -440,6 +443,8 @@ export interface Carry {
   assetsJwt?: string;
   /** The server wrote a health row in the minutes before the upload: its Cron Trigger runs (the live step's wait). */
   ticking?: boolean;
+  /** The time of the health row that was there before the upload: the live step takes only a newer one. */
+  rowAt?: number;
 }
 
 /** One deploy's run of the steps: what each step reads, and what it leaves for the next (`carry`). */
@@ -539,7 +544,9 @@ const worker = (run: CloudflareRun) =>
       if (!assetsJwt) throw new DeployError({ message: "The editor's files weren't uploaded first: deploy again." });
       const dbId = await databaseOf(run);
       // Whether the server's scheduled run runs already (a row of the last minutes): the live step waits by it.
-      carry.ticking = readHealth(await healthRow(await reach(run)).catch(() => null), null, now).healthy != null;
+      const before = await healthRow(await reach(run)).catch(() => null);
+      carry.ticking = readHealth(before, null, now).healthy != null;
+      carry.rowAt = before?.at;
       /** `rename`: Cloudflare gives the key its new name with this upload (secrets-key.ts), or refuses the upload. */
       const upload = (rename: boolean) => {
         const metadata = workerMetadata(release, run.spec, { dbId, assetsJwt, upload: `${release.version}-${now}`, secrets: run.secrets });
@@ -583,7 +590,7 @@ const live = (run: CloudflareRun) =>
     const name = run.spec.target.worker;
     const ticking = !!run.carry.ticking;
     const db = yield* tried(() => reach(run));
-    const h = yield* settledHealth(db, want, run.waitMs ?? (ticking ? 180_000 : 900_000));
+    const h = yield* settledHealth(db, want, run.waitMs ?? (ticking ? 180_000 : 900_000), run.carry.rowAt);
     if (h.healthy) return `release ${want}, healthy (${h.summary})`;
     if (h.healthy === false)
       return yield* Effect.fail(new Unhealthy(`Release ${want} is deployed to ${name}, but its health check fails: ${h.why}`, h.why));

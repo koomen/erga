@@ -52,12 +52,12 @@ export function tokenNow(): string {
 }
 
 /** In the place of a token in a call's header: `guarded` puts the token there when it sends the call. */
-const LATER = "the-token-at-the-call";
+export const LATER = "the-token-at-the-call";
 
 /**
  * fetch for Cloudflare's API, as the suite may use it: each call is asked of the suite's rule first (safe.ts,
  * apiProblem), and a call that the rule refuses throws: nothing is sent. A call names a D1 database, an Access
- * application or an identity provider by its ID: its name is asked of the account first. `token`: the token at the time of a call.
+ * application, an identity provider, a DNS record or a Custom Domain by its ID: its name is asked of the account first. `token`: the token at the time of a call.
  */
 export function guarded(scope: Scope, token: () => string, inner: Fetch = fetch): Fetch {
   const json = (text: unknown): unknown => {
@@ -89,6 +89,20 @@ export function guarded(scope: Scope, token: () => string, inner: Fetch = fetch)
       if (typeof id == "string") await named(scope.databases, "d1/database", id);
     const access = /\/access\/(apps|identity_providers)\/([^/]+)/.exec(path);
     if (access && scope.team) await named(scope.access, `access/${access[1]}`, access[2]);
+    const record = /^\/zones\/([\w-]+)\/dns_records\/([\w-]+)$/.exec(path);
+    if (record && !(record[2] in scope.records)) {
+      const r = await inner(`${API}${path}`, { headers: { authorization: `Bearer ${token()}` } });
+      const name = ((await r.json().catch(() => null)) as { result?: { name?: string } } | null)?.result?.name;
+      if (r.status == 200 && name) scope.records[record[2]] = name;
+    }
+    const domain = /\/workers\/domains\/([\w-]+)$/.exec(path)?.[1];
+    if (domain && !(domain in scope.domains)) {
+      const r = await inner(`${API}/accounts/${scope.account}/workers/domains/${domain}`, {
+        headers: { authorization: `Bearer ${token()}` },
+      });
+      const d = ((await r.json().catch(() => null)) as { result?: { hostname?: string; service?: string } } | null)?.result;
+      if (r.status == 200 && d?.hostname && d.service) scope.domains[domain] = { hostname: d.hostname, service: d.service };
+    }
     const no = apiProblem(method, path, body, scope);
     if (no) throw new Error(no);
     const headers = new Headers(init.headers);
@@ -119,7 +133,17 @@ export const apiOf =
 /** What the suite's calls may name: the settings' account and its two test zones, whose IDs the account says. */
 export async function scopeOf(l: Local, send: (scope: Scope) => Fetch): Promise<Scope> {
   const c = l.cloudflare;
-  const scope: Scope = { account: c.account, team: c.team, shell: c.shell, content: c.content, zones: {}, databases: {}, access: {} };
+  const scope: Scope = {
+    account: c.account,
+    team: c.team,
+    shell: c.shell,
+    content: c.content,
+    zones: {},
+    databases: {},
+    access: {},
+    records: {},
+    domains: {},
+  };
   const api = apiOf(send(scope));
   for (const name of [c.shell, c.content]) {
     const found = ((await api("GET", `/zones?name=${name}`)).result ?? []) as { id: string; name: string; account: { id: string } }[];

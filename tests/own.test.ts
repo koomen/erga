@@ -129,6 +129,8 @@ test("the main path: the login, the one account that holds the domain, the GitHu
   // The dry run's checks and plan.
   const f = run(a, CF, CF).answers;
   expect(checksOf(f, seen(CF))).toEqual(["Signed in to Cloudflare", "The account Ada Lovelace holds example.com", `${HOST} is free`]);
+  // An instance that runs: its address is its own, so no line says that it is free.
+  expect(checksOf(f, seen({ ...CF, ...LIVE }))).toEqual(["Signed in to Cloudflare", "The account Ada Lovelace holds example.com"]);
   expect(planText(f, seen(CF))).toEqual([
     `I will make Erga at ${HOST}, in the Cloudflare account Ada Lovelace:`,
     "• a Worker (erga-example-com), a D1 database, an R2 bucket and a DNS record",

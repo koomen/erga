@@ -26,6 +26,12 @@ const scope = (more: Partial<Scope> = {}): Scope => ({
   zones: { [ZONE]: CF.shell },
   databases: { [DB]: "erga-verify-2", [OTHER_DB]: "erga" },
   access: { app1: "erga-verify-4", app2: "Intranet" },
+  records: { rec: `*.c7.${CF.content}`, far: "example.com" },
+  domains: {
+    own: { hostname: `site.s7.${CF.shell}`, service: "erga-verify-deploys" },
+    away: { hostname: "example.com", service: "erga-verify-deploys" },
+    theirs: { hostname: `s1.${CF.shell}`, service: "erga" },
+  },
   ...more,
 });
 
@@ -100,6 +106,8 @@ test("each call of Cloudflare's API names only the suite's own, or it is not sen
   no("DELETE", `${ACC}/d1/database/33333333-3333-4333-8333-333333333333`);
   ok("POST", `${ACC}/r2/buckets`, { name: "erga-verify-2-files" });
   ok("DELETE", `${ACC}/r2/buckets/erga-verify-2-files/objects/a%2Fb.png`);
+  ok("DELETE", `${ACC}/workers/domains/own`);
+  ok("DELETE", `/zones/${ZONE}/dns_records/rec`);
   no("POST", `${ACC}/r2/buckets`, { name: "erga-files" });
   for (const method of ["GET", "DELETE"]) no(method, `${ACC}/r2/buckets/erga-files/objects/a.png`);
   // A zone: a test zone only, and in it only a run's host.
@@ -120,7 +128,14 @@ test("each call of Cloudflare's API names only the suite's own, or it is not sen
   no("PUT", `${ACC}/workers/domains`, { hostname: "example.com", service: "erga-verify-1", zone_id: ZONE });
   no("PUT", `${ACC}/workers/domains`, { hostname: `s1.${CF.shell}`, service: "erga", zone_id: ZONE });
   no("PUT", `${ACC}/workers/domains`, { hostname: `s1.${CF.shell}`, service: "erga-verify-1", zone_id: OTHER_ZONE });
+  // One Custom Domain: only a run's host on a Worker of the suite's is deleted, and none is read or changed.
   no("DELETE", `${ACC}/workers/domains/abc`);
+  no("DELETE", `${ACC}/workers/domains/away`);
+  no("DELETE", `${ACC}/workers/domains/theirs`);
+  no("GET", `${ACC}/workers/domains/own`);
+  no("DELETE", `/zones/${ZONE}/dns_records/far`);
+  no("DELETE", `/zones/${ZONE}/dns_records/abc`);
+  no("PATCH", `/zones/${ZONE}/dns_records/rec`, { content: "192.0.2.1" });
   // Access: none where the settings name no team. In the settings' team: the suite's own applications, at a run's
   // host only, and identity providers; the team's other applications, and the team itself, stay as they are.
   expect(no("GET", `${ACC}/access/apps`)).toContain("name no Zero Trust team");

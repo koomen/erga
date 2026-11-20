@@ -208,13 +208,13 @@ export const accountName = (a: Answers, s: Seen) =>
     ? s.account || s.choices.find((c) => c.id == a.profile)?.name || ""
     : (s.choices.find((c) => c.id == a.account)?.name ?? a.account);
 
-/** What the dry run checked, each as a line that passed. */
+/** What the dry run checked, each as a line that passed. An address that this instance has already is not "free": the plan says that it runs. */
 export function checksOf(a: Answers, s: Seen): string[] {
   const aws = a.where == "aws";
   return [
     aws ? `Signed in to AWS: account ${s.account}, region ${a.region}` : "Signed in to Cloudflare",
     aws ? `Route 53 holds ${zoneOf(a.host, s.zones)}` : `The account ${accountName(a, s)} holds ${zoneOf(a.host, s.zones)}`,
-    `${a.host} is free`,
+    ...(s.live?.version ? [] : [`${a.host} is free`]),
   ];
 }
 

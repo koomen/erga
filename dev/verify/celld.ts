@@ -131,7 +131,7 @@ async function check(browsers: string[]) {
   await machineChecks(report, run);
 
   // Seed and journey, as deploy/aws/check.ts does them, with ada's sign-in cookie (see the top).
-  const cookie = await cookieOf(run, url.host);
+  const cookie = await adaCookie(run.session, url.host);
   const made = await fetch(`${root}/new`, { redirect: "manual", headers: { cookie: `${cookie.name}=${cookie.value}` } });
   const at = made.headers.get("location");
   report.add(
@@ -159,8 +159,8 @@ const TYPES: Record<string, BrowserType> = { chromium, firefox, webkit };
  * ada's sign-in cookie, as the gate inside the server makes it now (the first of a sign-in's cookies; see the top).
  * `ahead`: its time, ahead of this machine's clock: a sign-in after a sign-out must be later by the server's clock.
  */
-async function cookieOf(run: Run, host: string, ahead = 0) {
-  const config = { key: await edgeKey(run.session), shell: host, content: "pages.invalid", https: true, open: true, idp: {}, oauth: true };
+export async function adaCookie(session: string, host: string, ahead = 0) {
+  const config = { key: await edgeKey(session), shell: host, content: "pages.invalid", https: true, open: true, idp: {}, oauth: true };
   const [shell] = await signInCookies(Date.now() + ahead, config, webPort, ADA);
   return { name: shell.slice(0, shell.indexOf("=")), value: shell.slice(shell.indexOf("=") + 1, shell.indexOf(";")) };
 }
@@ -190,7 +190,7 @@ async function journey(report: Report, name: string, label: string, run: Run, ro
     if (label) add("The browser", true, `${name} ${browser.version()}`);
     const context = await browser.newContext({ viewport: { width: 1100, height: 800 } });
     // (After another browser's sign-out: a sign-in later than it.)
-    const cookie = await cookieOf(run, url.host, label ? 5000 : 0);
+    const cookie = await adaCookie(run.session, url.host, label ? 5000 : 0);
     await context.addCookies([{ ...cookie, domain: url.hostname, path: "/", secure: true, httpOnly: true, sameSite: "Lax" }]);
     /** Each socket a tab or its frames opened: where to, the frames each way, and how it ended. */
     const sockets: { to: string; got: number; sent: number; end: string }[] = [];
@@ -301,7 +301,7 @@ async function journey(report: Report, name: string, label: string, run: Run, ro
 async function gateInside(report: Report, run: Run, root: string) {
   const host = new URL(root).host;
   const as = { shell: host } as VerifyRun;
-  const c = await cookieOf(run, host);
+  const c = await adaCookie(run.session, host);
   const ada: Jar = new Map([[`=${host}`, new Map([[c.name, c.value]])]]);
   const whoami = (o: { jar?: Jar; headers?: Record<string, string> } = {}) =>
     ask(`${root}/api/tools/whoami`, {
@@ -414,7 +414,7 @@ async function gateInside(report: Report, run: Run, root: string) {
 /** Setting 6, last: ada signs out with a request, and a copy of her cookie from before it names nobody. */
 async function signOutChecks(report: Report, run: Run, root: string) {
   const host = new URL(root).host;
-  const c = await cookieOf(run, host, 10_000);
+  const c = await adaCookie(run.session, host, 10_000);
   const cookie = `${c.name}=${c.value}`;
   const whoami = () =>
     ask(`${root}/api/tools/whoami`, { body: "{}", headers: { "content-type": "application/json", origin: root, cookie } });

@@ -91,6 +91,31 @@ test("a try puts the branch's merge with staging on verify as one commit, holds 
   expect([w.at("refs/heads/staging"), w.at("refs/heads/task")]).toEqual([staging, w.task]);
 });
 
+test("a caller that keeps the lock: verify stays its own after the try, until it frees the lock; a failed try keeps nothing", async () => {
+  const w = world();
+  const said: string[] = [];
+  const kept = await tryBranch({
+    branch: "task",
+    clone: w.clone,
+    repo: REPO,
+    log: (l) => said.push(l),
+    runOf: async () => DONE,
+    pause: async () => {},
+    keep: true,
+  });
+  // The lock is there after the try, with the try's name: a second try waits for it.
+  expect(w.at(LOCK) && w.of("%s", LOCK)).toBe("bun erga try task");
+  const second = await attempt(w.clone, "task", { now: () => Date.now(), pause: async () => kept.free() });
+  expect(second.said).toContain("verify is in use: bun erga try task");
+  expect(second.error).toBe("");
+  // The caller freed it (the second try's wait called free), and the second try's own lock is gone at its end.
+  expect(w.at(LOCK)).toBe("");
+  // A try that fails keeps no lock, with keep too.
+  const failed = await attempt(w.clone, "task", { keep: true, runOf: async () => ({ ...DONE, conclusion: "failure" }) });
+  expect(failed.error).toContain("ended with failure");
+  expect(w.at(LOCK)).toBe("");
+});
+
 test("a run that fails, or that GitHub never starts: the try says so with the run's address, and frees the lock", async () => {
   const w = world();
   const failed = await attempt(w.clone, "task", { runOf: async () => ({ ...DONE, conclusion: "failure" }) });

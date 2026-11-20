@@ -149,7 +149,13 @@ async function leftovers(p: Awaited<ReturnType<typeof probe>>, local: Local): Pr
       ...Object.entries(p.facts.held.cloudflare.zones).map(async ([zone, z]) => {
         const records = (z?.records ?? []).filter((r) => !(r.type == "NS" && [local.aws.shell, local.aws.content].includes(r.name)));
         const hosts = [...new Set([...(z?.domains ?? []).map((d) => d.hostname), ...records.map((r) => r.name)])];
-        left.push(...hosts.map((name) => ({ kind: `Host in ${zone}`, name, unit: /(?:^|\.)[sc]([1-6])\./.exec(name)?.[1] ?? null })));
+        left.push(
+          ...hosts.map((name) => ({
+            kind: `Host in ${zone}`,
+            name,
+            unit: /(?:^|\.)[sc]([1-7])\./.exec(name)?.[1]?.replace("7", "deploys") ?? null,
+          }))
+        );
       }),
     ]);
   } else unread.push("Cloudflare: no token, or no account is named: its resources were not listed.");
@@ -227,8 +233,8 @@ async function step(
   o: { env: Record<string, string>; log: string; browsers: string[]; origin?: string }
 ): Promise<number> {
   const cmd =
-    u.id == "celld"
-      ? ["dev/verify/celld.ts", name]
+    u.id == "celld" || u.id == "deploys"
+      ? [`dev/verify/${u.id}.ts`, name]
       : ["dev/verify.ts", u.id, name, "--browsers", o.browsers.join(","), ...(o.origin ? ["--origin", o.origin] : [])];
   const line = `\n--- ${name}: bun ${cmd.join(" ")}\n`;
   process.stdout.write(line);

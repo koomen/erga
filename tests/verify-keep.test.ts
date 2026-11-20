@@ -360,12 +360,12 @@ test("each command of bun erga verify, from its words: run, --keep, update, remo
   expect(at("check")).toBe("check");
   // A run, by a setting's number or its name; all: each setting.
   expect(at("2 cf-sso-same")).toBe("run 2 3");
-  expect(at("all")).toBe("run 1 2 3 4 5 6 celld");
-  expect(at("7")).toBe("fail: No setting 7: 1, 2, 3, 4, 5, 6, celld, or all.");
+  expect(at("all")).toBe("run 1 2 3 4 5 6 celld deploys");
+  expect(at("7")).toBe("fail: No setting 7: 1, 2, 3, 4, 5, 6, celld, deploys, or all.");
   expect(at("2", { open: ["wrangler"] })).toContain(
     "fail: Setting 2 (Cloudflare, SSO, content on another site) can't run. It is blocked by: the wrangler"
   );
-  expect(at("all", { open: ["wrangler"] })).toBe("run 6 celld (5 out)");
+  expect(at("all", { open: ["wrangler"] })).toBe("run 6 celld deploys (5 out)");
   expect(at("all", { open: ["config"] })).toBe("fail: No setting is ready. | bun erga verify");
   // What an earlier run left of the setting stops its next run.
   expect(at("2 3", { left: [worker] })).toBe(
@@ -385,7 +385,7 @@ test("each command of bun erga verify, from its words: run, --keep, update, remo
   expect(at("6", { kept, left: stacks })).toContain("can't run while setting 5 is in the AWS account");
   expect(at("6", { kept, left: stacks })).toContain("| bun erga verify remove 5");
   expect(at("celld", { left: stacks })).toContain("can't run while setting 5 is in the AWS account");
-  expect(at("all", { kept, left: stacks })).toBe("run 1 2 3 4 (3 out)");
+  expect(at("all", { kept, left: stacks })).toBe("run 1 2 3 4 deploys (3 out)");
   // update: only a kept setting; all: each kept one.
   expect(at("update 5", { kept, left: stacks })).toBe("update 5");
   expect(at("update aws-sso", { kept, left: stacks })).toBe("update 5");
@@ -398,7 +398,7 @@ test("each command of bun erga verify, from its words: run, --keep, update, remo
   expect(at("update 5", { kept, open: ["aws"] })).toContain("can't run. It is blocked by: the aws");
   // remove: a kept setting, or what a run left; it needs no prerequisite.
   expect(at("remove 5", { kept, open: ["aws"] })).toBe("remove 5");
-  expect(at("remove all")).toBe("remove 1 2 3 4 5 6 celld");
+  expect(at("remove all")).toBe("remove 1 2 3 4 5 6 celld deploys");
   expect(at("remove")).toBe("fail: Name the setting: bun erga verify remove <setting>|all.");
 });
 

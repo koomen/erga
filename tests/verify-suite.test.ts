@@ -130,7 +130,7 @@ test("a run starts only where the accounts, the zones and the team hold nothing 
     `The zone ${CF.shell} has DNS records that the suite did not make: A ${CF.shell}`
   );
   expect(cf((h) => (h.zones[CF.shell]!.records = [{ type: "MX", name: `mail.${CF.shell}` }]))).toContain("did not make: MX");
-  expect(cf((h) => (h.zones[CF.shell]!.records = [{ type: "A", name: `s7.${CF.shell}` }]))).toContain("did not make");
+  expect(cf((h) => (h.zones[CF.shell]!.records = [{ type: "A", name: `s8.${CF.shell}` }]))).toContain("did not make");
   expect(cf((h) => (h.zones[CF.shell]!.records = [{ type: "A", name: AWS.shell }]))).toContain("did not make");
   expect(cf((h) => (h.zones[CF.content]!.routes = [`*.${CF.content}/*`]))).toContain("Workers routes that the suite did not make");
   expect(cf((h) => (h.workers = ["erga-verify-gate-2", "erga", "blog"]))).toContain("Workers that the suite did not make: erga, blog");
@@ -364,7 +364,7 @@ test("a shared account: the prerequisites say what the suite touches there, and 
 
 test("each setting lists the prerequisites it needs, and says what blocks it", () => {
   const all = units();
-  expect(all.map((u) => u.id)).toEqual(["1", "2", "3", "4", "5", "6", "celld"]);
+  expect(all.map((u) => u.id)).toEqual(["1", "2", "3", "4", "5", "6", "celld", "deploys"]);
   const by = (f: Partial<Facts>, id: string, browsers: string[] = []) => {
     const r = readiness(all.find((u) => u.id == id)!, decide(facts(f)), browsers);
     return r.at == "ready" ? `ready${r.weak.map((p) => ` weak:${p.id}`).join("")}` : `${r.at}: ${r.by.map((p) => p.id).join(",")}`;
@@ -401,7 +401,7 @@ test("each setting lists the prerequisites it needs, and says what blocks it", (
   expect(by({ safari: { version: "18.6", automation: "off", preview: false } }, "3", ["chromium"])).toBe("ready");
   expect(neededBy("access")).toEqual(["4"]);
   expect(neededBy("analytics")).toEqual(["1", "2", "3", "4"]);
-  expect(neededBy("cloudflare")).toEqual(["1", "2", "3", "4", "5"]);
+  expect(neededBy("cloudflare")).toEqual(["1", "2", "3", "4", "5", "deploys"]);
   expect(neededBy("aws-own")).toEqual(["5", "6", "celld"]);
   expect(neededBy("safari-automation")).toEqual(["safari"]);
   expect(neededBy("safari-version")).toEqual([]);
@@ -496,12 +496,12 @@ const rowOf = (html: string, attr: string) =>
 test("the page says at a glance how much is set up and what passed", () => {
   expect(headline(null, {}, {})).toBe("The prerequisites are not checked yet.");
   // Thirteen prerequisites that a setting or a browser needs; two are optional (Safari's version, the preview).
-  expect(headline(state(), { "3": "passed" }, {})).toBe("Setup: 13 of 13 done. Settings: 7 of 7 ready, 1 passed.");
+  expect(headline(state(), { "3": "passed" }, {})).toBe("Setup: 13 of 13 done. Settings: 8 of 8 ready, 1 passed.");
   const s = state(
     { wrangler: "", safari: { version: "18.6", automation: "off", preview: false } },
     { left: [{ kind: "Worker", name: "erga-verify-3", unit: "3" }] }
   );
-  expect(headline(s, {}, {})).toBe("Setup: 11 of 13 done. Settings: 2 of 7 ready, 0 passed. 1 left in the accounts.");
+  expect(headline(s, {}, {})).toBe("Setup: 11 of 13 done. Settings: 3 of 8 ready, 0 passed. 1 left in the accounts.");
   const html = view({ state: s });
   expect(html).toContain("Setup: 11 of 13 done.");
   // A prerequisite that is not done says what to do; an address is a link.
@@ -605,7 +605,7 @@ test("the page's server shows the suite at #verify, and its buttons run bun erga
     });
   const html = async (hash = "verify") => (await fetch(`${at}/view?hash=${hash}`)).text();
   try {
-    expect(await html()).toContain("Setup: 12 of 13 done. Settings: 6 of 7 ready, 1 passed.");
+    expect(await html()).toContain("Setup: 12 of 13 done. Settings: 7 of 8 ready, 1 passed.");
     expect(await html("verify/3")).toContain("passed");
     // The sidebar has the suite's entry on every page.
     expect(await html("")).toContain('href="#verify"');

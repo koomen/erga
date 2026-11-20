@@ -114,7 +114,7 @@ export function answersOf(unit: AwsUnit, issuer = ""): Answers {
 /** The setting whose name the test issuer's Worker has. */
 const ISSUER = { n: 5 } as Setting;
 /** ada, as a provider vouches for her (celld.ts): an admin's row, and the identity that her sign-in cookie names. */
-const adaSql = (now = Date.now()) =>
+export const adaSql = (now = Date.now()) =>
   `INSERT INTO users (login, name, role, created, last_seen) VALUES ('ada', 'Ada', 'admin', ${now}, ${now}) ON CONFLICT (login) DO NOTHING; INSERT INTO identities (provider, subject, login, handle, created, last_used) VALUES ('github', '1', 'ada', 'ada', ${now}, ${now}) ON CONFLICT (provider, subject) DO NOTHING`;
 
 /**

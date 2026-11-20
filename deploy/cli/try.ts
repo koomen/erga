@@ -7,6 +7,8 @@
 // message names the try (not the machine: the repository may be public). git makes the ref only when it is not there (a push with a lease on "no ref"), and GitHub
 // decides that for all machines at once. A lock older than 30 minutes is free: the next try puts its own in its place,
 // again with a lease, on that commit. A try frees its own lock at its end; one that was killed leaves it to expire.
+// A caller that needs verify to stay at its commit after the try (the verify suite: a deployer deploys that commit)
+// keeps the lock (`keep`): the try makes it new at its end, for 30 more minutes, and gives the caller its release.
 //
 // Trap: the lock's commit must differ each time (its message has a random line). Two machines that made the same
 // commit would both see their push as done.
@@ -60,7 +62,8 @@ const ghRun = (repo: string) => async (sha: string) => {
 
 /**
  * Puts the branch's merge with staging on `verify`, and waits for GitHub's run of it. The result: the commit and its
- * release. An error says what stopped it. `clone`, `repo`, `runOf`, `now` and `pause` are for the tests.
+ * release. An error says what stopped it. `clone`, `repo`, `runOf`, `now` and `pause` are for the tests. With `keep`,
+ * a try that ends well keeps the lock, made new: no other try moves verify until the caller calls `free`.
  */
 export async function tryBranch(o: {
   branch: string | undefined;
@@ -71,7 +74,8 @@ export async function tryBranch(o: {
   runOf?: (sha: string) => Promise<Run | null>;
   now?: () => number;
   pause?: (ms: number) => Promise<void>;
-}): Promise<{ sha: string; release: string }> {
+  keep?: boolean;
+}): Promise<{ sha: string; release: string; free: () => void }> {
   const clone = o.clone ?? ROOT;
   const now = o.now ?? Date.now;
   const pause = o.pause ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -127,6 +131,9 @@ export async function tryBranch(o: {
 
   let mine = "";
   let since = 0;
+  let kept = false;
+  /** Frees the lock, only when it is still this try's: a lock that expired, and that another try took, stays. */
+  const free = () => void push(`--force-with-lease=${LOCK}:${mine}`, "origin", `:${LOCK}`);
   for (let said = false; !mine; ) {
     const lock = held();
     const step = lockStep(lock, now());
@@ -169,9 +176,14 @@ export async function tryBranch(o: {
     if (run.conclusion != "success") throw new Error(`GitHub's run of ${sha.slice(0, 12)} ended with ${run.conclusion}: ${run.url}`);
     const release = `ghcr.io/${repo.toLowerCase()}-verify:${sha}`;
     o.log(`PASS  GitHub tested and built ${sha.slice(0, 12)}. Its release: ${release}`);
-    return { sha, release };
+    if (o.keep) {
+      // A new lock in the place of its own: 30 minutes from now. Another try took it meanwhile: nothing is kept.
+      const again = take(mine);
+      kept = !!again;
+      mine = again ?? mine;
+    }
+    return { sha, release, free: kept ? free : () => {} };
   } finally {
-    // Only its own: a lock that expired, and that another try took, stays.
-    push(`--force-with-lease=${LOCK}:${mine}`, "origin", `:${LOCK}`);
+    if (!kept) free();
   }
 }

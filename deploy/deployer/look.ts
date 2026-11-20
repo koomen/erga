@@ -151,12 +151,14 @@ export const look = (ports: LookPorts): Effect.Effect<string> =>
             // The admin said yes in the app.
             if (ask.kind == "rollback") return void (yield* rollback(spec, { ...ports.cloud, log: job.line, ok: Effect.succeed(true) }));
             job.commit(ask.sha);
-            // A commit that the look saw on the branch is on it. For an older one, GitHub's API says (github.ts).
-            const seen = commits.some((c) => c.sha == ask.sha);
-            const onBranch = seen
-              ? (version: string) => Effect.succeed(version.length >= 12 && ask.sha.startsWith(version))
-              : onBranchAtGitHub(fetch, spec, ask.sha);
-            yield* deployOf(job, ask.sha, onBranch);
+            // The branch first: a commit of another branch is refused for that, whatever the registry has of it. A
+            // commit that the look saw on the branch is on it. For an older one, GitHub's API says (github.ts).
+            const has = commits.some((c) => c.sha == ask.sha) || (yield* onBranchAtGitHub(fetch, spec, ask.sha)(short(ask.sha)));
+            if (!has)
+              return yield* wrong(
+                `Release ${short(ask.sha)} is not a commit of ${spec.branch} on ${spec.repo}: the instance deploys only a commit of that branch.`
+              );
+            yield* deployOf(job, ask.sha, (version) => Effect.succeed(version.length >= 12 && ask.sha.startsWith(version)));
           })
         );
       }

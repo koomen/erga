@@ -115,6 +115,25 @@ describe("on Cloudflare", () => {
     );
   });
 
+  test("the release that runs, deployed again with a setting that stops the server: its old health row does not count, and it goes back", async () => {
+    const { mock, clock, cf } = await instance();
+    const again = { ...release, version: version(SHA1) };
+    // The same release, with the same settings: the server writes a new row, and the deploy is healthy.
+    expect((await run(spec, again, { cloudflare: cf }, clock)).failed).toBeNull();
+    const before = mock.state.deployments["erga-next"][0].id;
+    // With a setting that stops the server as it starts, it writes no row. The row that the version before wrote is
+    // of the same release, and fresh: it is not this deploy's.
+    mock.state.silent = [version(SHA1)];
+    const bad = { ...spec, settings: { ...spec.settings, SERVER_CONFIG: "{" } };
+    const { failed, log } = await run(bad, again, { cloudflare: cf }, clock);
+    expect(failed?.message).toContain("is deployed to erga-next, but it wrote no health row in 3 minutes");
+    expect(failed?.message).toContain("It is rolled back to ");
+    expect(log.at(-1)).toContain("which ran before.");
+    // The version before serves again, with its own settings.
+    expect(bindingsOf(mock.state, "erga-next").SERVER_CONFIG.text).toBe("");
+    expect(mock.state.deployments["erga-next"][0].id).not.toBe(before);
+  });
+
   test("an unhealthy release goes back to the version before, by itself, and the deploy fails with that", async () => {
     const { mock, clock, cf } = await instance();
     mock.state.unhealthy = [version(SHA3)];

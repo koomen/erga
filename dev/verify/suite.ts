@@ -90,10 +90,21 @@ export const units = (): Unit[] => [
     cost: COST.celld,
     keep: KEEP.aws,
   },
+  {
+    id: "deploys",
+    name: "cf-deploys",
+    title: "Cloudflare: deploys from a machine, and from the deployer in the account",
+    where: "cloudflare",
+    needs: ["config", "token", "cloudflare", "zones"],
+    wants: [],
+    cost: COST.cloudflare,
+    keep: KEEP.cloudflare,
+  },
 ];
 
 /** A unit's hosts on this machine's zones: the app's, and the documents' domain. */
 export function hostsOf(id: string, cf: { shell: string; content: string }, aws: { shell: string; content: string }): string[] {
+  if (id == "deploys") return [`s7.${cf.shell}`, `*.c7.${cf.content}`];
   const s = settingsOf(cf, aws).find((x) => String(x.n) == id);
   return s ? [s.shell, `*.${s.content}`] : [awsHost(id, aws.shell), `*.${aws.content}`];
 }
@@ -217,7 +228,7 @@ export interface Left {
  * (erga-verify-<unit>-<the zone's name>, and with -certs the us-east-1 stack).
  */
 export const unitOfName = (name: string): string | null =>
-  /^erga-verify-(?:(?:gate|stub|idp)-)?([1-6]|celld)(?:-[a-z0-9-]+)?$/.exec(name)?.[1] ?? null;
+  /^erga-verify-(?:(?:gate|stub|idp)-)?([1-6]|celld|deploys)(?:-[a-z0-9-]+)?$/.exec(name)?.[1] ?? null;
 
 /** The state file: the last look at the prerequisites and at the accounts. */
 export interface State {

@@ -33,12 +33,12 @@ async function deployed() {
 
 test("the dry run names the pages' DNS record, when setup made one", () => {
   expect(removalText("example.com", entry)).toBe(
-    "This deletes example.com: the Workers erga and erga-pages, the database erga and the bucket erga-files, with every document on it, and the DNS record *.example-pages.com that setup made for the documents' pages."
+    "This deletes example.com: the Workers erga and erga-pages, its deployer if it has one, the database erga and the bucket erga-files, with every document on it, and the DNS record *.example-pages.com that setup made for the documents' pages."
   );
   // Pages on the shared host have no record; and a host with no entry yet has its names only.
   expect(removalText("example.com", { ...entry, pages: { kind: "shared" } })).not.toContain("DNS record");
   expect(removalText("erga.example.org", null)).toBe(
-    "This deletes erga.example.org: the Workers erga-example-org and erga-example-org-pages, the database erga-example-org and the bucket erga-example-org-files, with every document on it."
+    "This deletes erga.example.org: the Workers erga-example-org and erga-example-org-pages, its deployer if it has one, the database erga-example-org and the bucket erga-example-org-files, with every document on it."
   );
 });
 

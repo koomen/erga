@@ -1,6 +1,7 @@
 // `bun erga setup <host> remove` of an instance on Cloudflare: what it deletes (the dry run says it), and the deletion.
 // It deletes what setup made, and nothing else: the instance's Workers (their routes and the app's custom domain go
-// with them), its database, its bucket when empty, and the wildcard DNS record of the documents' pages.
+// with them), its deployer when Erga made one, its database, its bucket when empty, and the wildcard DNS record of the
+// documents' pages.
 //
 // Trap: Cloudflare deletes a Worker's routes with the Worker, but never a DNS record. The record of the pages
 // (*.<pages domain>) stays unless this deletes it. Only a record as setup makes it is deleted (pipeline.ts,
@@ -9,6 +10,7 @@
 import type { CloudflareEntry } from "../cli/config";
 import type { Cloudflare } from "../deployer/cloudflare-api";
 import { findDatabase, zoneIdOf } from "../pipeline/account";
+import { deployerName, removeDeployer } from "../pipeline/deployer";
 import { PAGES_RECORD } from "../pipeline/pipeline";
 import { namesOf } from "./plan";
 
@@ -20,7 +22,7 @@ const pagesRecord = (entry: CloudflareEntry | null) =>
 export function removalText(host: string, entry: CloudflareEntry | null): string {
   const n = namesOf(host, entry);
   const record = pagesRecord(entry);
-  return `This deletes ${host}: the Workers ${n.worker} and ${n.pagesWorker}, the database ${n.database} and the bucket ${n.bucket}, with every document on it${record ? `, and the DNS record ${record} that setup made for the documents' pages` : ""}.`;
+  return `This deletes ${host}: the Workers ${n.worker} and ${n.pagesWorker}, its deployer if it has one, the database ${n.database} and the bucket ${n.bucket}, with every document on it${record ? `, and the DNS record ${record} that setup made for the documents' pages` : ""}.`;
 }
 
 /**
@@ -46,6 +48,9 @@ export async function removeOnCloudflare(
       .catch(() => [])) ?? [];
   for (const d of domains.filter((d) => d.service == n.worker))
     await part(`custom domain ${host} removed`, () => cf.call("DELETE", `${acc}/workers/domains/${d.id}`, "remove the custom domain"));
+  // The deployer first, when Erga made one: it holds a token for the Worker that goes.
+  if (await removeDeployer(cf, { account: entry.account, worker: n.worker }).catch(() => false))
+    o.done(`Worker ${deployerName(n.worker)} deleted, with the token that it held`);
   for (const w of [n.pagesWorker, n.worker])
     await part(`Worker ${w} deleted`, () =>
       cf.call("DELETE", `${acc}/workers/scripts/${w}?force=true`, "delete the Worker", undefined, { allow404: true })

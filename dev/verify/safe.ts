@@ -47,7 +47,7 @@ export const hostProblem = (host: string, zones: string[]): string | null =>
 
 /** A run's host on Cloudflare: a shell (s<n>.<shell>) or under it, or under a setting's content (c<n>.<content>). */
 export const runHost = (host: string, c: { shell: string; content: string }) =>
-  !!c.shell && !!c.content && [1, 2, 3, 4, 5, 6].some((n) => under(host, `s${n}.${c.shell}`) || under(host, `c${n}.${c.content}`));
+  !!c.shell && !!c.content && [1, 2, 3, 4, 5, 6, 7].some((n) => under(host, `s${n}.${c.shell}`) || under(host, `c${n}.${c.content}`));
 
 /** What the accounts hold, as dedicated.ts read it. null: not read. */
 export interface Held {
@@ -165,6 +165,10 @@ export interface Scope {
   databases: Record<string, string>;
   /** Each Access application and identity provider that a call names, by ID: its name, as the team says it. */
   access: Record<string, string>;
+  /** Each DNS record that a call names, by ID: its name, as its zone says it. */
+  records: Record<string, string>;
+  /** Each Custom Domain that a call names, by ID: its host and its Worker, as the account says them. */
+  domains: Record<string, { hostname: string; service: string }>;
 }
 
 /** The kinds of binding that a Worker of the suite's may have. Each one that names a thing of the account names one of the suite's. */
@@ -222,6 +226,9 @@ export function apiProblem(method: string, path: string, body: unknown, s: Scope
         ? null
         : no("the suite reads a zone's records, routes and certificates only");
     if (method == "POST" && rest == "/dns_records") return host(b.name) ? null : no(`${text(b.name) || "the record"} is not a run's host`);
+    // One DNS record: a run's host's is deleted (the wildcard of an instance's pages, which its Worker's deletion leaves).
+    const record = /^\/dns_records\/([^/]+)$/.exec(rest);
+    if (method == "DELETE" && record) return host(s.records[record[1]] ?? "") ? null : no("the record is not at a run's host");
     if (method == "POST" && rest == "/workers/routes")
       return host(text(b.pattern).replace(/\/.*$/, "")) && ours(text(b.script))
         ? null
@@ -244,6 +251,12 @@ export function apiProblem(method: string, path: string, body: unknown, s: Scope
         ? null
         : no(`the Custom Domain ${text(b.hostname)} of ${text(b.service)} is not a run's`);
     return no("it changes more than the suite's own");
+  }
+  // One Custom Domain: a run's host on a Worker of the suite's is deleted (a deploy's --remove-domain). Nothing reads one.
+  const domain = /^\/workers\/domains\/([^/]+)$/.exec(rest);
+  if (domain) {
+    const d = s.domains[domain[1]];
+    return method == "DELETE" && d && host(d.hostname) && ours(d.service) ? null : no("it is not a Custom Domain of a run's");
   }
   // A file of a Worker's static assets: it goes up with the token of an upload that began at one of the suite's Workers.
   if (method == "POST" && /^\/workers\/assets\/upload(\/[^/]+)?$/.test(rest)) return null;

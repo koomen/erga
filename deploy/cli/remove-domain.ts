@@ -78,7 +78,7 @@ export async function removalPlan(o: {
       `  ${d}:`,
       `    1. ${(await onCloudflare(cf, entry, d)).says.replace(/^./, (c) => c.toUpperCase())}.`,
       `    2. The instance: a deploy of ${entry.branch}'s head takes ${d} off its custom domains (the Worker's deploy facts, and its spec).`,
-      `    3. The server: it unpublishes the document that is published to ${d}, within a minute of the deploy.`,
+      `    3. The server: it unpublishes the document that is published to ${d}, within about 2 minutes of the deploy.`,
       `    4. .erga/config.json: ${d} leaves ${o.host}'s entry.`
     );
   }
@@ -115,7 +115,9 @@ export async function askUnpublish(
         [d, at],
         `tell the server that ${d} is removed`
       );
-    log(`The server unpublishes the document that is published to ${domains.join(", ")} at its next scheduled run, within a minute.`);
+    log(
+      `The server unpublishes the document that is published to ${domains.join(", ")} at its next scheduled run, within about 2 minutes.`
+    );
   } catch (e) {
     if (!/no such table/.test((e as Error).message)) throw e;
     log(
