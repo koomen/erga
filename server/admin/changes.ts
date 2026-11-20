@@ -3,6 +3,8 @@
 import {
   type Access,
   ACCESS_LABEL,
+  type Anyone,
+  ANYONE_LABEL,
   KIND_LABEL,
   ROLE_LABEL,
   type RuleKind,
@@ -57,6 +59,7 @@ function eventItem(c: SettingChange): string {
     return `<li><span class="key">User</span> <span class="title">${esc(u.login)}</span> ${what}</li>`;
   }
   if (c.access) {
+    // (An old line can name everybody's rule, which Anyone's level replaced, and a group's "No access".)
     const a = c.access,
       who =
         a.kind == "everybody" ? "Everybody" : `${esc(KIND_LABEL[a.kind as RuleKind] ?? a.kind)} <span class="title">${esc(a.value)}</span>`;
@@ -91,7 +94,9 @@ function eventItem(c: SettingChange): string {
  */
 function changeRow(v: SettingsVersion, settings: Settings, avatars: Record<string, string>): string {
   const at = new Date(v.at).toISOString();
-  const value = (key: string, x: unknown) => `<span class="was">${esc(shown(x, settings[key]?.kind))}</span>`;
+  // (Anyone's level by its words on the Access page.)
+  const value = (key: string, x: unknown) =>
+    `<span class="was">${esc(key == "anyone_access" ? (ANYONE_LABEL[x as Anyone] ?? String(x)) : shown(x, settings[key]?.kind))}</span>`;
   // A setting by its name on the admin page, its key on hover.
   const name = (key: string) => `<span class="key" title="${esc(key)}">${esc(settings[key]?.label ?? key)}</span>`;
   const what = v.changes

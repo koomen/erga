@@ -94,11 +94,11 @@ test("users: add by provider account with a role, make admin, demote, remove; bo
     provider: "github",
     handle: "cy",
     role: "read",
-    roleLabel: "Can authenticate",
+    roleLabel: "Can view documents",
     addedBy: "root",
   });
   expect((await run(root, "set_user", { action: "role", person: person.person, role: "write" })).roleLabel).toBe(
-    "Can create and edit content"
+    "Can create, edit and comment"
   );
   expect(
     (await failure(run(root, "set_user", { action: "add", provider: "github", handle: "no-such-one", role: "read" }))).message
@@ -111,7 +111,7 @@ test("users: add by provider account with a role, make admin, demote, remove; bo
   expect((await run(root, "people")).users.find((u: { login?: string }) => u.login == "bo")).toMatchObject({
     name: "Bo B",
     role: "write",
-    roleLabel: "Can create and edit content",
+    roleLabel: "Can create, edit and comment",
   });
   expect((await run(root, "set_user", { action: "role", login: "bo", role: "admin" })).role).toBe("admin");
   // Bo, an admin now, has the tools.
@@ -135,19 +135,47 @@ test("users: add by provider account with a role, make admin, demote, remove; bo
   expect(e.status).toBe(404);
   e = await failure(run(root, "set_user", { action: "add", provider: "github", handle: "not a login", role: "read" }));
   expect(e.status).toBe(403);
-  expect(await run(root, "set_user", { action: "remove", login: "bo" })).toEqual({ removed: "bo" });
+  // "No role" is no role to set: Remove takes a user's own role away, and their account stays, off the list.
+  e = await failure(run(root, "set_user", { action: "role", login: "bo", role: "none" }));
+  expect(e.message).toMatch(/remove them/);
+  expect((await run(root, "set_user", { action: "remove", login: "bo" })).removed).toBe("bo");
   expect(await dir.users.allowed("bo")).toBe(false);
+  expect((await dir.users.get("bo"))?.name).toBe("Bo B");
+  expect((await run(root, "people")).users.map((u: { login: string }) => u.login)).toEqual(["root"]);
+  // Anyone lets them in: they sign in again, still with no row.
+  await run(root, "set_access", { action: "anyone", level: "read" });
+  expect(await dir.users.allowed("bo")).toBe(true);
+  expect((await run(root, "people")).users.map((u: { login: string }) => u.login)).toEqual(["root"]);
 });
 
-test("access: a group rule added, changed and removed, public sharing switched, in one tool; people reads them", async () => {
+test("access: a group rule added, changed and removed, Anyone's level set, public sharing switched, in one tool; people reads them", async () => {
   const dir = fresh({ admins: ["root"] });
   const root = { dir, who: { login: "root", admin: true } };
   const rule = await run(root, "set_access", { action: "add", kind: "github_org", value: "acme", access: "read" });
-  expect([rule.who, rule.accessLabel]).toEqual(["GitHub organization: acme", "Can authenticate"]);
-  expect((await run(root, "set_access", { action: "change", id: rule.id, access: "write" })).from).toBe("read (Can authenticate)");
-  expect((await run(root, "set_access", { action: "public", on: false })).publicSharing).toBe(false);
-  const people = await run(root, "people");
-  expect([people.publicSharing, people.rules.find((r: { id: number }) => r.id == rule.id).access]).toEqual([false, "write"]);
+  expect([rule.who, rule.accessLabel]).toEqual(["GitHub organization: acme", "Can view documents"]);
+  expect((await run(root, "set_access", { action: "change", id: rule.id, access: "write" })).from).toBe("read (Can view documents)");
+  // A group has no "No access": its rule is removed.
+  expect((await failure(run(root, "set_access", { action: "change", id: rule.id, access: "none" }))).message).toMatch(/remove its rule/);
+  let people = await run(root, "people");
+  expect([people.anyone, people.anyoneLabel, people.publicSharing]).toEqual(["none", "No access", false]);
+  expect(people.rules.find((r: { id: number }) => r.id == rule.id).access).toBe("write");
+  // Public sharing needs Anyone at public or higher; an admin turns it on then. set_setting holds the same.
+  expect((await failure(run(root, "set_access", { action: "public", on: true }))).message).toMatch(/Anyone has No access/);
+  expect((await failure(run(root, "set_setting", { key: "public_sharing", value: true }))).message).toMatch(/Anyone has No access/);
+  expect(await run(root, "set_access", { action: "anyone", level: "public" })).toEqual({
+    anyone: "public",
+    anyoneLabel: "Can view public documents",
+    publicSharing: false,
+    before: "none",
+  });
+  expect(await run(root, "set_access", { action: "public", on: true })).toMatchObject({ publicSharing: true, before: false });
+  // Anyone back at No access: public sharing goes off with it (set_setting too), and stays off at a higher level.
+  expect((await run(root, "set_setting", { key: "anyone_access", value: "none" })).value).toBe("none");
+  people = await run(root, "people");
+  expect([people.anyone, people.publicSharing]).toEqual(["none", false]);
+  expect(await run(root, "set_access", { action: "anyone", level: "write" })).toMatchObject({ anyone: "write", publicSharing: false });
+  expect((await failure(run(root, "set_access", { action: "anyone", level: "some" }))).message).toMatch(/Anyone's level is/);
+  expect((await failure(run(root, "set_access", { action: "anyone" }))).message).toBe("anyone needs level.");
   expect((await run(root, "set_access", { action: "remove", id: rule.id })).removed.id).toBe(rule.id);
   // An action without what it needs says which argument.
   expect((await failure(run(root, "set_access", { action: "change", id: 1 }))).message).toBe("change needs access.");
@@ -156,7 +184,7 @@ test("access: a group rule added, changed and removed, public sharing switched, 
 
 test("sharing: the owner sees and changes who has access; editors change the page's model; the document agent defaults to its document", async () => {
   // Users can share content publicly here (anyone with the link): the Access page's switch.
-  const dir = fresh({ defaults: { public_sharing: true }, admins: ["root"] });
+  const dir = fresh({ defaults: { anyone_access: "public", public_sharing: true }, admins: ["root"] });
   // Bo and Cy may sign in here (a share goes only to someone who may).
   for (const l of ["bo", "cy"]) await dir.users.add({ login: "root", admin: true }, l);
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
@@ -181,6 +209,17 @@ test("sharing: the owner sees and changes who has access; editors change the pag
   expect((await failure(run(ada, "share_document", { document: "plan", login: "cy" }))).status).toBe(400);
   r = await run(ada, "share_document", { document: "aaaaaaaa", login: "bo", role: "none" });
   expect(r.permissions.map((p: { login: string }) => p.login)).toEqual(["ada", "*"]);
+  expect([r.publicSharing, r.anyoneWithLink]).toEqual([true, true]);
+  // Public sharing off: the share with anyone is refused, for a person's page and an agent alike; the one made before
+  // stays, and counts for nothing.
+  await run({ dir, who: { login: "root", admin: true } }, "set_access", { action: "public", on: false });
+  const off = await failure(run(ada, "share_document", { document: "aaaaaaaa", login: "*", role: "editor" }));
+  expect([off.status, /Public sharing is off on this server/.test(off.message)]).toEqual([403, true]);
+  r = await run(ada, "share_document", { document: "aaaaaaaa", page_llm: true });
+  expect([r.publicSharing, r.anyoneWithLink]).toEqual([false, false]);
+  expect(await dir.access({ login: "cy" }, (await dir.get("aaaaaaaa"))!)).toBeNull();
+  r = await run(ada, "share_document", { document: "aaaaaaaa", login: "*", role: "none" });
+  expect(r.permissions.map((p: { login: string }) => p.login)).toEqual(["ada"]);
 });
 
 test("the Site template makes a document with two pages that link to each other: from /new's menu and from create_document", async () => {

@@ -87,8 +87,10 @@ export default function adminUsers(c: UsersConfig): void {
       if (
         !confirm(
           login == me
-            ? "Remove yourself? You'll be signed out, and can't sign in again unless an admin adds you or a group lets you in."
-            : "Remove " + (login || "this user") + "? They can't sign in unless a group lets them in. Their documents stay."
+            ? "Remove your role? Your groups decide your access, and you won't see the admin pages any more."
+            : "Remove " +
+                (login || li.querySelector(".title")?.textContent || "this user") +
+                "? Their groups decide their access. Their documents stay."
         )
       )
         return;

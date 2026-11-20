@@ -2,7 +2,7 @@
 //
 // Two journeys. The first is on a server of this file's own, because its checks change who may use the whole server:
 // the sign-in page with one provider and with two, people that an admin adds before their first sign-in, and the
-// access rules (a Google Workspace, a GitHub organization, everybody). The second is one new person on the shared
+// access rules (a Google Workspace, a GitHub organization, Anyone's level). The second is one new person on the shared
 // server: the username step, the account corner, the editor's Share card and pencil, sign out and sign in.
 // Sign-ins go through local development's pretend provider (/auth/dev), which takes the same steps as GitHub's and
 // Google's answers. The admin is DEV_LOGIN ("tester").
@@ -125,7 +125,7 @@ journey("who may sign in, on a server of its own", () => {
     const ann = `ol.users > li[data-login="ann${id}"] select.role`;
     const annSignsIn = () => signIn(`provider=google&subject=a${id}&handle=ann.${id}@example.net&email=ann.${id}@example.net`);
     await page.goto(`${root}/admin/access?user=tester`);
-    // A Google account by its email, with Can authenticate: it waits on the Access page.
+    // A Google account by its email, with Can view documents: it waits on the Access page.
     await add("google", `ann.${id}@example.net`, "read");
     const waiting = `ol.users > li.waiting:has(.handle:text-is("ann.${id}@example.net"))`;
     await page.locator(waiting).waitFor();
@@ -160,10 +160,14 @@ journey("who may sign in, on a server of its own", () => {
       await page.selectOption("form.add-rule select[name=access]", access);
       await page.click("form.add-rule button");
     };
-    // Everybody is first, and none: this server is invite-only.
+    // No group has a rule yet, and Anyone lets no account in: this server is invite-only. A group gets one of two levels.
     await page.goto(`${root}/admin/access?user=tester`);
-    expect(await page.$eval("ol.rules > li:first-child", (li) => (li as HTMLElement).dataset.kind)).toBe("everybody");
-    expect(await page.inputValue(`${rule("everybody")} select.access`)).toBe("none");
+    expect(await page.$("ol.rules > li")).toBeNull();
+    expect(await page.inputValue("#anyone-access")).toBe("public");
+    expect(await page.$$eval("form.add-rule select[name=access] option", (os) => os.map((o) => o.textContent))).toEqual([
+      "Can view documents",
+      "Can create, edit and comment",
+    ]);
     // A Workspace is named by its domain: one that isn't is refused, in place.
     await addRule("workspace", "not a domain", "write");
     await until(async () => (await hint())?.includes("isn't a domain"), 5000, "a bad domain refused");
@@ -196,21 +200,29 @@ journey("who may sign in, on a server of its own", () => {
     expect(await page.innerText("main")).not.toMatch(/acme|example\.org|organization|Workspace/);
   });
 
-  test("rules: everybody's select lets a refused person in; a rule removed lets nobody in any more", async () => {
-    // Everybody: read, with its select. Bob (a personal account) may come in now.
+  test("Anyone's menu lets a refused person in; a rule removed lets nobody in any more; Users lists only the accounts with a role of their own, and Remove takes it away", async () => {
+    // Anyone: Can view documents shared with them, with its menu. Bob (a personal account) may come in now.
     await page.goto(`${root}/admin/access?user=tester`);
+    // Amy and Dee came in through their groups: no row. Ann has the role an admin gave her.
+    expect(await page.$$eval("ol.users > li[data-login]", (ls) => ls.map((l) => (l as HTMLElement).dataset.login))).toEqual([
+      `ann${id}`,
+      "tester",
+    ]);
     const saved = page.waitForResponse((r) => r.url().includes("/api/tools/set_access"));
-    await page.selectOption(`${rule("everybody")} select.access`, "read");
+    await page.selectOption("#anyone-access", "read");
     await saved;
     await until(
-      async () => (await markOf(page)) == "saved" && (await page.textContent("#rules-hint")) == "",
+      async () => (await markOf(page)) == "saved" && (await page.textContent("#public-hint")) == "",
       5000,
-      "everybody's access saved"
+      "Anyone's level saved"
     );
-    // The Workspace rule removed: Amy keeps only everybody's read.
     await page.evaluate(() => {
       window.confirm = () => true;
     });
+    // Ann removed: her own role goes, and her row with it; Anyone decides her access (read: no new document).
+    await page.click(`ol.users > li[data-login="ann${id}"] .remove`);
+    await page.locator(`ol.users > li[data-login="ann${id}"]`).waitFor({ state: "detached" });
+    // The Workspace rule removed: Amy keeps only Anyone's read.
     await page.click(`${rule("workspace", "example.org")} .remove-rule`);
     await page.locator(rule("workspace", "example.org")).waitFor({ state: "detached" });
     await signIn(BOB(id));
@@ -459,6 +471,8 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
       (f.elements.namedItem("role") as HTMLSelectElement).value = "viewer";
       f.requestSubmit();
     });
+    // Users share publicly here: the card offers anyone with the link (with the switch off, only Copy link stays).
+    expect(await page.isVisible("#sharing-anyone")).toBe(true);
     // Each person shows their own picture, as the header's avatar does: the owner hers; ada, with no account, none.
     await soon(async () => (await people()).slice(1)).toEqual([{ who: "ada", role: "viewer", picture: null }]);
     expect((await people())[0].picture).toBe(`${PICTURE}=s64-c`);

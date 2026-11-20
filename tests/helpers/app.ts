@@ -102,13 +102,13 @@ export function server(o: ServerOptions = {}) {
   const dir = new Directory(sql, {
     admins: ["tester"],
     local: true,
-    defaults: { public_sharing: true },
+    defaults: { anyone_access: "public", public_sharing: true },
     credentialSecret: "local:secret",
     providers: ["github", "google"],
     // GitHub's public users API, as the pretend GitHub answers it (dev/github-mock.ts): every login is an account.
     lookup: async (_provider, login) => ({ subject: String(mockGithubId(login)), handle: login }),
     changed: async (key) => {
-      if (key == "public_sharing") forgetDecisions();
+      if (key == "public_sharing" || key == "anyone_access") forgetDecisions();
     },
     permissionsChanged: async (id, permissions) => {
       forgetDecisions(id);

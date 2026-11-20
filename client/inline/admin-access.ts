@@ -1,7 +1,7 @@
-// The Access page's script (/admin/access, server/admin/access.ts): whether users can share content publicly, and the
-// group rules: add one, change its access, remove one. The switch and a rule's access save as they change, with no Save
-// button (client/common/autosave.ts): the save mark left of the buttons' bar says how far it is; refused, the value
-// stays, with the server's reason under it.
+// The Access page's script (/admin/access, server/admin/access.ts): the group rules (add one, change its access, remove
+// one), and everyone else: Anyone's level, and whether users can share publicly. Each menu and the switch save as they
+// change, with no Save button (client/common/autosave.ts): the save mark left of the buttons' bar says how far it is;
+// refused, the value stays, with the server's reason under it.
 
 import { runTool, say } from "../common/admin-post";
 import { saveMark } from "../common/admin-save";
@@ -11,9 +11,43 @@ import { liveList, refresh } from "../common/live-rows";
 export default function adminAccess(): void {
   const mark = saveMark();
   const publicHint = document.getElementById("public-hint")!;
+  const everyone = document.querySelector<HTMLElement>("section.everyone ol")!;
+  /**
+   * Anyone's level (its row comes again when it changes elsewhere). With No access the server turns public sharing off
+   * too: the switch shows it at once, and its row comes again from the server when the save ends.
+   */
+  const wireAnyone = (li: HTMLElement) => {
+    const select = li.querySelector<HTMLSelectElement>("select")!;
+    mark.set("access:anyone", "saved");
+    const auto = autosave({
+      mark,
+      key: "access:anyone",
+      label: "Access for anyone",
+      row: li,
+      read: () => select.value,
+      saved: select.value,
+      save: (value) => runTool("set_access", { action: "anyone", level: value }),
+      ended(why) {
+        say(publicHint, why ?? "", !!why);
+        select.toggleAttribute("aria-invalid", !!why);
+        void refresh("setting:public_sharing");
+      },
+    });
+    select.addEventListener("change", () => {
+      const box = everyone.querySelector<HTMLInputElement>("#public-sharing");
+      if (box && select.value == "none") {
+        box.checked = false;
+        box.disabled = true;
+        box.closest("li")!.classList.add("off");
+        box.closest("li")!.querySelector(".state")!.textContent = "Off";
+      }
+      auto.changed(true);
+    });
+  };
   /** The switch for sharing publicly (its row comes again when it changes elsewhere). */
-  const wirePublic = (publicBox: HTMLInputElement) => {
-    const state = publicBox.closest("li")?.querySelector(".state");
+  const wirePublic = (li: HTMLElement) => {
+    const publicBox = li.querySelector<HTMLInputElement>("input")!;
+    const state = li.querySelector(".state");
     const shown = () => {
       if (state) state.textContent = publicBox.checked ? "On" : "Off";
     };
@@ -22,6 +56,7 @@ export default function adminAccess(): void {
       mark,
       key: "access:public",
       label: "Public sharing",
+      row: li,
       read: () => String(publicBox.checked),
       saved: String(publicBox.checked),
       save: (value) => runTool("set_access", { action: "public", on: value == "true" }),
@@ -35,7 +70,7 @@ export default function adminAccess(): void {
         publicBox.checked &&
         auto.saved == "false" &&
         !confirm(
-          "Let users share content publicly? Documents already shared with anyone with the link will open for people who aren't signed in too."
+          "Let users share content publicly? Documents already shared with anyone with the link will open again, for people who aren't signed in too."
         )
       )
         publicBox.checked = false;
@@ -100,13 +135,11 @@ export default function adminAccess(): void {
   }
   const rules = document.querySelector<HTMLElement>("ol.rules")!;
   for (const li of rules.querySelectorAll<HTMLElement>(":scope > li")) wire(li);
-  wirePublic(document.getElementById("public-sharing") as HTMLInputElement);
+  /** A row of Everyone else: Anyone's menu, or the switch. */
+  const wireSetting = (li: HTMLElement) => (li.querySelector("select") ? wireAnyone(li) : wirePublic(li));
+  for (const li of everyone.querySelectorAll<HTMLElement>(":scope > [data-live]")) wireSetting(li);
   // Changes made elsewhere (another admin, an agent) show here as they're made (client/common/live-rows.ts).
   const signal = window.ergaView?.signal;
   liveList(rules, { wire }, signal);
-  liveList(
-    document.querySelector<HTMLElement>("section.public-sharing ol")!,
-    { wire: (row) => wirePublic(row.querySelector("input")!) },
-    signal
-  );
+  liveList(everyone, { wire: wireSetting }, signal);
 }

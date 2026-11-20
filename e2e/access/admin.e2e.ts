@@ -231,7 +231,7 @@ journey("an admin on the admin pages", () => {
     expect(await page.evaluate(() => document.querySelector<HTMLElement>("ol.users")!.dataset.mark)).toBe("same");
   });
 
-  test("Feedback, Documents, Agents and models and Access follow an agent's changes: a setting's value, No limit, a rule added and removed, the public switch", async () => {
+  test("Feedback, Documents, Agents and models and Access follow an agent's changes: a setting's value, No limit, a rule added and removed, Anyone's level, the public switch", async () => {
     // Feedback's repository is a setting on the Feedback page, with the value that the first step set.
     await go("/admin/feedback", "[data-key=feedback_repository]");
     const repository = await page.evaluate(() => {
@@ -260,18 +260,26 @@ journey("an admin on the admin pages", () => {
     await agent("set_setting", { key: "agent_daily_tokens", reset: true });
     await soon(() => page.evaluate((s) => document.querySelector<HTMLSelectElement>(`${s} select.mode`)!.value, tokens)).toBe("after");
 
-    // Access: a rule the agent adds comes in at its place; sharing publicly, switched by the agent, shows switched.
-    await go("/admin/access", "ol.rules > li");
+    // Access: a rule the agent adds comes in at its place; Anyone's level and sharing publicly, set by the agent, show so.
+    await go("/admin/access", "ol.users > li");
     const org = unique("org");
     const rules = () => page.evaluate(() => [...document.querySelectorAll<HTMLElement>("ol.rules > li .title")].map((t) => t.innerText));
-    const isPublic = () => page.evaluate(() => (document.getElementById("public-sharing") as HTMLInputElement).checked);
+    /** Everyone else, as the page shows it: Anyone's level, and the switch. */
+    const everyone = () =>
+      page.evaluate(() => {
+        const box = document.getElementById("public-sharing") as HTMLInputElement;
+        return `${(document.getElementById("anyone-access") as HTMLSelectElement).value} ${box.checked ? "on" : "off"}${box.disabled ? " disabled" : ""}`;
+      });
     await agent("set_access", { action: "add", kind: "github_org", value: org, access: "read" });
     await soon(rules).toContain(org);
-    const on = await isPublic();
-    await agent("set_access", { action: "public", on: !on });
-    await soon(isPublic).toBe(!on);
-    await agent("set_access", { action: "public", on });
-    await soon(isPublic).toBe(on);
+    // Local development starts with both on. Anyone at No access: the switch is off with it, and can't turn on.
+    expect(await everyone()).toBe("public on");
+    await agent("set_access", { action: "anyone", level: "none" });
+    await soon(everyone).toBe("none off disabled");
+    await agent("set_access", { action: "anyone", level: "public" });
+    await soon(everyone).toBe("public off");
+    await agent("set_access", { action: "public", on: true });
+    await soon(everyone).toBe("public on");
     const id = (await agent<{ rules: { id: number; value: string }[] }>("people")).rules.find((r) => r.value == org)!.id;
     await agent("set_access", { action: "remove", id });
     await soon(rules).not.toContain(org);
@@ -343,7 +351,7 @@ journey("an admin on the admin pages", () => {
     // A group rule's change says which group and its access (it showed as a setting before: "access never → never").
     const group = unique("org");
     await agent("set_access", { action: "add", kind: "github_org", value: group, access: "read" });
-    await soon(top).toContain(`${group} added: Can authenticate`);
+    await soon(top).toContain(`${group} added: Can view documents`);
   });
 
   test("Send feedback in the account menu: type, Send, thanks; the issue on GitHub has no name; the Feedback page lists it with its issue", async () => {

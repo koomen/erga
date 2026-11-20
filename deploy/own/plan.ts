@@ -181,7 +181,12 @@ export function pagesProblem(a: Answers, zones: string[]): string | null {
 }
 
 /** The settings' defaults that the answer sets (SERVER_DEFAULTS): an admin can change each on its admin page (/admin). */
-export const defaultsOf = (a: Pick<Answers, "signIn">) => ({ public_sharing: a.signIn == "invite", delete_docs_after_hours: null });
+export const defaultsOf = (a: Pick<Answers, "signIn">) => ({
+  // Invited users share with anyone with the link: Anyone may view public documents, and the switch is on.
+  anyone_access: a.signIn == "invite" ? "public" : "none",
+  public_sharing: a.signIn == "invite",
+  delete_docs_after_hours: null,
+});
 
 /** --email-claim's parts: the claim with the address, and the text before the address; null: not answered. */
 export const emailOf = (a: Pick<Answers, "emailClaim">): { claim: string; prefix: string } | null => {
@@ -216,8 +221,9 @@ export function varsOf(a: Answers, github: string | undefined, signer?: string):
   };
 }
 
-/** A row of a new server's database: its table, its values by column, what happens if it is there already. */
+/** A row of a new server's database: who it lets write, its table, its values by column, what happens if it is there already. */
 export interface FirstRow {
+  who: string;
   table: string;
   row: Record<string, string | number>;
   /** After ON CONFLICT. */
@@ -228,16 +234,25 @@ export interface FirstRow {
  * The rows a new server's database gets with its first deploy, only while it has no admin (each host writes them in its
  * own way: first.ts, deploy/aws/setup.ts): the access rule that the answer names. An organization's users may sign in and
  * write: a GitHub organization's members, or a Google Workspace's (once Google sign-in is on). With single sign-on,
- * everybody who passes the proxy may. No admin: the user who opens setup's one-time link becomes it
- * (server/identity/claim.ts).
+ * anyone who passes the proxy may: Anyone's level (the setting anyone_access, server/directory/access.ts). No admin: the
+ * user who opens setup's one-time link becomes it (server/identity/claim.ts).
  */
 export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
   const rule = (kind: string, value: string): FirstRow => ({
+    who: `${kind} ${value}`,
     table: "access_rules",
     row: { kind, value, access: "write", created: now },
     onConflict: "(kind, value) DO UPDATE SET access = 'write'",
   });
-  if (sso(a)) return [rule("everybody", "")];
+  if (sso(a))
+    return [
+      {
+        who: "anyone",
+        table: "server_config",
+        row: { key: "anyone_access", value: '"write"', updated: now },
+        onConflict: "(key) DO UPDATE SET value = excluded.value",
+      },
+    ];
   if (a.signIn == "organization" && a.organization)
     return [rule(a.organization.includes(".") ? "workspace" : "github_org", a.organization)];
   return [];

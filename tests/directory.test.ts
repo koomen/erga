@@ -107,7 +107,7 @@ test("the archive is each person's own: off their list, on their archived list, 
 
 test("sharing: editors, viewers and anyone with the link", async () => {
   // Users can share content publicly here (anyone with the link): the Access page's switch.
-  const dir = fresh({ defaults: { public_sharing: true }, admins: ["root"] });
+  const dir = fresh({ defaults: { anyone_access: "public", public_sharing: true }, admins: ["root"] });
   // Bo and Cy may sign in here (a share goes only to someone who may).
   for (const l of ["bo", "cy"]) await dir.users.add({ login: "root", admin: true }, l);
   const one = (await dir.add(doc("aaaaaaaa", "One"))).doc;

@@ -25,8 +25,8 @@ export const PAGE_SETTINGS = {
   pages: ["page_llm_daily_usd", "page_llm_guests"],
   feedback: ["feedback", "feedback_repository"],
 } as const;
-/** Settings with a control of their own: the Access page's switch, and the Agents and models page's choice and models' boxes. */
-export const OWN = ["public_sharing", "agent_keys", "agent_models_off"] as const;
+/** Settings with a control of their own: the Access page's menu and switch, and the Agents and models page's choice and models' boxes. */
+export const OWN = ["anyone_access", "public_sharing", "agent_keys", "agent_models_off"] as const;
 
 /**
  * The control a setting's value is set with: by its kind, its choices, else

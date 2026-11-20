@@ -81,9 +81,8 @@ export default function docs(c: DocsConfig): void {
     shown: () => share.open,
     look: { row: "", role: "", remove: { className: "act", innerHTML: c.close } },
     link(publicSharing) {
-      document.getElementById("share-anyone-note")!.textContent = publicSharing
-        ? "Signed in or not; people who aren't signed in view it"
-        : "Everyone who can sign in here";
+      // With public sharing off the server shares with nobody by link.
+      share.querySelector<HTMLElement>(".anyone")!.hidden = !publicSharing;
     },
   });
   /** A row's Share: the dialog, with who it's shared with. */

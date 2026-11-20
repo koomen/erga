@@ -213,11 +213,16 @@ test("the command stops where only the user can go on: two accounts, no domain, 
 
 test("who may sign in decides the settings, the access rule and the app step", () => {
   const a = (signIn: string, more = {}) => ({ ...noAnswers(HOST), where: "cloudflare" as const, signIn: signIn as "invite", ...more });
-  expect(JSON.parse(varsOf(a("invite"), "Iv1.x").SERVER_DEFAULTS)).toEqual({ public_sharing: true, delete_docs_after_hours: null });
+  expect(JSON.parse(varsOf(a("invite"), "Iv1.x").SERVER_DEFAULTS)).toEqual({
+    anyone_access: "public",
+    public_sharing: true,
+    delete_docs_after_hours: null,
+  });
   expect(firstRows(a("invite"))).toEqual([]);
-  expect(JSON.parse(varsOf(a("organization"), "Iv1.x").SERVER_DEFAULTS).public_sharing).toBe(false);
+  expect(JSON.parse(varsOf(a("organization"), "Iv1.x").SERVER_DEFAULTS)).toMatchObject({ anyone_access: "none", public_sharing: false });
   expect(firstRows(a("organization", { organization: "acme-inc" }), 5)).toEqual([
     {
+      who: "github_org acme-inc",
       table: "access_rules",
       row: { kind: "github_org", value: "acme-inc", access: "write", created: 5 },
       onConflict: "(kind, value) DO UPDATE SET access = 'write'",
@@ -233,7 +238,15 @@ test("who may sign in decides the settings, the access rule and the app step", (
     GITHUB_CLIENT_ID: "",
     PROXY_SIGN_IN: JSON.stringify({ kind: "cloudflare-access", team: "acme", aud: "f".repeat(64) }),
   });
-  expect(firstRows(sso)[0].row).toMatchObject({ kind: "everybody", value: "", access: "write" });
+  // Single sign-on is the wall: anyone who passes it may write (Anyone's level).
+  expect(firstRows(sso, 5)).toEqual([
+    {
+      who: "anyone",
+      table: "server_config",
+      row: { key: "anyone_access", value: '"write"', updated: 5 },
+      onConflict: "(key) DO UPDATE SET value = excluded.value",
+    },
+  ]);
   expect(proxySetting(a("invite"))).toBeNull();
 });
 
@@ -383,7 +396,10 @@ test("an instance's names come from its entry, or from its address; its entry fr
     subdomain: "erga-example-com",
     app: { kind: "domain", zoneName: "example.com", hostname: HOST },
     pages: { kind: "shared" },
-    vars: { GITHUB_CLIENT_ID: "Iv1.ada", SERVER_DEFAULTS: '{"public_sharing":true,"delete_docs_after_hours":null}' },
+    vars: {
+      GITHUB_CLIENT_ID: "Iv1.ada",
+      SERVER_DEFAULTS: '{"anyone_access":"public","public_sharing":true,"delete_docs_after_hours":null}',
+    },
   });
 });
 

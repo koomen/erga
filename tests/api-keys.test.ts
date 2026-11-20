@@ -251,3 +251,18 @@ test("the changelog shows a row of the removed factory as plain values: it has n
   for (const gone of ["Task #12", "A task", "A commit", "merged into", "overridden", "an emergency", "deploy role", "factory #12"])
     expect(log).not.toContain(gone);
 });
+
+test("the changelog shows Anyone's level with the Access page's words, and an old line of everybody's rule as it was", async () => {
+  // Everybody's rule is Anyone's level now; a line from before still names it.
+  const old = [
+    { key: "access", from: null, to: null, access: { event: "changed", kind: "everybody", value: "", access: "read", from: "none" } },
+  ];
+  await dir.config.record("ada", old as never, Date.UTC(2026, 9, 2));
+  await dir.setAnyone({ login: "ada", admin: true }, "read");
+  const log = await (await fetch(`${origin}/admin/changes`)).text();
+  expect(log).toContain(
+    `<span class="key" title="anyone_access">Anyone</span> <span class="was">No access</span> <span class="to" aria-label="to">→</span> <span class="was">Can view documents shared with them</span>`
+  );
+  expect(log).toContain(`<span class="key">Access</span> Everybody No access → Can view documents`);
+  await dir.setAnyone({ login: "ada", admin: true }, "none");
+});

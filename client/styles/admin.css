@@ -201,8 +201,8 @@ section.provider > .provider-hint { margin: 6px 0 0; }
 :is(#users-hint, #rules-hint) { margin: -8px 0 12px; }
 
 /* Users and groups: a row for each, its role (or access) in one column, the same width on both pages. */
-.labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 12rem 34px; align-items: center; column-gap: 12px; }
-ol.rules > li { display: grid; grid-template-columns: minmax(0, 1fr) 12rem 34px; align-items: center; column-gap: 12px; }
+.labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 14.5rem 34px; align-items: center; column-gap: 12px; }
+ol.rules > li { display: grid; grid-template-columns: minmax(0, 1fr) 14.5rem 34px; align-items: center; column-gap: 12px; }
 :is(ol.users select.role, ol.rules select.access) { justify-self: stretch; width: 100%; }
 .labels { padding: 0 4px 8px; font-size: 12px; font-weight: 500; color: var(--soft); }
 .labels span:nth-child(3) { padding-left: 11px; }
@@ -218,6 +218,14 @@ ol.rules .who { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 ol.users .who .note { font-size: 13px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 :is(ol.users, ol.rules) .who :is(.added, .kind) { font-size: 12.5px; color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--rule); box-sizing: border-box; }
+/* Everyone else: a switch that can't turn on (Anyone has no access) looks off, with its words. */
+section.everyone li.off :is(.about, .switch) { opacity: 0.5; }
+section.everyone li.off .switch { cursor: default; }
+@media (min-width: 641px) {
+  #anyone-access { width: 14.5rem; }
+  /* Its menu, switch and "Always public" end in line with the menus of the groups and the users, left of their 34px remove button. */
+  section.everyone li.setting .value { padding-right: 46px; }
+}
 @media (max-width: 640px) {
   .labels, ol.users > li > time { display: none; }
   ol.users > li, ol.rules > li { grid-template-columns: minmax(0, 1fr) 34px; row-gap: 8px; }

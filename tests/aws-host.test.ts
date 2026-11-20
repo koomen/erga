@@ -382,7 +382,7 @@ const viaGate = {
   client: "client-1",
 };
 
-test("the organization's sign-in on AWS: the entry says where the gate's key is, and everybody who passes the gate may write", () => {
+test("the organization's sign-in on AWS: the entry says where the gate's key is, and anyone who passes the gate may write", () => {
   // The machine's deploy reads the key that the gate sends from the stack's secret: the entry names it.
   const secret = "arn:aws:secretsmanager:us-west-2:123456789012:secret:GateKey-AbCdEf";
   const entry = awsEntry(viaGate, "123456789012", { AppHost: "erga.example.com", GateKey: secret }, undefined);
@@ -392,7 +392,7 @@ test("the organization's sign-in on AWS: the entry says where the gate's key is,
   // With no gate in front, the entry names no key.
   expect("gate" in awsEntry(aws, "1", { AppHost: "erga.example.com" }, undefined).aws).toBe(false);
   const sql = firstSql(viaGate);
-  expect(sql).toContain("INSERT INTO access_rules (kind, value, access, created) SELECT 'everybody', '', 'write'");
+  expect(sql).toContain("INSERT INTO server_config (key, value, updated) SELECT 'anyone_access', '\"write\"',");
   expect(sql).toContain("WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
   expect(sql).not.toContain("INSERT INTO people");
 });

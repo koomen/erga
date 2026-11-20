@@ -31,7 +31,16 @@ import type { Platform } from "../platform.ts";
 import { inlineScript, inlineStyle, notFound, page, safeNext } from "../pages/index.ts";
 import { call, ctx, Field, form, fromWeb, json, plainJson, redirect, text, type Route } from "../http.ts";
 import { esc } from "../../shared/html.ts";
-import { type Directory, groupOf, label, NotAllowed, type RuleKind, type Vouched, vouchedEmails } from "../directory/index.ts";
+import {
+  anyoneAccess,
+  type Directory,
+  groupOf,
+  label,
+  NotAllowed,
+  type RuleKind,
+  type Vouched,
+  vouchedEmails,
+} from "../directory/index.ts";
 import { safeAvatar } from "../../shared/avatars.ts";
 import { SIGN_IN_PROVIDERS, signedInWith } from "../../shared/sign-in.ts";
 import { callerOf, providerFor, SIGNED_OUT, signInCookiesFor } from "./caller.ts";
@@ -52,14 +61,14 @@ export type Outcome =
   | { kind: "refused"; login?: string };
 
 /**
- * Whether someone a provider vouched for may make a new account here: an admin added them (Users), or a group rule
- * matches them with read or write (Access). Local development stands in for an admin while the group rules are as a
- * server starts: everyone may join there, and may write. A group's rule decides there as anywhere.
+ * Whether someone a provider vouched for may make a new account here: an admin added them (Users), a group rule
+ * matches them, or Anyone's level lets every account in (Access). Local development stands in for an admin while the
+ * rules are as a server starts: everyone may join there, and may write. A group's rule decides there as anywhere.
  */
 export async function mayJoin(platform: Pick<Platform, "dev" | "directory">, url: URL, v: Vouched): Promise<boolean> {
   if (await platform.directory.mayJoin(v)) return true;
   if (!platform.dev(url)) return false;
-  return platform.directory.defaultRules(await platform.directory.rules.all());
+  return platform.directory.defaultRules();
 }
 
 /**
@@ -179,9 +188,9 @@ export const devSignedIn = Effect.fnUntraced(function* (platform: Platform, requ
 
 /**
  * Whether Erga names a new account itself, with no username step: this sign-in is the server's one way in, and what it
- * calls people is one person's each. A provider's logins are. Its email addresses are only when one group rule lets
- * people in, of this provider's kind (one Google Workspace), and this person is in that group: the part before the @
- * is then one person's. The server's only sign-in (a gate in front) names nobody: its people choose. With the setting
+ * calls people is one person's each. A provider's logins are. Its email addresses are only when one group rule alone
+ * lets people in (Anyone's level lets no account in), of this provider's kind (one Google Workspace), and this person
+ * is in that group: the part before the @ is then one person's. The server's only sign-in (a gate in front) names nobody: its people choose. With the setting
  * auto_usernames, any sign-in that vouches for its email address names the account by it.
  */
 async function namesItself(platform: Pick<Platform, "own" | "signIn" | "directory">, v: Vouched): Promise<boolean> {
@@ -192,17 +201,20 @@ async function namesItself(platform: Pick<Platform, "own" | "signIn" | "director
   const ways = await signInChoices(platform);
   if (!info || info.only || ways.length != 1 || ways[0].id != v.provider) return false;
   if (info.handle == "login") return true;
-  const open = (await platform.directory.rules.all()).filter((r) => r.access != "none");
-  const [rule] = open;
+  const [rules, level] = await Promise.all([platform.directory.rules.all(), platform.directory.anyone()]);
+  const [rule] = rules;
   return (
-    open.length == 1 && rule.kind != "everybody" && rule.kind == info.groups?.kind && !!v.groups?.includes(groupOf(rule.kind, rule.value))
+    anyoneAccess(level) == "none" &&
+    rules.length == 1 &&
+    rule.kind == info.groups?.kind &&
+    !!v.groups?.includes(groupOf(rule.kind, rule.value))
   );
 }
 
 /**
  * A new account under `username` for whoever `v` is: its login, or why not (the name has a problem). The role an admin
- * added them with (their wait ends), or none (a group's rule let them in), or local development's (everyone may
- * there): write.
+ * added them with (their wait ends), or none (a group's rule or Anyone's level let them in), or local development's
+ * (everyone may there): write.
  */
 const makeAccount = (platform: Platform, username: string, v: Vouched) =>
   Effect.tryPromise({
@@ -348,7 +360,7 @@ export const devSignIn: Route = Effect.gen(function* () {
   if (!info || !subject || handle == null) return page("Not enough", "Give the pretend identity's provider=, subject= and handle=.", 400);
   const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
   // As the provider's own sign-in gives them (providers.ts): its groups (group=), its picture, the login an old account has.
-  const kind = info.groups?.kind as Exclude<RuleKind, "everybody"> | undefined;
+  const kind = info.groups?.kind as RuleKind | undefined;
   const groups = kind
     ? q
         .getAll("group")

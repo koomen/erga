@@ -75,20 +75,23 @@ const adminsOf = (env: Env): string[] => (env.DEV_LOGIN?.trim() ? [env.DEV_LOGIN
 /** The directory, on this Worker's database, with the settings the deploy locks (SERVER_CONFIG). */
 export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) {
-    // Public sharing on or off: the views kept for people signed out no longer hold (server/documents/view.ts).
+    // Public sharing on or off, or Anyone's level: the views kept no longer hold (server/documents/view.ts).
     const changed = async (key: string) => {
-      if (key == "public_sharing") forgetDecisions();
+      if (key == "public_sharing" || key == "anyone_access") forgetDecisions();
     };
     // A document's permissions changed: its object keeps a copy, and decides with it (document/life/document.ts, authorize).
     const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await documentOf(env, id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };
     const dir = new Directory(sqlOn(env.DB), {
       admins: adminsOf(env),
       locked: parseDeployed(env.SERVER_CONFIG),
-      // Local development offers anyone with the link, as before the Access page's switch (a server starts with it off).
-      // And everyone may sign in there (server/identity/accounts.ts, mayJoin), so anyone may get a share.
+      // Local development: everyone may sign in there (server/identity/accounts.ts, mayJoin), so anyone may get a share.
       ...(env.DEV_LOGIN?.trim() ? { local: true } : {}),
-      // The deploy's defaults (an instance's preset: SERVER_DEFAULTS), and locally public_sharing on.
-      defaults: { ...parseDeployed(env.SERVER_DEFAULTS), ...(env.DEV_LOGIN?.trim() ? { public_sharing: true } : {}) },
+      // The deploy's defaults (an instance's preset: SERVER_DEFAULTS). Locally users share with anyone with the link: Anyone
+      // may view public documents, and public sharing is on (a server starts with both off).
+      defaults: {
+        ...parseDeployed(env.SERVER_DEFAULTS),
+        ...(env.DEV_LOGIN?.trim() ? { anyone_access: "public", public_sharing: true } : {}),
+      },
       // The providers an admin adds a person by here (the sign-in mode's), and an account added by its login: its id,
       // from the provider (locally, the pretend GitHub's), asked as the sign-in app in use (the page's, else the deploy's).
       providers: providersOf(signInOfEnv(env)),

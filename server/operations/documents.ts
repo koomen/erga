@@ -380,7 +380,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       document: DOCUMENT,
       login: Schema.optionalKey(
         str(
-          'A login, or "*" for anyone with the link who signs in here (and, while public sharing is on, people not signed in, as viewers).'
+          'A login, or "*" for anyone with the link (signed out, they view it): only while the server lets users share publicly (ls: access.publicSharing).'
         )
       ),
       role: Schema.optionalKey(Schema.Literals(["editor", "commenter", "viewer", "none"]).annotate({ description: "none stops sharing." })),
@@ -517,7 +517,8 @@ export async function viewersOf(caller: Caller, doc: DocRow) {
   const [permissions, llm, models] = await Promise.all([dir.permissions(doc.id), dir.pageLlm.setting(doc.id), pageLlmModels(caller)]);
   return {
     pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL, models, who: llm.who },
-    anyoneWithLink: permissions.some((p) => p.login == ANYONE),
+    // (A share with anyone counts only while the server lets users share publicly.)
+    anyoneWithLink: permissions.some((p) => p.login == ANYONE) && (await dir.sharing()),
   };
 }
 
@@ -538,7 +539,8 @@ export async function accessOf(caller: Caller, doc: DocRow) {
     })),
     notUsers,
     avatars: await dir.users.avatars(permissions.map((p) => p.login)),
-    publicSharing: await dir.config.get("public_sharing"),
+    // Whether users may share with anyone with the link: off, the Share dialogs don't offer it, and "*" is refused.
+    publicSharing: await dir.sharing(),
     // Who asked for access and waits for the owner's answer (request_access): share_document answers, "none" declines.
     requests: (await dir.requests.waiting(doc.owner, doc.id)).map((r) => ({ login: r.login, asked: iso(r.asked) })),
     ...viewers,

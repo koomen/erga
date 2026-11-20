@@ -31,7 +31,7 @@ async function setUp() {
   (s.platform as { signIn: unknown }).signIn = { mode: "gate", key: GATE_KEY, devLogin: null, encryptionKey: "local:secret" };
   const admin = { login: "tester", admin: true };
   // Everybody whom the organization's sign-in lets through may make an account, named from their address.
-  await s.dir.rules.change(admin, (await s.dir.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "write");
+  await s.dir.setAnyone(admin, "write");
   await s.dir.config.set(admin, "auto_usernames", true);
   const env: Env = {
     ERGA: { fetch: (request) => s.fetch(request.url, request) },

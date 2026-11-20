@@ -6,7 +6,7 @@
 //                  address of its own, and only the gate's service binding reaches it. GATE_KEY says a gate is in
 //                  front (server/identity/mode.ts): the gate's Worker has the same key
 //   the database   D1. One row, which setup's own code writes for single sign-on (deploy/own/first.ts, writeFirstRows):
-//                  everybody whom the gate lets in may write
+//                  anyone whom the gate lets in may write
 //   the bucket     R2, erga-verify-<n>-files: the documents' files that are not text
 //
 // The people sign in only at the test issuer, through the gate (idp.ts: ada, bob), and Erga hears them from the gate:

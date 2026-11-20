@@ -26,7 +26,7 @@ import type { Log, LogEvent } from "../../shared/agent-log";
 import type { ChatMessage, ChatStore, StoredChat } from "../checkpoint";
 import { startLoop, type AgentTool, type LoopHooks } from "../run";
 import { systemPrompt } from "./prompt";
-import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
+import { type Access, ACCESS_LABEL, type Anyone, ANYONE_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
 
 export interface AgentSession {
   readonly model: string | null;
@@ -60,12 +60,13 @@ function about(name: string, args: unknown): string | null {
   if (name == "set_sign_in") return `${providerName(String(a.provider))} (${a.action})`;
   if (name == "set_user") {
     const whom = a.handle ?? a.login ?? `person ${a.person}`,
-      role = typeof a.role == "string" ? ` (${ROLE_LABEL[a.role as UserRole | "none"] ?? a.role})` : "";
+      role = typeof a.role == "string" ? ` (${ROLE_LABEL[a.role as UserRole] ?? a.role})` : "";
     return `${a.action} ${whom}${a.action == "remove" ? "" : role}`;
   }
   if (name == "set_access") {
     const access = typeof a.access == "string" ? ` (${ACCESS_LABEL[a.access as Access] ?? a.access})` : "";
     if (a.action == "public") return `public sharing ${a.on ? "on" : "off"}`;
+    if (a.action == "anyone") return `anyone: ${ANYONE_LABEL[a.level as Anyone] ?? a.level}`;
     if (a.action == "add") return `add ${a.kind} ${a.value}${access}`;
     return `${a.action} rule ${a.id ?? ""}${a.action == "change" ? access : ""}`;
   }

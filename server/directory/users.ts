@@ -2,11 +2,13 @@
 // behind the directory's `Sql`, so the tests run it on
 // bun:sqlite as D1 runs it on a deployed server.
 //
-// Each account has a row in users, and one role (the Access page): "Admin",
-// who may see and change the server's settings and its users, and may write;
-// or, besides that, its own access: "Can create and edit content" (write),
-// "Can authenticate" (read), or none of its own, where only the group rules
-// (server/directory/access.ts) let it in. A person an admin added before
+// Each account has a row in users. An admin may give it a role of its own
+// (the Access page): "Admin", who may see and change the server's settings
+// and its users, and may write; "Can create, edit and comment" (write); or
+// "Can view documents" (read). An account with no role of its own came in
+// through a group rule or Anyone's level (server/directory/access.ts), which
+// decide its access: the Access page lists no such account, and Remove
+// takes a role away. A person an admin added before
 // their first sign-in waits in people.ts. The server always keeps an
 // admin: nobody may demote or remove the last one. Every admin is a row: a new
 // server's first one is written into its database when it is set up, and an admin
@@ -28,21 +30,20 @@ export type ServerRole = "user" | "admin";
 /** A user's one role, as the Access page and the admin agent name it. */
 export type UserRole = "admin" | "write" | "read";
 export const USER_ROLES: readonly UserRole[] = ["admin", "write", "read"];
-export const ROLE_LABEL: Record<UserRole | "none", string> = {
+export const ROLE_LABEL: Record<UserRole, string> = {
   admin: "Admin",
-  write: "Can create and edit content",
-  read: "Can authenticate",
-  none: "No role (groups decide)",
+  write: "Can create, edit and comment",
+  read: "Can view documents",
 };
-/** A role as given (`none` too, for an account), checked; a NotAllowed says what's wrong. */
-export function roleValue(raw: unknown, o: { none?: boolean } = {}): UserRole | "none" {
+/** A role as given, checked; a NotAllowed says what's wrong. */
+export function roleValue(raw: unknown): UserRole {
   const r = String(raw ?? "")
     .trim()
     .toLowerCase();
-  if ((USER_ROLES as readonly string[]).includes(r) || (o.none && r == "none")) return r as UserRole | "none";
+  if ((USER_ROLES as readonly string[]).includes(r)) return r as UserRole;
   throw new NotAllowed({
-    message: `A user's role is admin (${ROLE_LABEL.admin}), write (${ROLE_LABEL.write})${o.none ? "," : " or"} read (${ROLE_LABEL.read})${o.none ? ` or none (${ROLE_LABEL.none})` : ""}.`,
-   });
+    message: `A user's role is admin (${ROLE_LABEL.admin}), write (${ROLE_LABEL.write}) or read (${ROLE_LABEL.read}). To take a user's role away, remove them.`,
+  });
 }
 
 export interface User {
@@ -52,7 +53,7 @@ export interface User {
   name: string;
   /** Their role on the server (a bootstrap admin's is always "admin"). */
   role: ServerRole;
-  /** Their own access besides admin (users.access): write, read, or null (only the group rules decide). */
+  /** Their own access besides admin (users.access): write, read, or null (the group rules and Anyone's level decide). */
   access: "write" | "read" | null;
   /** The dev server's DEV_LOGIN (local development only): always an admin, and can't be demoted or removed here. */
   bootstrap: boolean;
@@ -121,8 +122,8 @@ export class Users {
   private readonly admins: Set<string>;
   private known = new Map<string, { user: User | null; at: number }>();
   /**
-   * Whether an account may sign in now: its role or the group rules give it read or write (server/directory/access.ts,
-   * which the directory sets here). Everyone with a row, until it's set.
+   * Whether an account may sign in now: its role, the group rules or Anyone's level give it read or write
+   * (server/directory/access.ts, which the directory sets here). Everyone with a row, until it's set.
    */
   gate: (user: User) => Promise<boolean> = async () => true;
   /** Called after a user's access changed here: the directory forgets the access it remembered. */
@@ -316,10 +317,10 @@ export class Users {
   }
 
   /**
-   * A user's one role: admin; or a user who may write, or read, or has no access of their own (`none`: only the group
-   * rules let them in). Admins only; the server keeps an admin, and a bootstrap admin stays one.
+   * A user's one role: admin; or a user who may write, or read. Admins only; the server keeps an admin, and a
+   * bootstrap admin stays one.
    */
-  async setUserRole(by: Actor, login: string, role: UserRole | "none"): Promise<User> {
+  async setUserRole(by: Actor, login: string, role: UserRole): Promise<User> {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     const user = await this.get(login);
@@ -328,7 +329,7 @@ export class Users {
     if (role != "admin" && user.bootstrap)
       throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay one.` });
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
-    const access = role == "admin" ? user.access : role == "none" ? null : role;
+    const access = role == "admin" ? user.access : role;
     await this.sql.batch([
       // A bootstrap admin with no row yet gets it, as signing in would.
       ["INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'user', ?2) ON CONFLICT (login) DO NOTHING", login, Date.now()],
@@ -357,13 +358,21 @@ export class Users {
     return (await this.get(login))!;
   }
 
-  /** Stops someone signing in (their sessions stop working within seconds; their documents stay). Admins only. */
+  /**
+   * Takes a user's own role away: their groups and Anyone's level decide their access from now (with none, their
+   * sessions stop working within seconds). Their account and their documents stay. Admins only.
+   */
   async remove(by: Actor, login: string): Promise<void> {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     if (this.isBootstrapAdmin(login)) throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay.` });
-    if ((await this.get(login))?.role == "admin") await this.mustKeepAnAdmin(by, login);
-    await this.sql.batch([["DELETE FROM users WHERE login = ?1", login], this.logged(by, Date.now(), { login, event: "removed" })]);
+    const user = await this.get(login);
+    if (!user) throw new NotFound({ message: `${login} isn't a user.` });
+    if (user.role == "admin") await this.mustKeepAnAdmin(by, login);
+    await this.sql.batch([
+      ["UPDATE users SET role = 'user', access = NULL WHERE login = ?1", login],
+      this.logged(by, Date.now(), { login, event: "removed" }),
+    ]);
     this.known.delete(login);
     this.accessChanged();
     await this.pagesChanged([`user:${login}`]);

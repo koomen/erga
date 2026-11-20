@@ -14,7 +14,7 @@ async function server(id: string) {
   const sql = memory();
   const seen = { reads: 0, queries: [] as string[] };
   const counted: Sql = { ...sql, all: <T>(q: string, ...p: Param[]) => (seen.reads++, seen.queries.push(q), sql.all<T>(q, ...p)) };
-  const dir = new Directory(counted, { admins: ["root"], defaults: { public_sharing: true } });
+  const dir = new Directory(counted, { admins: ["root"], defaults: { anyone_access: "public", public_sharing: true } });
   const root = { login: "root", admin: true };
   for (const login of ["ada", "bo"]) await dir.users.add(root, login);
   const { doc } = await dir.add({ id, owner: "ada", title: `Plan ${id}`, created: 1, expires: null });

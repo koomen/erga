@@ -13,13 +13,12 @@ export function mountSharing(shell: Shell) {
   $("btn-agent-share").addEventListener("erga:agent-menu", () => shell.chrome.cardOpened("agent"));
 
   const shareBtn = $("btn-share");
-  // Share (#btn-share, the Share card): who may view or edit the document, and anyone signed in with the link. Only its
+  // Share (#btn-share, the Share card): who may view or edit the document, and anyone with the link. Only its
   // owner may (the app says where, meta erga-share). The button stays for everyone else too, off, and its tip says why
   // (dimmed from the first frame: client/styles/editor.css). The list and its changes are client/common/share-list.ts's,
   // as on My Documents' share dialog.
   const sharing = $("sharing");
-  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement,
-    linkHint = $("sharing-hint");
+  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement;
   const shareAt = !!document.querySelector<HTMLMetaElement>('meta[name="erga-share"]');
   if (!shareAt) {
     shareBtn.setAttribute("aria-disabled", "true");
@@ -36,8 +35,8 @@ export function mountSharing(shell: Shell) {
     shown: () => !sharing.hidden,
     look: { row: "share-grid", role: "role", remove: { className: "remove", innerHTML: "×" }, color: colorFor },
     link(publicSharing) {
-      // Whom the link lets in, where its menu doesn't say: with public sharing off, only people who sign in.
-      linkHint.textContent = publicSharing ? "" : "they sign in first";
+      // With public sharing off the server shares with nobody by link: the row keeps only Copy link.
+      sharingAnyone.closest(".sharing-anyone")!.classList.toggle("no-link", !publicSharing);
     },
   });
   // Who it's shared with: read once the editor is idle, again behind as the pointer or focus comes to Share, and after

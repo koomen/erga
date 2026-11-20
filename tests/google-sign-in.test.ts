@@ -156,8 +156,8 @@ test("the sign-in page says what the person will open, or that they canceled; th
   const list = main(await pageOf("next=%2Fdocuments"));
   expect(list).toContain("<h1>Sign in to Erga</h1><p><style>");
   expect(list).not.toContain('class="asked"');
-  // The same page where everybody may make an account: it says nothing of who may join.
-  await directory.rules.change(koomen, (await directory.rules.list(koomen)).find((r) => r.kind == "everybody")!.id, "read");
+  // The same page where anyone may make an account: it says nothing of who may join.
+  await directory.setAnyone(koomen, "read");
   expect(main(await pageOf("next=%2Fdocuments"))).toBe(list);
   // After Cancel on a provider's page: the same page, which says so, and keeps the way back.
   const canceled = main(await pageOf("next=%2Fkoomen%2Ftrip&canceled"));

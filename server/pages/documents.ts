@@ -137,9 +137,9 @@ export function documentsPage(
     <button class="primary">Add</button>
   </form>
   <ul class="people" aria-label="People with access"></ul>
-  <div class="anyone">
+  <div class="anyone" hidden>
     <span class="face" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.4-3.6-8.5s1.1-5.9 3.6-8.5Z"/></svg></span>
-    <label class="who" for="share-anyone">Anyone with the link<small id="share-anyone-note">Signed in or not, as viewers</small></label>
+    <label class="who" for="share-anyone">Anyone with the link<small>Signed in or not; people who aren't signed in view it</small></label>
     <select id="share-anyone"><option value="none">No access</option><option value="viewer">Can view</option><option value="commenter">Can comment</option><option value="editor">Can edit</option></select>
   </div>
   <p class="hint" id="share-hint" role="status"></p>

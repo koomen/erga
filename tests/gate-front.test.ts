@@ -26,14 +26,14 @@ const person = (sub: string, email: string, name = "", i = Date.now()): Caller =
 const ADA = person("sub-ada", "ada@example.com", "Ada Lovelace");
 
 /**
- * A server whose deploy says a gate is in front, where everybody the gate lets through may make an account (the rule
- * "everybody": the organization's sign-in is the wall); `ask` is a request as the gate sends it on: with the key and
+ * A server whose deploy says a gate is in front, where anyone the gate lets through may make an account (Anyone's
+ * level: the organization's sign-in is the wall); `ask` is a request as the gate sends it on: with the key and
  * the caller.
  */
 async function front() {
   const s = app();
   const admin = { login: "tester", admin: true };
-  await s.dir.rules.change(admin, (await s.dir.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "write");
+  await s.dir.setAnyone(admin, "write");
   (s.platform as { signIn: unknown }).signIn = { mode: "gate", key: KEY, devLogin: null, encryptionKey: "local:secret" };
   const ask = (path: string, caller: Caller, init: RequestInit = {}) =>
     s.fetch(ORIGIN + path, {
@@ -211,7 +211,7 @@ test("sign-out behind Cloudflare Access: the gate's cookies, the documents' site
 test("someone the gate lets through who may not join here: one page, which names how they signed in and no other way", async () => {
   const { s, ask } = await front();
   const admin = { login: "tester", admin: true };
-  await s.dir.rules.change(admin, (await s.dir.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "none");
+  await s.dir.setAnyone(admin, "none");
   const refused = await ask("/auth/sso?next=%2Fdocuments", ADA);
   expect(refused.status).toBe(403);
   const said = await refused.text();

@@ -305,59 +305,118 @@ journey("an owner shares a document with a reader", () => {
   });
 });
 
-journey("the admin's switch: users can share content publicly", () => {
+journey("the Access page's Everyone else: users can share publicly, and Anyone's level", () => {
   let page: Page;
   const root = own?.root;
   let open: Awaited<ReturnType<typeof newDoc>>, closed: Awaited<ReturnType<typeof newDoc>>;
-  /** Someone not signed in asks for a page. */
-  const stranger = (path: string) => fetch(root + path, { redirect: "manual", headers: { ...signedOut(own), Accept: "text/html" } });
-  /** Flips the switch on the Access page, as the admin does. */
-  const setPublic = async (on: boolean) => {
+  const cy = unique("cy");
+  /** The Access page, where the test says yes to each question (a confirm), and keeps the question. */
+  const access = async () => {
     await page.goto(`${root}/admin/access`);
     await page.evaluate(() => {
-      window.confirm = () => true;
+      window.confirm = (question) => {
+        document.body.dataset.asked = question;
+        return true;
+      };
     });
-    expect(await page.isChecked("#public-sharing")).toBe(!on);
+  };
+  const asked = () => page.evaluate(() => document.body.dataset.asked ?? "");
+  /** Someone not signed in asks for a page. */
+  const stranger = async (path: string) =>
+    (await fetch(root + path, { redirect: "manual", headers: { ...signedOut(own), Accept: "text/html" } })).status;
+  /** Cy, signed in, who has only the link. */
+  const signedIn = async (path: string) => (await fetch(`${root}${path}?user=${cy}`, { redirect: "manual" })).status;
+  const saved = (what: string) =>
+    until(async () => (await markOf(page)) == "saved" && (await page.textContent("#public-hint")) == "", 5000, what);
+  /** The switch as the page shows it. */
+  const shown = () =>
+    page.evaluate(() => {
+      const box = document.getElementById("public-sharing") as HTMLInputElement;
+      return `${box.checked ? "on" : "off"}${box.disabled ? ", disabled" : ""}`;
+    });
+  /** Flips the switch on the Access page with the Space key, as the admin does; turning it on asks first. */
+  const setPublic = async (on: boolean) => {
+    expect(await shown()).toBe(on ? "off" : "on");
     // (No Save button: the switch saves as it changes, and the save mark says so.)
-    const saved = page.waitForResponse((r) => r.url().includes("/api/tools/set_access"));
-    await page.evaluate(() => document.querySelector<HTMLInputElement>("#public-sharing")!.click());
-    await saved;
-    await until(async () => (await markOf(page)) == "saved", 5000, `public sharing ${on ? "on" : "off"}`);
-    expect(await page.textContent("#public-hint")).toBe("");
+    await page.focus("#public-sharing");
+    await page.keyboard.press("Space");
+    await soon(shown).toBe(on ? "on" : "off");
+    await saved(`public sharing ${on ? "on" : "off"}`);
+  };
+  /** Chooses Anyone's level with a key: the menu takes the first letter of a level's name ("c": the next that starts with it). */
+  const setAnyone = async (key: string, value: string) => {
+    // (The focus comes to the menu anew: within a second, a menu reads a second letter as the next letter of one name.)
+    await page.locator("#anyone-access").blur();
+    await page.focus("#anyone-access");
+    await page.keyboard.press(key);
+    await soon(() => page.inputValue("#anyone-access")).toBe(value);
+    await saved(`Anyone: ${value}`);
   };
 
-  test("on: a document shared with anyone with the link opens for people who are not signed in; off: it is closed, but kept", async ({
+  test("on: a document shared with anyone with the link opens for people who are not signed in; off: it opens for nobody by the link, but the share is kept", async ({
     tab,
   }) => {
     page = tab.page;
     [open, closed] = [await newDoc(root), await newDoc(root)];
     expect((await share(root, open.id, "*", "viewer")).status).toBe(200);
-    // On (local development starts so): it opens for someone signed out.
-    let r = await stranger(open.address);
-    expect(r.status).toBe(200);
-    expect(await r.text()).toContain("erga-pages");
+    // On (local development starts so): it opens for someone signed out, and for someone signed in.
+    expect(await stranger(open.address)).toBe(200);
+    expect(await signedIn(open.address)).toBe(200);
+    await access();
+    // The three sections, with Pete's words under each heading; the published sites have no control.
+    expect(await page.$$eval("main h3, main .lede", (els) => els.map((e) => e.textContent))).toEqual([
+      "Groups",
+      "Grant access to everyone in your github or google workspace",
+      "Users",
+      "Grant access to specific users",
+      "Everyone else",
+      "The general public",
+    ]);
+    expect(await page.$$eval("section.everyone li.setting", (ls) => ls.map((l) => (l as HTMLElement).innerText.split("\n")[0]))).toEqual([
+      "Anyone",
+      "Users can share publicly",
+      "Published sites",
+    ]);
+    expect(await page.innerText("section.everyone li.setting:last-child .value")).toBe("Always public");
     await setPublic(false);
-    r = await stranger(open.address);
-    expect(r.status).toBe(302);
-    expect(r.headers.get("location")?.startsWith("/auth/sign-in")).toBe(true);
+    expect(await asked()).toBe("");
+    expect(await stranger(open.address)).toBe(302);
+    expect(await signedIn(open.address)).toBe(403);
   });
 
-  test("off: the Share dialog offers anyone with the link, as everyone who can sign in; on again: it opens to people signed out", async () => {
-    const cy = unique("cy");
-    const signedIn = async () => (await fetch(`${root}${closed.address}?user=${cy}`, { redirect: "manual" })).status;
-    expect(await signedIn()).toBe(403);
+  test("off: the server refuses a share with anyone with the link, and the Share dialog has no such option; on again, with the question: the link opens as before", async () => {
+    // The operation refuses it, for a page and an agent alike.
+    const refused = await share(root, closed.id, "*", "viewer");
+    expect([refused.status, refused.error]).toEqual([403, expect.stringContaining("Public sharing is off on this server")]);
     await page.goto(`${root}/documents`);
     await page.click(`button.share[data-id="${closed.id}"]`);
     await until(async () => (await page.textContent("#share-hint")) == "", 5000, "the share dialog loaded");
-    expect(await page.isVisible("#share .anyone")).toBe(true);
-    expect(await page.textContent("#share-anyone-note")).toBe("Everyone who can sign in here");
-    // A new share with anyone with the link: for people who sign in only.
-    await page.selectOption("#share-anyone", "viewer");
-    await soon(signedIn).toBe(200);
-    expect((await stranger(closed.address)).status).toBe(302);
+    expect(await page.isVisible("#share .people li")).toBe(true);
+    expect(await page.isVisible("#share .anyone")).toBe(false);
     await page.keyboard.press("Escape");
+    await access();
     await setPublic(true);
-    expect((await stranger(closed.address)).status).toBe(200);
+    expect(await asked()).toContain("Let users share content publicly?");
+    expect(await stranger(open.address)).toBe(200);
+    expect(await signedIn(open.address)).toBe(200);
+  });
+
+  test("Anyone's menu, with the keys: No access turns the switch off, and it can't turn on; a level above leaves it off until the admin turns it on", async () => {
+    await setAnyone("n", "none");
+    // The switch follows at once, and stays so when its row comes again from the server.
+    await soon(shown).toBe("off, disabled");
+    expect(await page.$eval("#public-sharing", (b) => b.closest("li")!.className)).toBe("setting off");
+    expect(await stranger(open.address)).toBe(302);
+    expect(await signedIn(open.address)).toBe(403);
+    // The server holds it too: the switch can't turn on beside the page.
+    const on = await runTool(root, "set_access", { action: "public", on: true });
+    expect([on.status, on.error]).toEqual([403, expect.stringContaining("Anyone has No access")]);
+    // A level above: the switch can turn on again, and is still off.
+    await setAnyone("c", "public");
+    await soon(shown).toBe("off");
+    expect(await stranger(open.address)).toBe(302);
+    await setPublic(true);
+    expect(await stranger(open.address)).toBe(200);
   });
 
   // (Cut list, brought back.) The homepage project has no owner: only an owner shares.

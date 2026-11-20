@@ -12,7 +12,7 @@ const share = (ctx: Caller, args: Record<string, unknown>) =>
   runTool(allTools().find((t) => t.name == "share_document")!, args, ctx) as Promise<any>;
 
 async function plan() {
-  const dir = new Directory(memory(), { defaults: { public_sharing: true }, admins: ["root"] });
+  const dir = new Directory(memory(), { defaults: { anyone_access: "public", public_sharing: true }, admins: ["root"] });
   for (const l of ["bo", "cy"]) await dir.users.add({ login: "root", admin: true }, l);
   const doc = (await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 })).doc;
   return { dir, doc, ada: { dir, who: { login: "ada" } } as unknown as Caller };

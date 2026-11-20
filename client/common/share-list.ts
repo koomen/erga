@@ -1,5 +1,6 @@
-// Who a document is shared with, as a list a person changes: the people and their roles, "Anyone with the link", and
-// the form that adds someone. Each change is saved as it's made (the operation share_document, as an agent's is; ls
+// Who a document is shared with, as a list a person changes: the people and their roles, "Anyone with the link" (only
+// while the server lets users share publicly: the page hides it else, and the server refuses the share), and the form
+// that adds someone. Each change is saved as it's made (the operation share_document, as an agent's is; ls
 // reads the list), and shows before the server answers. Two pages have it, each with its own elements and look: the
 // documents list's Share dialog (client/inline/documents.ts) and the editor's Share card (client/shell/sharing.ts).
 
@@ -28,7 +29,7 @@ export interface ShareList {
   shown(): boolean;
   /** The page's look: the classes of a row and of its role menu, its Remove button, and a face's colour (none: the style's). */
   look: { row: string; role: string; remove: { className: string; innerHTML: string }; color?(login: string): string };
-  /** After each draw, the page's words beside the link's menu: whom the link lets in. */
+  /** After each draw: whether the server lets users share with anyone with the link. The page shows the link's menu only then. */
   link(publicSharing: boolean): void;
 }
 
@@ -101,7 +102,6 @@ export function shareList(o: ShareList) {
       o.people.append(li);
     }
     o.anyone.value = all;
-    // Anyone with the link: whoever signs in here; while the server lets users share content publicly, people not signed in too.
     o.link(!!publicSharing);
   }
   /** A change of the sharing: the list shows it at once; if the server refuses, the list is as before, and says why. */

@@ -7,14 +7,16 @@ import * as Schema from "effect/Schema";
 import {
   ACCESS_LABEL,
   type AccessRule,
+  ANYONE_LABEL,
+  ANYONE_LEVELS,
   type ConfigEntry,
   ConfigError,
+  type Directory,
   KIND_LABEL,
   type Person,
   ROLE_LABEL,
   roleValue,
   type User,
-  type UserRole,
 } from "../directory/index.ts";
 import { type AuthOps, type AuthStatus, type Provider, providerOf, PROVIDERS } from "../identity/index.ts";
 import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
@@ -28,8 +30,8 @@ const PROVIDER = Schema.Literals(OAUTH).annotate({ description: OAUTH.join(" or 
 const ACCOUNT_PROVIDER = Schema.Literals(Object.keys(SIGN_IN_PROVIDERS)).annotate({
   description: `${OAUTH.join(" or ")}; sso on a server whose sign-in mode is gate (sign_in)`,
 });
-const ACCESS = Schema.Literals(["none", "read", "write"]).annotate({
-  description: "none ('No access'), read ('Can authenticate') or write ('Can create and edit content')",
+const ACCESS = Schema.Literals(["read", "write"]).annotate({
+  description: `add, change: read ('${ACCESS_LABEL.read}') or write ('${ACCESS_LABEL.write}'). No access: remove the rule`,
 });
 const PERSON = Schema.Int.annotate({ description: "For a user who hasn't signed in yet: their waiting id, as people lists it" });
 
@@ -136,11 +138,23 @@ export const ADMIN_OPERATIONS: Operation[] = [
     }),
     run: async (args, { dir, who }) => {
       const key = String(args.key ?? "");
-      if (args.reset === true) return entryOf(await dir.config.reset(who, key));
+      // Anyone's level and public sharing hold each other (set_access): the directory sets them, a reset too.
+      const set = async (value: unknown) => {
+        if (key == "anyone_access") await dir.setAnyone(who, value);
+        else if (key == "public_sharing" && typeof value == "boolean") await dir.setPublicSharing(who, value);
+        else return dir.config.set(who, key, value);
+        return dir.config.entry(key);
+      };
+      if (args.reset === true)
+        return entryOf(
+          key == "anyone_access" || key == "public_sharing"
+            ? await set((await dir.config.entry(key)).default)
+            : await dir.config.reset(who, key)
+        );
       if (args.value === undefined)
         throw new OperationError({ message: "Give the value to set it to, or reset: true to put back its default.", status: 400 });
       try {
-        return entryOf(await dir.config.set(who, key, args.value));
+        return entryOf(await set(args.value));
       } catch (e) {
         // "48" for 48: a model may send a number as a string.
         if (!(e instanceof ConfigError) || typeof args.value != "string") throw e;
@@ -151,7 +165,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
           throw e;
         }
         if (typeof parsed == "string") throw e;
-        return entryOf(await dir.config.set(who, key, parsed));
+        return entryOf(await set(parsed));
       }
     },
   },
@@ -236,33 +250,35 @@ export const ADMIN_OPERATIONS: Operation[] = [
   // ------------------------------------------------------------ the server's people (admins)
   {
     name: "people",
-    ui: "Access (/admin/access): the group rules, the users, and public sharing",
+    ui: "Access (/admin/access): the group rules, the users, and everyone else (Anyone, public sharing)",
     label: "Read the users and access rules",
     activity: "reading the users and access rules",
     admin: true,
-    description: "The users and their roles, the group rules, and whether public sharing is on.",
+    description: "The users with a role, the group rules, Anyone's level, and whether public sharing is on.",
     parameters: Schema.Struct({}),
     run: async (_args, { dir, who }) => {
-      const [users, people, ids, rules, suggestions, publicSharing] = await Promise.all([
+      const [users, people, ids, rules, suggestions, everyone] = await Promise.all([
         dir.users.list(who),
         dir.people.list(who),
         dir.identities.byLogin(),
         dir.rules.list(who),
         dir.rules.suggestions(who),
-        dir.config.get("public_sharing"),
+        everyoneOf(dir),
       ]);
       return {
         users: [
-          ...users.map((u) => ({
-            ...userOf(u),
-            accounts: (ids.get(u.login) ?? []).map((i) => ({ provider: i.provider, handle: i.handle })),
-          })),
+          // (An account with no role of its own came in through a group or Anyone: the page has no row for it either.)
+          ...users.flatMap((u) =>
+            u.role == "admin" || u.access
+              ? [{ ...userOf(u), accounts: (ids.get(u.login) ?? []).map((i) => ({ provider: i.provider, handle: i.handle })) }]
+              : []
+          ),
           ...people.map(personOf),
         ],
         rules: rules.map(ruleOf),
         suggestions,
-        publicSharing,
-        note: "Access is the highest of a user's role and every group rule that matches them; none: they can't sign in. waiting: added, not signed in yet (use its id as person). bootstrap: the dev server's own admin (DEV_LOGIN), fixed. Tell the user the labels (roleLabel, accessLabel).",
+        ...everyone,
+        note: "Access is the highest of a user's role, every group rule that matches them and Anyone's level; none: they can't sign in. users: only accounts with a role of their own; an account that came in through a group or Anyone isn't listed. waiting: added, not signed in yet (use its id as person). bootstrap: the dev server's own admin (DEV_LOGIN), fixed. Tell the user the labels (roleLabel, accessLabel, anyoneLabel).",
       };
     },
   },
@@ -304,26 +320,25 @@ export const ADMIN_OPERATIONS: Operation[] = [
     label: "Change a user",
     activity: "changing a user",
     admin: true,
-    description: "Adds a user, changes a user's role, or removes a user.",
+    description: "Adds a user, changes a user's role, or removes a user's role.",
     asks: (args) => {
       const whom = said(args.handle ?? args.login ?? `person ${args.person}`);
       if (args.action == "add") return `Add the user ${whom} with the role ${said(args.role ?? "none")}`;
-      if (args.action == "remove") return `Remove the user ${whom}`;
+      if (args.action == "remove") return `Remove the user ${whom}: their groups decide their access`;
       return `Change the role of the user ${whom} to ${said(args.role)}`;
     },
     parameters: Schema.Struct({
       action: Schema.Literals(["add", "role", "remove"]).annotate({
         description:
-          "add (provider, handle, role; before they ever signed in too), role (role), remove (sessions and tokens stop; documents stay)",
+          "add (provider, handle, role; before they ever signed in too), role (role), remove (takes their own role away: their groups and Anyone decide their access; their account and documents stay. A person who waits: gone)",
       }),
       provider: Schema.optionalKey(ACCOUNT_PROVIDER),
       handle: Schema.optionalKey(Schema.String.annotate({ description: "add: the account's login (github), or its email (google, sso)" })),
       login: Schema.optionalKey(LOGIN),
       person: Schema.optionalKey(PERSON),
       role: Schema.optionalKey(
-        Schema.Literals(["admin", "write", "read", "none"]).annotate({
-          description:
-            "admin ('Admin'), write ('Can create and edit content'), read ('Can authenticate'), or none ('No role', an account only)",
+        Schema.Literals(["admin", "write", "read"]).annotate({
+          description: `admin ('${ROLE_LABEL.admin}'), write ('${ROLE_LABEL.write}') or read ('${ROLE_LABEL.read}'). No role: remove`,
         })
       ),
     }),
@@ -333,7 +348,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
         const r = await dir.addUser(
           who,
           { provider: need(args, "provider", action), handle: need(args, "handle", action) },
-          roleValue(need(args, "role", action)) as UserRole
+          roleValue(need(args, "role", action))
         );
         return {
           ...(r.user ? { user: userOf(r.user) } : {}),
@@ -343,8 +358,8 @@ export const ADMIN_OPERATIONS: Operation[] = [
       }
       if (action == "role") {
         const role = need(args, "role", action);
-        if (args.person != null) return personOf(await dir.people.setRole(who, Number(args.person), roleValue(role) as UserRole));
-        return userOf(await dir.users.setUserRole(who, String(need(args, "login", action)), roleValue(role, { none: true })));
+        if (args.person != null) return personOf(await dir.people.setRole(who, Number(args.person), roleValue(role)));
+        return userOf(await dir.users.setUserRole(who, String(need(args, "login", action)), roleValue(role)));
       }
       if (action == "remove") {
         if (args.person != null) {
@@ -354,30 +369,31 @@ export const ADMIN_OPERATIONS: Operation[] = [
         const login = String(need(args, "login", action))
           .trim()
           .toLowerCase();
-        if (!(await dir.users.get(login))) throw new OperationError({ message: `${login} isn't a user.`, status: 404 });
         await dir.users.remove(who, login);
-        return { removed: login };
+        return { removed: login, note: "They have no role of their own now: their groups and Anyone's level decide their access." };
       }
-      throw new OperationError({ message: "action: add, role, deploy or remove.", status: 400 });
+      throw new OperationError({ message: "action: add, role or remove.", status: 400 });
     },
   },
   {
     name: "set_access",
-    ui: "Access (/admin/access): Add a rule, a rule's access, Remove a rule, and Users can share content publicly",
+    ui: "Access (/admin/access): Add group, a group's access, Remove a rule; Everyone else: Anyone, and Users can share publicly",
     label: "Change the access rules",
     activity: "changing the access rules",
     admin: true,
-    description: "Adds, changes or removes a group rule, or turns public sharing on or off.",
+    description: "Adds, changes or removes a group rule, sets Anyone's level, or turns public sharing on or off.",
     asks: (args) => {
       if (args.action == "public") return `Turn public sharing ${args.on ? "on" : "off"} for the whole server`;
+      if (args.action == "anyone")
+        return `Set what anyone may do on the server to ${said(args.level)}${args.level == "none" ? " (public sharing goes off too)" : ""}`;
       if (args.action == "add") return `Add the access rule ${said(args.kind)} ${said(args.value)}: ${said(args.access)}`;
       if (args.action == "remove") return `Remove the access rule ${said(args.id)}`;
       return `Change the access rule ${said(args.id)} to ${said(args.access)}`;
     },
     parameters: Schema.Struct({
-      action: Schema.Literals(["add", "change", "remove", "public"]).annotate({
+      action: Schema.Literals(["add", "change", "remove", "anyone", "public"]).annotate({
         description:
-          "add (kind, value, access; a rule for the same group changes it), change (id, access), remove (id; everybody's rule stays), public (on)",
+          "add (kind, value, access; a rule for the same group changes it), change (id, access), remove (id: the group gives no access), anyone (level), public (on)",
       }),
       kind: Schema.optionalKey(
         Schema.Literals(["workspace", "github_org"]).annotate({
@@ -387,10 +403,15 @@ export const ADMIN_OPERATIONS: Operation[] = [
       value: Schema.optionalKey(Schema.String.annotate({ description: "add: the domain or the organization's login" })),
       access: Schema.optionalKey(ACCESS),
       id: Schema.optionalKey(Schema.Int.annotate({ description: "change, remove: the rule's id (people)" })),
+      level: Schema.optionalKey(
+        Schema.Literals(ANYONE_LEVELS).annotate({
+          description: `anyone: what everyone may do whom no group rule and no user's role covers; each level has all of the one before it. ${ANYONE_LEVELS.map((l) => `${l} ('${ANYONE_LABEL[l]}')`).join(", ")}. public: signed out, they view documents shared with anyone with the link. read, write: every account signs in. none turns public sharing off too`,
+        })
+      ),
       on: Schema.optionalKey(
         Schema.Boolean.annotate({
           description:
-            "public: true opens documents shared with anyone with the link also to people who aren't signed in; false: those links need a sign-in",
+            "public: true lets users share a document with anyone with the link (signed out, they view it); it needs Anyone at public or higher. false: nobody can share so, and such shares made before stop working until it is on again",
         })
       ),
     }),
@@ -416,15 +437,27 @@ export const ADMIN_OPERATIONS: Operation[] = [
         await dir.rules.remove(who, id);
         return { removed: before ? ruleOf(before) : id };
       }
+      if (action == "anyone") {
+        const before = await dir.anyone();
+        await dir.setAnyone(who, need(args, "level", action));
+        return { ...(await everyoneOf(dir)), before };
+      }
       if (action == "public") {
         if (typeof args.on != "boolean") throw new OperationError({ message: "public needs on: true or false.", status: 400 });
-        const before = await dir.config.get("public_sharing");
-        return { publicSharing: (await dir.config.set(who, "public_sharing", args.on)).value, before };
+        const before = await dir.sharing();
+        await dir.setPublicSharing(who, args.on);
+        return { ...(await everyoneOf(dir)), before };
       }
-      throw new OperationError({ message: "action: add, change, remove or public.", status: 400 });
+      throw new OperationError({ message: "action: add, change, remove, anyone or public.", status: 400 });
     },
   },
 ];
+
+/** Everyone else, as people and set_access answer: Anyone's level, and whether users may share with anyone with the link now. */
+async function everyoneOf(dir: Directory) {
+  const [anyone, publicSharing] = await Promise.all([dir.anyone(), dir.sharing()]);
+  return { anyone, anyoneLabel: ANYONE_LABEL[anyone], publicSharing };
+}
 
 function entryOf(e: ConfigEntry) {
   const locked = e.locked;
@@ -447,7 +480,7 @@ function entryOf(e: ConfigEntry) {
 function ruleOf(r: AccessRule) {
   return {
     id: r.id,
-    who: r.kind == "everybody" ? "everybody" : `${KIND_LABEL[r.kind]}: ${r.value}`,
+    who: `${KIND_LABEL[r.kind]}: ${r.value}`,
     kind: r.kind,
     value: r.value,
     access: r.access,
@@ -459,12 +492,12 @@ function ruleOf(r: AccessRule) {
 }
 
 function userOf(u: User) {
-  const role = u.role == "admin" ? "admin" : (u.access ?? "none");
+  const role = u.role == "admin" ? "admin" : u.access;
   return {
     login: u.login,
     name: u.name,
-    role,
-    roleLabel: ROLE_LABEL[role],
+    // (None: an account with no role of its own.)
+    ...(role ? { role, roleLabel: ROLE_LABEL[role] } : {}),
     bootstrap: u.bootstrap,
     added: u.created ? iso(u.created) : null,
     addedBy: u.addedBy,

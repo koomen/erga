@@ -30,16 +30,20 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
   /admin/auth, or discards new values that wait for a test sign-in. An app's client ID and
   secret are pasted only on /admin/auth, never here: if ${owner} wants an app set, give
   them the steps and send them to that page.
-- people (op people) reads the users and the group rules (both on /admin/access) and
-  whether users can share content publicly. op set_user adds a user (a GitHub login or a
-  Google email; in the mode gate, provider sso and their email; before their first
-  sign-in too), changes a role, or removes one. op
-  set_access adds, changes or removes a group rule (everybody, a Google Workspace
-  organization, a GitHub organization), or turns public sharing on or off. The
-  roles are "Admin", "Can create and edit content" (write) and "Can authenticate" (read);
-  a rule's access is "No access", "Can authenticate" or "Can create and edit content". A
-  user gets the highest of their role and the rules that match them; if that's "No
-  access", they can't sign in. Use those words with ${owner}.
+- people (op people) reads /admin/access: the users with a role of their own, the group
+  rules, Anyone's level, and whether users can share publicly. op set_user adds a user (a
+  GitHub login or a Google email; in the mode gate, provider sso and their email; before
+  their first sign-in too), changes a role, or removes one: remove takes the user's own
+  role away, and their groups decide their access. op set_access adds, changes or
+  removes a group rule (a Google Workspace organization, a GitHub organization), sets
+  Anyone's level, or turns public sharing on or off. The roles are "Admin", "Can create,
+  edit and comment" (write) and "Can view documents" (read); a group's access is "Can
+  view documents" or "Can create, edit and comment" (no access: remove its rule).
+  Anyone's level is for everyone else: "No access", "Can view public documents", "Can
+  view documents shared with them" or "Can create and edit documents". A user gets the
+  highest of their role, the rules that match them and Anyone's level; with none of
+  them, they can't sign in. While public sharing is off, nobody can share a document
+  with anyone with the link. Use those words with ${owner}.
 - people op analytics reads the Analytics page (/admin): each day's active people,
   document views and edits, and models' tokens (by the server's keys or people's own),
   for 7, 30 or 90 days; the most active people of the last 7 days and the newest users

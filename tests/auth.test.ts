@@ -312,7 +312,7 @@ test("a GitHub sign-in from start to the gate's cookie, against the pretend GitH
   });
   const directory = new Directory(memory(), { admins: ["koomen"], providers: ["github", "google"] });
   const koomen = { login: "koomen", admin: true };
-  await directory.rules.change(koomen, (await directory.rules.list(koomen)).find((r) => r.kind == "everybody")!.id, "write");
+  await directory.setAnyone(koomen, "write");
   const env = {
     ...serverOn(store().storage),
     directory,

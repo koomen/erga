@@ -80,7 +80,7 @@ async function front(allow: string[] | null = [], content = "localhost") {
       }),
   });
   const admin = { login: "tester", admin: true };
-  await s.dir.rules.change(admin, (await s.dir.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "write");
+  await s.dir.setAnyone(admin, "write");
   await s.dir.config.set(admin, "auto_usernames", true);
   (s.platform as { signIn: unknown }).signIn = { mode: "gate", key: KEY, devLogin: null, encryptionKey: "local:secret" };
   s.platform.pagesDomain = () => content;

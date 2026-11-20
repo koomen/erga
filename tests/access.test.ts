@@ -1,8 +1,10 @@
 // Who may use the server: the specific people are users, each with one role (server/directory/users.ts, people.ts:
-// Admin, write, read; added by their GitHub or Google account before their first sign-in too), and the group rules
-// (server/directory/access.ts: everybody, a Google Workspace organization by the hd claim, a GitHub organization; each
-// none, read or write). A person gets the highest of their role and the rules that match them; none: they can't sign
-// in. Admins always have write. On an in-memory database with D1's migrations, 0240's and 0250's translations included.
+// Admin, write, read; added by their GitHub or Google account before their first sign-in too), the group rules
+// (server/directory/access.ts: a Google Workspace organization by the hd claim, a GitHub organization; each read or
+// write), and Anyone's level for everyone else (none, public, read, write). A person gets the highest of their role, the
+// rules that match them and Anyone's level; none: they can't sign in. Admins always have write. Users share with anyone
+// with the link only while public sharing is on. On an in-memory database with D1's migrations, the translations of
+// 0240, 0250 and 0490 included.
 
 import { expect, test } from "bun:test";
 import { Directory, groupOf, type Vouched } from "../server/directory/index.ts";
@@ -37,22 +39,52 @@ const lookup = async (_provider: string, login: string) =>
 const fresh = () => new Directory(memory(), { admins: ["koomen"], providers: ["github", "google"], lookup });
 /** An account someone made at their first sign-in (no rule of its own). */
 const joined = (dir: Directory, name: string, v: Vouched) => dir.identities.createAccount(name, v);
-const everybody = async (dir: Directory, access: string) => dir.rules.change(ADMIN, (await dir.rules.list(ADMIN)).find((r) => r.kind == "everybody")!.id, access);
+const anyone = (dir: Directory, level: string) => dir.setAnyone(ADMIN, level);
+/** A server whose users share with anyone with the link: Anyone views public documents, and the switch is on. */
+const sharing = async (dir: Directory) => (await anyone(dir, "public"), await dir.setPublicSharing(ADMIN, true), dir);
 const accessOf = async (dir: Directory, login: string) => dir.accessOf((await dir.users.get(login))!);
 
-test("0240 and 0250 translate the invite list: everybody none; each account on it a user with write; an invited email waits", async () => {
+test("0240 and 0250 translate the invite list: each account on it a user with write; an invited email waits; no rule is left", async () => {
   const dir = new Directory(memory({ at: "0240", run: (db) => {
     db.exec("INSERT INTO users (login, name, role, created, added_by) VALUES ('ada', 'Ada', 'user', 1, 'koomen'), ('bo', 'Bo', 'admin', 2, NULL)");
     db.exec("INSERT INTO invites (email, role, created) VALUES ('cy@example.com', 'user', 3)");
   } }), { admins: ["koomen"] });
   const rules = (await dir.rules.list(ADMIN)).map((r) => `${r.kind}:${r.value}:${r.access}`);
-  expect(rules).toEqual(["everybody::none"]);
+  expect(rules).toEqual([]);
   expect((await dir.users.get("ada"))?.access).toBe("write");
   expect(await dir.users.allowed("ada")).toBe(true);
   expect((await dir.people.list(ADMIN)).map((p) => `${p.provider}:${p.handle}:${p.role}`)).toEqual(["google:cy@example.com:write"]);
 });
 
-test("the highest access of the rules that match; none signs in nowhere; admins always write", async () => {
+test("0490: everybody's rule and a group's rule with no access go; on a server with users public sharing starts off, and Anyone at No access", async () => {
+  const old = (users: boolean) =>
+    new Directory(
+      memory({
+        at: "0490",
+        run: (db) => {
+          db.exec("UPDATE access_rules SET access = 'write' WHERE kind = 'everybody'");
+          db.exec(
+            "INSERT INTO access_rules (kind, value, access, created) VALUES ('github_org', 'acme', 'none', 1), ('workspace', 'example.com', 'read', 2)"
+          );
+          db.exec("INSERT INTO server_config (key, value, updated) VALUES ('public_sharing', 'true', 1)");
+          if (users) db.exec("INSERT INTO users (login, name, role, created) VALUES ('bo', 'Bo', 'admin', 2), ('cy', 'Cy', 'user', 3)");
+        },
+      }),
+      { admins: ["koomen"] }
+    );
+  const dir = old(true);
+  expect((await dir.rules.list(ADMIN)).map((r) => `${r.kind}:${r.value}:${r.access}`)).toEqual(["workspace:example.com:read"]);
+  expect(await dir.anyone()).toBe("none");
+  expect(await dir.config.get("public_sharing")).toBe(false);
+  expect(await dir.sharing()).toBe(false);
+  // Everybody's rule let cy in; nothing does now. An admin keeps their role.
+  expect(await dir.users.allowed("cy")).toBe(false);
+  expect(await dir.users.allowed("bo")).toBe(true);
+  // A new database (no user yet) keeps what its deploy starts with.
+  expect(await old(false).config.get("public_sharing")).toBe(true);
+});
+
+test("the highest access of the role, the rules that match and Anyone's level; none signs in nowhere; admins always write", async () => {
   const dir = fresh();
   await joined(dir, "dee", github(1, "dee", ["acme"]));
   expect(await accessOf(dir, "dee")).toBe("none");
@@ -61,19 +93,45 @@ test("the highest access of the rules that match; none signs in nowhere; admins 
   expect(await accessOf(dir, "dee")).toBe("read");
   expect(await dir.users.allowed("dee")).toBe(true);
   expect(await dir.mayWrite("dee")).toBe(false);
-  await everybody(dir, "write");
+  await anyone(dir, "write");
   expect(await accessOf(dir, "dee")).toBe("write");
-  await everybody(dir, "none");
+  await anyone(dir, "none");
   await dir.users.setUserRole(ADMIN, "dee", "write");
   expect(await accessOf(dir, "dee")).toBe("write");
   // Their role, and the groups: the higher of the two.
   await dir.users.setUserRole(ADMIN, "dee", "read");
   await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "write" });
   expect(await accessOf(dir, "dee")).toBe("write");
-  await dir.users.setUserRole(ADMIN, "dee", "none");
-  await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "none" });
+  // Removed: their own role goes, their account stays, and their groups decide.
+  await dir.users.remove(ADMIN, "dee");
+  expect((await dir.users.get("dee"))?.access).toBe(null);
+  expect(await accessOf(dir, "dee")).toBe("write");
+  // A group can't deny: its rule is removed.
+  await expect(dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "none" })).rejects.toThrow("remove its rule");
+  await dir.rules.remove(ADMIN, (await dir.rules.list(ADMIN))[0].id);
   expect(await dir.users.allowed("dee")).toBe(false);
   expect(await accessOf(dir, "koomen")).toBe("write");
+});
+
+test("Anyone's level: each has all of the one before it; public lets no account in, read and write let every account in", async () => {
+  const dir = fresh();
+  const pat = github(20, "pat");
+  await joined(dir, "pat", pat);
+  const at = async (level: string) => {
+    await anyone(dir, level);
+    return [await accessOf(dir, "pat"), await dir.users.allowed("pat"), await dir.mayJoin(github(21, "new")), await dir.mayWrite("pat")];
+  };
+  expect(await dir.anyone()).toBe("none");
+  expect(await at("none")).toEqual(["none", false, false, false]);
+  expect(await at("public")).toEqual(["none", false, false, false]);
+  expect(await at("read")).toEqual(["read", true, true, false]);
+  expect(await at("write")).toEqual(["write", true, true, true]);
+  // Back down: the account that Anyone let in signs in nowhere, at once.
+  expect(await at("public")).toEqual(["none", false, false, false]);
+  expect((await resolve(dir, pat, { join: false })).kind).toBe("refused");
+  await expect(anyone(dir, "all")).rejects.toThrow("Anyone's level is none");
+  await expect(dir.setAnyone({ login: "pat" }, "write")).rejects.toThrow("Only an admin");
+  expect(await dir.anyone()).toBe("public");
 });
 
 test("Google Workspace: the hd claim, never the email's domain; a personal account never matches", async () => {
@@ -142,7 +200,7 @@ test("users added before their first sign-in: a GitHub account by its id, a Goog
 
 test("write: someone with read opens their documents and those shared with them as a viewer, and makes none", async () => {
   const dir = fresh();
-  await everybody(dir, "read");
+  await anyone(dir, "read");
   await joined(dir, "kit", google("g-kit", "kit@example.com"));
   await dir.add({ id: "aaaaaaaa", owner: "kit", title: "Plan", created: 1, expires: null });
   expect(await dir.access({ login: "kit" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
@@ -154,7 +212,7 @@ test("write: someone with read opens their documents and those shared with them 
 test("a document's access asks the database a few things at once, so a stall counts once, not once per read", async () => {
   const sql = memory(),
     dir = new Directory(sql, { admins: ["koomen"] });
-  await everybody(dir, "read");
+  await anyone(dir, "read");
   await joined(dir, "kit", google("g-kit", "kit@example.com"));
   await dir.users.setUserRole(ADMIN, "kit", "write");
   await dir.add({ id: "aaaaaaaa", owner: "kit", title: "Plan", created: 1, expires: null });
@@ -177,11 +235,11 @@ test("a document's access asks the database a few things at once, so a stall cou
   expect(most).toBeGreaterThanOrEqual(2);
 });
 
-test("the rules' own rules: admins only; groups only; everybody's stays; values checked; a removed user's role goes", async () => {
+test("the rules' own rules: admins only; groups only, with read or write; values checked; a removed user's role goes", async () => {
   const dir = fresh();
   await expect(dir.rules.add({ login: "bo" }, { kind: "workspace", value: "example.com", access: "read" })).rejects.toThrow("Only an admin");
-  const all = await dir.rules.list(ADMIN), every = all.find((r) => r.kind == "everybody")!;
-  await expect(dir.rules.remove(ADMIN, every.id)).rejects.toThrow("always there");
+  expect(await dir.rules.list(ADMIN)).toEqual([]);
+  await expect(dir.rules.add(ADMIN, { kind: "everybody", value: "", access: "read" })).rejects.toThrow("isn't a kind of rule");
   await expect(dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "some" })).rejects.toThrow();
   await expect(dir.rules.add(ADMIN, { kind: "account", value: "ada", access: "read" })).rejects.toThrow("isn't a kind of rule");
   await expect(dir.rules.add(ADMIN, { kind: "workspace", value: "not a domain", access: "read" })).rejects.toThrow("isn't a domain");
@@ -190,12 +248,16 @@ test("the rules' own rules: admins only; groups only; everybody's stays; values 
   );
   const org = await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "read" });
   expect((await dir.rules.change(ADMIN, org.id, "write")).access).toBe("write");
+  await expect(dir.rules.change(ADMIN, org.id, "none")).rejects.toThrow("remove its rule");
   await dir.rules.remove(ADMIN, org.id);
   expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "github_org")).toBe(false);
   await dir.users.add(ADMIN, "lu");
   expect(await accessOf(dir, "lu")).toBe("write");
   await dir.users.remove(ADMIN, "lu");
   expect(await dir.users.allowed("lu")).toBe(false);
+  expect((await dir.users.get("lu"))?.access).toBe(null);
+  await expect(dir.users.remove(ADMIN, "nobody")).rejects.toThrow("isn't a user");
+  await expect(dir.users.remove(ADMIN, "koomen")).rejects.toThrow("DEV_LOGIN");
   await expect(dir.users.setUserRole(ADMIN, "koomen", "read")).rejects.toThrow("DEV_LOGIN");
 });
 
@@ -268,44 +330,68 @@ test("Add user: GitHub's rate limit is said as such; with the sign-in app, a pas
   }
 });
 
-test("public sharing: off by default; then anyone with the link means anyone who signs in, and no one signed out; on opens it to them too", async () => {
+test("public sharing: off by default, and then nobody shares with anyone with the link; on, the link opens for people signed in and signed out", async () => {
   const dir = fresh();
   await dir.users.add(ADMIN, "ada");
-  await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1, expires: null });
-  expect(await dir.config.get("public_sharing")).toBe(false);
-  // Off: anyone with the link is everyone who signs in here, and no one signed out.
-  await dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer");
-  expect(await dir.isPublic("aaaaaaaa")).toBe(false);
   await dir.users.add(ADMIN, "cy");
-  expect(await dir.access({ login: "cy" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
-  expect(await dir.access(null, (await dir.get("aaaaaaaa"))!)).toBe(null);
-  // On: people not signed in open it too, as viewers.
-  await dir.config.set(ADMIN, "public_sharing", true);
+  await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1, expires: null });
+  const doc = (await dir.get("aaaaaaaa"))!;
+  const link = () => dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer");
+  expect(await dir.sharing()).toBe(false);
+  // Off: the share is refused, for the owner and so for their agent (one operation).
+  await expect(link()).rejects.toThrow("Public sharing is off on this server");
+  expect((await dir.permissions("aaaaaaaa")).some((p) => p.login == "*")).toBe(false);
+  // The switch can't turn on while Anyone has no access.
+  await expect(dir.setPublicSharing(ADMIN, true)).rejects.toThrow("Anyone has No access");
+  // Anyone at public leaves the switch as it is: an admin turns it on.
+  await anyone(dir, "public");
+  expect(await dir.sharing()).toBe(false);
+  await expect(link()).rejects.toThrow("Public sharing is off");
+  await dir.setPublicSharing(ADMIN, true);
+  await link();
   expect(await dir.isPublic("aaaaaaaa")).toBe(true);
-  // Off again: kept, and still for people who sign in, but not public; stopping it is allowed.
-  await dir.config.set(ADMIN, "public_sharing", false);
+  expect(await dir.access({ login: "cy" }, doc)).toBe("viewer");
+  expect(await dir.access(null, doc)).toBe(null);
+  // Off again: the share stays, and opens the document for nobody, signed in or not; no new one is made.
+  await dir.setPublicSharing(ADMIN, false);
   expect((await dir.permissions("aaaaaaaa")).some((p) => p.login == "*")).toBe(true);
   expect(await dir.isPublic("aaaaaaaa")).toBe(false);
-  expect(await dir.access({ login: "cy" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
-  await dir.config.set(ADMIN, "public_sharing", true);
+  expect(await dir.access({ login: "cy" }, doc)).toBe(null);
+  expect(await dir.decide({ login: "cy" }, doc, [{ login: "*", role: "viewer" }])).toBe(null);
+  expect(await dir.access({ login: "ada" }, doc)).toBe("owner");
+  await expect(link()).rejects.toThrow("Public sharing is off");
+  // On again: it works as before.
+  await dir.setPublicSharing(ADMIN, true);
   expect(await dir.isPublic("aaaaaaaa")).toBe(true);
-  await dir.config.set(ADMIN, "public_sharing", false);
+  expect(await dir.access({ login: "cy" }, doc)).toBe("viewer");
+  // Anyone at No access turns the switch off with it; back at public, it stays off.
+  await anyone(dir, "none");
+  expect(await dir.config.get("public_sharing")).toBe(false);
+  expect(await dir.access({ login: "cy" }, doc)).toBe(null);
+  await anyone(dir, "read");
+  expect(await dir.sharing()).toBe(false);
+  expect(await dir.isPublic("aaaaaaaa")).toBe(false);
+  // A switch that says on counts for nothing while Anyone has no access (a setting written beside the directory).
+  await anyone(dir, "none");
+  await dir.config.set(ADMIN, "public_sharing", true);
+  expect(await dir.sharing()).toBe(false);
+  expect(await dir.access({ login: "cy" }, doc)).toBe(null);
+  // Stopping the share is always allowed.
   await dir.share({ login: "ada" }, "aaaaaaaa", "*", null);
   expect((await dir.permissions("aaaaaaaa")).some((p) => p.login == "*")).toBe(false);
   // Only admins turn it on or off.
-  await expect(dir.config.set({ login: "ada" }, "public_sharing", true)).rejects.toThrow();
+  await expect(dir.setPublicSharing({ login: "ada" }, true)).rejects.toThrow("Only an admin");
 });
 
-test("public sharing: anyone with the link as an editor gives a signed-in person with 'Can authenticate' only viewing", async () => {
-  const dir = fresh();
-  await dir.config.set(ADMIN, "public_sharing", true);
+test("public sharing: anyone with the link as an editor gives a signed-in person with 'Can view documents' only viewing", async () => {
+  const dir = await sharing(fresh());
   await dir.users.add(ADMIN, "ada");
   await dir.add({ id: "bbbbbbbb", owner: "ada", title: "Notes", created: 1, expires: null });
   await dir.share({ login: "ada" }, "bbbbbbbb", "*", "editor");
   await dir.identities.createAccount("dee", google("g-dee", "dee@example.com"));
-  await everybody(dir, "read");
+  await anyone(dir, "read");
   expect(await dir.access({ login: "dee" }, (await dir.get("bbbbbbbb"))!)).toBe("viewer");
-  await everybody(dir, "write");
+  await anyone(dir, "write");
   expect(await dir.access({ login: "dee" }, (await dir.get("bbbbbbbb"))!)).toBe("editor");
 });
 
@@ -332,11 +418,11 @@ test("a share goes only to someone who may sign in, and the page says why not; o
   await expect(shareTo("fox")).rejects.toThrow("There's no user fox on this server yet");
   await dir.rules.add(ADMIN, { kind: "workspace", value: "example.org", access: "read" });
   await expect(shareTo("gil")).rejects.toThrow("sign in once first");
-  // Everybody may sign in: anyone may get a share.
-  await everybody(dir, "read");
+  // Anyone may sign in: anyone may get a share.
+  await anyone(dir, "read");
   await shareTo("fox");
   // Shares made before stay when the rules change (sign-in still checks them).
-  await everybody(dir, "none");
+  await anyone(dir, "none");
   expect((await dir.permissions("cccccccc")).map((p) => p.login)).toContain("fox");
   // Stopping a share is always allowed; so is an admin.
   await dir.share({ login: "ada" }, "cccccccc", "fox", null);

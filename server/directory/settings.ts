@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import type { Sql, Statement } from "./model.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
+import { type Anyone, ANYONE_LABEL, ANYONE_LEVELS } from "./access.ts";
 import { isModelChoice, MODELS, MODELS_OFF_AT_FIRST } from "../../shared/models.ts";
 import { SIGN_IN_DAYS, SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
@@ -108,10 +109,23 @@ export const SETTINGS = {
     default: 5,
     parse: integer(1, 1000),
   }),
+  anyone_access: setting<Anyone>({
+    label: "Anyone",
+    description: "Anyone not covered by the group and user rules above",
+    values: `${ANYONE_LEVELS.map((l) => `${l}: ${ANYONE_LABEL[l]}`).join(". ")}. Each level has all of the one before it; read and write let every account sign in. Set it with set_access (anyone): none turns public sharing off too.`,
+    default: "none",
+    parse: (v) => {
+      if (typeof v == "string" && (ANYONE_LEVELS as readonly string[]).includes(v.trim().toLowerCase()))
+        return v.trim().toLowerCase() as Anyone;
+      throw new ConfigError({ message: `must be one of: ${ANYONE_LEVELS.join(", ")}` });
+    },
+    choices: [...ANYONE_LEVELS],
+  }),
   public_sharing: setting<boolean>({
-    label: "Public sharing",
-    description: "A document shared with anyone with the link opens also for people who aren't signed in, as viewers.",
-    values: "false: those links open only for people who sign in here. A published document is always public on its domain.",
+    label: "Users can share publicly",
+    description: "Users can make documents accessible to anyone with a link",
+    values:
+      "false: nobody can share a document with anyone with the link, and such a share made before doesn't work (it comes back with true). true needs anyone_access to be public at least. A published document is always public on its domain.",
     default: false,
     parse: boolean,
   }),

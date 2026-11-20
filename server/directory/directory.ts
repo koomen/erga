@@ -18,8 +18,9 @@
 //
 // Permissions: a document has one owner (who made it, whose address it's
 // under), and may have editors and viewers; a permission for "*" is one for
-// anyone signed in who has the link. Whether someone may do something with
-// a document is decided in one place, `may`:
+// anyone who has the link, which counts only while the server lets users
+// share so (`sharing`: the Access page's switch). Whether someone may do
+// something with a document is decided in one place, `may`:
 //
 //   open           owner, editor, viewer
 //   edit, rename   owner, editor
@@ -39,7 +40,7 @@
 
 import * as Effect from "effect/Effect";
 import { ConfigError, ServerConfig } from "./settings.ts";
-import { type Access, AccessRules, type Facts, higher } from "./access.ts";
+import { type Access, AccessRules, type Anyone, ANYONE_LABEL, anyoneAccess, anyoneValue, type Facts, higher, sharingOn } from "./access.ts";
 import { type AccountLookup, People, type Person, personHandle } from "./people.ts";
 import { type Actor, NotAllowed, NotFound, type User, type UserRole, Users } from "./users.ts";
 
@@ -63,6 +64,7 @@ import {
   fromRow,
   ID,
   idShaped,
+  NO_LINK_SHARING,
   NO_WRITE,
   type NewDoc,
   type News,
@@ -174,7 +176,7 @@ export class Directory {
     this.requests = new Requests(sql);
     this.providers = opts.providers ?? [];
     this.lookup = opts.lookup ?? null;
-    // A user's role and the group rules decide who may sign in (Users.allowed, Users.signedIn): read or write.
+    // A user's role, the group rules and Anyone's level decide who may sign in (Users.allowed, Users.signedIn): read or write.
     this.users.gate = async (user) => (await this.accessOf(user)) != "none";
     this.users.accessChanged = () => this.rules.forget();
     this.users.pagesChanged = (keys) => this.adminChanged(keys);
@@ -188,8 +190,11 @@ export class Directory {
       locked: opts.locked,
       defaults: opts.defaults,
       changed: async (key) => {
+        // Anyone's level is part of every account's access.
+        if (key == "anyone_access") this.rules.forget();
         await opts.changed?.(key);
-        await this.adminChanged([`setting:${key}`]);
+        // (The Access page's switch shows Anyone's level too: with none, it is off.)
+        await this.adminChanged(key == "anyone_access" ? ["setting:anyone_access", "setting:public_sharing"] : [`setting:${key}`]);
       },
     });
   }
@@ -535,7 +540,12 @@ export class Directory {
     if (!who) return null;
     if (who.onlyDoc != null && who.onlyDoc != doc.id) return null;
     const login = who.login.toLowerCase();
-    const best = permissions.reduce<Role | null>((b, p) => (p.login != login && p.login != ANYONE) || (b && RANK[b] >= RANK[p.role]) ? b : p.role, null);
+    // Anyone's permission counts only while users may share with anyone with the link (asked only where there is one).
+    const link = permissions.some((p) => p.login == ANYONE) && (await this.sharing());
+    const best = permissions.reduce<Role | null>(
+      (b, p) => ((p.login != login && !(link && p.login == ANYONE)) || (b && RANK[b] >= RANK[p.role]) ? b : p.role),
+      null
+    );
     // The owner as the permissions say: a host's copy of its owner is the one it was made with, and on a server older
     // than /_home, the default homepage was an admin's document first, so its host still names that admin.
     const owner = permissions.find((p) => p.role == "owner")?.login ?? doc.owner;
@@ -551,15 +561,53 @@ export class Directory {
 
   private known = new Map<string, { access: Access; at: number; version: number }>();
 
-  /** An account's access now: write for an admin, else the higher of its own role and the group rules that match it (remembered a few seconds). */
+  /** Anyone's level now: what everyone may do whom no group rule and no role of their own covers (the setting anyone_access). */
+  async anyone(): Promise<Anyone> {
+    return this.config.get("anyone_access");
+  }
+
+  /** Whether users may share a document with anyone with the link now (sharingOn): else no such share is made, and none made before counts. */
+  async sharing(): Promise<boolean> {
+    const [level, on] = await Promise.all([this.anyone(), this.config.get("public_sharing")]);
+    return sharingOn(level, on);
+  }
+
+  /**
+   * Sets Anyone's level. At none, nobody outside the groups and the users may view a document: public sharing is off
+   * from that moment (sharingOn), and its switch goes off with it, so it stays off until an admin turns it on again.
+   * (A switch that the deploy fixes stays as the deploy says, and counts again above none.)
+   */
+  async setAnyone(by: Actor, level: unknown): Promise<Anyone> {
+    await this.users.mustAdmin(by);
+    const to = anyoneValue(level);
+    await this.config.set(by, "anyone_access", to);
+    if (to == "none" && (await this.config.get("public_sharing")) && !this.config.isLocked("public_sharing"))
+      await this.config.set(by, "public_sharing", false);
+    return to;
+  }
+
+  /** Turns public sharing on or off. On needs Anyone's level to be public at least. */
+  async setPublicSharing(by: Actor, on: boolean): Promise<boolean> {
+    await this.users.mustAdmin(by);
+    if (on && (await this.anyone()) == "none")
+      throw new NotAllowed({
+        message: `Anyone has ${ANYONE_LABEL.none}, so users can't share publicly. Set Anyone to ${ANYONE_LABEL.public} first, or higher.`,
+      });
+    return (await this.config.set(by, "public_sharing", on)).value as boolean;
+  }
+
+  /**
+   * An account's access now: write for an admin, else the highest of its own role, the group rules that match it and
+   * Anyone's level (remembered a few seconds).
+   */
   async accessOf(user: User): Promise<Access> {
     if (user.role == "admin") return "write";
     const had = this.known.get(user.login);
     if (had && had.version == this.rules.version && Date.now() - had.at < 10_000) return had.access;
     const version = this.rules.version;
     // The rules (remembered a few seconds) are read with the account's identities, not after them.
-    const [facts] = await Promise.all([this.factsOf(user.login), this.rules.all()]);
-    const access = higher(user.access ?? "none", await this.rules.accessFor(facts));
+    const [facts, level] = await Promise.all([this.factsOf(user.login), this.anyone(), this.rules.all()]);
+    const access = higher(higher(user.access ?? "none", anyoneAccess(level)), await this.rules.accessFor(facts));
     if (this.known.size > 10_000) this.known.clear();
     this.known.set(user.login, { access, at: Date.now(), version });
     return access;
@@ -630,35 +678,35 @@ export class Directory {
   }
 
   /**
-   * Why `login` can't be given a share, or null if they can: they may sign in. That is: everybody may (at least Can
-   * authenticate); or they're a user whose role or groups (as at their last sign-in) let them in. A username comes at
+   * Why `login` can't be given a share, or null if they can: they may sign in. That is: Anyone's level lets every
+   * account in; or they're a user whose role or groups (as at their last sign-in) let them in. A username comes at
    * the first sign-in, so someone who never signed in has none to share with yet: they sign in once first.
    */
   async whyNoShare(login: string): Promise<string | null> {
     login = login.toLowerCase();
-    const rules = await this.rules.all();
-    if (rules.some((r) => r.kind == "everybody" && r.access != "none")) return null;
+    if (anyoneAccess(await this.anyone()) != "none") return null;
     // Local development: everyone may sign in, unless an admin added a group's rule there.
-    if (this.local && this.defaultRules(rules)) return null;
+    if (this.local && (await this.defaultRules())) return null;
     const user = await this.users.get(login);
     if (user && (await this.accessOf(user)) != "none") return null;
-    if (!user && (rules.some((r) => r.access != "none") || (await this.people.any())))
+    if (!user && ((await this.rules.all()).length || (await this.people.any())))
       return `There's no user ${login} on this server yet: a username comes at the first sign-in. If they may sign in, they sign in once first; then share it with them.`;
     return `${login} isn't allowed to sign in to this server, so they couldn't open it. An admin can give them a role on the Access page (/admin/access).`;
   }
 
-  /** Whether the group rules are as a server starts: everybody no access, and no other group. */
-  defaultRules(rules: { kind: string; access: Access }[]): boolean {
-    return rules.every((r) => r.kind == "everybody" && r.access == "none");
+  /** Whether the rules are as a server starts: no group's rule, and Anyone's level lets no account in. */
+  async defaultRules(): Promise<boolean> {
+    const [rules, level] = await Promise.all([this.rules.all(), this.anyone()]);
+    return !rules.length && anyoneAccess(level) == "none";
   }
 
   /**
    * What someone with no account yet gets at their first sign-in: the role an admin added them with (`person`), and
-   * whether that or a group rule lets them in at all.
+   * whether that, a group rule or Anyone's level lets them in at all.
    */
   async joining(v: Vouched): Promise<{ may: boolean; person: Person | null }> {
-    const person = await this.people.match(v);
-    return { may: !!person || (await this.rules.accessFor(this.factsOfVouched(v))) != "none", person };
+    const [person, groups, level] = await Promise.all([this.people.match(v), this.rules.accessFor(this.factsOfVouched(v)), this.anyone()]);
+    return { may: !!person || groups != "none" || anyoneAccess(level) != "none", person };
   }
 
   /** Whether someone with no account yet may make one at their first sign-in. */
@@ -668,10 +716,10 @@ export class Directory {
 
   /**
    * Whether a document opens for people who aren't signed in: the default homepage always does, and
-   * one shared with anyone with the link does while the server lets users share content publicly. They view it only.
+   * one shared with anyone with the link does while users may share so (sharing). They view it only.
    */
   async isPublic(id: string): Promise<boolean> {
-    if (!(await this.config.get("public_sharing"))) return false;
+    if (!(await this.sharing())) return false;
     const [row] = await this.sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM permissions p JOIN documents d ON d.id = p.doc_id WHERE p.doc_id = ?1 AND p.login = ?2 AND d.test = 0", id, ANYONE);
     return Number(row?.n ?? 0) > 0;
   }
@@ -689,11 +737,12 @@ export class Directory {
   }
 
   /**
-   * Gives someone ("*": anyone who signs in here and has the link; while the server lets users share content
-   * publicly, people who aren't signed in too, as viewers) a role on a
+   * Gives someone ("*": anyone who has the link; signed out, they view it only) a role on a
    * document, or takes theirs away (null), as `who`, whom `may` must allow
-   * to share it. The owner's own permission can't be changed. Returns
-   * everyone's permissions now.
+   * to share it. The owner's own permission can't be changed. A share with
+   * anyone is refused while users may not share so (sharing); one made before
+   * stays, and counts for nothing until they may again. Returns everyone's
+   * permissions now.
    */
   async share(who: Who, id: string, login: string, role: Grant | null): Promise<Permission[]> {
     const doc = await this.get(id);
@@ -704,6 +753,7 @@ export class Directory {
       throw new NotAllowed({ message: `"${login}" isn't a login (or "*" for anyone with the link).` });
     if (login == doc.owner) throw new NotAllowed({ message: "The owner's own permission can't be changed." });
     if (role != null && !GRANTS.includes(role)) throw new NotAllowed({ message: `"${role}" isn't a role: editor, commenter or viewer.` });
+    if (login == ANYONE && role != null && !(await this.sharing())) throw new NotAllowed({ message: NO_LINK_SHARING });
     // A person: only one who may sign in (the access rules). A share made before stays: sign-in checks them anyway.
     if (login != ANYONE && role != null) {
       const why = await this.whyNoShare(login);

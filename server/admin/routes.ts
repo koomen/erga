@@ -98,7 +98,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     method: "GET",
     path: "/admin/access",
     run: (a) => accessPage(a.platform, a.session),
-    action: "Read the group rules, the users, and whether users can share content publicly (Access)",
+    action: "Read the group rules, the users, Anyone's level, and whether users can share publicly (Access)",
     domain: "admin",
     tool: "people",
   },

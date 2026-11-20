@@ -83,6 +83,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   expect(file[HOST].SESSION_SECRET).toMatch(/^[0-9a-f]{64}$/);
   expect(bindingsOf(mock.state, "erga-ada-example-com").GITHUB_CLIENT_ID.text).toBe("Iv1.ada");
   expect(JSON.parse(bindingsOf(mock.state, "erga-ada-example-com").SERVER_DEFAULTS.text)).toEqual({
+    anyone_access: "none",
     public_sharing: false,
     delete_docs_after_hours: null,
   });

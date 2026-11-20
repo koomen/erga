@@ -62,10 +62,16 @@ export interface Who {
 }
 /** What making a document answers someone the write rule (/admin/access) leaves out. */
 export const NO_WRITE =
-  "Your access on this server is Can authenticate: you may open what is shared with you or public, but not make or edit documents. An admin can give you Can create and edit content on the Access page.";
+  "Your access on this server is Can view documents: you may open what is shared with you or public, but not make or edit documents. An admin can give you Can create, edit and comment on the Access page.";
 
-/** The login a permission for anyone with the link is under: anyone signed in, and, while the server lets users share content publicly, people who aren't signed in too (as viewers). */
+/**
+ * The login a permission for anyone with the link is under: anyone signed in, and people who aren't signed in too (as
+ * viewers). It counts only while the server lets users share publicly (Directory.sharing).
+ */
 export const ANYONE = "*";
+/** What sharing with anyone with the link answers while the server doesn't let users share publicly (/admin/access). */
+export const NO_LINK_SHARING =
+  "Public sharing is off on this server: a document can't be shared with anyone with the link. Share it with people by their login. An admin can turn public sharing on, on the Access page.";
 
 /** A row some open pages show changed: its key ("doc:<id>"), and who may see it ("admins": every admin). server/news/ carries it. */
 export interface News {
@@ -130,7 +136,7 @@ export interface NewDoc {
   expires?: number | null;
   test?: boolean;
   scratch?: boolean;
-  /** A role for anyone signed in who has the link, from the start (local development's documents on disk). */
+  /** A role for anyone who has the link, from the start (local development's documents on disk). */
   everyone?: Grant;
   /** How many pages it starts with; left for its object to count as it opens, if not given. */
   pages?: number;

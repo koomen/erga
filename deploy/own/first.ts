@@ -138,5 +138,5 @@ export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string
         .join(", ")}) ON CONFLICT ${onConflict}`,
       ...Object.values(row)
     );
-  print(`The access rule is in the database of ${worker}: ${rows.map((r) => `${r.row.kind} ${r.row.value}`.trim()).join(", ")} may write.`);
+  print(`The access rule is in the database of ${worker}: ${rows.map((r) => r.who).join(", ")} may write.`);
 }
