@@ -1,9 +1,10 @@
 // Publishing's rules (server/operations/publishing.ts, server/sites/), on the whole app in memory: one document for each
 // domain, an admin alone publishes, a claimed domain needs replace and serves the old document until the publish,
 // "Not published" frees the domain at once, a domain with nothing published answers with nothing, and the header bar
-// works only on the Erga domain.
+// works only on the Erga domain. And a custom domain that a deploy removed: the scheduled run unpublishes its document.
 
 import { expect, test } from "bun:test";
+import { tick } from "../server/health";
 import { runTool, server, signedOut } from "./helpers/app";
 
 const page = (title: string) => `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`;
@@ -138,4 +139,31 @@ test("only an admin changes the publishing; an editor sees it, a viewer doesn't;
   expect((await runTool(s, "delete_document", { document: a })).error).toBeUndefined();
   expect(await at("/")).toEqual([404, ""]);
   expect((await s.platform.site("").status()).state).toBe("free");
+});
+
+test("a custom domain that a deploy removed: the scheduled run unpublishes its document; a domain that the server has keeps it", async () => {
+  const { s, make, set, publish, publishing, at } = await world();
+  const [a, home] = [await make("Alpha"), await make("Home")];
+  for (const [doc, domain] of [
+    [a, "site.test"],
+    [home, "localhost"],
+  ]) {
+    await set(doc, { domain });
+    await publish(doc);
+  }
+  const removed = (domain: string) => s.sql.run("INSERT INTO removed_domains (domain, at) VALUES (?1, 1)", domain);
+  // The server has the domain (a deploy gave it again): its document stays, and the row goes.
+  await removed("site.test");
+  await tick(s.platform);
+  expect(await s.dir.removedDomains()).toEqual([]);
+  expect((await at("http://site.test/"))[1]).toContain("<h1>Alpha</h1>");
+  // The deploy took the domain: its document is unpublished. The Erga domain's key, or its object's name, is no domain.
+  s.platform.deploy.domains.length = 0;
+  for (const domain of ["site.test", "", "home"]) await removed(domain);
+  await tick(s.platform);
+  expect(await s.dir.removedDomains()).toEqual([]);
+  expect(await s.platform.site("site.test").status()).toMatchObject({ state: "free", doc: null, live: null });
+  expect(await publishing(a)).toMatchObject({ domain: null, state: "free", serving: false });
+  expect(await publishing(home)).toMatchObject({ domain: "localhost", state: "published" });
+  expect((await at("/"))[1]).toContain("<h1>Home</h1>");
 });

@@ -7,6 +7,7 @@
 // machine builds the commit (buildHere) only when GitHub has no release of it. A deploy runs the deployer's own code
 // steps (deploy/deployer/deploy.ts), with this machine's login, on Cloudflare and on AWS: it changes the code only.
 // What changes an instance's shape runs the pipeline's steps too (runPipeline): setup's first deploy, and --domain.
+// --remove-domain takes a custom domain from the instance (remove-domain.ts).
 // Every instance's target comes from its entry only (entryTarget): its names, its vars, the secrets the
 // Worker keeps. No secret goes out. No instance has a path of its own: the entries differ, the code does not.
 //
@@ -55,6 +56,7 @@ import { rollback } from "../deployer/rollback";
 import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
 import { heldSecrets, putSpec, specDiff, specOf, specOn, sqlOf, startInstanceJob } from "./instance";
+import { askUnpublish, detach, removalOf, withoutDomains } from "./remove-domain";
 import type { From } from "./jobs";
 import { parseDeployed } from "../../server/directory/index.ts";
 import { ROOT, sh } from "../root";
@@ -167,6 +169,8 @@ export interface DeployOptions {
   createSubdomain?: boolean;
   /** --domain: custom domains to register for publishing, hostnames on the account's zones. The entry keeps them after. */
   domains?: string[];
+  /** --remove-domain: custom domains that leave the instance (remove-domain.ts). */
+  removeDomains?: string[];
   /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first rows). */
   first?: string;
   /** --write-spec: the entry's values become the instance's spec, before the deploy. Without it, a deploy stops when the two differ. */
@@ -215,6 +219,9 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const aws = isAws(entry) ? entry : null;
   const domains = (o.domains ?? []).map((d) => d.toLowerCase());
   if (aws && (domains.length || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --domain is only for an instance on Cloudflare.`);
+  const removed = o.removeDomains?.length ? removalOf(o.dir, o.host, o.removeDomains).domains : [];
+  if (removed.length && (domains.length || o.secrets || o.createSubdomain))
+    throw new Error("--remove-domain goes in a deploy of its own, without --domain.");
   // setup's first deploy: its secrets, one time, and a new workers.dev subdomain.
   const own = {
     ...(o.secrets ? { secrets: o.secrets } : {}),
@@ -238,7 +245,9 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   // On AWS: the AWS CLI, which is this machine's own. On Cloudflare: its API, with this machine's credential.
   const { net, token, quick } = aws ? { net: globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
   const cf = new Cloudflare(token, net);
-  const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${domains.map((d) => ` --domain ${d}`).join("")}`;
+  const command =
+    o.command ??
+    `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${domains.map((d) => ` --domain ${d}`).join("")}${removed.map((d) => ` --remove-domain ${d}`).join("")}`;
   const reach = { cf };
   const sql = await sqlOf(entry, reach);
   const job = await startInstanceJob(sql, { kind: "deploy", command, source: o.from ?? "terminal", host: o.host, print: o.print });
@@ -389,8 +398,18 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
         // The code only: the deployer's own steps, by the instance's spec, as the deployer in the cloud runs them. It
         // refuses a release that is not a commit of the spec's branch, and puts back the version before an unhealthy one.
         const ports = { cloudflare: cf, onBranch: (version: string) => Effect.sync(() => onBranch(version)), log, waitMs: quick.waitMs };
-        const done = await runWith(quick.sleep, Effect.result(deploy(specNow(), release, ports)));
+        // --remove-domain: the domain leaves Cloudflare first, and the deploy's facts have the entry's domains without it.
+        const now = entryOf(readConfig(o.dir), o.host) as CloudflareEntry;
+        const left = withoutDomains(now, removed);
+        for (const d of removed) await detach(cf, now, d, log);
+        const done = await runWith(quick.sleep, Effect.result(deploy(removed.length ? specOf(left, held) : specNow(), release, ports)));
         if (done._tag == "Failure") throw new Error(done.failure.message);
+        if (removed.length) {
+          // The server unpublishes what was published there; then the entry, which the instance's spec takes below.
+          await askUnpublish(cf, now, removed, Date.now(), log);
+          writeConfig(o.dir, withEntry(readConfig(o.dir), left));
+          log(`${removed.join(", ")} left ${o.host}'s custom domains: the Worker's deploy facts, and the entry.`);
+        }
       }
       log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(t)}: healthy.`);
     }

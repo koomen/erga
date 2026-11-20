@@ -3,7 +3,7 @@
 // entry's vars, no secret goes out, the lock and the job log on the instance, its spec there, and the tests' gate. A Worker keeps its database:
 // its entry takes the name of the database that it is bound to. And the branches (a clone of its own): an instance
 // deploys the head of the branch it tracks, and only a commit of that branch; no deploy moves a branch;
-// `bun erga promote` moves main to staging's head.
+// `bun erga promote` moves main to staging's head. And --remove-domain (deploy/cli/remove-domain.ts).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -14,7 +14,9 @@ import { type CloudflareEntry, type Entry, entryOf, readConfig, withEntry, write
 import { commitOf, deployInstance, entryTarget, rollbackInstance, trackedHead } from "../deploy/cli/deploy";
 import { promote, promoteRefusal } from "../deploy/cli/promote";
 import { entryFrom, specOn, sqlOf, startInstanceJob, trackOn } from "../deploy/cli/instance";
+import { removalPlan } from "../deploy/cli/remove-domain";
 import { findInstance, instanceReader, jobsReader } from "../deploy/cli/running";
+import { d1 } from "../deploy/deployer/cloudflare";
 import { Cloudflare } from "../deploy/deployer/cloudflare-api";
 import { LEASE_MS } from "../deploy/deployer/instance";
 import { packRelease } from "../deploy/pipeline/build";
@@ -687,5 +689,72 @@ describe("the branches", () => {
       process.env.PATH = PATH;
       rmSync(tmp, { recursive: true, force: true });
     }
+  }, 60_000);
+});
+
+describe("bun erga deploy --remove-domain", () => {
+  test("a dry run changes nothing; the removal deletes the domain on Cloudflare, takes it off the instance and the entry, and tells the server", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    mock.state.zones.push({ id: "zone00000000000000000000000e7ga4", name: "example.org", status: "active" });
+    fresh(fleet, next);
+    const lines: string[] = [];
+    const deploy = (o: Partial<Parameters<typeof deployInstance>[0]>) =>
+      deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: (l) => lines.push(l), ...o });
+    const facts = () => JSON.parse(bindingsOf(mock.state, "erga").ERGA_DEPLOY.text).domains;
+    const entry = () => (entryOf(readConfig(dir), "example.com") as CloudflareEntry).domains;
+    const attached = () => mock.state.domains.map((d) => d.hostname);
+    await deploy({ domains: ["example.org", "blog.example.org"] });
+
+    // The dry run: what it removes, with what Cloudflare has now. No call changes anything.
+    const before = changes(mock).length;
+    const plan = await removalPlan({ dir, host: "example.com", domains: ["Example.org"], net: mock.fetch });
+    expect(plan[0]).toBe("A dry run: nothing changes. bun erga deploy example.com --remove-domain example.org does this:");
+    expect(plan.join("\n")).toContain("1. The custom domain example.org of the Worker erga is deleted on Cloudflare");
+    expect(plan.join("\n")).toContain("4. The server: it unpublishes the document that is published to example.org");
+    expect([changes(mock).length, entry(), attached().includes("example.org")]).toEqual([
+      before,
+      ["example.org", "blog.example.org"],
+      true,
+    ]);
+
+    // Only a custom domain of the instance, and in a deploy of its own.
+    await expect(deploy({ removeDomains: ["nowhere.test"] })).rejects.toThrow(
+      "nowhere.test is not a custom domain of example.com. Its custom domains: example.org, blog.example.org."
+    );
+    await expect(deploy({ host: "next.example.com", removeDomains: ["example.org"] })).rejects.toThrow("Its custom domains: none.");
+    await expect(deploy({ removeDomains: ["example.org"], domains: ["new.example.org"] })).rejects.toThrow("a deploy of its own");
+    expect(changes(mock).length).toBe(before);
+
+    await deploy({ removeDomains: ["Example.org"] });
+    expect(attached()).toEqual(expect.arrayContaining(["example.com", "blog.example.org"]));
+    expect(attached()).not.toContain("example.org");
+    expect([facts(), entry()]).toEqual([["blog.example.org"], ["blog.example.org"]]);
+    expect((await specOn(await sqlOn(mock, fleet)))!.target).toMatchObject({ domains: ["blog.example.org"] });
+    expect((await jobsOn(mock, fleet))[0].command).toBe("bun erga deploy HEAD example.com --remove-domain example.org");
+    // The domain leaves Cloudflare before the Worker's upload; the server's row comes after.
+    const made = changes(mock).slice(before);
+    const gone = made.findIndex((c) => /^DELETE .*\/workers\/domains\//.test(c));
+    expect(gone).toBeGreaterThanOrEqual(0);
+    expect(gone).toBeLessThan(made.findIndex((c) => /^PUT .*\/workers\/scripts\/erga$/.test(c)));
+    const rows = () =>
+      d1(
+        new Cloudflare("mock-machine-token", mock.fetch),
+        `/accounts/${fleet.account}`,
+        databaseOf(mock.state, "erga").uuid,
+        "SELECT domain FROM removed_domains ORDER BY domain",
+        [],
+        "read"
+      );
+    expect(await rows()).toEqual([{ domain: "example.org" }]);
+
+    // The last one, which Cloudflare has no more (a run that stopped, run again): the entry has no list after.
+    mock.state.domains = mock.state.domains.filter((d) => d.hostname != "blog.example.org");
+    await deploy({ removeDomains: ["blog.example.org"] });
+    expect(lines).toContainEqual(
+      expect.stringContaining("Cloudflare has no custom domain blog.example.org: there is nothing to delete there")
+    );
+    expect([facts(), entry()]).toEqual([undefined, undefined]);
+    expect((await specOn(await sqlOn(mock, fleet)))!.target).not.toHaveProperty("domains");
+    expect(await rows()).toEqual([{ domain: "blog.example.org" }, { domain: "example.org" }]);
   }, 60_000);
 });

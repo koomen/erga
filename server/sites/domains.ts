@@ -33,3 +33,20 @@ export async function sitesOf(platform: Platform): Promise<{ domain: string; sta
   const statuses = await Promise.all(domains.map((d) => platform.site(d).status()));
   return domains.map((domain, i) => ({ domain, status: statuses[i] }));
 }
+
+/**
+ * The server's scheduled run, for the custom domains that a deploy removed (`bun erga deploy <host> --remove-domain
+ * <domain>` writes each into `removed_domains`, after its deploy): the document that is published to one is
+ * unpublished, and its snapshot goes. A domain that the server has again keeps its document. Each row goes after.
+ * Only a domain's name: never the Erga domain's key, or its object's name.
+ */
+export async function unpublishRemoved(platform: Platform): Promise<void> {
+  for (const domain of await platform.directory.removedDomains()) {
+    if (domain.includes(".") && !platform.deploy.domains.includes(domain)) {
+      const site = platform.site(domain);
+      const { doc } = await site.status();
+      if (doc) await site.unlink(doc);
+    }
+    await platform.directory.forgetRemovedDomain(domain);
+  }
+}

@@ -40,7 +40,10 @@
 //                                       the release is GitHub's (its registry), built here only when it has none;
 //                                       the commits main and staging are origin's branches, never the clone's own;
 //                                       --domain <domain> (it can repeat): the instance takes a custom domain, which
-//                                       a document can be published to from now on; the instance holds its spec, and
+//                                       a document can be published to from now on; --remove-domain <domain> (it
+//                                       can repeat) takes one away: it deletes the domain on Cloudflare, takes it
+//                                       off the instance and the entry, and the server unpublishes the document
+//                                       there; with --dry-run it only says so; the instance holds its spec, and
 //                                       a deploy stops when the entry differs from it: --write-spec makes the
 //                                       entry's values the instance's spec first
 //   bun erga track <host> [--repo <repo>] [--branch <branch>] [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]
@@ -235,11 +238,20 @@ function release(asked: string | undefined, dry: boolean) {
 /** A host from a host or a URL. */
 const hostOf = async (arg: string) => new URL((await import("./config")).originOf(arg)).host;
 
-async function deploy(args: string[], noTests: boolean, domains: string[], writeSpec: boolean) {
+async function deploy(args: string[], noTests: boolean, domains: string[], writeSpec: boolean, removeDomains: string[], dry: boolean) {
   if (!args.length || args.length > 2)
-    fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--write-spec] [--domain <domain>]...");
+    fail(
+      "Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--write-spec] [--domain <domain>]... [--remove-domain <domain> [--dry-run]]..."
+    );
   const [commit, host] = args.length == 2 ? [args[0], await hostOf(args[1])] : [undefined, await hostOf(args[0])];
   const { ergaDir } = await import("./config");
+  if (dry) {
+    if (!removeDomains.length) fail("--dry-run goes with --remove-domain: it says what the removal does.");
+    const { removalPlan } = await import("./remove-domain");
+    const [first, ...lines] = await removalPlan({ dir: ergaDir(), host, domains: removeDomains }).catch((e: Error) => fail(e.message));
+    say(`NOTE  ${first}`);
+    return lines.forEach(say);
+  }
   const { deployInstance } = await import("./deploy");
   const command = [
     "bun erga deploy",
@@ -247,6 +259,7 @@ async function deploy(args: string[], noTests: boolean, domains: string[], write
     ...(noTests ? ["--no-tests"] : []),
     ...(writeSpec ? ["--write-spec"] : []),
     ...domains.flatMap((d) => ["--domain", d]),
+    ...removeDomains.flatMap((d) => ["--remove-domain", d]),
   ].join(" ");
   const sha = await deployInstance({
     dir: ergaDir(),
@@ -257,6 +270,7 @@ async function deploy(args: string[], noTests: boolean, domains: string[], write
     from: fromOf(),
     writeSpec,
     ...(domains.length ? { domains } : {}),
+    ...(removeDomains.length ? { removeDomains } : {}),
   }).catch((e: Error) => fail(e.message));
   pass(`${host} runs ${sha.slice(0, 12)}, healthy.`);
 }
@@ -414,9 +428,19 @@ export async function main(argv: string[]) {
   const plain = rest.filter(
     (x, i) =>
       !x.startsWith("-") &&
-      !["-m", "--port", "--repo", "--branch", "--upstream", "--upstream-repo", "--domain", "--host", "--profile", "--region"].includes(
-        rest[i - 1] ?? ""
-      )
+      ![
+        "-m",
+        "--port",
+        "--repo",
+        "--branch",
+        "--upstream",
+        "--upstream-repo",
+        "--domain",
+        "--remove-domain",
+        "--host",
+        "--profile",
+        "--region",
+      ].includes(rest[i - 1] ?? "")
   );
   const upstream = { upstream: opt("--upstream"), upstreamRepo: opt("--upstream-repo"), noUpstream: flag("--no-upstream") };
   switch (cmd) {
@@ -480,7 +504,9 @@ export async function main(argv: string[]) {
         plain,
         flag("--no-tests"),
         rest.flatMap((x, i) => (rest[i - 1] == "--domain" ? [x] : [])),
-        flag("--write-spec")
+        flag("--write-spec"),
+        rest.flatMap((x, i) => (rest[i - 1] == "--remove-domain" ? [x] : [])),
+        flag("--dry-run")
       );
     case "rollback":
       return rollback(plain[0], flag("--yes"));

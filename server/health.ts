@@ -13,7 +13,7 @@
 
 import { makeHome } from "./documents/index.ts";
 import type { Platform } from "./platform.ts";
-import { ERGA } from "./sites/index.ts";
+import { ERGA, unpublishRemoved } from "./sites/index.ts";
 
 export interface HealthCheck {
   ok: boolean;
@@ -57,12 +57,14 @@ async function timed(check: () => Promise<string | void>): Promise<HealthCheck> 
 
 /**
  * The server's scheduled run, each minute: its health into the database, for the ops tool to read there; then the
- * default homepage, when the server has none (documents/landing.ts: a server that has it does nothing). A new release
- * runs it within a minute of its deploy: nothing asks the server for either.
+ * default homepage, when the server has none (documents/landing.ts: a server that has it does nothing); then the
+ * documents of the custom domains that a deploy removed are unpublished (sites/domains.ts). A new release runs it
+ * within a minute of its deploy: nothing asks the server for any of them.
  */
 export async function tick(p: Platform, now = Date.now()): Promise<HealthReport> {
   const report = await health(p);
   await p.directory.keepHealth(report, now);
   await makeHome(p);
+  await unpublishRemoved(p);
   return report;
 }

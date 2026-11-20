@@ -213,6 +213,14 @@ export class Directory {
     );
   }
 
+  /** The custom domains that a deploy removed, and whose documents are not unpublished yet (server/sites/domains.ts, unpublishRemoved). */
+  async removedDomains(): Promise<string[]> {
+    return (await this.sql.all<{ domain: string }>("SELECT domain FROM removed_domains")).map((r) => r.domain);
+  }
+  async forgetRemovedDomain(domain: string): Promise<void> {
+    await this.sql.run("DELETE FROM removed_domains WHERE domain = ?1", domain);
+  }
+
   /**
    * The document a reference names: its id, its address (/<owner>/<slug>,
    * an old slug, /d/<id>) or a URL with one of those as its path.

@@ -216,6 +216,11 @@ and `main`. There are no pull requests.
   zones) registers a custom domain: an admin can publish a document to it
   from then on (the document's settings, "Publish to"). The entry gets
   the domains that the deploy sent: add one with `--domain`, never by hand.
+  `--remove-domain <domain>` (it can repeat, in a deploy of its own) takes
+  one away: it deletes the custom domain on Cloudflare, deploys with the
+  domain off the instance's list, and takes it off the entry; the server
+  then unpublishes the document that was published there. With `--dry-run`
+  it says what it removes, with what Cloudflare has now, and changes nothing.
   The instance holds its spec in its own database: what it tracks, where it
   is, its plain settings and the names of its secrets. Its first deploy
   writes the entry's values there. After that, a deploy stops when the entry
