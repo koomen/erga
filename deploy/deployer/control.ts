@@ -104,6 +104,15 @@ export const writeLook = (
   });
 
 /**
+ * Turns auto-deploy on or off, as the app does: setup turns it on when a person chooses deploys from the cloud. It
+ * makes the row when there is none, and touches nothing else of it.
+ */
+export const writeAuto = (sql: Sql, on: boolean): Effect.Effect<void, DeployError | NoTable> =>
+  Effect.asVoid(
+    sql("INSERT INTO deploy_control (id, auto) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET auto = excluded.auto", [on ? 1 : 0])
+  );
+
+/**
  * Takes `ask` off the row: true when it was still there. The deployer calls it after it has the instance's lock
  * (openJob, with startOf(ask)), so an ask waits while another job runs, and is not lost. false: the ask is gone, or
  * another one took its place; the job that was opened for it ends, and the next look reads the row again.

@@ -90,8 +90,9 @@ test("the command says each option it still needs, before it looks at anything",
   ]);
   expect(missing(options("--host", "cloudflare", "--sign-in", "organization").answers)).toEqual([
     "--organization <GitHub organization or email domain>: whose users may sign in.",
+    "--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.",
   ]);
-  expect(missing(options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme").answers)).toEqual([
+  expect(missing(options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--deploys", "cloud").answers)).toEqual([
     "--aud <tag>: the Access application's Audience tag.",
   ]);
   // AWS: without single sign-on the pages need a domain of their own.
@@ -104,7 +105,7 @@ test("the command says each option it still needs, before it looks at anything",
 });
 
 test("the main path: the login, the one account that holds the domain, the GitHub App, the build, the admin", () => {
-  const a = options("--host", "cloudflare", "--sign-in", "invite").answers;
+  const a = options("--host", "cloudflare", "--sign-in", "invite", "--deploys", "local").answers;
   // Not signed in: the command runs the login, and the user finishes it in the browser.
   expect(run(a, { login: { ok: false, why: "Not logged in to Cloudflare." } }).state).toEqual({
     at: "login",
@@ -125,8 +126,41 @@ test("the main path: the login, the one account that holds the domain, the GitHu
     "• a Worker (erga-example-com), a D1 database, an R2 bucket and a DNS record",
     "• a GitHub App, for sign-in (you click one button)",
     "• it tracks main of github.com/koomen/erga: a deploy gives it that branch's newest commit",
+    `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${HOST}`,
     "It costs $5 a month: the Workers Paid plan.",
   ]);
+});
+
+test("--deploys: cloud opens the deployer's step on an instance that runs, the user's own; local removes a deployer", () => {
+  const cloud = options("--host", "cloudflare", "--sign-in", "invite", "--deploys", "cloud").answers;
+  const local = { ...cloud, deploys: "local" as const };
+  const runs = { ...CF, app: true, ...LIVE };
+  // Not before the instance runs: the deployer binds its database.
+  expect(run(cloud, CF, { ...CF, app: true }).state).toEqual({ at: "build" });
+  expect(run(cloud, CF, runs).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(cloud, CF, { ...runs, deployer: true }).state).toEqual({ at: "admin" });
+  expect(run(cloud, CF, { ...runs, deployer: true, admin: true }).state).toEqual({ at: "done" });
+  // An instance that is done: a run again with the other answer changes who deploys.
+  expect(run(cloud, CF, { ...runs, admin: true }).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(local, CF, { ...runs, admin: true, deployer: true }).state).toEqual({ at: "deployer", do: "remove" });
+  expect(run(local, CF, { ...runs, admin: true }).state).toEqual({ at: "done" });
+  // The token is the user's step: with --remote it needs their terminal. The removal is the command's own.
+  const remote = { ...cloud, remote: true };
+  expect(run(remote, CF, runs).state).toEqual({ at: "terminal" });
+  expect(run(remote, CF, { ...runs, terminal: true }).state).toEqual({ at: "deployer", do: "install" });
+  expect(run({ ...local, remote: true }, CF, { ...runs, admin: true, deployer: true }).state).toEqual({ at: "deployer", do: "remove" });
+  // The plan says who deploys, and where the user pastes the token.
+  const f = run(cloud, CF, CF).answers;
+  expect(planText(f, seen(CF))[4]).toBe(
+    "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-example-com, which you make on Cloudflare and paste on a page that opens"
+  );
+  expect(planText({ ...f, remote: true }, seen(CF))[4]).toContain("and paste in your terminal");
+  // On AWS the deployer's install is not in setup yet: no question there, and cloud is refused before anything is made.
+  expect(missing(options("--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com").answers)).toEqual([]);
+  expect(missing(options("--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com", "--deploys", "cloud").answers)).toEqual([
+    "--deploys cloud is not there for AWS in this version: leave it out, and deploy with bun erga deploy.",
+  ]);
+  expect(options("--deploys", "sometimes").problems).toEqual(["--deploys: deploys is cloud or local."]);
 });
 
 test("the command stops where only the user can go on: two accounts, no domain, an address in use", () => {
@@ -214,7 +248,7 @@ test("AWS: the profile, the region from it, the stack as the plan, and the organ
   expect(options("--email-claim", "preferred_username corp|").problems).toEqual([
     '--email-claim: "preferred_username corp|" isn\'t <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".',
   ]);
-  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), emailClaim: "upn" })).toEqual([
+  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), emailClaim: "upn", deploys: "local" })).toEqual([
     "--email-claim is only for --sign-in sso on AWS: leave it out.",
   ]);
   // How long a sign-in at the gate lasts: the deploy's to say, from 1 to 90 days.
@@ -222,7 +256,7 @@ test("AWS: the profile, the region from it, the stack as the plan, and the organ
   for (const bad of ["0", "91", "1.5", "week"])
     expect(options("--sign-in-days", bad).problems).toEqual([`--sign-in-days: "${bad}" isn't a whole number of days from 1 to 90.`]);
   expect(planText({ ...r.answers, signInDays: "7" }, seen(AWS)).join("\n")).toContain("; a sign-in lasts 7 days");
-  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), signInDays: "7" })).toEqual([
+  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), signInDays: "7", deploys: "local" })).toEqual([
     "--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page.",
   ]);
   // The client's secret is the page's alone: the app step.

@@ -18,6 +18,9 @@
 //                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
 //       --sign-in-days <days>            --sign-in sso on AWS: how long a sign-in lasts, from 1 to 90 (default: 30)
 //       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
+//       --deploys cloud|local  Cloudflare: who deploys each new release. cloud: a deployer in the user's account, by
+//                              itself; the user makes its token (for the instance's Worker only) and pastes it on a
+//                              page that opens. local: the user, with bun erga deploy; no credential in the cloud.
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
 //       --no-tests             the build runs no tests
 //       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
@@ -37,10 +40,10 @@ import { Claim } from "../../server/identity/claim-link";
 import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "../cli/config";
 import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
-import { askSecret, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
+import { askSecret, deployerToken, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { cloudflare, type Connection, observe } from "./facts";
 import { adminOn, firstDeploy, secretsFor } from "./first";
-import { checksOf, missing, planText, type Seen, type State, step } from "./flow";
+import { checksOf, deploysText, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
 
@@ -64,6 +67,7 @@ const OPTIONS: Record<string, TextAnswer> = {
   "--sign-in-days": "signInDays",
   "--pages": "pages",
   "--egress": "egress",
+  "--deploys": "deploys",
 };
 const FLAGS = ["--dry-run", "--no-tests", "--yes", "--remote"];
 
@@ -105,6 +109,36 @@ async function oidcInTerminal(a: Answers): Promise<string> {
     if (!secret) continue;
     await putOidcSecret(a, secret);
     return "";
+  }
+}
+
+/**
+ * Cloud deploys on Cloudflare: the user gives the deployer's token (on a page; --remote: in their terminal), the
+ * command checks it and installs the deployer with it, and turns auto-deploy on. The result: "" (done), a failure, or
+ * null (the wait ended). The token goes to Cloudflare only: this command prints none of it.
+ */
+async function installWithToken(a: Answers): Promise<string | null> {
+  const c = await connect();
+  const { installWithToken: install } = await import("../pipeline/deployer");
+  const target = { account: a.account, worker: namesAt(a.host).worker };
+  const take = async (token: string) => {
+    const unconfirmed = await install(c.net, c.cf, target, token);
+    for (const u of unconfirmed) say(`NOTE  Erga could not confirm about the token: ${u}`);
+    return unconfirmed;
+  };
+  if (!a.remote) return deployerToken({ ...target, take }, WAIT_MS);
+  for (;;) {
+    const token = askSecret(
+      `A token for the deployer: on Cloudflare (Manage account, Account API tokens, Create Token), with one permission: Workers, for the Worker ${target.worker} only, with the role Editor. Paste it here (it does not show):`
+    );
+    if (token == null) return "The prompt in the terminal ended.";
+    if (!token) continue;
+    const refused = await take(token).then(
+      () => "",
+      (e: Error) => e.message
+    );
+    if (!refused) return "";
+    tellUser(`Erga does not take this token:\n${refused}`);
   }
 }
 
@@ -236,6 +270,15 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       );
       return "dry";
     }
+    if (o.dryRun && state.at == "deployer") {
+      for (const c of checksOf(a, seen)) pass(c);
+      say(
+        state.do == "install"
+          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a)}`
+          : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${namesAt(a.host).worker}-deployer, with the token that it holds):\nPLAN  ${deploysText(a)}`
+      );
+      return "dry";
+    }
     if (o.dryRun && (state.at == "app" || state.at == "build" || state.at == "admin" || state.at == "terminal")) {
       let resources: string[] = [];
       if (a.where == "aws") {
@@ -297,6 +340,25 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         );
         await build(a, seen, o);
         break;
+      case "deployer": {
+        if (again) return fail(`${a.host}'s deployer is not ${state.do == "install" ? "there" : "gone"} yet.`, o.again);
+        if (state.do == "remove") {
+          const c = await connect();
+          await (await import("../pipeline/deployer")).removeDeployer(c.cf, { account: a.account, worker: namesAt(a.host).worker });
+          pass(`The deployer of ${a.host} is removed, with its token: no credential stays in the cloud.`);
+          break;
+        }
+        say(
+          a.remote
+            ? "WAIT  The user makes a token for the deployer on Cloudflare, and pastes it in their terminal. It goes to Cloudflare, never to you."
+            : "WAIT  A page opens. The user makes a token for the deployer on Cloudflare, and pastes it there. It goes to Cloudflare, never to you."
+        );
+        const ended = await installWithToken(a);
+        if (ended == null) return "wait";
+        if (ended) return fail(ended, o.again);
+        pass(`The deployer of ${a.host} is installed: it deploys each new release of ${a.branch} by itself (auto-deploy is on).`);
+        break;
+      }
       case "admin": {
         if (again) return fail(`${a.host} has no admin yet.`, o.again);
         const who = await admin(a, o);
@@ -330,7 +392,7 @@ async function run(a: Answers, o: Run) {
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run."
     );
   say(
-    `DONE  Tell the user: Erga is live at https://${a.host}, and they are the admin. It tracks ${a.branch} of ${a.repo}: bun erga deploy ${a.host} gives it that branch's newest commit. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
+    `DONE  Tell the user: Erga is live at https://${a.host}, and they are the admin. It tracks ${a.branch} of ${a.repo}: ${a.deploys == "cloud" ? "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's ops page)" : `bun erga deploy ${a.host} gives it that branch's newest commit`}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
   );
   // A repository of the user's own (a fork): Erga's main is the upstream to compare it with. Setup sets none itself.
   if (repoName(a.repo) != DEFAULT_REPO)

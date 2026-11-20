@@ -1,7 +1,11 @@
 // The setup of a new instance, as one state machine (`bun erga setup <host> --host ... --sign-in ...`). Pure: no
 // network, no files.
 //
-//   login > (stop) > app > build > (update) > admin > done
+//   login > (stop) > app > build > (update) > (deployer) > admin > done
+//
+// deployer: the answer --deploys and what the account has differ. cloud with no deployer: the user makes the
+// deployer's token and gives it to the command, which installs the deployer. local with a deployer: the command
+// removes it. This step is open on an instance that is done too: a run again with the other answer changes it.
 //
 // With --remote (answers.remote) the user is at another computer: their steps (login, app, admin) go through their terminal,
 // never a browser on this machine. A command with no terminal (an agent's shell) stops there: "terminal".
@@ -43,6 +47,8 @@ export interface Seen {
   vars: Record<string, string> | null;
   /** The GitHub App's client id that setup holds for the host, or "". */
   github: string;
+  /** Cloudflare: the account has the instance's deployer (the Worker that deploys each new release by itself). */
+  deployer: boolean;
   /** The user's terminal (/dev/tty) opens for this command: an agent's shell has none. */
   terminal: boolean;
 }
@@ -62,6 +68,7 @@ export const nothingSeen: Seen = {
   admin: false,
   vars: null,
   github: "",
+  deployer: false,
   terminal: false,
 };
 
@@ -78,6 +85,11 @@ export type State =
    * writes the entry and deploys again. An instance with an admin is what its entry says: `bun erga deploy` changes it.
    */
   | { at: "update"; vars: string[] }
+  /**
+   * The instance runs, and who deploys it is not what --deploys says. install: the user's step, the deployer's token.
+   * remove: the command removes the deployer.
+   */
+  | { at: "deployer"; do: "install" | "remove" }
   /** The user signs in to the new server with a one-time link: they become its admin. */
   | { at: "admin" }
   /** --remote: the next step is the user's, in their terminal, and this command has none. The user runs it in theirs. */
@@ -100,6 +112,11 @@ export function missing(a: Answers): string[] {
   if (a.signInDays && !(sso(a) && aws))
     need.push("--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
+  if (a.where == "cloudflare" && !a.deploys)
+    need.push("--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.");
+  // The AWS deployer's install joins here (deploy/aws/, the Lambda): until then an instance on AWS deploys from a machine.
+  if (aws && a.deploys == "cloud")
+    need.push("--deploys cloud is not there for AWS in this version: leave it out, and deploy with bun erga deploy.");
   return need;
 }
 
@@ -124,7 +141,14 @@ export function stateOf(a: Answers, s: Seen): State {
   if (aws && !a.profile)
     return { at: "stop", why: `Several AWS profiles: ${s.choices.map((c) => c.id).join(", ")}. Add --profile with one of them.` };
   if (!s.login?.ok) return { at: "login", ...(s.login ? { why: s.login.why } : {}) };
-  if (s.admin) return { at: "done" };
+  // Who deploys, against the answer: only for an instance that runs (the deployer binds its database).
+  const deployer: State | null =
+    a.deploys == "cloud" && !s.deployer
+      ? { at: "deployer", do: "install" }
+      : a.deploys == "local" && s.deployer
+        ? { at: "deployer", do: "remove" }
+        : null;
+  if (s.admin) return deployer ?? { at: "done" };
   if (!aws && !s.choices.some((c) => c.id == a.account))
     return {
       at: "stop",
@@ -148,7 +172,7 @@ export function stateOf(a: Answers, s: Seen): State {
   if (!(s.live?.healthy && s.live.version && s.live.signIn == "ok")) return { at: "build" };
   const changed = changedVars(a, s);
   if (changed.length) return { at: "update", vars: changed };
-  return { at: "admin" };
+  return deployer ?? { at: "admin" };
 }
 
 /**
@@ -167,7 +191,7 @@ export function step(a: Answers, s: Seen): { answers: Answers; state: State; loo
   const fill = filled(a, s);
   const answers = { ...a, ...fill };
   const state = stateOf(answers, s);
-  const theirs = state.at == "login" || state.at == "app" || state.at == "admin";
+  const theirs = state.at == "login" || state.at == "app" || state.at == "admin" || (state.at == "deployer" && state.do == "install");
   return {
     answers,
     state: theirs && answers.remote && !s.terminal ? { at: "terminal" } : state,
@@ -190,6 +214,12 @@ export function checksOf(a: Answers, s: Seen): string[] {
     `${a.host} is free`,
   ];
 }
+
+/** Who deploys each new release, as the plan says it. */
+export const deploysText = (a: Answers) =>
+  a.deploys == "cloud"
+    ? `• a deployer (the Worker ${namesOf(a.host).worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${namesOf(a.host).worker}, which you make on Cloudflare and paste ${a.remote ? "in your terminal" : "on a page that opens"}`
+    : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
 /** The plan, as the agent says it before the user's yes. */
 export function planText(a: Answers, s: Seen): string[] {
@@ -221,6 +251,7 @@ export function planText(a: Answers, s: Seen): string[] {
     `• a Worker (${n.worker}), a D1 database, an R2 bucket and a DNS record`,
     signIn,
     tracks,
+    deploysText(a),
     "It costs $5 a month: the Workers Paid plan.",
   ];
 }

@@ -8,6 +8,7 @@ import { mocked, netOf } from "../cli/deploy";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { d1Api, healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
 import { machineCredential } from "../local-credential";
+import { DEPLOYER_TAG, deployerName } from "../pipeline/deployer";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, varsOf, zoneOf } from "./plan";
 import { adminOn } from "./first";
@@ -148,6 +149,7 @@ export async function observe(a: Answers, dir = DIR): Promise<Seen> {
     seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
     seen.live = await liveOf(cf, account.id, n.worker, a, githubIdOf(a.host, dir) || undefined);
     seen.admin = !!(await adminOn(cf, acc, n.worker).catch(() => null));
+    seen.deployer = !!scripts.find((x) => x.id == deployerName(n.worker))?.tags?.includes(DEPLOYER_TAG);
   }
   seen.app = !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
   return seen;

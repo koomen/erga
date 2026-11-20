@@ -10,8 +10,10 @@
 // Trap: a Worker of that name that this code did not make is never replaced: the account may hold other things.
 
 import { join } from "node:path";
-import { boundDatabase, setSchedule } from "../deployer/cloudflare";
+import * as Effect from "effect/Effect";
+import { boundDatabase, d1Sql, setSchedule } from "../deployer/cloudflare";
 import { Cloudflare, DeployError, type Fetch } from "../deployer/cloudflare-api";
+import { writeAuto } from "../deployer/control";
 import type { CloudflareTarget } from "../deployer/spec";
 import { ROOT } from "../root";
 
@@ -88,6 +90,23 @@ export async function installDeployer(
   return name;
 }
 
+/** Whether the account has the instance's deployer, as an install of Erga's made it. */
+export async function hasDeployer(cf: Cloudflare, target: Pick<CloudflareTarget, "account" | "worker">): Promise<boolean> {
+  const scripts =
+    (await cf.call<{ id: string; tags?: string[] }[]>("GET", `/accounts/${target.account}/workers/scripts`, "list your Workers")) ?? [];
+  return !!scripts.find((s) => s.id == deployerName(target.worker))?.tags?.includes(DEPLOYER_TAG);
+}
+
+/**
+ * Removes the instance's deployer, when Erga made it: its Worker, and with it the token that it held. The instance
+ * then deploys from a machine only. The result: whether one was there.
+ */
+export async function removeDeployer(cf: Cloudflare, target: Pick<CloudflareTarget, "account" | "worker">): Promise<boolean> {
+  if (!(await hasDeployer(cf, target))) return false;
+  await cf.call("DELETE", `/accounts/${target.account}/workers/scripts/${deployerName(target.worker)}?force=true`, "remove the deployer");
+  return true;
+}
+
 // ------------------------------------------------------------------ the deployer's token
 
 /** What Erga found out about a token that a person made for the deployer. */
@@ -153,4 +172,26 @@ export async function checkToken(
     "That the token has no other permission than those tried here (D1, another Worker): Cloudflare shows a token's permissions on its own page only."
   );
   return { refused, unconfirmed };
+}
+
+/**
+ * Cloud deploys for an instance, with the token that a person made for its deployer: the token is checked, the
+ * deployer is installed with it, and auto-deploy is on. A token that the check refuses changes nothing: the error says
+ * each reason. The result: what the check could not confirm, for the person to read.
+ */
+export async function installWithToken(
+  net: Fetch,
+  own: Cloudflare,
+  target: Pick<CloudflareTarget, "account" | "worker">,
+  token: string
+): Promise<string[]> {
+  const checked = await checkToken(net, own, target, token);
+  if (checked.refused.length) throw new DeployError({ message: checked.refused.join("\n") });
+  await installDeployer(own, target, token);
+  await Effect.runPromise(writeAuto(d1Sql(own, target), true)).catch((e) => {
+    throw new DeployError({
+      message: `The deployer is installed, but auto-deploy is not on: ${e._tag == "NoTable" ? "the instance's database has no table for it yet (deploy the instance again, then set up again)" : e.message}`,
+    });
+  });
+  return checked.unconfirmed;
 }

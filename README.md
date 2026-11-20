@@ -50,11 +50,17 @@ git. Give your coding agent this prompt:
         the same sign-in read `x-amzn-oidc-data`. Never guess.
    5. AWS without single sign-on: a second Route 53 domain, not the
       address's, for the documents' pages.
+   6. Cloudflare: who deploys each new release of Erga? 1. A deployer in
+      your own Cloudflare account, by itself (`--deploys cloud`): you make
+      one token for it on Cloudflare, for the one Worker, and paste it on a
+      page that opens. 2. You, from this clone, with `bun erga deploy`
+      (`--deploys local`): no credential stays in the cloud.
 3. Run this with the answers. It makes nothing and prints the plan:
 
        bun erga setup <address> --host cloudflare|aws --sign-in invite|organization|sso \
          [--profile <name>] [--organization <org or domain>] \
-         [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] [--remote] --dry-run
+         [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] \
+         [--deploys cloud|local] [--remote] --dry-run
 
    Show the user the plan. On their yes, run it again without `--dry-run`,
    in the background: the first build takes 10 to 20 minutes, a redeploy
@@ -78,9 +84,11 @@ name Erga's `main` as its upstream: `bun erga track <address> --upstream
 main --upstream-repo github.com/koomen/erga`. `bun erga status` then
 says how many of Erga's commits your fork lacks. Take them with a merge
 commit or a rebase, not as one squashed commit: git can then tell which
-ones you have. Later deploys run from your clone:
+ones you have. With `--deploys local`, later deploys run from your clone:
 `git pull`, then `bun erga deploy <address>`, which gives the server that
-branch's newest commit.
+branch's newest commit. With `--deploys cloud`, the deployer in your
+account deploys each new release of that branch by itself. Run setup
+again with the other answer to change who deploys.
 
 ## Develop
 

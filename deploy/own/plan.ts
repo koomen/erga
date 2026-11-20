@@ -10,6 +10,8 @@ import { SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 export type Where = "cloudflare" | "aws";
 /** Who may sign in: users the admin invites, they and an organization's users, or everyone the organization's single sign-on lets pass. */
 export type SignIn = "invite" | "organization" | "sso";
+/** Who deploys each new release: a deployer in the user's own account, or the user from a machine. */
+export type Deploys = "cloud" | "local";
 
 /** The user's answers. "" is "not answered yet". No secret is ever in here. */
 export interface Answers {
@@ -40,6 +42,11 @@ export interface Answers {
   signInDays: string;
   /** Documents' pages: "shared", or a domain. "": the default (pagesOf). */
   pages: string;
+  /**
+   * --deploys: who deploys each new release. cloud: a deployer in the user's own account, by itself (it holds a token
+   * for the instance's Worker only). local: the user, with `bun erga deploy`: no credential stays in the cloud.
+   */
+  deploys: Deploys | "";
   /** --remote (or $SSH_CONNECTION): the user is at another computer. Their steps go through their terminal, never a browser here. */
   remote: boolean;
 }
@@ -65,6 +72,7 @@ export const noAnswers = (host: string): Answers => ({
   emailClaim: "",
   signInDays: "",
   pages: "",
+  deploys: "",
   remote: false,
 });
 
@@ -108,6 +116,8 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
       );
     case "signIn":
       return is(low == "invite" || low == "organization" || low == "sso", low, "signIn is invite, organization or sso.");
+    case "deploys":
+      return is(low == "cloud" || low == "local", low, "deploys is cloud or local.");
     case "organization":
       return is(
         /^[a-z0-9][a-z0-9.-]{0,99}$/.test(low),

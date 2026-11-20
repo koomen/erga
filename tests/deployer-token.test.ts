@@ -3,9 +3,12 @@
 // reading of Cloudflare's scope, not a record of its answers: a real token is tried in the deploy plan's task 12.
 
 import { beforeAll, describe, expect, test } from "bun:test";
+import * as Effect from "effect/Effect";
+import { d1Sql } from "../deploy/deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deploy/deployer/cloudflare-api";
+import { readControl } from "../deploy/deployer/control";
 import { deployerToken } from "../deploy/own/browser";
-import { checkToken, installDeployer } from "../deploy/pipeline/deployer";
+import { checkToken, hasDeployer, installDeployer, installWithToken, removeDeployer } from "../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { bootstrap, prepareRelease } from "./helpers/deploys.ts";
 
@@ -84,6 +87,32 @@ describe("the check of the deployer's token", () => {
       "That the token is for the Worker erga-next only: the account has no other Worker to try it on.",
       ...NEVER_SHOWN,
     ]);
+  });
+});
+
+describe("cloud deploys, from a person's token", () => {
+  const sql = (own: Cloudflare) => d1Sql(own, TARGET);
+  test("a good token installs the deployer and turns auto-deploy on; a refused one changes nothing", async () => {
+    const { mock, own } = await account();
+    const from = mock.state.calls.length;
+    await expect(installWithToken(mock.fetch, own, TARGET, "mock-deployer-token")).rejects.toThrow(
+      /^The token can read the account's D1 databases\..*\nThe token can read another Worker \(/
+    );
+    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
+    expect(mock.state.calls.slice(from).every((c) => c.startsWith("GET "))).toBe(true);
+    expect(await Effect.runPromise(readControl(sql(own)))).toBeNull();
+
+    expect(await installWithToken(mock.fetch, own, TARGET, "mock-only-erga-next")).toEqual(NEVER_SHOWN);
+    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "mock-only-erga-next" });
+    expect(await hasDeployer(own, TARGET)).toBe(true);
+    expect(await Effect.runPromise(readControl(sql(own)))).toMatchObject({ auto: true, ask: null });
+
+    // Local deploys again: the deployer goes, with its token.
+    expect(await removeDeployer(own, TARGET)).toBe(true);
+    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
+    expect(await hasDeployer(own, TARGET)).toBe(false);
+    expect(await removeDeployer(own, TARGET)).toBe(false);
+    expect(mock.state.scripts["erga-next"]).toBeDefined();
   });
 });
 
