@@ -28,7 +28,7 @@ import { sleep } from "../../shared/time";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
-import { panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
+import { pageDoc, panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
 import { mountTurn, type TurnFacts } from "./turn-summary";
 
 interface AgentState {
@@ -42,7 +42,7 @@ interface AgentState {
 
 const $ = (id: string) => document.getElementById(id)!;
 /** The document the page has open, if any: its thread is the panel's, and its document tools' own when the agent names none. */
-const DOC = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content ?? null;
+const DOC = pageDoc();
 /** A path of the agent's API, for this page's thread. */
 const inThread = (path: string) => (DOC ? `${path}${path.includes("?") ? "&" : "?"}doc=${encodeURIComponent(DOC)}` : path);
 /** A request to the agent's API about this page's thread, as whoever this tab is. */

@@ -352,7 +352,13 @@ journey("a document's page loads one time, for a reader and in the editor", () =
       what: "the agent closed by its close button",
       set: async () => {
         await page.locator("#agent-close").click();
-        await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("erga:settings:v1") || "{}").agent)).toBe(false);
+        await expect
+          .poll(() =>
+            page.evaluate(() =>
+              localStorage.getItem(`erga:agent:v1:${document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content}`)
+            )
+          )
+          .toBe("closed");
       },
       want: { l: 0, r: WIDTH },
       agent: false,
@@ -397,6 +403,8 @@ journey("a document's page loads one time, for a reader and in the editor", () =
     // (A page of text alone: the music page draws its widget after its first frame.)
     const light = (await s.fixture("top/light")).address;
     await page.evaluate((doc) => localStorage.setItem(`erga:zoom:v1:${doc}`, "1.5"), await idOf(light));
+    // (The agent closed there: the close button, above, closed it on the music page only.)
+    await keep({ "erga:settings:v1": { agent: false } })();
     const want = { l: -WIDTH / 4, r: (WIDTH * 5) / 4 };
     const r = await open("load", want, up, light);
     // (Zoomed in the editor, the page keeps its width and is magnified, in the middle.)

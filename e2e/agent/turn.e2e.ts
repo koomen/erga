@@ -397,6 +397,19 @@ journey("a turn of the agent in the editor", () => {
   });
 });
 
+/** Open or closed, as each frame of a page showed the panel from the first one with it: each change, in order. */
+const PANEL_FRAMES = `(() => {
+  if (window.top != window) return;
+  const seen = (window.__panelFrames = []);
+  const look = () => {
+    const a = document.getElementById("agent");
+    const open = document.body?.classList.contains("agent-open");
+    if (a && !a.hidden && seen[seen.length - 1] !== open) seen.push(open);
+    requestAnimationFrame(look);
+  };
+  requestAnimationFrame(look);
+})()`;
+
 /** At each page's first frame that shows the panel open: what its log shows, before the agent's own script loads the conversation. */
 const FIRST_PAINT = `(() => {
   if (window.top != window) return;
@@ -573,6 +586,48 @@ journey("the agent on the documents' list", () => {
     expect(await shown()).toEqual([inA, "Answer in A.", slow, "Late answer in A."]);
     await open(docs());
     expect(await page.locator("#agent-log > *").count()).toBe(listed);
+  });
+
+  // Was: one value for every page ("whether the agent is expanded or collapsed should be remembered on a document by
+  // document basis and also for the whole of the UI that is not a document e.g. the admin pages").
+  test("the panel is open or closed as the person left it on each document, and as one on the pages outside a document, from the first frame", async () => {
+    const [a, b] = [await s.fixture("empty"), await s.fixture("empty")];
+    /** The page is open: the panel as each frame showed it since its first (one value: it never changed in view). */
+    const at = async (address: string) => {
+      await page.goto(address);
+      await until(() => page.evaluate(() => (window as any).__panelFrames.length > 0), 5000, "the page shows the panel");
+      await settle(page);
+      return page.evaluate(() => (window as any).__panelFrames as boolean[]);
+    };
+    const toggle = async (key: string, to: boolean) => {
+      await page.keyboard.press(key);
+      await until(
+        () => page.evaluate((to) => document.body.classList.contains("agent-open") == to, to),
+        5000,
+        `${key} ${to ? "opens" : "closes"} the panel`
+      );
+    };
+    await page.addInitScript(PANEL_FRAMES);
+
+    // Closed on the list. A document that the person never opened or closed it on takes that.
+    await toggle("ControlOrMeta+j", false);
+    // Opened on document A; opened on document B, and closed there with Esc, from its box.
+    expect(await at(`${a.address}?user=${LISA}`), "a new document, as the list").toEqual([false]);
+    await toggle("ControlOrMeta+j", true);
+    expect(await at(`${b.address}?user=${LISA}`)).toEqual([false]);
+    await toggle("ControlOrMeta+j", true);
+    await until(() => page.evaluate(() => document.activeElement?.id == "agent-input"), 5000, "the agent's box has the keys");
+    await toggle("Escape", false);
+    // Opened on an admin page (the admin's: this browser keeps it, not the person).
+    expect(await at(`${s.root}/admin/changes`), "an admin page, as the list").toEqual([false]);
+    await toggle("ControlOrMeta+j", true);
+
+    // Each as it was left: A open, B closed, another admin page and the list open.
+    expect(await at(`${a.address}?user=${LISA}`), "document A").toEqual([true]);
+    expect(await at(`${b.address}?user=${LISA}`), "document B").toEqual([false]);
+    expect(await at(`${s.root}/admin/ops`), "another admin page").toEqual([true]);
+    expect(await at(docs()), "the list").toEqual([true]);
+    await agentOn(page);
   });
 
   // The bug: the panel loaded its conversation again, in view, at each page ("the agent shouldn't refresh its contents

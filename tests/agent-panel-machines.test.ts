@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 import { sendStep, type SendEvent, type SendState } from "../client/agent/sends";
 import { canSend, type SendFacts } from "../client/agent/send-gate";
-import { panelStep, type Drawn } from "../client/common/agent-panel";
+import { panelOpen, panelStep, savePanel, type Drawn } from "../client/common/agent-panel";
 
 const run = (events: SendEvent[], from: SendState = "pending") =>
   events.reduce<{ state: SendState; effects: string[] }>(
@@ -55,4 +55,33 @@ test("a page that goes before it loaded the conversation leaves the tab's copy a
   const loaded = panelStep("as-left", { t: "loaded" });
   expect(loaded).toEqual({ state: "loaded", save: null });
   expect(panelStep(loaded.state, { t: "leave", drawn })).toEqual({ state: "loaded", save: drawn });
+});
+
+test("open or closed is kept for each document, and one time for every page outside a document, which a new document takes", () => {
+  const kept = new Map<string, string>(),
+    g = globalThis as { localStorage?: unknown },
+    was = g.localStorage;
+  g.localStorage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) };
+  try {
+    const shown = () => [panelOpen("a"), panelOpen("b"), panelOpen(null)];
+    expect(shown(), "open unless closed").toEqual([true, true, true]);
+    savePanel({ open: false }, "b");
+    expect(shown(), "closed on b only").toEqual([true, false, true]);
+    savePanel({ open: false });
+    expect(shown(), "closed outside a document: a, never opened or closed, follows").toEqual([false, false, false]);
+    savePanel({ open: true }, "a");
+    expect(shown(), "opened on a only").toEqual([true, false, false]);
+    savePanel({ open: true });
+    expect(shown(), "opened outside a document: b stays closed").toEqual([true, false, true]);
+    savePanel({ open: false });
+    expect(shown(), "and a stays open").toEqual([true, false, false]);
+    g.localStorage = {
+      getItem: () => {
+        throw new Error("denied");
+      },
+    };
+    expect(shown(), "with no storage, open").toEqual([true, true, true]);
+  } finally {
+    g.localStorage = was;
+  }
 });

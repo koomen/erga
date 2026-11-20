@@ -33,6 +33,7 @@ without; the whole run took 37 s and 36 s. V2's budget is 11 since its step for 
 loads a page again 2 s after the last time at the earliest, and the step waits for that (8.4 s at most in 13 runs).
 S3's budget is 9 since the save mark: its first step types for longer than the 2 s that an edit has to reach the server
 (libs/text/ui/unsaved.ts, GRACE_MS), 1 s more than before (7.8 s alone in 3 runs).
+G1's budget is 16 since its step for the panel, open or closed on each document: it loads seven pages (1.1 s alone).
 A4's budget is 8 since its Ops step: the page asks the server again each second while a job runs or an ask waits, and
 the step waits for that one time (1.4 s of 6.4 s alone).
 
@@ -60,7 +61,7 @@ The rules:
 | Y1 | `e2e/sync/two-people.e2e.ts` | Two people lose or double text; they end with different documents; undo takes the other person's text. | 10 |
 | Y2 | `e2e/sync/restart.e2e.ts` | A deploy or a crash loses edits, doubles the document, or loses pages. | 10 |
 | Y3 | `e2e/sync/bad-input.e2e.ts` | Bad bytes, a storm of sockets or a huge paste stops the server or reaches other files. | 4 |
-| G1 | `e2e/agent/turn.e2e.ts` | The agent's turn is not shown, cannot be undone, or acts without the person's Approve. A document's panel shows another page's thread. | 15 |
+| G1 | `e2e/agent/turn.e2e.ts` | The agent's turn is not shown, cannot be undone, or acts without the person's Approve. A document's panel shows another page's thread, or opens or closes because of another page. | 16 |
 | G2 | `e2e/agent/tools.e2e.ts` | An agent tool edits the wrong file, shows a wrong picture, or works on a document it may not open. | 21 |
 | V1 | `e2e/viewer/reader.e2e.ts` | A reader gets a blank or wrong page, links leave the viewer, or the bars hide the text. | 9 |
 | V2 | `e2e/viewer/live.e2e.ts` | A reader sees an old page; the page's scripts run twice; a page that loads again shows its start, or loses its view. | 11 |

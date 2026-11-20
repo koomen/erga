@@ -181,8 +181,9 @@ test("the editor's early layout puts on what mountLayout will (the document does
     { order: ["doc", "picker", "agent"], agentWidth: 450 },
     { order: ["x"], agentWidth: "wide" },
   ];
+  // (The agent: as kept for the pages outside a document, and for this document, "doc"; its own counts first.)
   for (const kept of layouts)
-    for (const agent of [true, false, undefined])
+    for (const [agent, own] of [[true], [false], [undefined], [false, "open"], [true, "closed"]] as const)
       for (const width of [1300, 1000, 800, 700, 390])
         for (const safe of [0, 47]) {
           const vars: Record<string, string> = {},
@@ -190,6 +191,7 @@ test("the editor's early layout puts on what mountLayout will (the document does
           const stored: Record<string, string> = {
             [KEY]: typeof kept == "string" ? "{" : JSON.stringify(kept),
             "erga:settings:v1": JSON.stringify(agent == null ? {} : { agent }),
+            ...(own ? { "erga:agent:v1:doc": own } : {}),
           };
     const storage = { getItem: (k: string) => stored[k] ?? null };
     const el = () => ({ style: { cssText: "" }, remove() {} });
@@ -202,9 +204,9 @@ test("the editor's early layout puts on what mountLayout will (the document does
     const computed = () => ({ paddingLeft: `${safe}px`, paddingRight: `${safe}px` });
     new Function("document", "localStorage", "getComputedStyle", "innerWidth", LAYOUT_EARLY)(document, storage, computed, width);
     // (On a phone the agent starts closed: main.ts, openAgentOnEntry.)
-    const open = agent !== false && width >= 760,
+    const open = (own ? own == "open" : agent !== false) && width >= 760,
       want = layoutVars(load(storage), { width, safeL: safe, safeR: safe }, { agent: open });
-    const what = `${JSON.stringify(kept)}, agent ${agent}, ${width}px, notch ${safe}px`;
+    const what = `${JSON.stringify(kept)}, agent ${agent}, the document's ${own}, ${width}px, notch ${safe}px`;
     expect(vars, what).toEqual(Object.fromEntries(Object.entries(want).map(([k, n]) => [k, `${Math.round(n)}px`])));
     expect(classes.has("agent-open"), what).toBe(open);
     expect(classes.has("agent-right"), what).toBe(load(storage).order.indexOf("agent") > load(storage).order.indexOf("doc"));

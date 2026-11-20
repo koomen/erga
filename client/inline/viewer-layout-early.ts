@@ -1,9 +1,10 @@
 // The editor's layout as this browser keeps it, put on the page as its body starts (opened with ?edit,
 // viewer-editing-body.ts), so the first frame already has the document where it stays: the agent open or not
-// (client/shell/main.ts, settings.agent), its side and width (client/agent/layout.ts: KEY, geometry, and mountLayout's variables;
+// on this document (client/common/agent-panel.ts, panelOpen), its side and width (client/agent/layout.ts: KEY, geometry, and mountLayout's variables;
 // tests/layout.test.ts checks the two agree), and the document's zoom (client/inline/viewer-zoom.ts), which the frame takes
 // (client/inline/viewer-band.css, html.erga-zoomed).
 
+import { pageDoc, panelOpen } from "../common/agent-panel";
 import { clampZoom } from "../common/zoom";
 
 type Item = "agent" | "doc";
@@ -19,8 +20,7 @@ export default function viewerLayoutEarly(): void {
         return null;
       }
     };
-    const s = get("erga:settings:v1"),
-      l = get("erga:layout:v1"),
+    const l = get("erga:layout:v1"),
       items: Item[] = ["agent", "doc"];
     const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi),
       px = (n: number) => Math.round(n) + "px";
@@ -39,7 +39,7 @@ export default function viewerLayoutEarly(): void {
     probe.remove();
     const narrow = W < 760;
     // (On a phone the agent starts closed: open, it covers the page.)
-    const open = !(s && s.agent === false) && !narrow;
+    const open = panelOpen(pageDoc()) && !narrow;
     const w = narrow ? Math.max(0, Math.min(kept, W - 32)) : clamp(kept, 300, Math.max(300, Math.min(760, W - sl - sr - 360 - 32)));
     // The agent's box, 16px from the window's edge on its side; open (and not on a phone), the document beside it.
     const agentX = right ? W - sr - 16 - w : sl + 16;
