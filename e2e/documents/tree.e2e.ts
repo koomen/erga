@@ -27,6 +27,7 @@ import {
   menuItem,
   menuItems,
   multi,
+  newsAnswered,
   openCard,
   paths,
   press,
@@ -208,20 +209,14 @@ journey("a project's tree in the editor", () => {
       addEventListener("pointerdown", (e) => (w.__down = e.target), { capture: true, once: true });
     }, more);
     await page.mouse.down();
-    const held = await page.evaluate(async () => {
-      const w = window as unknown as { __more: Element; __down: Node | null; __calls: number };
-      if (!w.__down || !w.__more.contains(w.__down)) return "the press is not on the button";
-      const before = w.__calls;
-      window.dispatchEvent(new CustomEvent("erga-tree", { detail: {} }));
-      if (w.__calls == before) return "the tree did not ask the server";
-      // (Each call has its answer, and the tree has done what it does with it: watchTree.)
-      await new Promise<void>((done) => {
-        const look = () => (w.__calls ? setTimeout(look) : done());
-        look();
+    const pressed = () =>
+      page.evaluate(() => {
+        const w = window as unknown as { __more: Element; __down: Node | null };
+        return [!!w.__down && w.__more.contains(w.__down), w.__more.isConnected];
       });
-      return w.__more.isConnected;
-    });
-    expect(held, "the pressed button is still in the tree when the answer has come").toBe(true);
+    expect(await pressed(), "the press is on the button").toEqual([true, true]);
+    expect(await newsAnswered(page)).toBe(true);
+    expect(await pressed(), "the pressed button is still in the tree when the answer has come").toEqual([true, true]);
     await page.mouse.up();
     // The release gives its click: the menu opens. After it, the answer's rows come.
     await until(() => page.evaluate(`!!document.querySelector(".et-menu")`), 3000, "the release opens the menu");
@@ -289,6 +284,12 @@ journey("a project's tree in the editor", () => {
         label: document.querySelector(".drop-chip:not([hidden])")?.textContent,
       }))
     ).toEqual({ lit: ["blog"], label: "Add 2 filesto blog/" });
+    // News from the server while the files are over the folder: the rows stay until the drop, which goes to the row
+    // that the files were over last. (Was a flaky failure: drawn again, that row was gone, and the drop did nothing.)
+    expect(await newsAnswered(page)).toBe(true);
+    expect(await js(page, `[...document.querySelectorAll(".et-row.drop")].map((r) => r.dataset.path)`), "the folder is still lit").toEqual([
+      "blog",
+    ]);
     await over.drop();
     const pending = () =>
       page.evaluate(() =>

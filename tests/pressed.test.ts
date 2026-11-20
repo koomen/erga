@@ -14,10 +14,11 @@ function setup() {
   const button = { contains: (n: unknown) => n === button };
   const card = { contains: (n: unknown) => n === card || n === button };
   const other = { contains: (n: unknown) => n === other };
-  const fire = (type: string, on: object, button = 0) => {
+  const fire = (type: string, on: object, button = 0, relatedTarget: object | null = null) => {
     const e = new Event(type);
     Object.defineProperty(e, "target", { value: on });
     Object.defineProperty(e, "button", { value: button });
+    Object.defineProperty(e, "relatedTarget", { value: relatedTarget });
     target.dispatchEvent(e);
   };
   return { p, later, button, card, other, fire, target };
@@ -92,4 +93,25 @@ test("the blur of the element that had the focus, as the press takes it, does no
   fire("pointerup", button);
   later.splice(0).forEach((f) => f());
   expect(n).toBe(1);
+});
+
+// Was a bug: files from the computer over a folder of the tree, then news. The rows were drawn again, the drop went to
+// the row that was gone, and no file was added.
+test("a drag over the element holds a draw until the drop; a drag that leaves the window ends too, one that goes on to another element does not", () => {
+  const { p, later, button, card, other, fire } = setup();
+  let n = 0;
+  fire("dragover", button);
+  expect(p.pressedIn(card as unknown as Node)).toBe(true);
+  p.afterPress(card as unknown as Node, () => n++);
+  // (On to another element of the page: the drag is still on.)
+  fire("dragleave", button, 0, other);
+  expect(p.pressedIn(card as unknown as Node)).toBe(true);
+  expect(n).toBe(0);
+  fire("drop", button);
+  expect(p.pressedIn(card as unknown as Node)).toBe(false);
+  later.splice(0).forEach((f) => f());
+  expect(n).toBe(1);
+  fire("dragover", button);
+  fire("dragleave", button);
+  expect(p.pressedIn(card as unknown as Node)).toBe(false);
 });

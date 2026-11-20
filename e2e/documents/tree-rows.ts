@@ -88,6 +88,23 @@ export const watchTree = (page: Page) =>
     }) as typeof fetch;
   });
 
+/**
+ * The tree's news, in the tab, and the server's answer to the read that the news starts: back once the tree has done
+ * what it does with the answer (watchTree). False: the tree asked the server nothing.
+ */
+export const newsAnswered = (page: Page) =>
+  page.evaluate(async () => {
+    const w = window as unknown as { __calls: number };
+    const before = w.__calls;
+    window.dispatchEvent(new CustomEvent("erga-tree", { detail: {} }));
+    if (w.__calls == before) return false;
+    await new Promise<void>((done) => {
+      const look = () => (w.__calls ? setTimeout(look) : done());
+      look();
+    });
+    return true;
+  });
+
 /** The "tree" events that the tab has heard: each one's detail, as JSON. */
 export const treeEvents = (page: Page) => page.evaluate(() => (window as unknown as { __tree: string[] }).__tree);
 
