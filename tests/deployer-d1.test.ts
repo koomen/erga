@@ -8,15 +8,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { Cloudflare, DeployError, type Fetch } from "../deploy/deployer/cloudflare-api";
+import { DeployError } from "../deploy/deployer/cloudflare-api";
 import { readControl } from "../deploy/deployer/control";
 import { bindingDatabase, bindingSql, type D1, statementsOf } from "../deploy/deployer/d1-binding";
 import { NoTable, openJob, readJobs, readLog, readSpec, writeSpec } from "../deploy/deployer/instance";
 import type { Spec } from "../deploy/deployer/spec";
 import { deployer } from "../deploy/deployer/worker";
-import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { bindingsOf, bootstrap, prepareRelease, ROOT, release, SHA1, SHA2 } from "./helpers/deploys.ts";
-import { builtBundle, github } from "./helpers/github.ts";
+import { FLEET_ACCOUNT } from "../dev/mock-cloudflare";
+import { bindingsOf, prepareRelease, ROOT, SHA1, SHA2 } from "./helpers/deploys.ts";
+import { instanceOn, record, SPEC } from "./helpers/binding.ts";
 
 const run = Effect.runPromise;
 const short = (sha: string) => sha.slice(0, 12);
@@ -24,7 +24,6 @@ const MIGRATIONS = join(ROOT, "server/migrations");
 const files = readdirSync(MIGRATIONS)
   .filter((n) => n.endsWith(".sql"))
   .sort();
-const record = (name: string) => `INSERT INTO d1_migrations (name) VALUES ('${name}');`;
 /** A database's tables and indexes, as SQLite keeps them. */
 const SCHEMA =
   "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name != 'd1_migrations' ORDER BY name";
@@ -129,52 +128,12 @@ describe("the binding", () => {
   });
 });
 
-const SPEC: Spec = {
-  repo: "github.com/example/erga",
-  branch: "main",
-  target: {
-    kind: "cloudflare",
-    account: FLEET_ACCOUNT,
-    worker: "erga-next",
-    database: "erga-next",
-    app: { kind: "domain", zoneName: "example.com", hostname: "next.example.com" },
-    pages: { kind: "zone", zoneName: "example-pages-next.com", domain: "example-pages-next.com" },
-  },
-  settings: { GITHUB_CLIENT_ID: "Ov23next" },
-  secrets: [],
-};
-
 describe("the deployer's Worker", () => {
-  /**
-   * The instance as setup's pipeline made it (release SHA1) on the mock Cloudflare, with its database as the binding
-   * has it: the release's tables and the spec. The instance's own Worker writes its health row there, as its
-   * scheduled run does, when a new release is uploaded.
-   */
+  /** The instance, with a new database of the runtime as the deployer's binding. */
   async function instance() {
-    const mock = mockCloudflare({ fleet: true });
-    await bootstrap(mock);
     const d1 = await fresh();
-    const db = bindingDatabase(d1);
-    await db.query("CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)", [], "set up the database");
-    for (const name of Object.keys(release.migrations).sort()) await db.apply(release.migrations[name], record(name), `apply ${name}`);
-    const sql = bindingSql(d1);
-    await run(writeSpec(sql, SPEC));
-    const hub = github();
-    hub.state.releases.set(SHA2, builtBundle(SHA2));
-    const from = mock.state.calls.length;
-    const fetch: Fetch = async (input, init) => {
-      if (!String(input).startsWith("https://api.cloudflare.com/")) return hub.fetch(input, init);
-      const answer = await mock.fetch(input, init);
-      if (init?.method == "PUT" && String(input).endsWith("/workers/scripts/erga-next"))
-        await db.query(
-          "INSERT INTO health (id, at, version, ok, checks) VALUES (1, ?, ?, 1, '{}') ON CONFLICT (id) DO UPDATE SET at = excluded.at, version = excluded.version",
-          [Date.now(), bindingsOf(mock.state, "erga-next").ERGA_VERSION.text],
-          "write the health row"
-        );
-      return answer;
-    };
-    const env = { CLOUDFLARE_API_TOKEN: "mock-deployer-token", ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next", DB: d1 };
-    return { mock, sql, hub, fetch, env, calls: () => mock.state.calls.slice(from) };
+    const made = await instanceOn(d1);
+    return { ...made, env: { CLOUDFLARE_API_TOKEN: "mock-deployer-token", ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next", DB: d1 } };
   }
 
   test("its schedule deploys the head's release with no call of D1's API: the database is its binding", async () => {
