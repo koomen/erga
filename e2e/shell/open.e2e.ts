@@ -3,7 +3,7 @@
 // open_page on a document of several pages, and a deck: a refused edit key, full screen, a reload.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Page } from "playwright-core";
+import type { Frame, Page } from "playwright-core";
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, test, until } from "../helpers/fixtures";
@@ -41,6 +41,10 @@ journey("a document that is slow to open", () => {
   const h1More = () => docFrame(page)!.evaluate(() => document.getElementById("more")!.textContent);
   /** Where that heading is, down the page, before the eye. */
   let at = 0;
+  /** Each version of the document that the viewer heard (client/inline/viewer-live.ts). */
+  const heard: string[] = [];
+  /** Each of the page's frames whose editor has the room's start (GET /api/start). */
+  const started = new Set<Frame>();
 
   // Before, the editor gave the room's hello 8 s, then said "Nothing to edit here" for good.
   test("a room that stays silent: the editor says the document is still opening, offers a reload, and starts when the hello comes", async ({
@@ -50,6 +54,14 @@ journey("a document that is slow to open", () => {
     page = tab.page;
     await page.setViewportSize({ width: 1100, height: 760 });
     page.on("console", (m) => said.push(m.text()));
+    page.on("websocket", (ws) => {
+      if (!/watch=view/.test(ws.url())) return;
+      ws.on("framereceived", ({ payload }) => {
+        const ver = /"type":"view","ver":"([^"]+)"/.exec(String(payload))?.[1];
+        if (ver) heard.push(ver);
+      });
+    });
+    page.on("response", (r) => void (/\/api\/start\b/.test(r.url()) && r.ok() && started.add(r.frame())));
     held = await hold(page);
     // (Only its first one waits: the page that loads again opens another.)
     await page.routeWebSocket(/\/api\/room\?key=/, (ws) => void (own.length ? ws.connectToServer() : own.push(() => ws.connectToServer())));
@@ -167,6 +179,30 @@ journey("a document that is slow to open", () => {
 
   // Before, the page's editor left the room at the eye, and the pencil waited for the room again (250 ms on a real network).
   test("the pencil, down the page: the page's editor is in the room already, and every frame the tab paints shows the page where it was", async () => {
+    // The viewer hears each new version, at most every 2 s (document/api/view.ts). The last edit's comes after the eye,
+    // most times: then the viewer loads the page again, and that page's editor joins the room ahead (GET /api/start).
+    // The pencil's part starts after that: the viewer has the last version, and the one page it shows is in the room.
+    await until(
+      async () => (await page.evaluate<string>("ergaPage.collab.current()")).includes(">X</h2>"),
+      5000,
+      "the room has the last edit"
+    );
+    const ver = /name="erga-ver" content="([^"]+)"/.exec(await (await fetch(ed.address)).text())?.[1];
+    await until(
+      () => !!ver && heard.at(-1) == ver,
+      10_000,
+      "the viewer hears the last edit's version",
+      () => ({ ver, heard })
+    );
+    await until(
+      async () => {
+        const shown = page.frames().filter((f) => f.parentFrame() == page.mainFrame() && /\/t\//.test(f.url()));
+        const frame = await (await page.$("#frame"))?.contentFrame();
+        return shown.length == 1 && shown[0] == frame && started.has(shown[0]);
+      },
+      10_000,
+      "one page shows, and its editor has the room's start"
+    );
     const starts: string[] = [];
     const asked = (r: { url(): string }) => void (/\/api\/start\b/.test(r.url()) && starts.push(r.url()));
     page.on("request", asked);
