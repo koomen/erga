@@ -4,7 +4,7 @@
 //
 //   (none)                      in person: their browser session
 //   their agent                 their own agent (agents/person/), on any page
-//   their admin agent           the admin pages' agent before each person had one (the change log's older rows)
+//   their admin agent           the admin pages' agent before each person had one (the changelog's older rows)
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
 //                               API (/api/tools), MCP
 //   an agent's view of the page the server's browser, which renders a page for
@@ -19,7 +19,7 @@
 export const VIA = {
   /** Their own agent (agents/person/). */
   agent: "their agent",
-  /** The admin pages' agent, before each person had one: the change log's older rows say so. */
+  /** The admin pages' agent, before each person had one: the changelog's older rows say so. */
   admin: "their admin agent",
   /** An agent with one of their tokens: its label. */
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,
@@ -37,7 +37,7 @@ export function byLine(by: string | null | undefined, via?: string | null): stri
 }
 
 
-/** The statement that adds an entry to the change log (server_config_versions, server/directory/settings.ts): `changes` (SettingChange[]), by `by`, via `via`. */
+/** The statement that adds an entry to the changelog (server_config_versions, server/directory/settings.ts): `changes` (SettingChange[]), by `by`, via `via`. */
 export function changeLogEntry(at: number, by: string, via: string | null | undefined, changes: object[]): [string, number, string, string, string | null] {
   return ["INSERT INTO server_config_versions (at, by, changes, via) VALUES (?1, ?2, ?3, ?4)", at, by.toLowerCase(), JSON.stringify(changes), via ?? null];
 }

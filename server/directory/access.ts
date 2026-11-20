@@ -21,7 +21,7 @@ import type { Sql } from "./model.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
 export type Access = "none" | "read" | "write";
-/** How each access shows, wherever it shows (the Access page, the change log, the admin agent). */
+/** How each access shows, wherever it shows (the Access page, the changelog, the admin agent). */
 export const ACCESS_LABEL: Record<Access, string> = { none: "No access", read: "Can authenticate", write: "Can create and edit content" };
 export type RuleKind = "everybody" | "workspace" | "github_org";
 export const RULE_KINDS: readonly RuleKind[] = ["everybody", "workspace", "github_org"];
@@ -200,6 +200,6 @@ export class AccessRules {
   }
 }
 
-/** The change log's entry for a change to the rules. */
+/** The changelog's entry for a change to the rules. */
 const logged = (by: Actor, at: number, access: { event: "added" | "changed" | "removed"; kind: RuleKind; value: string; access: Access; from?: Access }) =>
   changeLogEntry(at, by.login, by.via, [{ key: "access", from: null, to: null, access }]);

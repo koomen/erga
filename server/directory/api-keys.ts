@@ -6,11 +6,11 @@
 //     the additional data, under a key derived from a deploy-time secret
 //     (FACTORY_KEY; locally the session secret), in a table of its own
 //     (credentials, server/migrations/0140_credentials.sql). Not in the settings,
-//     whose values are plain and copied into the change log.
+//     whose values are plain and copied into the changelog.
 //   - Nothing here answers a key to a page: `list` says only whether there is
 //     one, its last four characters, and who set it when. `value` is for the
 //     server's own calls to the providers.
-//   - The change log gets "ANTHROPIC_API_KEY set by …", never the value.
+//   - The changelog gets "ANTHROPIC_API_KEY set by …", never the value.
 //   - Admins only (Users.mustAdmin); server/admin/routes.ts takes changes only from an
 //     admin, in a browser, with a same-origin request.
 //   - A server with no key stored uses the Worker secret of the same name
@@ -348,7 +348,7 @@ export class Credentials {
     return (await this.sql.all("SELECT 1 FROM credentials WHERE name = ?1", name)).length > 0;
   }
 
-  /** The change log's line for it (server/directory/settings.ts's server_config_versions): what happened to which key, never the key. */
+  /** The changelog's line for it (server/directory/settings.ts's server_config_versions): what happened to which key, never the key. */
   private logged(name: CredentialName, what: "set" | "replaced" | "cleared", at: number, by: string, via?: string): Statement {
     return changeLogEntry(at, by, via, [{ key: CREDENTIALS[name].env, from: null, to: null, credential: what }]);
   }
@@ -372,7 +372,7 @@ export interface PersonKeyEntry {
 /**
  * Each person's own API keys, for their own agent only (server/migrations/0290_person_keys.sql). Kept as the server's
  * keys are, each bound to its person and provider; every call reads and changes only the caller's own (`by.login`).
- * Nothing here answers a key to a page; `opened` is for that person's agent. Not in the change log: it is the person's,
+ * Nothing here answers a key to a page; `opened` is for that person's agent. Not in the changelog: it is the person's,
  * not the server's. A key is set only on its page (POST /api/agent/keys), never by an agent.
  */
 export class PersonKeys {

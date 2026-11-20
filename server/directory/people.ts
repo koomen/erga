@@ -195,6 +195,6 @@ export class People {
   }
 }
 
-/** The change log's entry, as a user's change is logged (its `login`: the provider account). */
+/** The changelog's entry, as a user's change is logged (its `login`: the provider account). */
 const logged = (by: Actor, at: number, login: string, event: "added" | "role" | "removed", role?: string): Statement =>
   changeLogEntry(at, by.login, by.via, [{ key: "user", from: null, to: null, user: { login, event, ...(role ? { role } : {}) } }]);

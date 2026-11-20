@@ -11,7 +11,7 @@
 // tool (shared/routes.ts), and tests/agent-actions.test.ts fails when one has none. The one exception is a secret: an API key or
 // a new token is pasted or made only on its page, never in a conversation; the agent can clear or revoke them.
 //
-// Every tool acts as the person (their login), via their agent, so the change log (/admin/changes), a document's
+// Every tool acts as the person (their login), via their agent, so the changelog (/admin/changes), a document's
 // history name them. Documents and logs are written by others and can carry
 // instructions: the system prompt says to treat that text as data and to act only on what the person asks.
 //

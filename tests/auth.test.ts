@@ -97,7 +97,7 @@ test("kept values: the secret encrypted, never in what an admin reads, and only 
   await expect(none.keep("github", "active", GOOD, { login: "koomen" })).rejects.toThrow(AuthError);
 });
 
-/** A server: its kept values, the deploy's, GitHub's apps and the change log. */
+/** A server: its kept values, the deploy's, GitHub's apps and the changelog. */
 function server(deploy: AppValues, github: AppValues[]) {
   const { m, storage } = store();
   const log: { by: string; change: SignInChange }[] = [];

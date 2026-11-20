@@ -59,8 +59,16 @@ const contextOf = (platform: SignInPlatform, provider: Provider): AppContext => 
   deploy: oauthOf(platform).apps[provider],
   check: checkOf(platform, provider),
   log: async (by, change) => {
-    try { await platform.directory.config.record(by.login, [{ key: "sign-in", from: null, to: null, signIn: change }], Date.now(), by.via ?? null); }
-    catch (e) { console.log(`couldn't write the change log: ${e}`); }
+    try {
+      await platform.directory.config.record(
+        by.login,
+        [{ key: "sign-in", from: null, to: null, signIn: change }],
+        Date.now(),
+        by.via ?? null
+      );
+    } catch (e) {
+      console.log(`couldn't write the changelog: ${e}`);
+    }
   },
 });
 
@@ -104,7 +112,7 @@ export async function testedSignIn(platform: SignInPlatform, clientId: string, e
     await c.log({ login: effect.login }, { provider, event: "tested", clientId });
     return true;
   }
-  // Nothing changed, so the change log has no line for it: the page shows it beside the pending values.
+  // Nothing changed, so the changelog has no line for it: the page shows it beside the pending values.
   if (effect.do == "note") await c.apps.noteTest(provider, clientId, effect.result);
   return false;
 }

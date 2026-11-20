@@ -69,7 +69,7 @@ test("no instance's name in the code", () => {
 /**
  * A flag or a value for a kind of instance, or a link from one instance to another: the settings that only two
  * instances had (DEPLOY_TARGET, SNAPSHOT_IMPORT), the names of an instance whose data another one copied (stagingOf,
- * copyOf, SNAPSHOT_FROM, SNAPSHOT_TOKEN), a server for admins only (adminsOnly), the change log's record of a push
+ * copyOf, SNAPSHOT_FROM, SNAPSHOT_TOKEN), a server for admins only (adminsOnly), the changelog's record of a push
  * past the old staging rule (stagingOverride), and "production" as a key, a value or a question. (The word in a
  * sentence for a person is not one; staging is a branch's name.)
  */

@@ -13,7 +13,7 @@
 // A grant from MCP's sign-in is one exchange's of its code. The gate keeps no state, so it can't refuse a code's second
 // use in the code's 60 seconds; it marks each exchange's tokens instead (gate/core.ts, `token`). The first token of a
 // grant that comes here says which exchange is the grant's (`exchange`), and a token of another exchange revokes the
-// grant: so a second use of a code gives nothing, and its person sees the revoke in Settings and in the change log.
+// grant: so a second use of a code gives nothing, and its person sees the revoke in Settings and in the changelog.
 //
 // A grant ends after GRANT_DAYS at most (the gate's tokens end then too), or sooner if its maker chose. Only a person
 // signed in in a browser makes one: on the approval page of MCP's sign-in (authorize.ts), or as a token to paste
@@ -71,7 +71,7 @@ export class ScopeError extends Schema.TaggedError<ScopeError>()("ScopeError", {
 /** The rule, with no exception: a token is made by a person, in person. An agent never makes one, of any kind. */
 export const NOT_FOR_AGENTS = "An agent can't make a token: a user makes one, signed in as themselves, on the page.";
 
-/** How the change log says that the server revoked a grant whose code was traded for tokens two times. */
+/** How the changelog says that the server revoked a grant whose code was traded for tokens two times. */
 export const CODE_USED_TWICE = "the server (the grant's code was used two times)";
 
 const clip = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || "Agent";
@@ -215,7 +215,7 @@ export class Grants {
 
   /**
    * Revokes one of `login`'s grants: its agent's next request is refused. `via`: how they did it, when not in person:
-   * the change log (/admin/changes) records it under them, with that.
+   * the changelog (/admin/changes) records it under them, with that.
    */
   async revoke(login: string, id: string, via?: string | null): Promise<boolean> {
     login = login.toLowerCase();
@@ -234,7 +234,7 @@ export class Grants {
       ]),
     ]);
     await this.changed(login, id);
-    // The change log's new line, on the open admin pages.
+    // The changelog's new line, on the open admin pages.
     await this.dir.users.pagesChanged([]);
     return true;
   }

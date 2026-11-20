@@ -259,7 +259,7 @@ test("the documents list: the document agent lists, makes (blank, a template, a 
   expect((await toolsFor(ada, true)).flatMap(opsOf)).toContain("delete_document");
 });
 
-test("API keys: an admin clears one (the change log says who), and is never offered a tool to set one", async () => {
+test("API keys: an admin clears one (the changelog says who), and is never offered a tool to set one", async () => {
   const dir = fresh({ admins: ["root"], credentialSecret: "a-secret-for-the-tests-0123456789" });
   const root = { dir, who: { login: "root", admin: true } };
   await dir.credentials.set(root.who, "anthropic", "sk-ant-api03-test-1234567890abcd");

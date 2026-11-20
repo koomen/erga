@@ -51,7 +51,7 @@ test("each change of a document's row sends its key to everyone whose list shows
   expect(take()).toEqual(["doc:aaaaaaaa>ada,cy"]);
 });
 
-test("each change on the admin pages sends its row's key to the admins, with the change log's new line; a user's change, every admin's row", async () => {
+test("each change on the admin pages sends its row's key to the admins, with the changelog's new line; a user's change, every admin's row", async () => {
   const { dir, take } = directory();
   const admin = { login: "ada", admin: true };
   const log = async () => (await dir.config.history(admin, { limit: 1 })).versions[0].n;

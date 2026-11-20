@@ -148,7 +148,7 @@ export class PersonAgents {
     /** The documents its tools ran in this turn (callDocument): each hears when the turn is done (a version is cut there). */
     const touched = new Map<string, DocRoute>();
     const admin = await this.platform.directory.users.isAdmin(login);
-    // Every tool acts as the person, via their agent: the change log and a document's history name them, and how.
+    // Every tool acts as the person, via their agent: the changelog and a document's history name them, and how.
     const as = (): Caller => ({
       dir: this.platform.directory,
       who: { login, ...(admin ? { admin: true } : {}), via: VIA.agent },

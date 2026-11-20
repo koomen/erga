@@ -1,5 +1,5 @@
 // The server's database: every document's address, title and permissions
-// (directory.ts), the users (users.ts), the settings and their change log
+// (directory.ts), the users (users.ts), the settings and their changelog
 // (settings.ts), the API keys admins store (api-keys.ts); the tables are
 // server/migrations/. Reached through Directory (dir.users, dir.config,
 // dir.credentials), whose admin-only calls check

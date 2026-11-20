@@ -1,4 +1,4 @@
-// The Change log's script (/admin/changes, server/admin/changes.ts), on its first page: each new line shows at the top
+// The Changelog's script (/admin/changes, server/admin/changes.ts), on its first page: each new line shows at the top
 // as it's made, whoever made the change (client/common/live-rows.ts).
 
 import { liveList } from "../common/live-rows";

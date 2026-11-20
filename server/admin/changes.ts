@@ -1,4 +1,4 @@
-// /admin/changes, the Change log.
+// /admin/changes, the Changelog.
 
 import {
   type Access,
@@ -19,7 +19,7 @@ import { adminPage } from "./layout.ts";
 import { avatarHtml, shown } from "./parts.ts";
 import { plural } from "../../shared/time.ts";
 
-/** How many changes the change log lists on a page. */
+/** How many changes the changelog lists on a page. */
 const CHANGES = 50;
 
 /**
@@ -40,7 +40,7 @@ function viaChip(via: string): { text: string; title: string } {
   return { text: via, title: `via ${via}` };
 }
 
-/** A change log line for something other than a setting: a user, an access rule, a sign-in app or a token changed. */
+/** A changelog line for something other than a setting: a user, an access rule, a sign-in app or a token changed. */
 function eventItem(c: SettingChange): string {
   const role = (r: string) => esc(ROLE_LABEL[r as keyof typeof ROLE_LABEL] ?? r);
   if (c.user) {
@@ -86,7 +86,7 @@ function eventItem(c: SettingChange): string {
 }
 
 /**
- * One version of the settings in the change log: when, who, and each
+ * One version of the settings in the changelog: when, who, and each
  * setting's value from and to.
  */
 function changeRow(v: SettingsVersion, settings: Settings, avatars: Record<string, string>): string {
@@ -115,7 +115,7 @@ async function changeRows(platform: Platform, versions: SettingsVersion[]): Prom
   return versions.map((v) => ({ n: v.n, html: changeRow(v, settings, avatars) }));
 }
 
-/** /admin/changes: the change log, every change to the settings, the users, the access rules, the sign-in apps and the tokens, newest first (`before`: only those older than version n). */
+/** /admin/changes: the changelog, every change to the settings, the users, the access rules, the sign-in apps and the tokens, newest first (`before`: only those older than version n). */
 export async function changesPage(platform: Platform, session: Session, before?: number) {
   const history = await platform.directory.config.history(whoOf(session), { before, limit: CHANGES });
   const rows = await changeRows(platform, history.versions);
@@ -123,7 +123,7 @@ export async function changesPage(platform: Platform, session: Session, before?:
   const older = last && last.n > 1 && history.versions.length == CHANGES;
   return adminPage({
     session,
-    title: "Change log",
+    title: "Changelog",
     here: "changes",
     ...(history.total ? { lede: plural(history.total, "change") } : {}),
     body: `

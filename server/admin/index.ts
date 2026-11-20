@@ -1,4 +1,4 @@
-// The server's admin pages (/admin: settings, their change log, users, API
+// The server's admin pages (/admin: settings, their changelog, users, API
 // keys, sign-in) and the layout they share. The rest of the app imports admin
 // through this file. Each admin's agent is agents/person/.
 

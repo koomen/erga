@@ -1,4 +1,4 @@
-// The server's own settings and people, on the admin pages (/admin: each setting is on the page of what it governs): the settings, the API keys and the change log
+// The server's own settings and people, on the admin pages (/admin: each setting is on the page of what it governs): the settings, the API keys and the changelog
 // (read; a key is cleared here, and set only on the page), how people sign in (read, switch, clear: an app's values are
 // set only on the page), the users, and the access rules. Each needs admin power (`admin`), and the directory checks
 // who's asking itself (Users.mustAdmin). Reads stay apart from changes: an app may allow the reads with no prompt.
@@ -46,19 +46,19 @@ export const ADMIN_OPERATIONS: Operation[] = [
   // ------------------------------------------------------------ the server's settings and API keys (admins)
   {
     name: "settings",
-    ui: "The settings on Sign-in (/admin/auth), Access (/admin/access), Documents (/admin/documents), Agents and models (/admin/agents) and Feedback (/admin/feedback), and Change log (/admin/changes)",
+    ui: "The settings on Sign-in (/admin/auth), Access (/admin/access), Documents (/admin/documents), Agents and models (/admin/agents) and Feedback (/admin/feedback), and Changelog (/admin/changes)",
     label: "Read the server's settings",
     activity: "reading the server's settings",
     admin: true,
-    description: "The server's settings, API keys and pages' model use today, or the settings' change log (changes).",
+    description: "The server's settings, API keys and pages' model use today, or the settings' changelog (changes).",
     parameters: Schema.Struct({
       changes: Schema.optionalKey(
         Schema.Boolean.annotate({
-          description: "true: the change log, newest first, instead of the settings and API keys (never a key)",
+          description: "true: the changelog, newest first, instead of the settings and API keys (never a key)",
         })
       ),
-      limit: Schema.optionalKey(Schema.Int.annotate({ description: "The change log: how many (default 20, at most 100)" })),
-      before: Schema.optionalKey(Schema.Int.annotate({ description: "The change log: only changes numbered lower than this" })),
+      limit: Schema.optionalKey(Schema.Int.annotate({ description: "The changelog: how many (default 20, at most 100)" })),
+      before: Schema.optionalKey(Schema.Int.annotate({ description: "The changelog: only changes numbered lower than this" })),
     }),
     run: async (args, { dir, who }) => {
       if (args.changes === true) {

@@ -739,7 +739,7 @@ export class Directory {
 
   /**
    * A change the admin pages show, to every admin: its rows' keys; for a user, every admin's row too (a row says
-   * whether its admin is the last); and the change log's newest line.
+   * whether its admin is the last); and the changelog's newest line.
    */
   private async adminChanged(keys: string[]): Promise<void> {
     if (!this.news) return;

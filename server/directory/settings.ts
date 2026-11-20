@@ -308,7 +308,7 @@ export interface SettingChange {
   via?: string;
 }
 
-/** A server's sign-in app changed (server/identity/apps.ts): its line in the change log. */
+/** A server's sign-in app changed (server/identity/apps.ts): its line in the changelog. */
 export interface SignInChange {
   provider: SignInProvider;
   event: "set" | "pending" | "tested" | "discarded" | "cleared" | "on" | "off";
@@ -483,7 +483,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
       JSON.stringify(changes),
       via
     );
-    // The open admin pages: the change log's new line, and the sign-in page's cards for a change to sign-in.
+    // The open admin pages: the changelog's new line, and the sign-in page's cards for a change to sign-in.
     await this.users.pagesChanged(changes.some((c) => c.signIn) ? ["auth:github", "auth:google"] : []);
   }
 

@@ -1,7 +1,7 @@
 // The API keys admins enter on the Agents and models page (/admin/agents), on an
 // in-memory SQLite database with the same migrations D1 gets: stored
 // encrypted, never answered back (only set, the last four characters, and who
-// set it when), in the change log without the value, and admins only.
+// set it when), in the changelog without the value, and admins only.
 
 import { afterAll, expect, test } from "bun:test";
 import { adminRoutes } from "../server/admin/index.ts";
@@ -35,7 +35,7 @@ function fresh(secret: string | null = "the factory key", fallback: string[] = [
 }
 const ada = { login: "ada", admin: true };
 
-test("a key is stored encrypted: the table and the change log never hold it; the list shows only its last four characters", async () => {
+test("a key is stored encrypted: the table and the changelog never hold it; the list shows only its last four characters", async () => {
   const { db, dir } = fresh();
   const set = await dir.credentials.set(ada, "anthropic", `  ${ANTHROPIC}\n`);
   expect(set).toMatchObject({ name: "anthropic", env: "ANTHROPIC_API_KEY", set: true, last4: "Ab12", updatedBy: "ada", canStore: true });
@@ -50,7 +50,7 @@ test("a key is stored encrypted: the table and the change log never hold it; the
   const cleared = await dir.credentials.clear(ada, "anthropic");
   expect(cleared).toMatchObject({ set: false, last4: null, updated: null });
   expect(await dir.credentials.value("anthropic")).toBeNull();
-  // The change log: what happened to the key, by whom, never the key.
+  // The changelog: what happened to the key, by whom, never the key.
   const { versions } = await dir.config.history(ada);
   expect(versions.map((v) => [v.by, v.changes])).toEqual([
     ["ada", [{ key: "ANTHROPIC_API_KEY", from: null, to: null, credential: "cleared" }]],
@@ -224,7 +224,7 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect((await fetch(`${origin}/admin/api-keys`)).status).toBe(404);
 });
 
-test("the change log shows a row of the removed factory as plain values: it has no code of its own", async () => {
+test("the changelog shows a row of the removed factory as plain values: it has no code of its own", async () => {
   // Rows as the factory wrote them, before it went: a task, main moved with its commits, a push past the old staging
   // rule, a user's deploy role. The production database still has such rows.
   const old = [

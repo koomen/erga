@@ -19,7 +19,7 @@
 //     derivation of its own), with the provider and the client ID as the
 //     additional data, so it opens only for that app.
 //   - Nothing answers the secret to a page or an agent: only whether one is set.
-//   - The change log gets who changed the app and its client ID (public),
+//   - The changelog gets who changed the app and its client ID (public),
 //     never the secret.
 //
 // Lockout: a wrong value could stop everyone, admins too, from signing in.
@@ -194,7 +194,7 @@ export interface AppContext {
   provider: Provider;
   deploy: AppValues;
   check(v: AppValues): Promise<AppCheck>;
-  /** A line in the change log. */
+  /** A line in the changelog. */
   log(by: Act, change: SignInChange): Promise<void>;
 }
 

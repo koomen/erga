@@ -90,7 +90,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
       const before = Number(a.url.searchParams.get("before"));
       return changesPage(a.platform, a.session, Number.isInteger(before) && before > 0 ? before : undefined);
     },
-    action: "Read the change log (Change log)",
+    action: "Read the changelog (Changelog)",
     domain: "admin",
     tool: "settings",
   },

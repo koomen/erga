@@ -1,6 +1,6 @@
 // Each person's own API keys (server/directory/api-keys.ts, PersonKeys), on an in-memory SQLite database with the same
 // migrations D1 gets: a person's key stays theirs. It is stored encrypted and bound to them, never answered back (only
-// its last four characters), never in the change log, never another person's, and set only from their own page; their
+// its last four characters), never in the changelog, never another person's, and set only from their own page; their
 // agent alone runs on it (agents/models.ts).
 
 import { afterAll, expect, test } from "bun:test";
@@ -35,7 +35,7 @@ const ada = { login: "ada", admin: true },
   bob = { login: "bob" };
 const op = (name: string) => OPERATIONS.find((o) => o.name == name)!;
 
-test("a person's key is stored encrypted, bound to them: never answered, never another's, never in the change log", async () => {
+test("a person's key is stored encrypted, bound to them: never answered, never another's, never in the changelog", async () => {
   const { db, dir } = fresh();
   const set = await dir.personKeys.set(bob, "openai", `  ${OPENAI}\n`);
   expect(set).toMatchObject({ name: "openai", set: true, last4: "Ow42", unreadable: false });
@@ -44,7 +44,7 @@ test("a person's key is stored encrypted, bound to them: never answered, never a
   expect((await dir.personKeys.list(ada)).every((k) => !k.set)).toBe(true);
   expect(await dir.personKeys.opened("bob")).toEqual({ openai: OPENAI });
   expect(await dir.personKeys.opened("ada")).toEqual({});
-  // The table and the change log never hold the key.
+  // The table and the changelog never hold the key.
   const everything = JSON.stringify([db.query("SELECT * FROM person_keys").all(), db.query("SELECT * FROM server_config_versions").all()]);
   expect(everything).not.toContain(OPENAI.slice(0, 20));
   expect(everything).not.toContain(btoa(OPENAI).slice(0, 20));

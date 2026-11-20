@@ -380,7 +380,7 @@ export class Users {
     });
   }
 
-  /** The change log's entry for a change to a user, under the admin who made it and how. */
+  /** The changelog's entry for a change to a user, under the admin who made it and how. */
   private logged(by: Actor, at: number, user: { login: string; event: "added" | "role" | "removed"; role?: string }): Statement {
     return changeLogEntry(at, by.login, by.via, [{ key: "user", from: null, to: null, user }]);
   }

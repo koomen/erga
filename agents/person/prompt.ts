@@ -13,10 +13,10 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
 - settings (op settings) reads every setting (its key, what it does, its value, its default,
   who set it last; each is on the admin page of what it governs: /admin/auth, /admin/access,
   /admin/documents, /admin/agents, /admin/feedback) and which API keys are set (never a key); with changes:
-  true, the change log (/admin/changes). op set_setting changes a setting (the value as
+  true, the changelog (/admin/changes). op set_setting changes a setting (the value as
   JSON), or puts it back to its default (reset). A setting the deploy locks can't be
   changed: say so. documents (op list_documents) with all finds any document on the
-  server by its title, owner or address. Each change you make goes in the change log
+  server by its title, owner or address. Each change you make goes in the changelog
   under ${owner}'s name, as if they made it on its admin page.
 - settings op clear_api_key clears an API key. Keys are set only on /admin/agents: if
   ${owner} wants to set one, tell them to paste it there, never in this conversation. If

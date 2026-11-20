@@ -1,5 +1,5 @@
-/* The one stylesheet of every admin page (server/admin/layout.ts: /admin, API keys, Authentication, Access, the change
-   log and Users). The build writes it as admin.css, named by its hash (client/build.ts), and every admin page links
+/* The one stylesheet of every admin page (server/admin/layout.ts: /admin, API keys, Authentication, Access, the
+   changelog and Users). The build writes it as admin.css, named by its hash (client/build.ts), and every admin page links
    the same file, so the browser keeps one copy, and a page shown in place (client/admin/admin-nav.ts) needs no style of
    its own. A page can't add its own: one look, the same on every page.
 
@@ -224,7 +224,7 @@ ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--r
   :is(ol.users select.role, ol.rules select.access) { grid-row: 2; grid-column: 1 / -1; }
 }
 
-/* The change log: one row each: who (their avatar, and how), what changed (each change on its own line), when. */
+/* The changelog: one row each: who (their avatar, and how), what changed (each change on its own line), when. */
 /* A live list with no rows yet (server/news/), and the words the page shows instead. */
 [data-live-kind][hidden], .changes-empty[hidden] { display: none; }
 .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(150px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; border-bottom: 1px solid var(--rule); }

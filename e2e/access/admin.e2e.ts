@@ -1,7 +1,7 @@
 // The admin pages: one journey of an admin (DEV_LOGIN, "tester"), on a server of this file's own, because it changes
 // the list of users, the settings and the access rules of the whole server, and reads the whole server's counts.
 // The path: the admin pages as one page. A link shows the next page in place, styled. Users, Settings, Access and the
-// Change log follow changes that an agent makes with an admin token, with no reload. Feedback sent from the account
+// Changelog follow changes that an agent makes with an admin token, with no reload. Feedback sent from the account
 // menu comes to the Feedback page, with its issue on the pretend GitHub; the page's switch turns Send feedback off and on. Ops
 // shows the server's own deploys: Deploy on a commit asks the server's deployer, played here by the deployer's own code,
 // and its job shows as it runs. Analytics shows the day's counts. Then the
@@ -136,8 +136,8 @@ journey("an admin on the admin pages", () => {
 
     await page.setViewportSize({ width: 1200, height: 760 });
     await agentClosed(page);
-    // The Change log hears a change and asks for its row. The answer comes late: after the next page shows. It once
-    // threw there (the Change log's empty line is not on that page).
+    // The Changelog hears a change and asks for its row. The answer comes late: after the next page shows. It once
+    // threw there (the Changelog's empty line is not on that page).
     let asked = 0,
       release!: () => void;
     const late = new Promise<void>((done) => {
@@ -160,7 +160,7 @@ journey("an admin on the admin pages", () => {
       "Agents and models",
       "Feedback",
       "Ops",
-      "Change log",
+      "Changelog",
     ]);
     // A mark on this window, for the steps after: still here after the links, so the pages came in place.
     await page.evaluate(() => {
@@ -334,7 +334,7 @@ journey("an admin on the admin pages", () => {
     await soon(() => page.inputValue(field)).not.toBe("64");
   });
 
-  test("the Change log shows each change at the top as it is made", async () => {
+  test("the Changelog shows each change at the top as it is made", async () => {
     await go("/admin/changes", "ol.changes > li");
     const top = () => page.evaluate(() => document.querySelector<HTMLElement>("ol.changes > li")!.innerText);
     const other = unique("u");
