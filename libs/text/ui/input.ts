@@ -19,7 +19,7 @@ import {
   type PagePlace,
   showDropSign,
 } from "./drop";
-import { pageOwnBox } from "./core";
+import { pageOwnBox, pointIn } from "./core";
 import { isMac } from "../../../client/common/app-keys";
 import { TEXT_ATTR } from "../../../shared/page-html";
 import { leaveCode } from "../api/blocks";
@@ -307,14 +307,12 @@ export abstract class EditorInput extends EditorClipboard {
     if (this.posFromDOM(sel.focusNode, sel.focusOffset) != null) return;
     const at = sel.focusNode.nodeType == 1 ? (sel.focusNode as Element) : sel.focusNode.parentElement;
     if (click && at && this.inIsland(at)) return;
-    const last = this.state.selection.main.head;
-    const was = this.domAtPos(last);
-    let forward = true;
-    if (was) {
-      const r = this.doc!.createRange();
-      r.setStart(sel.focusNode, sel.focusOffset);
-      forward = r.comparePoint(was.node, was.offset) <= 0;
-    }
+    // Forward, unless the caret that was is after this one. (It has no place on the page when the page's script took
+    // its block out: then forward.)
+    const was = this.domAtPos(this.state.selection.main.head);
+    const r = this.doc!.createRange();
+    r.setStart(sel.focusNode, sel.focusOffset);
+    const forward = ((was && pointIn(r, was.node, was.offset)) ?? 0) <= 0;
     const pos = this.posNear(sel.focusNode, sel.focusOffset, forward) ?? this.posNear(sel.focusNode, sel.focusOffset, !forward);
     if (pos == null) return;
     this.dispatch({ selection: { anchor: pos }, userEvent: "select" });

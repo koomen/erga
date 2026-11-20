@@ -20,6 +20,19 @@ export const pageOwnBox = (el: Element): boolean =>
   !!el.closest('[contenteditable]:not([contenteditable="false"])') &&
   el.closest('[contenteditable]:not([contenteditable="false"])') != el.ownerDocument.body;
 
+/**
+ * Where a point is against a range's start (Range.comparePoint): before it (-1), in the range (0) or after it (1).
+ * Null when the two are not in one tree, where comparePoint throws: the page's script took the point's node out of
+ * the page, or drew it again.
+ */
+export function pointIn(r: Range, node: Node, offset: number): number | null {
+  try {
+    return r.comparePoint(node, offset);
+  } catch {
+    return null;
+  }
+}
+
 export abstract class EditorCore {
   constructor(readonly config: PageEditorConfig) {
     this.state = config.state;
@@ -331,7 +344,7 @@ export abstract class EditorCore {
     }
     let before = -1;
     nodes.forEach((n, i) => {
-      if (n?.isConnected && at.comparePoint(n, 0) < 0) before = i;
+      if (n && (pointIn(at, n, 0) ?? 0) < 0) before = i;
     });
     if (before >= 0) return u.runs[before].to;
     if (u.runs.length) return u.runs[0].from;
@@ -362,14 +375,18 @@ export abstract class EditorCore {
     return dom.length == (this.state.doc.sliceString(u.contentFrom, u.contentTo).match(/<br\b/gi) ?? []).length ? dom : null;
   }
 
-  /** A DOM point for a source position (side < 0 prefers the text before a boundary). */
+  /**
+   * A DOM point on the page for a source position (side < 0 prefers the text before a boundary). Null for a block that
+   * is not on the page: the page's script took its element out, or drew it again.
+   */
   domAtPos(pos: number, side = 1): { node: Node; offset: number } | null {
     const u = M.unitAt(this.units, pos);
     if (!u) return null;
     const el = this.elOf(u);
-    if (!el) return null;
+    if (!el?.isConnected) return null;
     const live = this.runNodes(u);
-    if (!u.runs.length || live.some((n) => !n)) return { node: el, offset: 0 };
+    // (A run's node that others took out of the block: the block itself, until it is drawn again, verify.)
+    if (!u.runs.length || live.some((n) => !n || !el.contains(n))) return { node: el, offset: 0 };
     const nodes = live as Text[];
     // On a line with no text, after a line break (an empty last line, `text<br>|<br>`): the point after the <br>.
     const texts = u.runs.filter((r) => r.text.length);
@@ -408,7 +425,8 @@ export abstract class EditorCore {
     for (const u of units) {
       const el = this.elOf(u);
       if (!el?.isConnected) continue;
-      if (after ? at.comparePoint(el, 0) > 0 : at.comparePoint(el, el.childNodes.length) < 0) return after ? M.textStart(u) : M.textEnd(u);
+      const side = pointIn(at, el, after ? 0 : el.childNodes.length) ?? 0;
+      if (after ? side > 0 : side < 0) return after ? M.textStart(u) : M.textEnd(u);
     }
     return null;
   }
@@ -424,7 +442,9 @@ export abstract class EditorCore {
     if (anchor == null || head == null) {
       const r = this.doc!.createRange();
       r.setStart(sel.anchorNode, sel.anchorOffset);
-      const forward = r.comparePoint(sel.focusNode, sel.focusOffset) >= 0;
+      const side = pointIn(r, sel.focusNode, sel.focusOffset);
+      if (side == null) return null;
+      const forward = side >= 0;
       anchor ??= this.posNear(sel.anchorNode, sel.anchorOffset, forward);
       head ??= this.posNear(sel.focusNode, sel.focusOffset, !forward);
       if (anchor != null && head != null && forward != anchor <= head) return null;

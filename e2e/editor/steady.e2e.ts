@@ -127,6 +127,20 @@ journey("a page with parts of its own: keys go where the caret is", () => {
     expect(await ed.count("[id=target]")).toBe(1);
   });
 
+  // A page's script drew the caret's block again (a row of a list that it keeps). The caret then was in a node that
+  // is no longer on the page: each key raised "WrongDocumentError: Failed to execute 'comparePoint' on 'Range'", and
+  // was lost.
+  test("keys after the page's script draws the caret's block again raise no error, and go into the next text", async ({ tab }) => {
+    await ed.frame(`(() => { const p = ${F}.querySelector("p.lead:not([id])"); p.replaceWith(p.cloneNode(true)); return true; })()`);
+    // Real keys: the editor looks at the caret a frame after each key goes down. (The first key finds the caret
+    // between two blocks: the editor may refuse it, with a notice.)
+    await tab.page.keyboard.press("x");
+    await expect.poll(() => ed.caretIn(".free")).toBe(true);
+    await tab.page.keyboard.press("y");
+    await expect.poll(() => ed.source()).toMatch(/<p class="free">x?yTotal: /);
+    expect(tab.errors).toEqual([]);
+  });
+
   test("a change to the page's stylesheet reaches the page, and the page still edits", async () => {
     appendFileSync(join(ed.dir, "style.css"), "\nh1 { letter-spacing: 3px; }\n");
     await expect.poll(() => ed.frame<string>(`getComputedStyle(${F}.querySelector("h1")).letterSpacing`)).toBe("3px");

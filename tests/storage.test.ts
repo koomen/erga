@@ -32,8 +32,10 @@ test("the alarm wakes once it is due; set again, only the last one counts", asyn
   let woke = 0;
   const s = new MemoryStorage(() => { woke++; });
   await s.setAlarm(Date.now() + 10_000);
-  await s.setAlarm(Date.now() + 20);
-  expect(await s.getAlarm()).toBeGreaterThan(Date.now() - 1);
+  const soon = Date.now() + 20;
+  await s.setAlarm(soon);
+  // (On a busy machine the 20 ms can be over already: then it is due, or it woke.)
+  expect([soon, null]).toContain(await s.getAlarm());
   await until(() => woke > 0);
   expect(woke).toBe(1);
   expect(await s.getAlarm()).toBeNull();
