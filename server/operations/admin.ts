@@ -17,8 +17,10 @@ import {
   ROLE_LABEL,
   roleValue,
   type User,
+  USERNAME_RULES,
+  type UsernameRule,
 } from "../directory/index.ts";
-import { type AuthOps, type AuthStatus, type Provider, providerOf, PROVIDERS } from "../identity/index.ts";
+import { type AuthOps, type AuthStatus, type Provider, providerOf, PROVIDERS, usernameFacts, whyNot } from "../identity/index.ts";
 import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { ACTIVE_DAYS, analytics, analyticsList, isSpan, pageLlmUsage, SPANS } from "../admin/index.ts";
 import { type Caller, iso, LOGIN, type Operation, OperationError, said } from "./operation.ts";
@@ -62,7 +64,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
       limit: Schema.optionalKey(Schema.Int.annotate({ description: "The changelog: how many (default 20, at most 100)" })),
       before: Schema.optionalKey(Schema.Int.annotate({ description: "The changelog: only changes numbered lower than this" })),
     }),
-    run: async (args, { dir, who }) => {
+    run: async (args, { dir, who, platform }) => {
       if (args.changes === true) {
         const { versions, total } = await dir.config.history(who, {
           limit: Math.min(100, Number(args.limit) || 20),
@@ -74,8 +76,14 @@ export const ADMIN_OPERATIONS: Operation[] = [
         };
       }
       const [settings, keys, use] = await Promise.all([dir.config.list(who), dir.credentials.list(who), pageLlmUsage(dir)]);
+      // usernames: the rule that applies now (its condition may hold no more: server/identity/usernames.ts).
+      const facts = platform ? await usernameFacts(platform) : null;
+      const inEffect = (e: ConfigEntry) => {
+        const why = facts && e.key == "usernames" ? whyNot(e.value as UsernameRule, facts) : null;
+        return why ? { inEffect: "choose", note: `Not in effect: new users choose their usernames. ${why}` } : {};
+      };
       return {
-        settings: settings.map(entryOf),
+        settings: settings.map((e) => ({ ...entryOf(e), ...inEffect(e) })),
         documentLlmApiUsage: {
           thisMonth: {
             since: iso(use.since),
@@ -137,10 +145,11 @@ export const ADMIN_OPERATIONS: Operation[] = [
       ),
       reset: Schema.optionalKey(Schema.Boolean.annotate({ description: "true: back to its default (no value)" })),
     }),
-    run: async (args, { dir, who }) => {
+    run: async (args, { dir, who, platform }) => {
       const key = String(args.key ?? "");
       // Anyone's level and public sharing hold each other (set_access): the directory sets them, a reset too.
       const set = async (value: unknown) => {
+        if (key == "usernames") await ruleApplies(platform, value);
         if (key == "anyone_access") await dir.setAnyone(who, value);
         else if (key == "public_sharing" && typeof value == "boolean") await dir.setPublicSharing(who, value);
         else return dir.config.set(who, key, value);
@@ -522,6 +531,18 @@ function personOf(p: Person) {
 }
 
 /** Sign-in's settings, where this agent has them. */
+/**
+ * usernames: a rule is set only while its condition holds (server/identity/usernames.ts); else a 400 that says what
+ * fails now. (A value that is no rule: the setting refuses it.)
+ */
+async function ruleApplies(platform: Caller["platform"], value: unknown): Promise<void> {
+  const rule = typeof value == "string" ? USERNAME_RULES.find((r) => r == value.trim().toLowerCase()) : undefined;
+  if (!rule) return;
+  if (!platform) throw new OperationError({ message: "This server's sign-in settings aren't reachable from here.", status: 404 });
+  const why = whyNot(rule, await usernameFacts(platform));
+  if (why) throw new OperationError({ message: `usernames can't be "${rule}" now. ${why} Nothing changed.`, status: 400 });
+}
+
 function authOf(caller: Caller): AuthOps {
   if (!caller.auth) throw new OperationError({ message: "This server's sign-in settings aren't reachable from here.", status: 404 });
   return caller.auth;

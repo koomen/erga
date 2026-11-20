@@ -1,12 +1,14 @@
 // /admin/auth, the Sign-in page: everything that governs how people sign in on this server (client/inline/admin-auth.ts
 // changes it). It shows what the sign-in reports (server/identity/settings.ts, authOps.status): the mode, and that
 // mode's own parts: each OAuth provider's card; none with a gate in front. A secret that is set shows as its last 4
-// characters, with Replace and Remove: the page never has the secret. Then what a new account gets (its username: a
-// setting row, ./settings.ts), and the deploy's secrets that sign-in needs.
+// characters, with Replace and Remove: the page never has the secret. Then what a new account gets: how its username is
+// assigned (usernamesRow: a radio, with why an option can't be chosen now under it), and the deploy's secrets that
+// sign-in needs.
 
 import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
+import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
+import { type ConfigEntry, USERNAME_RULES, type UsernameRule } from "../directory/index.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import {
@@ -16,10 +18,14 @@ import {
   type CheckState,
   type Provider,
   type ProvidersOn,
+  RULE_LABEL,
   type SignInStatus,
+  usernameFacts,
+  type UsernameFacts,
+  whyNot,
 } from "../identity/index.ts";
 import { setAt } from "./parts.ts";
-import { chip, deploySection, PAGE_SETTINGS, settingLiveRows, settingsSection } from "./settings.ts";
+import { chip, deploySection, lockedBadge, PAGE_SETTINGS, setLine, settingLiveRows, settingsSection } from "./settings.ts";
 
 const STATE_LABEL: Record<CheckState, string> = {
   working: "Working",
@@ -141,11 +147,43 @@ function modeSection(mode: SignInStatus["mode"]): string {
   </section>`;
 }
 
+const USERNAMES = "setting:usernames";
+
+/**
+ * How a new account gets its username (the setting usernames: server/identity/usernames.ts), a radio: an option whose
+ * condition does not hold now can't be chosen, and says why under it. The option that is set and holds no more stays
+ * checked, with what happens meanwhile.
+ */
+export function usernamesRow(e: ConfigEntry, facts: UsernameFacts): string {
+  const why = (text: string) => esc(text).replace("the Access page", `<a href="/admin/access">the Access page</a>`);
+  const options = USERNAME_RULES.map((rule: UsernameRule) => {
+    const no = whyNot(rule, facts),
+      set = e.value == rule;
+    const note = !no ? "" : set ? `<b>Not in effect: new users choose their usernames.</b> ${why(no)}` : why(no);
+    return `<label class="choice${no ? " off" : ""}"><input type="radio" name="value" value="${rule}"${set ? " checked" : ""}${no || e.locked ? " disabled" : ""}><span class="what">${esc(RULE_LABEL[rule])}${note ? `<small class="why${set ? " warn" : ""}">${note}</small>` : ""}</span></label>`;
+  }).join("\n        ");
+  return `  <li class="setting usernames" data-key="usernames" data-control="radio" data-live="${USERNAMES}" data-sort="-1">
+    <div class="about">
+      <div class="head"><span class="key" id="usernames-label" title="usernames">${esc(e.label!)}</span>${lockedBadge(e)}</div>
+      <form class="choices" role="radiogroup" aria-labelledby="usernames-label">
+        ${options}
+      </form>
+      <p class="desc">${esc(e.description!)}</p>
+      ${setLine(e)}
+    </div>
+    <p class="hint" role="status"></p>
+  </li>`;
+}
+
+/** The row as the server is now. */
+const usernamesNow = async (platform: Platform) =>
+  usernamesRow(await platform.directory.config.entry("usernames"), await usernameFacts(platform));
+
 /** /admin/auth: how people sign in on this server. */
 export async function authPage(platform: Platform, session: Session, status: SignInStatus) {
   const s = sections(session, status);
   const [accounts, deployed] = await Promise.all([
-    settingsSection(platform, session, PAGE_SETTINGS.auth, "auth-settings"),
+    usernamesNow(platform).then((first) => settingsSection(platform, session, PAGE_SETTINGS.auth, "auth-settings", { first })),
     platform.directory.credentials.deployed(whoOf(session)),
   ]);
   return adminPage({
@@ -166,10 +204,19 @@ export async function authPage(platform: Platform, session: Session, status: Sig
 }
 
 /** The page's setting rows ("setting:<key>"), as they are now, for an open page (server/news/). */
-export const authSettingsRows: LiveRows = async (platform, session, keys) => ({
-  ...Object.fromEntries(keys.map((k) => [k, null])),
-  ...(await settingLiveRows(platform, session, keys, PAGE_SETTINGS.auth)),
-});
+export const authSettingsRows: LiveRows = async (platform, session, keys) => {
+  const rows: Record<string, LiveRow> = {
+    ...Object.fromEntries(keys.map((k) => [k, null])),
+    ...(await settingLiveRows(platform, session, keys, PAGE_SETTINGS.auth)),
+  };
+  if (!keys.includes(USERNAMES)) return rows;
+  const { users, rules, config } = platform.directory;
+  await users.mustAdmin(whoOf(session));
+  // As the database has them now: the change was likely made in another isolate, whose memory this one doesn't share.
+  rules.forget();
+  config.forget();
+  return { ...rows, [USERNAMES]: { html: await usernamesNow(platform), sort: -1 } };
+};
 
 /** The sections of /admin/auth that `keys` name ("auth:<provider>"), as they are now, for an open page (server/news/). */
 export const authRows: LiveRows = async (platform, session, keys, origin) => {

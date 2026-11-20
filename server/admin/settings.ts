@@ -16,8 +16,8 @@ import { setAt, shown } from "./parts.ts";
  * control of its own on its page (OWN): tests/settings.test.ts holds this, so a new setting gets a place.
  */
 export const PAGE_SETTINGS = {
-  /** Sign-in: what a new account gets, and how long a sign-in lasts. */
-  auth: ["auto_usernames", "sign_in_days"],
+  /** Sign-in: how long a sign-in lasts (after the row of how a new account gets its username: ./auth.ts, usernamesRow). */
+  auth: ["sign_in_days"],
   /** Documents: new documents, and the files' limits. */
   documents: ["delete_docs_after_hours", "max_file_mb", "max_project_gb"],
   /** Agents and models: the agents on the server's keys, then the Document LLM API: its switch, and what shows while it's on. */
@@ -26,8 +26,8 @@ export const PAGE_SETTINGS = {
   llmApiOn: ["document_llm_guests", "document_llm_daily_usd"],
   feedback: ["feedback", "feedback_repository"],
 } as const;
-/** Settings with a control of their own: the Access page's menu and switch, and the Agents and models page's choice and models' boxes. */
-export const OWN = ["anyone_access", "public_sharing", "agent_keys", "agent_models_off", "document_llm_models_off"] as const;
+/** Settings with a control of their own: the Access page's menu and switch, the Sign-in page's radio, and the Agents and models page's choice and models' boxes. */
+export const OWN = ["anyone_access", "public_sharing", "usernames", "agent_keys", "agent_models_off", "document_llm_models_off"] as const;
 
 /**
  * The control a setting's value is set with: by its kind, its choices, else
@@ -91,25 +91,30 @@ function controlOf(e: ConfigEntry): "switch" | "choice" | "users" | "typed" {
 export const chip = (login: string, locked: boolean) =>
   `<li class="chip" data-login="${esc(login)}">${esc(login)}${locked ? "" : `<button type="button" class="unpick" aria-label="Take out ${esc(login)}" title="Take out ${esc(login)}">${ICON.close}</button>`}</li>`;
 
+/** "Locked", on a setting that the deploy fixes; else nothing. */
+export const lockedBadge = (e: ConfigEntry) =>
+  e.locked
+    ? `<span class="meta"><span class="badge" title="Fixed by the deploy · default ${esc(shown(e.default))}">Locked</span></span>`
+    : "";
+
+/** Under a setting that was set: when, and by whom (its default on hover); `reset`: more in that line. */
+export const setLine = (e: ConfigEntry, reset = "") =>
+  e.source == "set"
+    ? `<p class="set"><span title="default ${esc(shown(e.default))}">${e.updated != null ? `Set ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}` : "Set"}</span>${reset}</p>`
+    : "";
+
 export function settingRow(e: ConfigEntry, never: boolean, place: number): string {
-  const def = `default ${shown(e.default)}`;
   const control = controlOf(e);
-  const meta = e.locked ? `<span class="badge" title="Fixed by the deploy · ${esc(def)}">Locked</span>` : "";
   // Reset where the control can't simply pick the default (a switch, a choice can): in the line that says who set it.
   const reset =
     e.source == "set" && !e.locked && control != "switch" && control != "choice"
       ? ` · <button type="button" class="reset" title="Back to ${esc(shown(e.default))}">Reset</button>`
       : "";
-  // Under each setting: when it was last set, and by whom (its default on hover).
-  const set =
-    e.source == "set"
-      ? `<p class="set"><span title="${esc(def)}">${e.updated != null ? `Set ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}` : "Set"}</span>${reset}</p>`
-      : "";
   return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}" data-live="setting:${esc(e.key)}" data-sort="${place}">
     <div class="about">
-      <div class="head"><label class="key" for="set-${esc(e.key)}" title="${esc(e.key)}">${esc(e.label ?? e.key)}</label>${meta ? `<span class="meta">${meta}</span>` : ""}</div>
+      <div class="head"><label class="key" for="set-${esc(e.key)}" title="${esc(e.key)}">${esc(e.label ?? e.key)}</label>${lockedBadge(e)}</div>
       ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ""}
-      ${set}
+      ${setLine(e, reset)}
     </div>
     <form class="value">
       <input type="hidden" name="key" value="${esc(e.key)}">
@@ -165,21 +170,21 @@ export async function settingRows(platform: Platform, session: Session, keys: re
  * A list of setting rows on a page, which follows the server: `view` names the page's rows (server/news/routes.ts), and
  * client/inline/admin-settings.ts saves each row as it changes (data-settings).
  */
-const settingsList = (rows: { html: string }[], view: string, o: { more?: string; hidden?: boolean } = {}) =>
+const settingsList = (rows: { html: string }[], view: string, o: { more?: string; hidden?: boolean; first?: string } = {}) =>
   `<ol class="rows settings${o.more ? ` ${o.more}` : ""}" data-settings data-live-kind="setting" data-live-view="${view}" data-live-order="asc" data-live-at="${Date.now()}"${o.hidden ? " hidden" : ""}>
-${rows.map((r) => r.html).join("\n")}
+${[...(o.first ? [o.first] : []), ...rows.map((r) => r.html)].join("\n")}
     </ol>`;
 
 /**
  * A page's list of the settings `keys`, as settingsList makes it; with the server's users for the box of a users
- * setting's picker, where the list has one.
+ * setting's picker, where the list has one. `first`: a row of the page's own, before them.
  */
 export async function settingsSection(
   platform: Platform,
   session: Session,
   keys: readonly string[],
   view: string,
-  o: { more?: string; hidden?: boolean } = {}
+  o: { more?: string; hidden?: boolean; first?: string } = {}
 ): Promise<string> {
   const rows = await settingRows(platform, session, keys);
   const users = rows.some((r) => r.html.includes('class="picker"')) ? await platform.directory.users.list(whoOf(session)) : [];

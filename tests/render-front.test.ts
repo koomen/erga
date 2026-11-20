@@ -81,7 +81,7 @@ async function front(allow: string[] | null = [], content = "localhost") {
   });
   const admin = { login: "tester", admin: true };
   await s.dir.setAnyone(admin, "write");
-  await s.dir.config.set(admin, "auto_usernames", true);
+  await s.dir.config.set(admin, "usernames", "email");
   (s.platform as { signIn: unknown }).signIn = { mode: "gate", key: KEY, devLogin: null, encryptionKey: "local:secret" };
   s.platform.pagesDomain = () => content;
   // The editor's built files: empty ones (the tests' server has no build), so the viewer's page loads without an error.

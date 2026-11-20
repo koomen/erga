@@ -11,11 +11,10 @@
 //      it, once: the accounts from before keep that login as their username.
 //      An account that has an identity is never claimed by a login: a login
 //      that changed hands is taken, and its person gets another username.
-//   3. Anyone else who may join makes a new account. Where this sign-in is the
-//      server's one way in and its names are one person's each, Erga names the
-//      account itself, at once (namesItself). Else they choose a username first
-//      (/auth/username): until they do, who they are waits in a signed cookie
-//      for half an hour, and nothing is written.
+//   3. Anyone else who may join makes a new account. Where the setting usernames gives them a name (usernames.ts: their
+//      GitHub username, or their address's part before the @) and that name is free, Erga makes the account under it,
+//      at once. Else they choose a username first (/auth/username): until they do, who they are waits in a signed
+//      cookie for half an hour, and nothing is written.
 //   4. Anyone who may not join sees one page (refusedPage), which says nothing
 //      of who may: the server's access rules are private.
 //
@@ -31,23 +30,14 @@ import type { Platform } from "../platform.ts";
 import { inlineScript, inlineStyle, notFound, page, safeNext } from "../pages/index.ts";
 import { call, ctx, Field, form, fromWeb, json, plainJson, redirect, text, type Route } from "../http.ts";
 import { esc } from "../../shared/html.ts";
-import {
-  anyoneAccess,
-  type Directory,
-  groupOf,
-  label,
-  NotAllowed,
-  type RuleKind,
-  type Vouched,
-  vouchedEmails,
-} from "../directory/index.ts";
+import { type Directory, groupOf, label, NotAllowed, type RuleKind, type Vouched, vouchedEmails } from "../directory/index.ts";
 import { safeAvatar } from "../../shared/avatars.ts";
 import { SIGN_IN_PROVIDERS, signedInWith } from "../../shared/sign-in.ts";
 import { callerOf, providerFor, SIGNED_OUT, signInCookiesFor } from "./caller.ts";
 import { cookies, setCookie, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { signed } from "../signed.ts";
-import { signInChoices } from "./settings.ts";
+import { assigned, usernameFacts } from "./usernames.ts";
 import { claims } from "./claim.ts";
 import type { TestEnd } from "./app-test.ts";
 
@@ -143,14 +133,16 @@ export const vouchedSignIn = Effect.fnUntraced(function* (
   }
   if (outcome.kind == "new") {
     yield* tested({ kind: "new", handle: v.handle });
-    // One way in: Erga names the account, and they go on at once. A name it can't have: they choose one.
-    const named =
-      outcome.suggestion && (yield* call(() => namesItself(platform, v))) ? yield* makeAccount(platform, outcome.suggestion, v) : null;
-    if (typeof named == "string") return { identity } as Ended;
+    // The name the setting usernames gives them, if it is free: the account, and they go on at once. Else they choose:
+    // a name that an account holds is said on the page.
+    const dir = platform.directory;
+    const [rule, facts] = yield* call(() => Promise.all([dir.config.get("usernames"), usernameFacts(platform)]));
+    const name = assigned(rule, facts, v);
+    const made = name && name == outcome.suggestion ? yield* makeAccount(platform, name, v) : null;
+    if (typeof made == "string") return { identity } as Ended;
+    const taken = outcome.taken ?? (name && (yield* call(() => dir.identities.inUse(name))) ? name : undefined);
     // On to the username step, with its cookie: who they are, signed, for half an hour.
-    const value = yield* call(() =>
-      Join.seal(platform.secret, { v, next: safeNext(next), ...(outcome.taken ? { taken: outcome.taken } : {}) })
-    );
+    const value = yield* call(() => Join.seal(platform.secret, { v, next: safeNext(next), ...(taken ? { taken } : {}) }));
     return { identity, next: "/auth/username", cookies: [setCookie(request, JOIN, value, JOIN_SECONDS, "/auth")] } as Ended;
   }
   const admin = yield* call(() => platform.directory.users.isAdmin(outcome.login));
@@ -185,31 +177,6 @@ export const devSignedIn = Effect.fnUntraced(function* (platform: Platform, requ
   if (HttpServerResponse.isHttpServerResponse(end)) return end;
   return ended(end, request, next, yield* call(() => signInCookiesFor(platform, new URL(request.url), end.identity)));
 });
-
-/**
- * Whether Erga names a new account itself, with no username step: this sign-in is the server's one way in, and what it
- * calls people is one person's each. A provider's logins are. Its email addresses are only when one group rule alone
- * lets people in (Anyone's level lets no account in), of this provider's kind (one Google Workspace), and this person
- * is in that group: the part before the @ is then one person's. The server's only sign-in (a gate in front) names nobody: its people choose. With the setting
- * auto_usernames, any sign-in that vouches for its email address names the account by it.
- */
-async function namesItself(platform: Pick<Platform, "own" | "signIn" | "directory">, v: Vouched): Promise<boolean> {
-  const handle = v.handle.toLowerCase();
-  if (handle.includes("@") && v.emails.some((e) => e.verified && e.email.toLowerCase() == handle))
-    if (await platform.directory.config.get("auto_usernames")) return true;
-  const info = SIGN_IN_PROVIDERS[v.provider];
-  const ways = await signInChoices(platform);
-  if (!info || info.only || ways.length != 1 || ways[0].id != v.provider) return false;
-  if (info.handle == "login") return true;
-  const [rules, level] = await Promise.all([platform.directory.rules.all(), platform.directory.anyone()]);
-  const [rule] = rules;
-  return (
-    anyoneAccess(level) == "none" &&
-    rules.length == 1 &&
-    rule.kind == info.groups?.kind &&
-    !!v.groups?.includes(groupOf(rule.kind, rule.value))
-  );
-}
 
 /**
  * A new account under `username` for whoever `v` is: its login, or why not (the name has a problem). The role an admin

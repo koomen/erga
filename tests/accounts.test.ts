@@ -6,7 +6,6 @@ import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
 import { githubAvatar } from "../shared/avatars.ts";
-import { server } from "./helpers/app.ts";
 import { memory } from "./helpers/memory-sql.ts";
 
 const ADMIN = { login: "koomen", admin: true };
@@ -180,31 +179,4 @@ test("a person who waits as an email an account verified later waits no more onc
   expect(await resolve(dir, google("g-5", "erin@b.example"), { join: false })).toEqual({ kind: "in", login: "erin" });
   expect(await dir.people.list(ADMIN)).toEqual([]);
   expect((await dir.users.get("erin"))?.role).toBe("user");
-});
-
-// On the whole app in memory (tests/helpers/app.ts), through local development's pretend provider (/auth/dev).
-test("a login that is another account's: with one way in Erga gives the name a number; else the username page says so under the field", async () => {
-  const s = server();
-  const signIn = (subject: number, handle: string) =>
-    s.fetch(`/auth/dev?provider=github&subject=${subject}&handle=${handle}&next=/documents`);
-  // GitHub alone is on: the first Ada is ada, at once, with no username step.
-  expect((await signIn(501, "Ada")).headers.get("location")).toBe("/documents");
-  expect((await s.platform.directory.identities.find("github", "501"))?.login).toBe("ada");
-  // Another GitHub account has the login now: ada2, at once.
-  expect((await signIn(502, "ada")).headers.get("location")).toBe("/documents");
-  expect((await s.platform.directory.identities.find("github", "502"))?.login).toBe("ada2");
-  // Two ways in: she chooses. The page says only that the account is taken, under the field, as the field's error.
-  await s.platform.own.put("auth:providers", { github: true, google: true });
-  const at = await signIn(503, "ada");
-  expect(at.headers.get("location")).toBe("/auth/username");
-  const cookie = at.headers
-    .getSetCookie()
-    .map((c) => c.split(";")[0])
-    .join("; ");
-  const page = await (await s.fetch("/auth/username", { headers: { Cookie: cookie } })).text();
-  const main = page.slice(page.indexOf("<main"), page.indexOf("</main>"));
-  expect(main).toContain("<h1>Choose a username</h1><p>Welcome. You signed in with GitHub as <b>ada</b>. Choose a username");
-  expect(main).toContain('<p class="hint error" role="status" id="username-hint">The Erga account <b>ada</b> is already taken.</p>');
-  expect(main).toContain('name="username" value="ada3"');
-  expect(await s.platform.directory.identities.find("github", "503")).toBeNull();
 });

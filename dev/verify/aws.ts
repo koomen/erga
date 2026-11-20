@@ -26,7 +26,7 @@
 //   - the release is this checkout's build (buildHere), not a commit of the repository that `bun erga deploy` builds;
 //   - no person answers setup's questions or opens its pages: the answers are made here, the entry is not written to
 //     .erga/config.json, and the client's secret is the test issuer's;
-//   - with SSO a new person gets their username from their address (the setting auto_usernames): a run has no
+//   - with SSO a new person gets their username from their address (the setting usernames: "email"): a run has no
 //     person to choose one. With OAuth, ada's rows go in with the first rows: GitHub and Google take no scripted
 //     person (celld.ts);
 //   - `remove` deletes the bucket too. A real instance's stack keeps it;
@@ -192,7 +192,7 @@ export async function deployOnAws(unit: AwsUnit, update = false): Promise<AwsRun
   const entry = () => {
     const made = awsEntry(a, account, run.outputs!, unit == "6" ? GITHUB_CLIENT : undefined);
     return unit == "5"
-      ? { ...made, vars: { ...made.vars, SERVER_DEFAULTS: JSON.stringify({ ...defaultsOf(a), auto_usernames: true }) } }
+      ? { ...made, vars: { ...made.vars, SERVER_DEFAULTS: JSON.stringify({ ...defaultsOf(a), usernames: "email" }) } }
       : made;
   };
   const secrets = { SESSION_SECRET: run.session, SECRETS_KEY: run.factory, ...(unit == "6" ? { GITHUB_CLIENT_SECRET: key() } : {}) };

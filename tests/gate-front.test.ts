@@ -123,17 +123,24 @@ test("a first sign-in: the gate signed them in, and the account comes with a use
 });
 
 test("with usernames from email addresses, the first sign-in makes the account at once", async () => {
-  const { s, ask } = await front();
-  await s.dir.config.set({ login: "tester", admin: true }, "auto_usernames", true);
+  const { s, ask, cookiesOf } = await front();
+  await s.dir.config.set({ login: "tester", admin: true }, "usernames", "email");
   expect((await ask("/auth/sso?next=%2Fnew", ADA)).headers.get("location")).toBe("/new");
   expect((await s.dir.identities.find("sso", "sub-ada"))?.login).toBe("ada");
   // A sign-in that gives no address has no name to take: the username step.
   expect((await ask("/auth/sso", person("sub-anon", ""))).headers.get("location")).toBe("/auth/username");
+  // The organization has a second email domain, with the same prefix: never a second ada. Its person chooses.
+  const other = person("sub-ada-2", "ada@example.net");
+  const step = await ask("/auth/sso", other);
+  expect(step.headers.get("location")).toBe("/auth/username");
+  const page = await (await ask("/auth/username", other, { headers: { Cookie: cookiesOf(step) } })).text();
+  expect(page).toContain('id="username-hint">The Erga account <b>ada</b> is already taken.</p>');
+  expect(page).toContain('name="username" value="ada2"');
 });
 
 test("the server asks the gate: sign-out, a token to paste, and MCP's code, each in the answer's header", async () => {
   const { s, ask } = await front();
-  await s.dir.config.set({ login: "tester", admin: true }, "auto_usernames", true);
+  await s.dir.config.set({ login: "tester", admin: true }, "usernames", "email");
   await ask("/auth/sso", ADA);
   // A token to paste: the grant is the server's, the token is the gate's to sign, for the person it named.
   const made = await ask("/tokens/new", ADA, {
@@ -186,7 +193,7 @@ test("the server asks the gate: sign-out, a token to paste, and MCP's code, each
 
 test("sign-out behind Cloudflare Access: the gate's cookies, the documents' site's frame, then Access's own sign-out", async () => {
   const { s, ask } = await front();
-  await s.dir.config.set({ login: "tester", admin: true }, "auto_usernames", true);
+  await s.dir.config.set({ login: "tester", admin: true }, "usernames", "email");
   // Access's proof names her on each request: the gate says so in the caller (gate/core.ts: the issuer "access").
   const ada = { ...person("sub-ada", "ada@example.com", "Ada Lovelace"), p: "access" } as Caller;
   await ask("/auth/sso", ada);
@@ -222,7 +229,7 @@ test("someone the gate lets through who may not join here: one page, which names
 
 test("documents on another site: the list of documents runs the gate's hand-off in a hidden frame, and the editor's page connects to the accept host early", async () => {
   const { s, ask } = await front();
-  await s.dir.config.set({ login: "tester", admin: true }, "auto_usernames", true);
+  await s.dir.config.set({ login: "tester", admin: true }, "usernames", "email");
   await ask("/auth/sso", ADA);
   // (The app at erga.example, and the documents under localhost: two sites.)
   expect(await (await ask("/documents", ADA)).text()).toContain('<iframe hidden src="https://warm.localhost/erga-warm" title=""></iframe>');
@@ -244,7 +251,7 @@ test("documents on another site: the list of documents runs the gate's hand-off 
 
 test("documents on another site behind the gate: a document's page asks for no service worker of Erga's; on the app's own site it does", async () => {
   const { s } = await front();
-  await s.dir.config.set({ login: "tester", admin: true }, "auto_usernames", true);
+  await s.dir.config.set({ login: "tester", admin: true }, "usernames", "email");
   /** The reader's settings in the page of a new document's frame, as the app at `origin` frames it. */
   const framed = async (origin: string, fetcher: (url: string, init?: RequestInit) => Promise<Response>, caller: Caller) => {
     const at = (await fetcher(`${origin}/new`, { redirect: "manual", headers: calling(caller) })).headers.get("location")!;

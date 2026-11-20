@@ -77,6 +77,19 @@ export const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 /** Names no account may take, besides the app's addresses (RESERVED): people would read them as Erga's. */
 const NOT_A_USERNAME = new Set(["anyone", "admins", "erga", "root", "system", "support", "security", "staff", "www", "mail", "ops", "git", "deploy", "install", "me", "you", "everyone", "null", "undefined"]);
 
+/** A text as a username's characters: lowercase letters and digits, with one dash for each run of anything else. */
+const valid = (from: string) =>
+  from
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+/** The username a provider's name for someone gives: a login, or an address's part before the @, made valid. "": none. */
+export const usernameFrom = (handle: string): string => valid(handle.split("@")[0]);
+
 interface Row {
   provider: SignInProvider;
   subject: string;
@@ -222,7 +235,7 @@ export class Identities {
   }
 
   /** Whether a name is in use: an account, a bootstrap admin, an identity's account, a document's owner, a share, an old address. */
-  private async inUse(name: string): Promise<boolean> {
+  async inUse(name: string): Promise<boolean> {
     if (this.users.isBootstrapAdmin(name)) return true;
     const [row] = await this.sql.all<{ n: number }>(
       `SELECT (SELECT COUNT(*) FROM users WHERE login = ?1) + (SELECT COUNT(*) FROM identities WHERE login = ?1)
@@ -232,21 +245,12 @@ export class Identities {
   }
 
   /**
-   * A username to offer first: the provider's name for them (an address's part before the @), made valid, with a number
-   * when it's taken; without one, their display name ("Ada Lovelace": ada-lovelace). Never the provider's id for them.
-   * "": nothing to offer, or nothing free.
+   * A username to offer first: the provider's name for them (usernameFrom), with a number when it's taken; without one,
+   * their display name ("Ada Lovelace": ada-lovelace). Never the provider's id for them. "": nothing to offer, or
+   * nothing free.
    */
   async suggest(v: Pick<Vouched, "handle" | "name">): Promise<string> {
-    const valid = (from: string) =>
-      from
-        .normalize("NFKD")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 32)
-        .replace(/-+$/, "");
-    const base = valid(v.handle.split("@")[0]) || valid(v.name ?? "");
+    const base = usernameFrom(v.handle) || valid(v.name ?? "");
     if (!base || base.startsWith("test-")) return "";
     for (let i = 1; i < 50; i++) {
       const name = i == 1 ? base : `${base}${i}`;

@@ -2,8 +2,8 @@
 //
 // Two journeys. The first is on a server of this file's own, because its checks change who may use the whole server:
 // the sign-in page with one provider and with two, people that an admin adds before their first sign-in, and the
-// access rules (a Google Workspace, a GitHub organization, Anyone's level). The second is one new person on the shared
-// server: the username step, the account corner, the editor's Share card and pencil, sign out and sign in.
+// access rules (a Google Workspace, a GitHub organization, Anyone's level), and how a new account gets its username. The
+// second is one new person on the shared server: the username step, the account corner, the editor's Share card and pencil, sign out and sign in.
 // Sign-ins go through local development's pretend provider (/auth/dev), which takes the same steps as GitHub's and
 // Google's answers. The admin is DEV_LOGIN ("tester").
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
@@ -187,6 +187,19 @@ journey("who may sign in, on a server of its own", () => {
       "You need permission to join",
       `You signed in with Google as bob.${id}@example.org. Ask an admin of this Erga server to add you, then sign in again. Or sign in with another account.`,
     ]);
+    // How a new account gets its username, on the Sign-in page. Until an admin chooses, each new person chooses, as
+    // Amy did. The email prefix can't be chosen here, and says why under it. With the keys: Arrow up from "Users
+    // choose" passes it, to "GitHub username", which saves by itself.
+    const option = (rule: string) => `li.usernames input[value=${rule}]`;
+    await page.goto(`${root}/admin/auth?user=tester`);
+    expect(await page.isChecked(option("choose"))).toBe(true);
+    expect(await page.isDisabled(option("email"))).toBe(true);
+    expect(await page.innerText("li.usernames label:has(input[value=email]) .why")).toContain(
+      "Now: Google is off; GitHub is on; 2 group rules give access."
+    );
+    await page.focus(option("choose"));
+    await page.keyboard.press("ArrowUp");
+    await until(async () => (await page.isChecked(option("github"))) && (await markOf(page)) == "saved", 5000, "the rule saved");
     // A member of acme: read, so no new document. GitHub is the one way in here (Google is off), so Erga names her
     // account by her login, and she is on her documents at once: no username step.
     await signIn(`provider=github&subject=${Date.now()}&handle=Dee-${id}&group=acme`);
@@ -258,6 +271,23 @@ journey("who may sign in, on a server of its own", () => {
     await page.evaluate(() => {
       (window as unknown as { stayed: boolean }).stayed = true;
     });
+    // Google's switch, with the keys: with two providers on, a GitHub username is one person's no more. The rule stays
+    // chosen, and says in place that it has no effect; with Google off again, it says nothing.
+    const note = () =>
+      page
+        .locator("li.usernames .why.warn")
+        .innerText({ timeout: 100 })
+        .catch(() => "");
+    const google = 'section.provider[data-provider="google"] input[role=switch]';
+    await page.focus(google);
+    await page.keyboard.press("Space");
+    await soon(note).toBe(
+      "Not in effect: new users choose their usernames. Only while GitHub is the only sign-in provider. Now: Google is on."
+    );
+    expect(await page.isChecked("li.usernames input[value=github]")).toBe(true);
+    await page.focus(google);
+    await page.keyboard.press("Space");
+    await soon(note).toBe("");
     // No Save button. The Client ID alone waits for the secret (the gray circle); with both, they save when the
     // typing pauses.
     expect(await page.locator(`${CARD} button:text-is("Save")`).count()).toBe(0);

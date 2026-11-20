@@ -313,6 +313,8 @@ test("a GitHub sign-in from start to the gate's cookie, against the pretend GitH
   const directory = new Directory(memory(), { admins: ["koomen"], providers: ["github", "google"] });
   const koomen = { login: "koomen", admin: true };
   await directory.setAnyone(koomen, "write");
+  // A new account is its GitHub username, with no step to choose one.
+  await directory.config.set(koomen, "usernames", "github");
   const env = {
     ...serverOn(store().storage),
     directory,

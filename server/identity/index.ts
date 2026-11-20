@@ -10,6 +10,7 @@ export { Claim } from "./claim-link.ts";
 export { claimRoute } from "./claim.ts";
 export { providersOf, type SignIn, signInOf } from "./mode.ts";
 export { accountLookup, authOps, signInChoices } from "./settings.ts";
+export { RULE_LABEL, usernameFacts, type UsernameFacts, whyNot } from "./usernames.ts";
 export { DOMAIN_ERGA, DOMAIN_SIGN_OUT, domainPass, domainSignIn, domainVisitor } from "./domain-pass.ts";
 export { authorize } from "./authorize.ts";
 export { tokensRoutes } from "./tokens-page.ts";

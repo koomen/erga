@@ -92,6 +92,10 @@ export const boolean = (v: unknown): boolean => {
 
 const setting = <T>(s: Setting<T>) => s;
 
+/** How a new account gets its username (the setting usernames; server/identity/usernames.ts says when each applies). */
+export const USERNAME_RULES = ["github", "email", "choose"] as const;
+export type UsernameRule = (typeof USERNAME_RULES)[number];
+
 /** Every setting the server has. */
 export const SETTINGS = {
   delete_docs_after_hours: setting<number | null>({
@@ -192,13 +196,18 @@ export const SETTINGS = {
       return repo;
     },
   }),
-  auto_usernames: setting<boolean>({
-    label: "Usernames from email addresses",
-    description:
-      "A new user's username is the part of their email address before the @ (pete@example.com: pete), with no step to choose one.",
-    values: "true: only for a verified address; a taken name gets a number (pete2). false: each new user chooses their username.",
-    default: false,
-    parse: boolean,
+  usernames: setting<UsernameRule>({
+    label: "Usernames are assigned based on",
+    description: "A name that is taken or reserved: that user chooses. Existing accounts keep their usernames.",
+    values:
+      "How a new account gets its username. github: the GitHub username; only while GitHub is the only sign-in provider that is on. email: the part of the email address before the @ (pete@example.com: pete); only with single sign-on, or while Google is the only provider that is on, one Google Workspace rule is the only group rule, and Anyone's level is none or public (a user outside that Workspace chooses). choose: each new user chooses. A rule is set only while its condition holds. When the condition stops later, the rule stays but has no effect, and new users choose (settings says which rule is in effect).",
+    default: "choose",
+    parse: (v) => {
+      const rule = typeof v == "string" ? v.trim().toLowerCase() : v;
+      if ((USERNAME_RULES as readonly unknown[]).includes(rule)) return rule as UsernameRule;
+      throw new ConfigError({ message: `must be one of: ${USERNAME_RULES.join(", ")}` });
+    },
+    choices: [...USERNAME_RULES],
   }),
   sign_in_days: setting<number>({
     label: "A sign-in lasts",

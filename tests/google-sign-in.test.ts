@@ -270,12 +270,13 @@ test("Cancel on the provider's page goes back to Sign in; any other refusal is o
   expect((await visit(platform, "/_edge/callback?state=abc&code=x")).status).toBe(400);
 });
 
-test("one way in: Erga names the account itself, from the address, when the one rule lets in her Workspace; else she chooses", async () => {
+test("usernames: email. Erga names the account from the address when the one rule lets in her Workspace; else she chooses", async () => {
   const koomen = { login: "koomen", admin: true };
   const only = async (rules: (d: Directory) => Promise<unknown>) => {
     const s = server();
     await s.own.put("auth:providers", { github: false, google: true });
     await rules(s.directory);
+    await s.directory.config.set(koomen, "usernames", "email");
     return s;
   };
   // Only Google, and one rule: her Workspace. ada@example.com is ada, at once, and she goes on to where she was going.
@@ -290,10 +291,10 @@ test("one way in: Erga names the account itself, from the address, when the one 
   expect(named.headers.get("location")).toBe("/documents");
   expect(named.headers.get("set-cookie")).toContain("__Host-erga=s.");
   expect((await one.directory.identities.find("google", "1001"))?.login).toBe("ada");
-  // A name that is taken gets a number.
+  // A name that is taken: no second ada, and no number without a question. Its person chooses.
   google.state.user = { ...ADA, sub: "1002", email: "Ada@example.com", hd: "example.com" };
-  expect((await signInWithGoogle(one.platform)).headers.get("location")).toBe("/documents");
-  expect((await one.directory.identities.find("google", "1002"))?.login).toBe("ada2");
+  expect((await signInWithGoogle(one.platform)).headers.get("location")).toBe("/auth/username");
+  expect(await one.directory.identities.find("google", "1002")).toBeNull();
   // Open to two Workspaces: the part before the @ is not one person's, so she chooses.
   google.state.user = { ...ADA, hd: "example.com" };
   const two = await only(async (d) => {

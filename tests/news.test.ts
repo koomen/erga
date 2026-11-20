@@ -58,7 +58,8 @@ test("each change on the admin pages sends its row's key to the admins, with the
   await dir.users.add(admin, "dee");
   expect(take()).toEqual(["user:dee>admins", `change:${await log()}>admins`]);
   await dir.rules.add(admin, { kind: "github_org", value: "acme", access: "read" });
-  expect(take()).toEqual(["rule:github_org:acme>admins", `change:${await log()}>admins`]);
+  // (How a new account gets its username depends on the group rules: its row on the Sign-in page too.)
+  expect(take()).toEqual(["rule:github_org:acme>admins", "setting:usernames>admins", `change:${await log()}>admins`]);
   await dir.config.set(admin, "public_sharing", true);
   expect(take()).toEqual(["setting:public_sharing>admins", `change:${await log()}>admins`]);
   await dir.users.setUserRole(admin, "dee", "admin");

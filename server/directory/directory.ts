@@ -801,6 +801,10 @@ export class Directory {
    */
   private async adminChanged(keys: string[]): Promise<void> {
     if (!this.news) return;
+    // How a new account gets its username depends on the providers that are on, the group rules and Anyone's level
+    // (server/identity/usernames.ts): its row on the Sign-in page says so again.
+    if (keys.some((k) => k.startsWith("auth:") || k.startsWith("rule:") || k == "setting:anyone_access"))
+      keys = [...keys, "setting:usernames"];
     const [{ n }] = await this.sql.all<{ n: number | null }>("SELECT MAX(n) AS n FROM server_config_versions");
     const admins = keys.some((k) => k.startsWith("user:"))
       ? (await this.sql.all<{ login: string }>("SELECT login FROM users WHERE role = 'admin'")).map((r) => `user:${r.login}`)

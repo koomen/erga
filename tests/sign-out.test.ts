@@ -14,8 +14,11 @@ const cookieIn = (r: Response, name: string) =>
 
 function server() {
   const s = app();
+  // A new account is its GitHub username, with no step to choose one.
+  const named = s.platform.directory.config.set({ login: "tester", admin: true }, "usernames", "github");
   /** A new sign-in of the GitHub account `handle` (local development's pretend provider): the gate's cookie, as a browser keeps it. */
   const cookieOf = async (handle: string, subject: string) => {
+    await named;
     // (A sign-in made in the same millisecond as a sign-out is ended with it: the next one is later.)
     const t = Date.now();
     while (Date.now() == t);

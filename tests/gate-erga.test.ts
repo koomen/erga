@@ -32,7 +32,7 @@ async function setUp() {
   const admin = { login: "tester", admin: true };
   // Everybody whom the organization's sign-in lets through may make an account, named from their address.
   await s.dir.setAnyone(admin, "write");
-  await s.dir.config.set(admin, "auto_usernames", true);
+  await s.dir.config.set(admin, "usernames", "email");
   const env: Env = {
     ERGA: { fetch: (request) => s.fetch(request.url, request) },
     EDGE_KEY: "an-edge-key-that-erga-never-holds-".repeat(2),

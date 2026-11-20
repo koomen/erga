@@ -1,8 +1,9 @@
 // The script of the admin pages' setting rows (server/admin/settings.ts: each page has those of what it governs): each
 // setting saves by itself, with no Save button
 // (client/common/autosave.ts): a switch or a choice as soon as it changes, a typed value when the typing pauses or the
-// focus leaves its field. The save mark left of the buttons' bar says how far it is. The server checks each value: a
-// refused one stays in its field, with the server's reason under it and the mark's red x, until it changes.
+// focus leaves its field; a radio (the Sign-in page's usernames) as soon as another option is chosen. The save mark left
+// of the buttons' bar says how far it is. The server checks each value: a refused one stays in its field, with the
+// server's reason under it and the mark's red x, until it changes.
 
 import { runTool, say } from "../common/admin-post";
 import { saveMark } from "../common/admin-save";
@@ -19,8 +20,31 @@ export interface SettingsConfig {
 export default function adminSettings(c: SettingsConfig): void {
   const chipHtml = c.chip;
   const mark = saveMark();
+  /** A setting that is a radio (data-control="radio"): the option chosen saves at once. */
+  function wireRadio(li: HTMLElement) {
+    const live = li.dataset.live!,
+      options = [...li.querySelectorAll<HTMLInputElement>("input[type=radio]")];
+    const chosen = () => options.find((o) => o.checked)?.value ?? "";
+    mark.set(live, "saved");
+    const auto = autosave({
+      mark,
+      key: live,
+      label: li.querySelector(".key")!.textContent!.trim(),
+      row: li,
+      read: chosen,
+      saved: chosen(),
+      save: (value) => runTool("set_setting", { key: li.dataset.key!, value }),
+      // (The row as the server has it now comes again: who set it, and each option's state.)
+      ended(why) {
+        say(document.querySelector(`[data-live="${CSS.escape(live)}"] .hint`) ?? li.querySelector(".hint")!, why ?? "", !!why);
+        if (!why) void changedRow(live);
+      },
+    });
+    for (const o of options) o.addEventListener("change", () => auto.changed(true));
+  }
   /** A setting's row: its control, which saves by itself, and Reset. */
   function wire(li: HTMLElement) {
+    if (li.dataset.control == "radio") return wireRadio(li);
     const form = li.querySelector("form")!,
       input = form.elements.namedItem("value") as HTMLInputElement,
       mode = li.querySelector<HTMLSelectElement>("select.mode"),

@@ -11,7 +11,7 @@
 //
 // The people sign in only at the test issuer, through the gate (idp.ts: ada, bob), and Erga hears them from the gate:
 // no cookie or row of the harness's says who they are. Their accounts come as a new server's do: a first visit makes
-// the account (the setting auto_usernames, a deploy's default here, names it by the email address: ada, bob), and ada
+// the account (the setting usernames, "email" by a deploy's default here, names it by the email address: ada, bob), and ada
 // becomes the admin by setup's one-time link (server/identity/claim.ts), which the harness seals with the instance's
 // SESSION_SECRET as `bun erga setup` does.
 //
@@ -66,7 +66,7 @@ const targetOf = (run: Run): Target => ({
   pages: { kind: "zone", zoneName: zone(run.content), domain: run.content },
   gate: true,
   // A new person's username is their address's (no step to choose one: a run has no person to choose).
-  vars: { SERVER_DEFAULTS: JSON.stringify({ auto_usernames: true }), GITHUB_CLIENT_ID: "" },
+  vars: { SERVER_DEFAULTS: JSON.stringify({ usernames: "email" }), GITHUB_CLIENT_ID: "" },
   secrets: { SESSION_SECRET: run.erga!.session, SECRETS_KEY: run.erga!.factory, GATE_KEY: run.gateKey! },
 });
 
