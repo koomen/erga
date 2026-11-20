@@ -15,8 +15,8 @@ quietConsole();
 
 beforeAll(prepareRelease, 120_000);
 
-/** A wait that ends soon: a release that never gets healthy spends it all. */
-const soon = { ...quick, waitMs: 60 };
+/** A wait of a minute, which goes by at once (the sleeps end at once, and move the pipeline's clock on): a release that never gets healthy spends it all. */
+const soon = { ...quick, waitMs: 60_000 };
 
 describe("rollbacks", () => {
   test("an unhealthy release fails at the live step and says what failed; a rollback puts the version before it back, in one call", async () => {

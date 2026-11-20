@@ -157,20 +157,31 @@ export function guardTarget(t: Target): string | null {
 type Sleep = (ms: number) => Promise<void>;
 
 /**
- * The Clock that tells the real time and sleeps with `sleep`. The pipeline's waits (polls, retries, a deploy's wait for
- * its new version) are Effect Schedules, and they wait on Effect's Clock. A test, and the mock Cloudflare, give a sleep
- * of their own so the waits go by at once.
+ * The Clock that sleeps with `sleep`. The pipeline's waits (polls, retries, a deploy's wait for its new version) are
+ * Effect Schedules, and they wait on Effect's Clock. A test, and the mock Cloudflare, give a sleep of their own that
+ * ends at once. The Clock's time still moves on by the whole sleep, so a wait of minutes ends at once too: it never
+ * spends real time until its limit.
  */
 function clockOf(sleep: Sleep): Clock.Clock {
   const real = Clock.Clock.defaultValue();
+  /** The part of the sleeps that took no real time. */
+  let skipped = 0;
+  const millis = () => real.currentTimeMillisUnsafe() + skipped;
+  const nanos = () => real.currentTimeNanosUnsafe() + BigInt(skipped) * 1_000_000n;
   return {
-    currentTimeMillisUnsafe: () => real.currentTimeMillisUnsafe(),
-    currentTimeMillis: real.currentTimeMillis,
-    currentTimeNanosUnsafe: () => real.currentTimeNanosUnsafe(),
-    currentTimeNanos: real.currentTimeNanos,
-    monotonicTimeNanosUnsafe: () => real.monotonicTimeNanosUnsafe(),
-    monotonicTimeNanos: real.monotonicTimeNanos,
-    sleep: (d) => Effect.promise(() => sleep(Duration.toMillis(d))),
+    currentTimeMillisUnsafe: millis,
+    currentTimeMillis: Effect.sync(millis),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: Effect.sync(nanos),
+    monotonicTimeNanosUnsafe: nanos,
+    monotonicTimeNanos: Effect.sync(nanos),
+    sleep: (d) =>
+      Effect.promise(async () => {
+        const ms = Duration.toMillis(d);
+        const from = real.currentTimeMillisUnsafe();
+        await sleep(ms);
+        skipped += Math.max(0, ms - (real.currentTimeMillisUnsafe() - from));
+      }),
   };
 }
 

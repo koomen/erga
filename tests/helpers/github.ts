@@ -96,7 +96,8 @@ export function github(shas: string[] = [SHA2, SHA1]) {
       said(`manifest ${short(tagged)}`);
       const release = state.releases.get(tagged);
       if (!release) return Response.json({ errors: [{ code: "MANIFEST_UNKNOWN" }] }, { status: 404 });
-      if (release == "not a release")
+      // (Not `release == "not a release"`: JavaScript would first write the bundle's 14 million bytes as text.)
+      if (typeof release == "string")
         return Response.json({
           schemaVersion: 2,
           layers: [{ mediaType: "application/vnd.oci.image.layer.v1.tar", digest: `sha256:${"0".repeat(64)}`, size: 5 }],
@@ -109,7 +110,7 @@ export function github(shas: string[] = [SHA2, SHA1]) {
     }
     const blob = /^\/v2\/example\/erga\/blobs\/(sha256:[0-9a-f]{64})$/.exec(path)?.[1];
     for (const [sha, release] of state.releases)
-      if (blob && release != "not a release" && (await digestOf(release)) == blob) {
+      if (blob && typeof release != "string" && (await digestOf(release)) == blob) {
         said(`bundle ${short(sha)}`);
         return new Response(new Uint8Array(state.served ?? release));
       }
