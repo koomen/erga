@@ -4,7 +4,9 @@
 // (whoami's pages: the admin sections only for an admin), by typing part of its name; ↑ ↓ choose, Enter opens (⌘Enter in
 // a new tab), Esc closes. One pane per page: the first script to install it owns window.ergaQuickSearch, and the editor's
 // shell calls that. The account menus' "Go to…" opens it too (quickLink), with the key beside it.
-// It opens at once: with the list it read last, read again behind each time it opens, and filtered here.
+// It opens at once: with the lists it read last (this browser keeps them: KEPT), read again behind each time it opens,
+// and filtered here. Before anything is typed it shows where to go from here (start): a few of the open project's
+// pages, the documents opened last, and Erga's pages. Its list is never empty under the line: it has no line then.
 
 import { readable } from "../../document/model/pages";
 import { esc } from "../../shared/html";
@@ -16,7 +18,42 @@ interface Found {
   label: string;
   path: string;
   hint?: string;
+  /** A document's id. */
+  id?: string;
 }
+
+/** What the pane finds in: the open project's pages, the person's documents (the last edited first) and Erga's pages. */
+interface Lists {
+  own: Found[];
+  docs: Found[];
+  site: Found[];
+}
+
+/**
+ * This browser's record of the pane (localStorage): the lists as it read them last (`of`: the document whose pages `own`
+ * has), so that it opens with them on the next page too; and the documents opened here (their ids, the last one first).
+ * The sign-out page deletes it (client/inline/sign-out.ts).
+ */
+export const KEPT = "erga:quick-search:v1";
+type Kept = Partial<Lists> & { of?: string; visits?: string[] };
+/** As whoever this tab is: local development's ?user= has a record of its own. */
+const keptKey = () => asUser(KEPT);
+const kept = (): Kept => {
+  try {
+    return JSON.parse(localStorage.getItem(keptKey()) ?? "{}") as Kept;
+  } catch {
+    return {};
+  }
+};
+const keep = (more: Kept) => {
+  try {
+    localStorage.setItem(keptKey(), JSON.stringify({ ...kept(), ...more }));
+  } catch {
+    /* no storage: the pane reads its lists each time */
+  }
+};
+/** How many of the project's pages, and how many documents, the pane starts with. */
+const FEW = 5;
 
 declare global {
   interface Window {
@@ -33,9 +70,10 @@ const CSS = `
 .erga-qs[hidden] { display: none; }
 .erga-qs-card { width: min(560px, 100%); max-height: 70vh; display: flex; flex-direction: column; overflow: hidden; color: var(--qs-fg); background: var(--qs-bg);
   border: 1px solid var(--qs-ring); border-radius: 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, .18), 0 1px 2px rgba(0, 0, 0, .06); }
-.erga-qs-input { margin: 0; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--qs-ring); outline: none; background: transparent; color: inherit; font: inherit; font-size: 15px; }
+.erga-qs-input { margin: 0; padding: 14px 16px; border: 0; outline: none; background: transparent; color: inherit; font: inherit; font-size: 15px; }
 .erga-qs-input::placeholder { color: var(--qs-soft); }
-.erga-qs-list { margin: 0; padding: 6px; overflow-y: auto; list-style: none; }
+.erga-qs-list { margin: 0; padding: 6px; border-top: 1px solid var(--qs-ring); overflow-y: auto; list-style: none; }
+.erga-qs-list:empty { display: none; }
 .erga-qs-group { padding: 8px 10px 4px; color: var(--qs-soft); font-size: 12px; }
 .erga-qs-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
 .erga-qs-item[aria-selected="true"] { background: var(--qs-pick); }
@@ -55,6 +93,16 @@ export function match(all: Found[], query: string): Found[] {
     .map((x) => x.f);
 }
 
+/**
+ * What the pane shows before anything is typed: the first few of the open project's pages; the documents opened last in
+ * this browser (`visits`), then those edited last, but never the open one (`here`); and Erga's pages.
+ */
+export function start(all: Lists, visits: string[], here?: string): Found[] {
+  const rank = (d: Found) => visits.indexOf(d.id!) + 1 || visits.length + 1;
+  const recent = all.docs.filter((d) => d.id != here).sort((a, b) => rank(a) - rank(b));
+  return [...all.own.slice(0, FEW), ...recent.slice(0, FEW).map((d) => ({ ...d, group: "Recent documents" })), ...all.site];
+}
+
 /** An account menu's "Go to…" (`a`, with a <kbd> for the key): it shows this system's key, and a click opens the pane after `close` closes the menu. */
 export function quickLink(a: HTMLElement | null | undefined, close: () => void): void {
   if (!a) return;
@@ -71,11 +119,13 @@ export function quickLink(a: HTMLElement | null | undefined, close: () => void):
 export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () => false): void {
   if (window.ergaQuickSearch) return;
   let root: HTMLElement | null = null;
-  // The list as it was read last (shown at once), and the read under way.
-  let entries: Found[] | null = null;
+  // The lists as they were read last (shown at once), and the read under way.
+  let entries: Lists | null = null;
   let reading: Promise<void> | null = null;
   let shown: Found[] = [];
   let at = 0;
+  // The documents opened in this browser, as the pane opened.
+  let visits: string[] = [];
   // What had the focus as the pane opened (the document's frame, a button): it gets the focus back as the pane closes.
   let before: Element | null = null;
   // The pages it opens keep local development's ?user=. "#settings" and "#shortcuts" open a dialog on this page
@@ -84,32 +134,42 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
 
   // On a document's page: the document (its project's pages come first).
   const doc = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content;
+  if (doc) keep({ visits: [doc, ...(kept().visits ?? []).filter((v) => v != doc)].slice(0, FEW + 1) });
   type Ls = { title?: string; index?: string; entries?: { type: string; path: string; title?: string; address?: string }[] };
   const read = () =>
     (reading ??= Promise.all([
       doc ? runTool<Ls>("ls", { document: doc }).catch(() => null) : null,
-      runTool<{ documents: { title: string; address: string }[] }>("list_documents", WHOLE_LIST).then(
+      runTool<{ documents: { id: string; title: string; address: string }[] }>("list_documents", WHOLE_LIST).then(
         (l) => l.documents,
-        () => []
+        () => null
       ),
       runTool<{ pages?: { group: string; label: string; path: string }[] }>("whoami").then(
         (w) => w.pages ?? [],
-        () => []
+        () => null
       ),
     ]).then(([ls, docs, pages]) => {
       reading = null;
+      // A list it could not read (the network is gone, or the page is going: Enter, before the answer) stays as it was.
+      const was = entries;
       // The open document's pages, when it has more than one: its own page first, then as its tree has them.
       const own = (ls?.entries ?? []).filter((e) => e.type == "page" && e.address);
-      entries = [
-        ...(own.length > 1 ? own : [])
-          .sort((a, b) => Number(b.path == ls!.index) - Number(a.path == ls!.index))
-          .map((e) => ({ group: `Pages of ${ls!.title}`, label: e.title || readable(e.path), path: e.address!, hint: e.address })),
-        ...docs.map((d) => ({ group: "Documents", label: d.title || d.address, path: d.address, hint: d.address })),
-        ...pages.map((p) => ({ ...p, hint: p.path })),
-      ];
+      entries = {
+        own:
+          doc && !ls
+            ? (was?.own ?? [])
+            : (own.length > 1 ? own : [])
+                .sort((a, b) => Number(b.path == ls!.index) - Number(a.path == ls!.index))
+                .map((e) => ({ group: `Pages of ${ls!.title}`, label: e.title || readable(e.path), path: e.address!, hint: e.address })),
+        docs:
+          docs?.map((d) => ({ group: "Documents", label: d.title || d.address, path: d.address, hint: d.address, id: d.id })) ??
+          was?.docs ??
+          [],
+        site: pages?.map((p) => ({ ...p, hint: p.path })) ?? was?.site ?? [],
+      };
+      if (docs && pages && (ls || !doc)) keep({ ...entries, of: doc });
       if (root && !root.hidden) void render(root.querySelector("input")!.value, true);
     }));
-  const load = async () => entries ?? (await read(), entries ?? []);
+  const load = async () => entries ?? (await read(), entries!);
 
   function build(): HTMLElement {
     const style = document.createElement("style");
@@ -153,7 +213,7 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
     const all = await load();
     if (root!.querySelector("input")!.value != query) return;
     const was = keep ? shown[at]?.path : undefined;
-    shown = match(all, query).slice(0, 30);
+    shown = (query.trim() ? match([...all.own, ...all.docs, ...all.site], query) : start(all, visits, doc)).slice(0, 30);
     at = Math.max(0, was ? shown.findIndex((f) => f.path == was) : 0);
     let html = "",
       group = "";
@@ -193,6 +253,10 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
       before = document.activeElement;
       root.hidden = false;
       input.value = "";
+      // This browser's record, as it is now: another tab, or this one before it came back, may have changed it.
+      const { own, of, docs, site, visits: last = [] } = kept();
+      visits = last;
+      if (docs && site) entries ??= { own: (of == doc && own) || [], docs, site };
       void render("");
       // (The first time, render's own read is this one.)
       if (entries) void read();
@@ -220,4 +284,3 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
     if (e.data?.type == "erga-quick-search" && fromFrame(e)) open();
   });
 }
-

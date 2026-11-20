@@ -356,13 +356,18 @@ journey("a person's documents", () => {
       .toBe("4 documents | A project | Garden plan, spring | Old minutes | Untitled");
   });
 
-  test("in the viewer of a project, Go to… in the avatar's menu shows the key and opens the quick search, the project's pages first; ⌘K opens it from inside the page", async () => {
+  test("in the viewer of a project, Go to… in the avatar's menu shows the key and opens the quick search, with no line over an empty list while it reads, the project's pages first; ⌘K opens it from inside the page", async () => {
     await page.goto(`${s.root}${project}`);
     await clickOn(page, "[data-erga-account] button");
     expect(await page.evaluate(() => document.querySelector(".erga-account-go")?.textContent)).toBe(
       `Go to…${process.platform == "darwin" ? "⌘K" : "Ctrl K"}`
     );
+    // The first time in this browser, the lists are on their way: the box alone, with no line and no room under it.
+    const lists = await hold(page, { url: /\/api\/tools\/list_documents/ });
     await clickOn(page, ".erga-account-go");
+    await expect.poll(() => lists.waiting()).toBe(1);
+    expect(await page.evaluate(() => document.querySelector(".erga-qs:not([hidden]) .erga-qs-list")!.getClientRects().length)).toBe(0);
+    await lists.end();
     await expect.poll(async () => (await pane(page))?.groups[0]).toBe("Pages of A project");
     expect(await page.evaluate(() => document.querySelector<HTMLElement>(".erga-account-menu")!.hidden), "the menu closed").toBe(true);
     expect((await pane(page))!.rows.slice(0, 2)).toEqual([`Home${project}`, `Road map${project}/plans/roadmap`]);
@@ -376,7 +381,7 @@ journey("a person's documents", () => {
     await expect.poll(() => pane(page)).toBeNull();
   });
 
-  test("Back to Documents shows the list from the browser's copy, and the list follows a change made meanwhile", async () => {
+  test("Back to Documents shows the list from the browser's copy, and the list follows a change made meanwhile; ⌘K there has the documents opened last and Erga's pages at once, and Enter opens the first", async () => {
     await agent("rename_document", { document: id.Minutes, title: "Minutes of May" });
     await page.goBack();
     await expect.poll(async () => (await shown(page)).split(" | ")).toContain("Minutes of May");
@@ -387,6 +392,17 @@ journey("a person's documents", () => {
         return [n.type, n.transferSize];
       })
     ).toEqual(["back_forward", 0]);
+    // Nothing typed: where to go from here, from what this browser kept, before the server answers. The project is
+    // first (it was opened last), not the document edited last.
+    await page.keyboard.press("ControlOrMeta+k");
+    const start = (await pane(page))!;
+    expect(start.groups).toEqual(["Recent documents", "Pages"]);
+    expect([start.rows[0], start.picked]).toEqual([`A project${project}`, `A project${project}`]);
+    expect(start.rows.slice(-3)).toEqual(["Documents/documents", "Settings#settings", "Keyboard shortcuts#shortcuts"]);
+    await page.keyboard.press("Enter");
+    await page.waitForURL(`${s.root}${project}`);
+    await page.goBack();
+    await page.waitForURL((u) => u.pathname == "/documents");
   });
 
   test("the Scratch link after the heading opens the scratch documents, each with when it goes; one made meanwhile comes in; Save takes a row onto the list, and Delete empties the view", async () => {
@@ -541,7 +557,7 @@ journey("a person's documents", () => {
     // The editor's own avatar menu (#account).
     await clickOn(page, "#me .avatar");
     await clickOn(page, "#account-go");
-    await expect.poll(async () => (await pane(page))?.groups).toEqual(expect.arrayContaining(["Pages of A project", "Documents"]));
+    await expect.poll(async () => (await pane(page))?.groups).toEqual(expect.arrayContaining(["Pages of A project", "Recent documents"]));
     expect(await page.evaluate(() => document.getElementById("account")!.hidden), "the menu closed").toBe(true);
     await page.keyboard.type("road");
     await expect.poll(async () => (await pane(page))?.rows).toEqual([`Road map${project}/plans/roadmap`]);
@@ -556,7 +572,7 @@ journey("a person's documents", () => {
     const at = await ed.charAt("h1", 2);
     await ed.click(at.x, at.y);
     await ed.press("ControlOrMeta+k");
-    await expect.poll(async () => (await pane(page))?.groups).toContain("Documents");
+    await expect.poll(async () => (await pane(page))?.groups).toContain("Recent documents");
     await page.keyboard.press("Escape");
     await expect.poll(() => pane(page)).toBeNull();
     // Made while the editor is open: the next ⌘K reads the list again.

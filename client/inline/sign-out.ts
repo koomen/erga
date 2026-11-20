@@ -5,16 +5,19 @@
 // (`gate`: gate/core.ts, the accept host), which ends that site's cookie in this site's partition: after the frames
 // above, which need it. Last it goes on to `to`: behind Cloudflare Access that is Access's own sign-out, which ends the
 // sign-in that this page and its frames came with (gate/core.ts, signOutAt). It also deletes this tab's copy of the
-// agent's panel (client/agent/person-agent.ts keeps it for the tab's next page).
+// agent's panel (client/agent/person-agent.ts keeps it for the tab's next page), and the quick search's record of the
+// person's documents (client/common/quick-search.ts).
 
 import { savePanel } from "../common/agent-panel";
 import { clearOffline } from "../common/offline";
+import { KEPT } from "../common/quick-search";
 import { CLEAR_PATH, ORIGINS_KEY } from "../../shared/offline";
 
 export default function signOut(C: { to: string; gate: string | null }): void {
   let origins: string[] = [];
   savePanel({ drawn: null });
   try {
+    localStorage.removeItem(KEPT);
     origins = (JSON.parse(localStorage.getItem(ORIGINS_KEY) ?? "[]") as unknown[]).filter(
       (o): o is string => typeof o == "string" && /^https?:\/\/[^/]+$/.test(o)
     );
