@@ -242,8 +242,26 @@ export default function reader(C: ReaderConfig): void {
     tell({ type: "erga-zooms", on });
   };
   addEventListener("load", () => zooms());
+  // The page loaded again in the editor, with the focus in its text (the editor kept that with its state:
+  // libs/text/ui/frame.ts, Carry.focus). The viewer gives this page the keys when this script says that it is up, and
+  // the editor's script runs later: a key pressed between the two was lost. They are held here, for the editor.
+  /** The viewer opened this page in the editor. */
+  const EDITS = /[?&]erga-edit(=|&|$)/;
+  const keys: { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean }[] = [];
+  const holdKey = (e: KeyboardEvent) => {
+    if (e.isComposing || e.metaKey || e.ctrlKey || e.key == "Escape") return;
+    e.preventDefault();
+    keys.push({ key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey });
+  };
+  try {
+    if (EDITS.test(location.search) && JSON.parse(sessionStorage.getItem("erga:carry:" + location.pathname) || "null")?.focus)
+      addEventListener("keydown", holdKey, true);
+  } catch {
+    /* no storage */
+  }
   window.__ergaReader = {
     config: C,
+    keys: { held: keys, letGo: () => removeEventListener("keydown", holdKey, true) },
     restyle,
     // (The editor puts the page back where it was: with its room for the bars.)
     placed: () => {
@@ -521,7 +539,7 @@ export default function reader(C: ReaderConfig): void {
     if (script.integrity) s.integrity = script.integrity;
     head.append(s);
   }
-  if (/[?&]erga-edit(=|&|$)/.test(location.search)) load();
+  if (EDITS.test(location.search)) load();
   // The fade: where the page is scrolled to, and the pointer over it, at most once a frame.
   let scrolled: string | null = null,
     pointer: { x: number; y: number } | null = null;

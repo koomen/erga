@@ -148,7 +148,8 @@ export abstract class EditorRender extends EditorMarks {
   protected checkView(start = false): void {
     const doc = this.doc,
       own = this.ownership;
-    if (!doc?.body || !own || this.rendering || this.stopped) return;
+    // (A page that lacks a change shows an older text, as it must: applyChanges.)
+    if (!doc?.body || !own || !this.upToDate || this.stopped) return;
     const want = new DOMParser().parseFromString(this.src, "text/html").body;
     const skip = (n: Node) =>
       own.owned.has(n) ||
@@ -373,9 +374,16 @@ export abstract class EditorRender extends EditorMarks {
   }
 
 
+  /**
+   * Shows a change on the page, in place if it can. A page that lacks a change already (unshown, stale: it loads again
+   * soon, at the end of an agent's turn) has the tree and the units of an older text: a later change put into it went
+   * to other places (a paragraph showed text from beside it). Nothing more goes into it: the page that loads again
+   * shows every change.
+   */
   protected applyChanges(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): void {
     if (!this.doc || this.rendering) return;
-    const how = this.reconcile(tr.changes, oldUnits, oldSrc, this.src) || this.reconcileEach(tr.changes, oldSrc);
+    const how =
+      !this.unshown && !this.stale && (this.reconcile(tr.changes, oldUnits, oldSrc, this.src) || this.reconcileEach(tr.changes, oldSrc));
     if (how) {
       this.unshown = false;
       this.recheck(tr.changes, how == "region");

@@ -199,6 +199,41 @@ journey("a page with parts of its own: keys go where the caret is", () => {
       'overloaded. Say "go on" to try again.'
     );
   });
+
+  // An agent added a tag to the page's head (a change that the page can't show in place: it loads again at the turn's
+  // end), then changed a paragraph, in the same turn. The second change went into the page by the places that the
+  // text had before the first: the paragraph showed text from beside it ('lass="lede">People with a role of their ').
+  test("an agent changes the page's head, then a paragraph, in one turn: the paragraph shows no other text; at the turn's end the page shows both, and edits", async ({
+    tab,
+  }) => {
+    const WAS = "A block with an id.",
+      NOW = "The block with an id.";
+    await agentPlays(ed, [
+      {
+        tool: "edit",
+        args: {
+          path: "index.html",
+          edits: [{ oldText: "<title>Page parts</title>", newText: '<title>Page parts</title><meta name="note">' }],
+        },
+      },
+      { tool: "edit", args: { path: "index.html", edits: [{ oldText: WAS, newText: NOW }] } },
+      { text: "Done.", delay: 12_000 },
+    ]);
+    await until(
+      () => ed.frame<boolean>(`ergaFrame.page.state.doc.toString().includes("${NOW}")`),
+      10_000,
+      "the page's editor has both changes"
+    );
+    expect([WAS, NOW]).toContain(await ed.textOf("#target"));
+    // The turn ends (the person stops it): the page loads again, shows both changes, and edits.
+    await ed.page.click("#agent-send.stop");
+    await expect.poll(() => ed.textOf("#target"), { timeout: 10_000 }).toBe(NOW);
+    await ed.loaded();
+    await ed.clickEnd("#target");
+    await tab.page.keyboard.press("!");
+    await expect.poll(() => ed.disk(), { timeout: DISK_MS }).toContain(`${NOW}!</p>`);
+    expect(ed.disk()).toContain('<meta name="note">');
+  });
 });
 
 journey("a deck that changes on disk and by an agent while the person types", () => {
@@ -251,6 +286,33 @@ journey("a deck that changes on disk and by an agent while the person types", ()
       "the file has both"
     );
     expect(await para(1), "the first slide has the edit on disk").toContain("the disk edits");
+  });
+
+  // A key that a person pressed after the new page was up, and before its editor's script ran, was lost: the new
+  // page had the keys, and nothing in it held them ("abcefg", with no "d").
+  test("keys pressed while the page that loads again waits for its editor's script: every key is in the text", async ({ tab }) => {
+    // The next page's editor's script comes slowly, as on a real network: the page is up before it.
+    const script = await holdLoads(tab.page, /\/erga\/text\/editor\.js/);
+    await ed.frame(`ergaFrame.page.render()`);
+    await until(() => script.asked() > 0, 5000, "the new page asks for its editor's script");
+    // (The new page is up: the viewer gave it the keys.)
+    await until(() => ed.eval<boolean>(`document.activeElement?.id == "frame"`), 5000, "the new page has the keys");
+    for (const key of "45") await tab.page.keyboard.press(key);
+    script.release();
+    await ed.loaded();
+    await ed.idle();
+    await ed.shows(`
+      # Third slide one two three45|
+
+      The last one.
+    `);
+    // (The title as it was, for the steps after this one.)
+    for (const key of "45") await ed.press("Backspace");
+    await ed.shows(`
+      # Third slide one two three|
+
+      The last one.
+    `);
   });
 
   test("typing and a disk edit at once: both survive, unmarked; ⌘Z takes back the typing only, ⌘⇧Z brings it back", async () => {

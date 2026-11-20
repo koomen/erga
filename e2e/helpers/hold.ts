@@ -190,7 +190,7 @@ export async function hold(page: Page, match: Match, o: { each?: Fate; loads?: b
 }
 
 /**
- * Holds a page's load: a frame that goes to an address like `url`. The tab can't hold its own loads, so a route of the
+ * Holds a page's load: a frame that goes to an address like `url`, or a script from one. The tab can't hold its own loads, so a route of the
  * test's does, and it stays for the tab's life: after `release` each such load goes on at once, and nothing is turned
  * off under a request (the trap above).
  */

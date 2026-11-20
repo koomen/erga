@@ -252,26 +252,11 @@ const carry = (c: Carry) => {
 };
 
 // The page loaded again with the focus (its editor kept that: Carry.focus): the keys typed before its editor is up
-// (it joins the room first) are held here, and the editor applies them first, in order.
-const early: HeldInput[] = [];
+// (it joins the room first) are held, and the editor applies them first, in order. The page's first script holds
+// them (client/inline/reader.ts): it is up before this one, when the viewer gives the page the keys.
+const early: HeldInput[] = window.__ergaReader.keys.held;
 /** Lets go of the keys: the editor takes them, or it stops before it's up (then the page's own keys work again). */
-let letGo = () => {};
-try {
-  if ((JSON.parse(sessionStorage.getItem(CARRY) ?? "null") as Carry | null)?.focus) {
-    const key = (e: KeyboardEvent) => {
-      if (e.isComposing || e.metaKey || e.ctrlKey || e.key == "Escape") return;
-      e.preventDefault();
-      early.push({ key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey });
-    };
-    addEventListener("keydown", key, true);
-    letGo = () => {
-      removeEventListener("keydown", key, true);
-      letGo = () => {};
-    };
-  }
-} catch {
-  /* no storage */
-}
+const letGo = window.__ergaReader.keys.letGo;
 
 /** An agent's edit plays as typing, behind its caret; anyone else's shows as it comes. */
 const typingAgent = (a: Author | null): TypingAgent | null =>

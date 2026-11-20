@@ -11,6 +11,11 @@ declare global {
     /** This script, for the editor and the page tools: its config, and what they tell it or take from it. */
     __ergaReader?: {
       config: ReaderConfig;
+      /**
+       * The keys pressed before the editor's script ran, on a page that loaded again with the focus in its text; and
+       * the end of that hold: the editor takes the keys, or it stops.
+       */
+      keys: { held: { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean }[]; letGo(): void };
       /** The editor put the page back where it was. */
       placed?(): void;
       /** Stylesheets of the document changed (their paths in it): their new rules, in the page as it is. False: it can't. */
