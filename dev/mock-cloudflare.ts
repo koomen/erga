@@ -21,6 +21,8 @@
 //   mock-fail-<step>    Cloudflare fails at that step (account, database, migrations, assets, worker, address, pages)
 //   mock-once-<step>    Cloudflare fails at that step the first time only (an install that stops, then goes on with Try again)
 //   mock-flaky          the first asset upload fails with a 502 (the deploy tries it again)
+//   mock-only-<worker>  a token for that one Worker (the deployer's): any call but that Worker's own is refused (403).
+//                       This is the design's reading of Cloudflare's scope for one Worker, not a record of its answers.
 //
 // Zones, custom domains and Registrar: dev/mock-cloudflare-zones.ts.
 //
@@ -188,6 +190,9 @@ export function mockCloudflare(
       if (token == "mock-nosub") state.subdomain = null;
       onceAt = /^mock-once-(\w+)$/.exec(token)?.[1] ?? null;
     }
+    const only = /^mock-only-([\w-]+)$/.exec(token)?.[1];
+    if (only && !new RegExp(`^/accounts/[^/]+/workers/scripts/${only}(/|\\?|$)`).test(path))
+      return fail(403, 10000, "Authentication error");
     const failAt = /^mock-fail-(\w+)$/.exec(token)?.[1];
     const step = stepOf(m, path);
     if (failAt == "registration" && step == "registration") return fail(400, 10500, "Your account has no default payment method");

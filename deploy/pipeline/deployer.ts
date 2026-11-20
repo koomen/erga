@@ -11,7 +11,7 @@
 
 import { join } from "node:path";
 import { boundDatabase, setSchedule } from "../deployer/cloudflare";
-import { type Cloudflare, DeployError } from "../deployer/cloudflare-api";
+import { Cloudflare, DeployError, type Fetch } from "../deployer/cloudflare-api";
 import type { CloudflareTarget } from "../deployer/spec";
 import { ROOT } from "../root";
 
@@ -86,4 +86,71 @@ export async function installDeployer(
   });
   await setSchedule(cf, acc, name);
   return name;
+}
+
+// ------------------------------------------------------------------ the deployer's token
+
+/** What Erga found out about a token that a person made for the deployer. */
+export interface TokenCheck {
+  /** Why the token is refused: it is not for the instance's Worker, or it is for more than that. Empty: it is taken. */
+  refused: string[];
+  /** What Erga could not confirm about the token. Never a refusal: the person reads it. */
+  unconfirmed: string[];
+}
+
+/** Cloudflare's status for one read with the token: 200, its refusal's status, or 0 for no answer. */
+const statusOf = (cf: Cloudflare, path: string, what: string): Promise<number> =>
+  cf.call("GET", path, what).then(
+    () => 200,
+    (e) => (e instanceof DeployError ? e.status : 0)
+  );
+
+/**
+ * Checks a token for the deployer, with reads only: it must read the instance's Worker, and two reads that it must not
+ * be able to make must fail (the account's D1 databases; another Worker of the account, which `own`, the person's own
+ * login, finds). A token that can do more than the deployer needs is refused: it would stay in the cloud.
+ *
+ * Trap: this proves little. A token can't read its own permissions, and a check makes no change. So what the token
+ * may write, and each permission that no read here tries, stays unconfirmed, and the result says so.
+ */
+export async function checkToken(
+  net: Fetch,
+  own: Cloudflare,
+  target: Pick<CloudflareTarget, "account" | "worker">,
+  token: string
+): Promise<TokenCheck> {
+  const acc = `/accounts/${target.account}`;
+  const cf = new Cloudflare(token, net);
+  const refused: string[] = [];
+  const unconfirmed: string[] = [];
+  const unclear = (what: string, status: number) =>
+    unconfirmed.push(`${what}: Cloudflare gave no clear answer (${status ? `it answered ${status}` : "no answer"}).`);
+
+  const reads = await statusOf(cf, `${acc}/workers/scripts/${target.worker}/settings`, `read ${target.worker}'s settings`);
+  if (reads == 401) refused.push("Cloudflare does not know this token: it is not whole, it expired, or it is not a token of this account.");
+  else if (reads == 403) refused.push(`The token can't read the Worker ${target.worker}. Give it that Worker, with the role Editor.`);
+  else if (reads != 200) unclear(`Whether the token can read the Worker ${target.worker}`, reads);
+  if (refused.length) return { refused, unconfirmed };
+
+  const databases = await statusOf(cf, `${acc}/d1/database?per_page=1`, "list the account's D1 databases");
+  if (databases == 200)
+    refused.push("The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.");
+  else if (databases != 403) unclear("Whether the token can read the account's D1 databases", databases);
+
+  const others = ((await own.call<{ id: string }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? []).filter(
+    (s) => s.id != target.worker
+  );
+  const other = others.find((s) => s.id == deployerName(target.worker)) ?? others[0];
+  if (!other) unconfirmed.push(`That the token is for the Worker ${target.worker} only: the account has no other Worker to try it on.`);
+  else {
+    const reaches = await statusOf(cf, `${acc}/workers/scripts/${other.id}/settings`, `read ${other.id}'s settings`);
+    if (reaches == 200) refused.push(`The token can read another Worker (${other.id}). Make a token for the Worker ${target.worker} only.`);
+    else if (reaches != 403 && reaches != 404) unclear(`Whether the token can read another Worker (${other.id})`, reaches);
+  }
+
+  unconfirmed.push(
+    `That the token may deploy to ${target.worker} (the role Editor): Erga changes nothing to try it. The first deploy from the cloud shows it.`,
+    "That the token has no other permission than those tried here (D1, another Worker): Cloudflare shows a token's permissions on its own page only."
+  );
+  return { refused, unconfirmed };
 }

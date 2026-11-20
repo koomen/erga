@@ -94,7 +94,7 @@ describe("the installed Worker, in the Workers runtime", () => {
         modules: [{ type: "ESModule", path: "worker.js", contents: await deployerModule() }],
         compatibilityDate: "2026-09-01",
         d1Databases: ["DB"],
-        bindings: { ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next", CLOUDFLARE_API_TOKEN: "mock-deployer-token" },
+        bindings: { ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next", CLOUDFLARE_API_TOKEN: "mock-only-erga-next" },
         outboundService: async (request: Request) => {
           const body = request.method == "GET" || request.method == "HEAD" ? undefined : await request.arrayBuffer();
           const answer = await out(request.url, { method: request.method, headers: [...request.headers], body });

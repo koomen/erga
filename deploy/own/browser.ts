@@ -133,6 +133,47 @@ export function githubApp(
   );
 }
 
+/**
+ * The deployer's token (cloud deploys on Cloudflare): the user makes it on Cloudflare's page and pastes it here. `take`
+ * checks it and installs the deployer with it: it gives what it could not confirm about the token, or throws why the
+ * token is refused (the page then asks again). The token goes to Cloudflare as the deployer's secret, nowhere else.
+ */
+export function deployerToken(
+  o: { account: string; worker: string; take: (token: string) => Promise<string[]> },
+  ms: number,
+  open: (url: string) => void = openBrowser
+): Promise<string | null> {
+  const form = (problem = "") =>
+    html(`<h1 style="font-size:20px">A token for the deployer</h1>
+<p>The deployer runs in your Cloudflare account and deploys each new release of Erga to the Worker <code>${esc(o.worker)}</code>. It needs a token that can change that one Worker, and nothing else.</p>
+<ol><li>Open <a href="https://dash.cloudflare.com/${esc(o.account)}/api-tokens" target="_blank" rel="noreferrer">Account API tokens</a> on Cloudflare (Manage account, Account API tokens), and choose Create Token.</li>
+<li>Give it one permission: Workers, for the Worker <code>${esc(o.worker)}</code> only, with the role Editor. No other permission, no other Worker.</li>
+<li>Create it, copy it, and paste it here.</li></ol>
+<p>The token goes to Cloudflare, as the deployer's secret. Your agent never sees it. Erga refuses a token that can do more.</p>
+${problem ? `<p style="color:#b42318;white-space:pre-line">${esc(problem)}</p>` : ""}<form method="post" action="/"><input name="secret" type="password" autocomplete="off" style="width:100%;padding:6px 8px" autofocus>
+<p><button>Check it and install the deployer</button></p></form>`);
+  return step(
+    async (req) => {
+      if (req.method != "POST") return { res: form() };
+      const token = String((await req.formData()).get("secret") ?? "").trim();
+      if (!token) return { res: form("Paste the token.") };
+      return o.take(token).then(
+        (unconfirmed) => ({
+          res: html(
+            `<h1 style="font-size:20px">Done</h1><p>The deployer has the token. Go back to your terminal: setup goes on by itself.</p>${
+              unconfirmed.length ? `<p>Erga could not confirm:</p><ul>${unconfirmed.map((u) => `<li>${esc(u)}</li>`).join("")}</ul>` : ""
+            }`
+          ),
+          end: "",
+        }),
+        (e: Error) => ({ res: form(e.message) })
+      );
+    },
+    ms,
+    open
+  );
+}
+
 /** Single sign-on on AWS: the user types the client secret, and `put` stores it (Parameter Store). */
 export function oidcSecret(a: Answers, put: (secret: string) => Promise<void>, ms: number): Promise<string | null> {
   const form = (problem = "") =>

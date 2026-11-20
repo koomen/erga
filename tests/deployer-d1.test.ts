@@ -133,7 +133,7 @@ describe("the deployer's Worker", () => {
   async function instance() {
     const d1 = await fresh();
     const made = await instanceOn(d1);
-    return { ...made, env: { CLOUDFLARE_API_TOKEN: "mock-deployer-token", ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next", DB: d1 } };
+    return { ...made, env: { CLOUDFLARE_API_TOKEN: "mock-only-erga-next", ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next", DB: d1 } };
   }
 
   test("its schedule deploys the head's release with no call of D1's API: the database is its binding", async () => {
