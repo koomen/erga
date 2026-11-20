@@ -22,7 +22,7 @@ const provider = (async (_: RequestInfo | URL, init?: RequestInit) =>
     ? Response.json({ error: { message: "invalid x-api-key" } }, { status: 401 })
     : Response.json({ data: [] })) as typeof fetch;
 
-function fresh(secret: string | null = "the factory key", fallback: string[] = []) {
+function fresh(secret: string | null = "the secrets key", fallback: string[] = []) {
   const sql = memory();
   const db = sql.db;
   const dir = new Directory(sql, {
@@ -82,7 +82,7 @@ test("admins only, with admin power; a key that isn't one, or a server with no s
   expect(() => checkKey("anthropic", "sk-ant-has a space in it xxxxxxxxxxxx")).toThrow(CredentialError);
   expect(() => checkKey("anthropic", "")).toThrow(/Paste/);
   const none = fresh(null, ["ANTHROPIC_API_KEY"]).dir;
-  await expect(none.credentials.set(ada, "anthropic", ANTHROPIC)).rejects.toThrow(/no FACTORY_KEY/);
+  await expect(none.credentials.set(ada, "anthropic", ANTHROPIC)).rejects.toThrow(/no SECRETS_KEY/);
   expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])[0]).toEqual(["anthropic", false, true]);
 });
 
@@ -97,7 +97,7 @@ test("a key's provider says whether it is one, before it is kept: one request ea
     asked.push({ url: r.url, headers: Object.fromEntries(sent) });
     return answer();
   }) as typeof fetch;
-  const dir = new Directory(memory(), { admins: ["ada"], credentialSecret: "the factory key", keyCheck: keyCheck(null, provider) });
+  const dir = new Directory(memory(), { admins: ["ada"], credentialSecret: "the secrets key", keyCheck: keyCheck(null, provider) });
   const last4 = async (name: string) => (await dir.credentials.list(ada)).find((c) => c.name == name)!.last4;
   // A key of no known start (Google AI Studio's keys of 2026 don't start with AIza): the server's, and a person's own.
   const KEY = "Ab." + "k".repeat(50) + "Qq77";
@@ -154,20 +154,20 @@ test("a key's provider says whether it is one, before it is kept: one request ea
 });
 
 test("the deploy's own secrets only as set or not", async () => {
-  const { dir } = fresh("the factory key", ["SESSION_SECRET", "GITHUB_CLIENT_SECRET"]);
+  const { dir } = fresh("the secrets key", ["SESSION_SECRET", "GITHUB_CLIENT_SECRET"]);
   const deployed = await dir.credentials.deployed(ada);
   expect(deployed.map((d) => [d.env, d.set])).toEqual([
     ["SESSION_SECRET", true],
-    ["FACTORY_KEY", false],
+    ["SECRETS_KEY", false],
     ["GITHUB_CLIENT_SECRET", true],
     ["GITHUB_ISSUES_TOKEN", false],
   ]);
-  expect(deployed.find((d) => d.env == "FACTORY_KEY")!.standIn).toBe(true);
+  expect(deployed.find((d) => d.env == "SECRETS_KEY")!.standIn).toBe(true);
   await expect(dir.credentials.deployed({ login: "mallory" })).rejects.toThrow(NotAllowed);
 });
 
 // The real page, on the real directory: what POST /admin/credentials answers, and what the pages show.
-const { dir } = fresh("the factory key", ["ANTHROPIC_API_KEY"]);
+const { dir } = fresh("the secrets key", ["ANTHROPIC_API_KEY"]);
 const session = { login: "ada", name: "Ada", admin: true } as unknown as Session;
 const platform = { sessionOf: async () => session, directory: dir } as unknown as Platform;
 const server = Bun.serve({

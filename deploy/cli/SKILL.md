@@ -318,7 +318,12 @@ and `main`. There are no pull requests.
   first deploy of a server can wait up to 15 minutes for its first row (a
   new Cron Trigger starts slowly). The same run makes the default homepage
   when the server has none. A deploy sends no secret: the Workers keep
-  their own.
+  their own. The key that encrypts the secrets that a server stores is
+  `SECRETS_KEY`; an instance from before holds it as `FACTORY_KEY`. The
+  deploy of a release that reads `SECRETS_KEY` gives the key that name on
+  the platform, with its value (`deploy/deployer/secrets-key.ts`): no
+  machine reads it. A server that stores API keys and gets no key is
+  unhealthy, so the deploy puts the release before back.
 - A rollback never changes the database: migrations only add.
 
 ## Run it locally

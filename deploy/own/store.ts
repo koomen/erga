@@ -2,7 +2,7 @@
 // (deploy/cli/config.ts, ergaDir), which git ignores. Each worktree of the clone uses the same folder.
 //
 //   .erga/secrets.json    mode 600: by host, the secrets `bun erga setup` gave that server one time (SESSION_SECRET,
-//                         FACTORY_KEY, the GitHub App's secret), and the GitHub App's
+//                         SECRETS_KEY, the GitHub App's secret), and the GitHub App's
 //                         client id. Never printed.
 //
 // A user who loses .erga/ keeps a working server: the secrets stay on the server. Keep a copy of secrets.json in a

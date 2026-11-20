@@ -7,6 +7,7 @@
 //
 //   db          one read of the server's settings (D1 answers)
 //   documents   the Erga domain's document, opened in its own object (a Durable Object answers), when there is one
+//   secrets     a server that stores API keys has the key that opens them (SECRETS_KEY)
 //
 // {ok, version, checks: {<name>: {ok, ms, error?}}}: 200 when every
 // check passes, 503 when one fails. It holds no data and needs no sign-in.
@@ -39,6 +40,10 @@ export async function health(p: Platform): Promise<HealthReport> {
       const route = await p.directory.route(id);
       if (!route) return `the Erga domain's document ${id} isn't in the directory: nothing to open`;
       if ((await p.docs.index(route)) == null) throw new Error(`the Erga domain's document ${id} has no host`);
+    }),
+    secrets: await timed(async () => {
+      if (await p.directory.credentials.locked())
+        throw new Error("the server stores API keys, and it has no SECRETS_KEY to open them: the deploy did not give it the key");
     }),
   };
   return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, checks };

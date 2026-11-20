@@ -46,17 +46,17 @@ async function requests(n: number) {
   return sent.slice();
 }
 
-test("a stored key that doesn't open here (another server's FACTORY_KEY): the agent says so, and what to do", async () => {
-  const { db, dir } = directory("one server's factory key");
+test("a stored key that doesn't open here (another server's SECRETS_KEY): the agent says so, and what to do", async () => {
+  const { db, dir } = directory("one server's secrets key");
   await dir.credentials.set(ada, "anthropic", KEY1);
-  // Another server on a copy of the database: its FACTORY_KEY is its own.
+  // Another server on a copy of the database: its SECRETS_KEY is its own.
   const other = new Directory(
     {
     all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...(params as (string | number | null)[])) as T[],
     run: async () => {},
     batch: async () => {},
   },
-  { admins: ["ada"], credentialSecret: "another server's factory key" }
+  { admins: ["ada"], credentialSecret: "another server's secrets key" }
 );
 expect(await agentSettingsFrom({}, other)).toMatchObject({ missing: UNREADABLE_KEY });
 expect((await other.credentials.list(ada)).find((c) => c.name == "anthropic")).toMatchObject({ set: true, unreadable: true });

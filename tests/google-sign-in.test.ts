@@ -51,7 +51,7 @@ function server() {
       apps: { github: GITHUB_APP, google: APP },
       origins: { github: GITHUB, google: GOOGLE },
       devLogin: null,
-      encryptionKey: "factory-key",
+      encryptionKey: "secrets-key",
     },
     deploy: { version: null, domains: [], app: null },
     pagesDomain: () => "pages.example",
@@ -313,7 +313,7 @@ test("new values for the client wait for an admin's test sign-in with them, as G
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
   await directory.users.signedIn("koomen");
   await directory.identities.link("koomen", { provider: "google", subject: "1001", handle: "k@example.com", name: null, emails: [] });
-  const apps = new AuthApps(own, "factory-key");
+  const apps = new AuthApps(own, "secrets-key");
   const NEW = { clientId: "123456789012-newnewnewnewnew.apps.googleusercontent.com", secret: "GOCSPX-newnewnewnewnewnew" };
   await apps.keep("google", "pending", NEW, { login: "koomen" });
   google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/_edge/callback`], user: ADA });
@@ -327,7 +327,7 @@ test("new values for the client wait for an admin's test sign-in with them, as G
 test("a test sign-in by someone refused, or with no account yet, notes why beside the values that wait", async () => {
   const { platform, own, directory } = server();
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
-  const apps = new AuthApps(own, "factory-key");
+  const apps = new AuthApps(own, "secrets-key");
   const NEW = { clientId: "123456789012-newnewnewnewnew.apps.googleusercontent.com", secret: "GOCSPX-newnewnewnewnewnew" };
   await apps.keep("google", "pending", NEW, { login: "koomen" });
   google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/_edge/callback`], user: ADA });
@@ -371,7 +371,7 @@ test("values set on the page that the provider refuses give way to the deploy's,
   const { platform, own } = server();
   // Values kept as the page keeps them, for a client Google doesn't know (deleted since, say).
   const gone = { clientId: "999999999999-deletedclient0000.apps.googleusercontent.com", secret: "GOCSPX-deleted-deleted-del" };
-  await new AuthApps(own, "factory-key").keep("google", "active", gone, { login: "koomen" });
+  await new AuthApps(own, "secrets-key").keep("google", "active", gone, { login: "koomen" });
   expect(await signInApp(platform, "active", "google")).toEqual(APP);
   // With no deploy values that work, the page's stand: nothing else to fall back to.
   const noDeploy = {

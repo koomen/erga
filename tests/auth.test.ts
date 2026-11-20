@@ -82,16 +82,16 @@ const store = () => {
 
 test("kept values: the secret encrypted, never in what an admin reads, and only for this app with this server's key", async () => {
   const { m, storage } = store();
-  const apps = new AuthApps(storage, "factory-key");
+  const apps = new AuthApps(storage, "secrets-key");
   await apps.keep("github", "active", GOOD, { login: "Koomen", via: "their admin agent" });
   expect(await apps.values("github", "active")).toEqual(GOOD);
   const read = await apps.read("github");
   expect(read.active).toMatchObject({ clientId: GOOD.clientId, updatedBy: "koomen", updatedVia: "their admin agent" });
   expect(JSON.stringify(read)).not.toContain(GOOD.secret);
   expect(JSON.stringify([...m.values()])).not.toContain(GOOD.secret);
-  // Another server's key opens nothing (each server has its own FACTORY_KEY).
+  // Another server's key opens nothing (each server has its own SECRETS_KEY).
   expect(await new AuthApps(storage, "another-key").values("github", "active")).toBeNull();
-  // No FACTORY_KEY: nothing can be kept.
+  // No SECRETS_KEY: nothing can be kept.
   const none = new AuthApps(store().storage, null);
   expect(none.canStore).toBe(false);
   await expect(none.keep("github", "active", GOOD, { login: "koomen" })).rejects.toThrow(AuthError);
@@ -102,7 +102,7 @@ function server(deploy: AppValues, github: AppValues[]) {
   const { m, storage } = store();
   const log: { by: string; change: SignInChange }[] = [];
   const c: AppContext = {
-    apps: new AuthApps(storage, "factory-key"),
+    apps: new AuthApps(storage, "secrets-key"),
     provider: "github",
     deploy,
     check: (v) => checkGithubApp(v, { fetch: fakeGithub(github) }),
@@ -211,7 +211,7 @@ function serverOn(own: Platform["own"]): Platform {
       apps: { github: GOOD, google: { clientId: "", secret: "" } },
       origins: { github: null, google: null },
       devLogin: null,
-      encryptionKey: "factory-key",
+      encryptionKey: "secrets-key",
     },
     deploy: { version: null, domains: [], app: null },
     pagesDomain: () => "pages.example",
@@ -223,7 +223,7 @@ function serverOn(own: Platform["own"]): Platform {
 test("sign-in uses the page's values over the deploy's, and ?app=pending tests the values that wait", async () => {
   const { storage } = store();
   const env = serverOn(storage);
-  const apps = new AuthApps(storage, "factory-key");
+  const apps = new AuthApps(storage, "secrets-key");
   /** Where /auth/github goes, behind the gate: Erga's checks, then the gate's sign-in, which goes off to GitHub. */
   const visit = (on: Platform, at: string) => gated(on, new Request(`https://erga.dev${at}`), (r) => respond(startSignIn, r, on));
   const goOn = async (on: Platform, q = "") => {
@@ -322,7 +322,7 @@ test("a GitHub sign-in from start to the gate's cookie, against the pretend GitH
       apps: { github: GOOD, google: { clientId: "", secret: "" } },
       origins: { github: GH, google: null },
       devLogin: null,
-      encryptionKey: "factory-key",
+      encryptionKey: "secrets-key",
     },
   } as unknown as Platform;
   const real = globalThis.fetch;

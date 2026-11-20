@@ -2,7 +2,7 @@
 // `bun erga deploy`'s code (deploy/cli/deploy.ts, deployInstance):
 //
 // 1. The entry in .erga/config.json, from the answers alone. An entry with other names is not this setup's: it stops.
-// 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, and
+// 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and SECRETS_KEY, and
 //    the GitHub App's secret. Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
 //    it, and no later deploy sends one.
 // 3. After the deploy, healthy: the access rule that the answers name (plan.ts, firstRows), written into the new
@@ -15,6 +15,7 @@ import { type CloudflareEntry, type Config, entryOf, readConfig, withEntry, writ
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import { d1 } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
+import { movedNames, OLD_SECRETS_KEY, SECRETS_KEY } from "../deployer/secrets-key";
 import type { Seen } from "./flow";
 import { type Answers, firstRows, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets } from "./store";
@@ -61,16 +62,21 @@ const random = () => randomBytes(32).toString("hex");
 export function secretsFor(dir: string, a: Answers, held: string[]): Record<string, string> {
   const file = loadSecrets(dir);
   const own = (file[a.host] ??= {});
-  // A new SESSION_SECRET would sign everyone out, and a new FACTORY_KEY would make the values encrypted with the old one
+  // The key under its old name (deploy/deployer/secrets-key.ts): the file's copy takes the new name, and a server that
+  // holds the old name holds the key: its deploy gives it the new name, and setup makes and sends no other.
+  if (own[OLD_SECRETS_KEY]) own[SECRETS_KEY] ??= own[OLD_SECRETS_KEY];
+  delete own[OLD_SECRETS_KEY];
+  const has = movedNames(held);
+  // A new SESSION_SECRET would sign everyone out, and a new SECRETS_KEY would make the values encrypted with the old one
   // unreadable: a server that has them keeps them.
-  for (const k of ["SESSION_SECRET", "FACTORY_KEY"]) if (!own[k] && !held.includes(k)) own[k] = random();
+  for (const k of ["SESSION_SECRET", SECRETS_KEY]) if (!own[k] && !has.includes(k)) own[k] = random();
   saveSecrets(file, dir);
   const want = {
     SESSION_SECRET: own.SESSION_SECRET,
-    FACTORY_KEY: own.FACTORY_KEY,
+    [SECRETS_KEY]: own[SECRETS_KEY],
     GITHUB_CLIENT_SECRET: own.GITHUB_CLIENT_SECRET,
   };
-  return Object.fromEntries(Object.entries(want).filter((e): e is [string, string] => !!e[1] && !held.includes(e[0])));
+  return Object.fromEntries(Object.entries(want).filter((e): e is [string, string] => !!e[1] && !has.includes(e[0])));
 }
 
 /** The first deploy, then the first rows. The result: the commit it deployed. */

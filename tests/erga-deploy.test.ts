@@ -442,7 +442,11 @@ describe("the instance holds its spec, and the entry must agree with it", () => 
     await deploy();
     const sql = await sqlOn(mock, next);
     const first = (await specOn(sql))!;
-    expect(first).toMatchObject({ branch: "staging", settings: next.vars, secrets: ["GITHUB_CLIENT_SECRET", "SESSION_SECRET"] });
+    expect(first).toMatchObject({
+      branch: "staging",
+      settings: next.vars,
+      secrets: ["GITHUB_CLIENT_SECRET", "SECRETS_KEY", "SESSION_SECRET"],
+    });
 
     // A person changes the entry by hand: what it tracks, a setting, and a new setting.
     const edited: Entry = { ...next, branch: "main", vars: { ...next.vars, GITHUB_CLIENT_ID: "Ov23-edited", SERVER_CONFIG: "{}" } };

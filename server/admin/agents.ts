@@ -53,7 +53,7 @@ export function credentialRow(c: CredentialEntry, session: Session, place: numbe
     <div class="about"><label class="key" for="${id}">${esc(c.service)}</label><p class="state">${state}</p></div>
     <form class="value" method="post" action="${esc(link("/admin/credentials", session))}">
       ${now}
-      <input class="input secret" type="password" name="value" id="${id}" aria-label="${esc(c.label)}" placeholder="${c.set ? "Paste the new key" : "Paste the key"}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false"${c.canStore ? "" : ` disabled title="This server has no FACTORY_KEY, so it can't store a key."`}${shown ? " hidden" : ""}>
+      <input class="input secret" type="password" name="value" id="${id}" aria-label="${esc(c.label)}" placeholder="${c.set ? "Paste the new key" : "Paste the key"}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false"${c.canStore ? "" : ` disabled title="This server has no SECRETS_KEY, so it can't store a key."`}${shown ? " hidden" : ""}>
     </form>
     ${models}
     <p class="hint" role="status"></p>

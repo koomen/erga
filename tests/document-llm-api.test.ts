@@ -148,7 +148,7 @@ test("the Agents and models page: the Document LLM API's section; unauthenticate
   expect(html).toContain(`<p class="lede">An LLM API that users can expose to their documents.</p>`);
   expect(html).toContain(`<h3 class="sub-head" id="llm-use-head">Document LLM API Usage</h3>`);
   expect(html).toMatch(/<strong>This Month<\/strong> <span class="pct">\w+ \d{4}, UTC<\/span>/);
-  expect(html).not.toMatch(/FACTORY_KEY"|deploy-secret|Pages' models|pages' models/);
+  expect(html).not.toMatch(/SECRETS_KEY"|deploy-secret|Pages' models|pages' models/);
   // Published sites are always public: the switch holds for them, on as it starts, whatever public sharing is.
   const guests = html.slice(html.indexOf(`data-key="document_llm_guests"`), html.indexOf(`data-key="document_llm_daily_usd"`));
   expect(guests).toContain(

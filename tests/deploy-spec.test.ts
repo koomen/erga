@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import { decodeSpec } from "../deploy/deployer/spec";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
-const SECRETS = ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"];
+const SECRETS = ["SESSION_SECRET", "SECRETS_KEY", "GITHUB_CLIENT_SECRET"];
 
 /** Today's entries, as specs: an entry's facts are the target, its vars are the settings. */
 const production = {
@@ -66,7 +66,7 @@ const aws = {
     pages: { kind: "domain", domain: "pages.example.com" },
   },
   settings: { PROXY_SIGN_IN: '{"team":"example"}', SERVER_DEFAULTS: "{}" },
-  secrets: ["SESSION_SECRET", "FACTORY_KEY"],
+  secrets: ["SESSION_SECRET", "SECRETS_KEY"],
 };
 const awsShared = {
   ...aws,

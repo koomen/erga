@@ -39,10 +39,13 @@ export function seedFleet(state: MockState) {
       ),
     ],
   });
+  const secrets = { SESSION_SECRET: "fleet-session-secret", SECRETS_KEY: "fleet-secrets-key", GITHUB_CLIENT_SECRET: "fleet-github-secret" };
   const bindings = [
     { type: "durable_object_namespace", name: "DOCUMENTS", class_name: "DocumentObject" },
     { type: "d1", name: "DB", database_id: FLEET_DB, id: FLEET_DB },
     { type: "plain_text", name: "ERGA_VERSION", text: "prim00000000" },
+    // Its secrets, as its settings list them: never a value.
+    ...Object.entries(secrets).map(([name, text]) => ({ type: "secret_text", name, text: `(${text.length} characters)` })),
   ];
   state.scripts.erga = {
     metadata: { main_module: "index.js", bindings },
@@ -51,10 +54,7 @@ export function seedFleet(state: MockState) {
     tags: [],
     namespaces: ["DocumentObject"],
   };
-  state.secrets.erga = {
-    SESSION_SECRET: "fleet-session-secret",
-    GITHUB_CLIENT_SECRET: "fleet-github-secret",
-  };
+  state.secrets.erga = secrets;
   state.versions = { erga: 1 };
   deployVersion(state, "erga", state.scripts.erga);
   state.domains.push({ hostname: "example.com", service: "erga", zone_id: state.zones[0].id });

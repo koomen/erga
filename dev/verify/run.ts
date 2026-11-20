@@ -73,7 +73,7 @@ export interface Run extends Setting {
   /**
    * The real Erga behind the gate (erga.ts; none: the stub is the origin): its database's ID (Cloudflare's D1; "" on
    * AWS), the release that runs (its name: update.ts, buildRelease; "": none yet), its SESSION_SECRET (it seals the
-   * first admin's link) and FACTORY_KEY, and the seeded documents, each with its address on the shell and its own host.
+   * first admin's link) and SECRETS_KEY, and the seeded documents, each with its address on the shell and its own host.
    */
   erga?: {
     database: string;

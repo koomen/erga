@@ -105,7 +105,7 @@ declare module "../server/platform.ts" {
 
 /** What the agent pane says when the stored key doesn't open on this server. */
 export const UNREADABLE_KEY =
-  "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again on /admin/agents, or you add your own in Settings";
+  "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's SECRETS_KEY. An admin pastes the key again on /admin/agents, or you add your own in Settings";
 
 /** What the agent pane says when no key runs any model. */
 const NO_KEY =

@@ -316,7 +316,7 @@ export function mockCloudflare(
         const all = Object.values(state.assets.manifest).every((f) => state.assets.uploaded.includes(f.hash));
         return okAssets(all ? { jwt: COMPLETE } : {}, all ? 201 : 202);
       }
-      if (m == "PUT" && (r = /^\/workers\/scripts\/([^/]+)$/.exec(rest))) {
+      if (m == "PUT" && (r = /^\/workers\/scripts\/([^/?]+)(\?bindings_inherit=strict)?$/.exec(rest))) {
         const form = await req.formData();
         const field = form.get("metadata");
         const meta = JSON.parse(typeof field == "string" ? field : await (field as File).text());
@@ -337,6 +337,19 @@ export function mockCloudflare(
         // Secrets: those in this upload, and the last version's when keep_bindings says so (as the real API does).
         const kept = (meta.keep_bindings ?? []).includes("secret_text") ? { ...(state.secrets[r[1]] ?? {}) } : {};
         for (const b of meta.bindings ?? []) if (b.type == "secret_text") kept[b.name] = b.text;
+        // A binding of type inherit: the last version's secret of that name, or of old_name, which then has the new name.
+        // One that the last version doesn't have is left out; with bindings_inherit=strict, the upload is refused (10057).
+        // (Cloudflare's API reference says this much. That the old name is gone after is the design's reading of "renamed".)
+        for (const b of (meta.bindings ?? []).filter((x: any) => x.type == "inherit")) {
+          const from = b.old_name ?? b.name;
+          const was = state.secrets[r[1]]?.[from];
+          if (was == null && r[2])
+            return fail(400, 10057, `Cannot resolve the inherit binding ${b.name}: the previous version has no binding ${from}`);
+          if (was == null) continue;
+          delete kept[from];
+          kept[b.name] = was;
+        }
+        meta.bindings = (meta.bindings ?? []).filter((x: any) => x.type != "inherit");
         state.secrets[r[1]] = kept;
         const named = new Set((meta.bindings ?? []).map((b: any) => b.name));
         const keptBindings = Object.keys(kept).filter((n) => !named.has(n)).map((name) => ({ type: "secret_text", name, text: kept[name] }));

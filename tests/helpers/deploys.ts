@@ -46,6 +46,7 @@ export const fleet = (): Target => ({
 /** The secrets of a second instance, as its first deploy from a machine gives them. */
 export const nextSecrets = {
   SESSION_SECRET: "next-session-secret-0123456789",
+  SECRETS_KEY: "next-secrets-key-0123456789",
   GITHUB_CLIENT_SECRET: "next-github-secret-0123456789",
 };
 /** A second instance in the same account (next.example.com), with names of its own: the same kind of target. */

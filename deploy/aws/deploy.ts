@@ -15,8 +15,10 @@ import { tried } from "../deployer/cloudflare-api";
 import { deploy } from "../deployer/deploy";
 import type { Sql } from "../deployer/instance";
 import type { Release } from "../deployer/release-format";
+import { OLD_SECRETS_KEY, readsSecretsKey, SECRETS_KEY } from "../deployer/secrets-key";
 import { type Aws, awsCli } from "./cli";
 import { deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease, recordScript } from "./machine";
+import { paramPath } from "./template";
 
 const awsOf = (e: AwsEntry) => awsCli({ profile: e.profile, region: e.aws.region });
 
@@ -106,9 +108,48 @@ export async function deployToAws(
   const spec = { repo: e.repo, branch: e.branch, target: { kind: "aws" as const, ...e.aws }, settings: e.vars };
   const aws = awsApi(e, first ? { version: release.version, sql: first } : undefined);
   const ports = { aws, onBranch: (version: string) => Effect.sync(() => onBranch(version)), log };
+  const moved = await moveSecretsKey(awsOf(e), e.aws.stack, release, log);
   await Effect.runPromise(deploy(spec, release, ports)).catch((err) => {
     throw new Error((err as Error).message);
   });
+  await moved();
+}
+
+/**
+ * The key's parameter under its new name (deploy/deployer/secrets-key.ts), before a release that reads that name
+ * loads. A stack with the old name only: a copy under the new name. The value goes from one parameter into the other
+ * in this process: it is never printed or written. A stack with both (the deploy after): the result deletes the old
+ * one, for the caller to run when its release answers. So a rollback between the two deploys finds the old name.
+ */
+export async function moveSecretsKey(aws: Aws, stack: string, release: Release, log: (line: string) => void): Promise<() => Promise<void>> {
+  const nothing = async () => {};
+  if (!readsSecretsKey(release)) return nothing;
+  const at = (name: string) => `${paramPath(stack)}${name}`;
+  const found = await aws<{ Parameters: { Name: string }[] }>("ssm", "get-parameters-by-path", "--path", paramPath(stack));
+  const names = (found?.Parameters ?? []).map((p) => p.Name.split("/").at(-1));
+  if (!names.includes(OLD_SECRETS_KEY)) return nothing;
+  if (names.includes(SECRETS_KEY))
+    return async () => {
+      await aws("ssm", "delete-parameter", "--name", at(OLD_SECRETS_KEY));
+      log(`Parameter Store: ${at(OLD_SECRETS_KEY)} is deleted. The server reads the key as ${SECRETS_KEY}.`);
+    };
+  const old = await aws<{ Parameter: { Value: string } }>("ssm", "get-parameter", "--name", at(OLD_SECRETS_KEY), "--with-decryption");
+  await aws(
+    "ssm",
+    "put-parameter",
+    "--name",
+    at(SECRETS_KEY),
+    "--type",
+    "SecureString",
+    "--key-id",
+    `alias/erga-${stack}`,
+    "--value",
+    old.Parameter.Value
+  );
+  log(
+    `Parameter Store: the key ${OLD_SECRETS_KEY} has a copy with its new name, ${at(SECRETS_KEY)}. The next deploy deletes ${at(OLD_SECRETS_KEY)}.`
+  );
+  return nothing;
 }
 
 /**

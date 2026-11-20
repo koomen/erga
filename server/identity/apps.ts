@@ -15,7 +15,7 @@
 //     server's) would drop its values and bring in the other's. The
 //     Durable Object is each server's own.
 //   - The secret is encrypted with AES-GCM, a fresh IV each time, under a key
-//     derived from FACTORY_KEY (KeyBox of server/directory/api-keys.ts, with a
+//     derived from SECRETS_KEY (KeyBox of server/directory/api-keys.ts, with a
 //     derivation of its own), with the provider and the client ID as the
 //     additional data, so it opens only for that app.
 //   - Nothing answers the secret to a page or an agent: only whether one is set.
@@ -103,7 +103,7 @@ const view = (k: Kept & { test?: TestResult }): KeptView => ({ clientId: k.clien
 export class AuthApps {
   private box: KeyBox | null;
 
-  /** `secret`: FACTORY_KEY (null: this server can't keep values). */
+  /** `secret`: SECRETS_KEY (null: this server can't keep values). */
   constructor(
     private storage: AuthStorage,
     secret: string | null
@@ -124,7 +124,7 @@ export class AuthApps {
     else await this.storage.delete(`auth:${p}`);
   }
 
-  /** What a secret is bound to: it opens only for that app. (Each server has its own FACTORY_KEY and its own storage.) */
+  /** What a secret is bound to: it opens only for that app. (Each server has its own SECRETS_KEY and its own storage.) */
   private label = (p: Provider, clientId: string) => `erga-auth:${p}:${clientId}`;
 
   /** What the page set, without secrets. */
@@ -146,7 +146,7 @@ export class AuthApps {
     if (!this.box)
       throw new AuthError({
         message:
-          "This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.",
+          "This server has no SECRETS_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.",
       });
     const sealed = await this.box.seal(this.label(p, v.clientId), v.secret);
     const r = await this.record(p);
@@ -212,7 +212,7 @@ export async function saveApp(c: AppContext, input: { clientId?: unknown; secret
   const name = PROVIDERS[c.provider].label;
   if (!c.apps.canStore)
     throw new AuthError({
-      message: "This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.",
+      message: "This server has no SECRETS_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.",
     });
   const fresh = await c.check(v);
   if (fresh.state != "working")
@@ -276,7 +276,7 @@ export interface AuthStatus {
   /** Values set on the page: in use, and waiting for a test sign-in. */
   page: KeptView | null;
   pending: KeptView | null;
-  /** This server can keep values from the page (it has FACTORY_KEY). */
+  /** This server can keep values from the page (it has SECRETS_KEY). */
   canStore: boolean;
   check: AppCheck;
   pendingCheck: AppCheck | null;

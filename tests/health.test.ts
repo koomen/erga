@@ -85,6 +85,20 @@ test("unhealthy: a document that doesn't open, or a database that throws, fails 
   expect(h.checks.db).toMatchObject({ ok: false, error: "D1_ERROR: no such table: server_config" });
 });
 
+test("a server that stores API keys and has no key to open them is unhealthy: a deploy that lost SECRETS_KEY is put back", async () => {
+  const sql = memory();
+  const check = async (secret: string | null) =>
+    (await health(platform(new Directory(sql, { admins: ["ada"], credentialSecret: secret }), async () => true))).checks.secrets;
+  // It stores none: no key is needed.
+  expect(await check(null)).toMatchObject({ ok: true });
+  await sql.run("INSERT INTO person_keys (login, name, iv, data, last4, updated) VALUES ('ada', 'anthropic', 'iv', 'data', 'Ab12', 1)");
+  expect(await check(null)).toMatchObject({
+    ok: false,
+    error: "the server stores API keys, and it has no SECRETS_KEY to open them: the deploy did not give it the key",
+  });
+  expect(await check("the secrets key")).toMatchObject({ ok: true });
+});
+
 test("the scheduled run: the report goes into the one health row, which the ops tool's own statement reads; the first run makes the homepage", async () => {
   const s = server();
   // The statement that the ops tool sends to the database's API (deploy/deployer/cloudflare.ts, healthRow).

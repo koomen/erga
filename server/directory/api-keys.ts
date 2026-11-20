@@ -4,7 +4,7 @@
 //
 //   - Each key is encrypted with AES-GCM, a fresh IV each time, its name as
 //     the additional data, under a key derived from a deploy-time secret
-//     (FACTORY_KEY; locally the session secret), in a table of its own
+//     (SECRETS_KEY; locally the session secret), in a table of its own
 //     (credentials, server/migrations/0140_credentials.sql). Not in the settings,
 //     whose values are plain and copied into the changelog.
 //   - Nothing here answers a key to a page: `list` says only whether there is
@@ -16,7 +16,7 @@
 //   - A server with no key stored uses the Worker secret of the same name
 //     (agents/models.ts), so a server deployed without this page still works.
 //
-// Each server has a FACTORY_KEY of its own, so keys in a copy of another
+// Each server has a SECRETS_KEY of its own, so keys in a copy of another
 // server's database don't open here. A
 // key that doesn't open is shown as such (`unreadable`), and the agents
 // say so. The last four characters are kept in plain text, for the page.
@@ -95,10 +95,10 @@ export const DEPLOY_SECRETS = [
     why: "It is the root key of every sign-in.",
   },
   {
-    env: "FACTORY_KEY",
+    env: "SECRETS_KEY",
     service: "Erga",
-    description: "Encrypts the API keys on the Agents and models page and the sign-in secrets.",
-    why: "The API keys on the Agents and models page are encrypted with it.",
+    description: "Encrypts the secrets that this server stores.",
+    why: "The API keys and the sign-in secrets that this server stores are encrypted with it.",
   },
   {
     env: "GITHUB_CLIENT_SECRET",
@@ -115,7 +115,14 @@ export const DEPLOY_SECRETS = [
 ] as const;
 
 /** A deploy-time secret as an admin sees it: only whether the deploy has it. */
-export interface DeploySecretEntry { env: string; service: string; description: string; why: string; set: boolean; /** Not set, but something stands in for it (FACTORY_KEY: the session secret, locally). */ standIn: boolean }
+export interface DeploySecretEntry {
+  env: string;
+  service: string;
+  description: string;
+  why: string;
+  set: boolean /** Not set, but something stands in for it (SECRETS_KEY: the session secret, locally). */;
+  standIn: boolean;
+}
 
 export type CredentialName = keyof typeof CREDENTIALS;
 export const isCredentialName = (s: string): s is CredentialName => Object.hasOwn(CREDENTIALS, s);
@@ -139,7 +146,7 @@ export interface CredentialEntry {
   fallback: boolean;
   /** This server has the secret to encrypt with, so it can store a key. */
   canStore: boolean;
-  /** A key is stored, but it doesn't open here: it was encrypted under another FACTORY_KEY. The server can't use it. */
+  /** A key is stored, but it doesn't open here: it was encrypted under another SECRETS_KEY. The server can't use it. */
   unreadable: boolean;
 }
 
@@ -151,7 +158,7 @@ export class CredentialError extends Schema.TaggedError<CredentialError>()("Cred
 interface Row { name: string; iv: string; data: string; last4: string; updated: number; updated_by: string; updated_via?: string | null }
 
 const enc = new TextEncoder();
-const NO_FACTORY_KEY = "This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts makes it.";
+const NO_SECRETS_KEY = "This server has no SECRETS_KEY to encrypt the key with: bun deploy/setup.ts makes it.";
 
 /** Tidies a key as pasted, and refuses what no request can carry. Whether it is a key, its provider says (keyCheck). */
 export function checkKey(name: CredentialName, value: string): string {
@@ -279,8 +286,16 @@ export class Credentials {
     await this.users.mustAdmin(by);
     return DEPLOY_SECRETS.map((s) => {
       const set = this.fallback(s.env);
-      return { ...s, set, standIn: !set && s.env == "FACTORY_KEY" && !!this.box };
+      return { ...s, set, standIn: !set && s.env == "SECRETS_KEY" && !!this.box };
     });
+  }
+
+  /**
+   * The server stores keys, and has no SECRETS_KEY to open them: its deploy lost the key (server/health.ts fails, and the
+   * deploy puts the release before back). A server that has the key asks the database nothing.
+   */
+  async locked(): Promise<boolean> {
+    return !this.box && (await this.sql.all("SELECT 1 FROM credentials UNION ALL SELECT 1 FROM person_keys LIMIT 1")).length > 0;
   }
 
   /** Stores a key, in place of the one there was. Admins only. Answers it as `list` shows it. */
@@ -288,7 +303,7 @@ export class Credentials {
     await this.users.mustAdmin(by);
     const n = nameOf(name);
     const key = checkKey(n, value);
-    if (!this.box) throw new CredentialError({ message: NO_FACTORY_KEY });
+    if (!this.box) throw new CredentialError({ message: NO_SECRETS_KEY });
     await this.check(n, key);
     const { iv, data } = await this.box.seal(n, key);
     const had = await this.has(n), at = Date.now(), login = by.login.toLowerCase();
@@ -363,7 +378,7 @@ export interface PersonKeyEntry {
   set: boolean;
   last4: string | null;
   updated: number | null;
-  /** Stored, but it doesn't open here (another server's FACTORY_KEY: a copy of its database). */
+  /** Stored, but it doesn't open here (another server's SECRETS_KEY: a copy of its database). */
   unreadable: boolean;
   /** This server can store a key. */
   canStore: boolean;
@@ -420,7 +435,7 @@ export class PersonKeys {
   async set(by: Actor, name: string, value: string): Promise<PersonKeyEntry> {
     const n = nameOf(name),
       key = checkKey(n, value);
-    if (!this.box) throw new CredentialError({ message: NO_FACTORY_KEY });
+    if (!this.box) throw new CredentialError({ message: NO_SECRETS_KEY });
     await this.check(n, key);
     const { iv, data } = await this.box.seal(this.label(by.login, n), key);
     await this.sql.run(

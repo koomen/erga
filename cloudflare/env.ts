@@ -22,7 +22,7 @@ export interface Env {
    * The server's key (a Worker secret, named for the factory it once served): it encrypts the API keys and sign-in
    * secrets admins store. Without it, a hosted server can't store them.
    */
-  FACTORY_KEY?: string;
+  SECRETS_KEY?: string;
   /** Cloudflare Browser Rendering: the browser view_page renders pages in (cloudflare/render.ts). Local development uses the dev server's Chrome. */
   BROWSER?: BrowserBinding;
   /** Starts the sandbox Workers a page's own API runs in (cloudflare/sandbox.ts). */

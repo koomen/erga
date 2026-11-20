@@ -26,6 +26,7 @@ import * as Effect from "effect/Effect";
 import { type Carry, liveDeployment, liveRelease, rollbackTo } from "../deployer/cloudflare";
 import { deploy } from "../deployer/deploy";
 import { fetchRelease, releaseAddress } from "../deployer/registry";
+import { movedNames, readsSecretsKey } from "../deployer/secrets-key";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../deployer/cloudflare-api";
 import {
   STEPS,
@@ -270,7 +271,8 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     let spec = await specOn(sql);
     // The names of the secrets that the instance holds: read now, before the deploy changes the Worker (just after an
     // upload, Cloudflare's settings do not list the secrets that the Worker kept), with those that this deploy sends.
-    const held = [...new Set([...(await heldSecrets(entry, reach)), ...sent])].sort();
+    // (A release that reads SECRETS_KEY gives the key that name, deploy/deployer/secrets-key.ts: the names follow.)
+    let held = [...new Set([...(await heldSecrets(entry, reach)), ...sent])].sort();
     /** The entry as it is now, as a spec. */
     const specNow = () => specOf(entryOf(readConfig(o.dir), o.host)!, held);
     /** Writes the entry as the instance's spec, with the secrets' names that the platform holds, when the instance has another one, or none. */
@@ -358,6 +360,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log("Deploy to the machine...");
       // The machine's own script waits until the release answers its health check, healthy, on the loopback.
       await deployToAws(aws, release, log, onBranch, o.first);
+      held = await heldSecrets(entry, reach);
       log("Deploy to the machine: done");
       log(`Deployed ${sha.slice(0, 12)} to ${entryOrigin(aws)}: healthy.`);
     } else if (t) {
@@ -411,6 +414,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
           log(`${removed.join(", ")} left ${o.host}'s custom domains: the Worker's deploy facts, and the entry.`);
         }
       }
+      if (readsSecretsKey(release)) held = movedNames(held);
       log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(t)}: healthy.`);
     }
     await writeSpec();

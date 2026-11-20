@@ -90,7 +90,7 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
       "Enable Document LLM API",
       "Users can turn on the API for specific documents.",
     ]);
-    expect(await admin.locator(".deploy-secrets, [data-env=FACTORY_KEY]").count()).toBe(0);
+    expect(await admin.locator(".deploy-secrets, [data-env=SECRETS_KEY]").count()).toBe(0);
     const limit = row(admin, "document_llm_daily_usd");
     // The switch, off: its other settings go, and the document's script gets "off"; on again, they are back.
     const enable = admin.locator("#set-document_llm_api");

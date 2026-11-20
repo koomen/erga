@@ -85,6 +85,10 @@ export default defineConfig(({ mode }) => ({
       // Opens an issue in Erga's repository for each feedback (server/feedback.ts). Locally the pretend GitHub takes its own.
       ...optionalSecret(mode, "GITHUB_ISSUES_TOKEN"),
       SESSION_SECRET: bindings.secret(),
+      // Encrypts the secrets that the server stores (cloudflare/d1.ts, secretsKey). Locally, the session secret stands
+      // in. A release that declares it reads this name: its deploy gives an older instance's key the name
+      // (deploy/deployer/secrets-key.ts).
+      ...optionalSecret(mode, "SECRETS_KEY"),
       ANTHROPIC_API_KEY: bindings.secret(),
       // Local development only (vite dev reads them from .dev.vars); a deployed instance never has them.
       ...(mode == "development" ? {

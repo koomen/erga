@@ -67,7 +67,7 @@ const targetOf = (run: Run): Target => ({
   gate: true,
   // A new person's username is their address's (no step to choose one: a run has no person to choose).
   vars: { SERVER_DEFAULTS: JSON.stringify({ auto_usernames: true }), GITHUB_CLIENT_ID: "" },
-  secrets: { SESSION_SECRET: run.erga!.session, FACTORY_KEY: run.erga!.factory, GATE_KEY: run.gateKey! },
+  secrets: { SESSION_SECRET: run.erga!.session, SECRETS_KEY: run.erga!.factory, GATE_KEY: run.gateKey! },
 });
 
 /**

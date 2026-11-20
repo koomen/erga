@@ -102,7 +102,7 @@ export function directoryOf(env: Env): Directory {
       news: async (news) => {
         await env.NEWS?.getByName("news").publish(news);
       },
-      credentialSecret: factoryKey(env),
+      credentialSecret: secretsKey(env),
       fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim(),
       // A new API key is checked with its provider; locally (the tests), with the dev server's stand-in for the four.
       keyCheck: keyCheck(env.DEV_LOGIN?.trim() && env.ERGA_DEV_ORIGIN ? `${env.ERGA_DEV_ORIGIN}/__providers` : null),
@@ -114,10 +114,10 @@ export function directoryOf(env: Env): Directory {
 
 /**
  * What encrypts the API keys and sign-in secrets admins enter, each with a key of its
- * own derived from it: FACTORY_KEY, or locally the session secret.
+ * own derived from it: SECRETS_KEY, or locally the session secret.
  */
-export function factoryKey(env: Env): string | null {
-  if (env.FACTORY_KEY?.trim()) return env.FACTORY_KEY.trim();
+export function secretsKey(env: Env): string | null {
+  if (env.SECRETS_KEY?.trim()) return env.SECRETS_KEY.trim();
   return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
 }
 

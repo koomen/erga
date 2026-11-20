@@ -78,7 +78,7 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
     ? `<details class="setup"${s.check.state == "not_set_up" ? " open" : ""}><summary>How to make ${s.check.state == "not_set_up" ? "its" : "a new"} ${name} OAuth ${PROVIDERS[provider].appWord}</summary><ol class="steps">${s.setup.map((x) => `<li>${esc(x).replace(esc(newApp), `<a href="${esc(newApp)}" target="_blank" rel="noopener">${esc(newApp)}</a>`)}</li>`).join("")}</ol></details>`
     : "";
   const cannot =
-    !o.editable && !s.canStore ? `<p class="note">This server has no FACTORY_KEY, so only the deploy sets these values.</p>` : "";
+    !o.editable && !s.canStore ? `<p class="note">This server has no SECRETS_KEY, so only the deploy sets these values.</p>` : "";
   // With values in use, the form to set others is closed until Replace; Remove takes the page's values off.
   const closed = !!s.inUse.clientId;
   const form = o.editable
@@ -160,7 +160,7 @@ export async function authPage(platform: Platform, session: Session, status: Sig
   <section class="new-accounts" aria-labelledby="accounts-head">
     <h3 class="sub-head" id="accounts-head">New accounts</h3>
     ${accounts}
-  </section>${deploySection(deployed, ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"])}
+  </section>${deploySection(deployed, ["SESSION_SECRET", "SECRETS_KEY", "GITHUB_CLIENT_SECRET"])}
 <script>${TIMES_SCRIPT}${inlineCall("admin-auth")}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
   });
 }

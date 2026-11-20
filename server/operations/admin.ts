@@ -108,7 +108,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
           ...(c.unreadable
             ? {
                 unreadable:
-                  "stored, but this server can't open it (encrypted with another server's FACTORY_KEY): an admin must paste it again on /admin/agents",
+                  "stored, but this server can't open it (encrypted with another server's SECRETS_KEY): an admin must paste it again on /admin/agents",
               }
             : {}),
         })),

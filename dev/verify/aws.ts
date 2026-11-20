@@ -195,7 +195,7 @@ export async function deployOnAws(unit: AwsUnit, update = false): Promise<AwsRun
       ? { ...made, vars: { ...made.vars, SERVER_DEFAULTS: JSON.stringify({ ...defaultsOf(a), auto_usernames: true }) } }
       : made;
   };
-  const secrets = { SESSION_SECRET: run.session, FACTORY_KEY: run.factory, ...(unit == "6" ? { GITHUB_CLIENT_SECRET: key() } : {}) };
+  const secrets = { SESSION_SECRET: run.session, SECRETS_KEY: run.factory, ...(unit == "6" ? { GITHUB_CLIENT_SECRET: key() } : {}) };
   const rows = (now?: number) => [firstSql(a), unit == "5" ? "" : adaSql(now)].filter(Boolean).join("; ");
   let built: Promise<Release> | null = null;
   const release = () => (built ??= buildRelease(log));

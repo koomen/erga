@@ -77,7 +77,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   const file = loadSecrets(dir);
   expect(mock.state.secrets["erga-ada-example-com"]).toEqual({
     SESSION_SECRET: file[HOST].SESSION_SECRET,
-    FACTORY_KEY: file[HOST].FACTORY_KEY,
+    SECRETS_KEY: file[HOST].SECRETS_KEY,
     GITHUB_CLIENT_SECRET: "github-app-secret",
   });
   expect(file[HOST].SESSION_SECRET).toMatch(/^[0-9a-f]{64}$/);
@@ -113,7 +113,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   const [job, ...more] = await jobsOn(mock, HOST);
   expect(more).toEqual([]);
   expect(job).toMatchObject({ kind: "deploy", command: `bun erga setup ${HOST}`, host: HOST, commit: HEAD, phase: "ok" });
-  expect(job.out).toContainEqual(expect.stringContaining("the secrets sent: SESSION_SECRET, FACTORY_KEY, GITHUB_CLIENT_SECRET"));
+  expect(job.out).toContainEqual(expect.stringContaining("the secrets sent: SESSION_SECRET, SECRETS_KEY, GITHUB_CLIENT_SECRET"));
   expect(readConfig(dir).instances.map((e) => [e.repo, e.branch])).toEqual([["github.com/koomen/erga", "main"]]);
   // The instance holds its spec: what the entry says, and the names of the secrets that the Worker holds. No value.
   const spec = await specOn(await sqlOf(readConfig(dir).instances[0], { cf }));
@@ -121,7 +121,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
     repo: "github.com/koomen/erga",
     branch: "main",
     target: { kind: "cloudflare", worker: "erga-ada-example-com" },
-    secrets: ["FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SESSION_SECRET"],
+    secrets: ["GITHUB_CLIENT_SECRET", "SECRETS_KEY", "SESSION_SECRET"],
   });
   expect(JSON.stringify(spec)).not.toContain(file[HOST].SESSION_SECRET);
 
@@ -144,7 +144,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
     [SECOND, "staging"],
   ]);
   const second = mock.state.secrets["erga-next-ada-example-com"];
-  expect(Object.keys(second).sort()).toEqual(["FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SESSION_SECRET"]);
+  expect(Object.keys(second).sort()).toEqual(["GITHUB_CLIENT_SECRET", "SECRETS_KEY", "SESSION_SECRET"]);
   expect(second.GITHUB_CLIENT_SECRET).toBe("second-app-secret");
   expect(second.SESSION_SECRET).not.toBe(held.SESSION_SECRET);
   expect(bindingsOf(mock.state, "erga-next-ada-example-com").GITHUB_CLIENT_ID.text).toBe("Iv1.second");
@@ -194,7 +194,7 @@ test("an instance that runs already, with names of its own: setup stops, and its
       writeEntry({
         ...first(mock, "example.com", { account: FLEET_ACCOUNT }),
         dir: own,
-        seen: { zones: ["example.com"], subdomain: "erga", held: ["SESSION_SECRET", "FACTORY_KEY"] },
+        seen: { zones: ["example.com"], subdomain: "erga", held: ["SESSION_SECRET", "SECRETS_KEY"] },
       })
     ).toThrow(
       "example.com has an entry already, with the Worker erga and the database erga: setup would name them example-com and example-com."

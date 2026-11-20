@@ -21,6 +21,7 @@ import { Cloudflare, DeployError, Unhealthy, tried } from "./cloudflare-api";
 import { NoTable, type Sql } from "./instance";
 import type { Step } from "./job";
 import type { Release } from "./release-format";
+import { OLD_SECRETS_KEY, readsSecretsKey, SECRETS_KEY } from "./secrets-key";
 import type { CloudflareTarget, Spec } from "./spec";
 
 /** What the steps read of an instance's spec (spec.ts): where it is, and the Worker's plain settings. */
@@ -497,6 +498,21 @@ export async function boundDatabase(cf: Cloudflare, acc: string, worker: string)
   return b?.database_id ?? b?.id ?? null;
 }
 
+/** The names of the secrets that a Worker holds, as its settings list them. None: no such Worker. */
+export async function secretNames(cf: Cloudflare, acc: string, worker: string): Promise<string[]> {
+  const settings = await cf.call<{ bindings?: { name: string; type: string }[] }>(
+    "GET",
+    `${acc}/workers/scripts/${worker}/settings`,
+    `read ${worker}'s settings`,
+    undefined,
+    { allow404: true }
+  );
+  return (settings?.bindings ?? [])
+    .filter((b) => b.type == "secret_text")
+    .map((b) => b.name)
+    .sort();
+}
+
 /**
  * The instance's database, for its own record of its deploys (instance.ts): D1's API, on the database that the Worker
  * is bound to. No Worker yet, or a database from before the record's migration: NoTable.
@@ -634,15 +650,35 @@ const worker = (run: CloudflareRun) =>
       const dbId = await databaseOf(run);
       // Whether the server's scheduled run runs already (a row of the last minutes): the live step waits by it.
       carry.ticking = readHealth(await healthRow(await reach(run)).catch(() => null), null, now).healthy != null;
-      const form = new FormData();
-      form.set("metadata", JSON.stringify(workerMetadata(release, run.spec, { dbId, assetsJwt, secrets: run.secrets })));
-      for (const [module, bytes] of Object.entries(release.modules))
-        form.append(module, new File([new Uint8Array(bytes)], module, { type: "application/javascript+module" }));
-      await cf.call("PUT", `${acc}/workers/scripts/${name}`, "upload the Worker", form);
+      /** `rename`: Cloudflare gives the key its new name with this upload (secrets-key.ts), or refuses the upload. */
+      const upload = (rename: boolean) => {
+        const metadata = workerMetadata(release, run.spec, { dbId, assetsJwt, secrets: run.secrets });
+        if (rename) metadata.bindings.push({ type: "inherit", name: SECRETS_KEY, old_name: OLD_SECRETS_KEY });
+        const form = new FormData();
+        form.set("metadata", JSON.stringify(metadata));
+        for (const [module, bytes] of Object.entries(release.modules))
+          form.append(module, new File([new Uint8Array(bytes)], module, { type: "application/javascript+module" }));
+        return cf.call("PUT", `${acc}/workers/scripts/${name}${rename ? "?bindings_inherit=strict" : ""}`, "upload the Worker", form);
+      };
+      // The key under its old name (secrets-key.ts): a release that reads the new name, on a Worker whose settings list
+      // no SECRETS_KEY. Cloudflare says whether there is a key to rename (10057: none), never that list: just after an
+      // upload, it does not have the secrets that the Worker kept.
+      const rename =
+        readsSecretsKey(release) && run.secrets?.[SECRETS_KEY] == null && !(await secretNames(cf, acc, name)).includes(SECRETS_KEY);
+      const moved =
+        rename &&
+        (await upload(true).then(
+          () => true,
+          (e: unknown) => {
+            if (String((e as Error)?.message).includes("[code 10057]")) return false;
+            throw e;
+          }
+        ));
+      if (!moved) await upload(false);
       delete carry.assetsJwt;
       // Its Cron Trigger, each minute: the server's own health into its database, and the default homepage.
       await setSchedule(cf, acc, name);
-      return `${name}, release ${release.version}; its Cron Trigger runs each minute`;
+      return `${name}, release ${release.version}; its Cron Trigger runs each minute${moved ? `; its key ${OLD_SECRETS_KEY} has the name ${SECRETS_KEY} now` : ""}`;
     })
   );
 

@@ -25,7 +25,7 @@ const provider = (async (_: RequestInfo | URL, init?: RequestInit) =>
     ? Response.json({ error: { message: "invalid x-api-key" } }, { status: 401 })
     : Response.json({ data: [] })) as typeof fetch;
 
-function fresh(secret: string | null = "the factory key") {
+function fresh(secret: string | null = "the secrets key") {
   const sql = memory();
   const db = sql.db;
   return { db, sql, dir: new Directory(sql, { admins: ["ada"], credentialSecret: secret, keyCheck: keyCheck(null, provider) }) };
@@ -63,11 +63,11 @@ test("a person's key is stored encrypted, bound to them: never answered, never a
 });
 
 // (A key that its provider refuses: tests/api-keys.test.ts.)
-test("no key, or a provider there isn't, is refused, saying why; a server with no FACTORY_KEY can't store one", async () => {
+test("no key, or a provider there isn't, is refused, saying why; a server with no SECRETS_KEY can't store one", async () => {
   const { dir } = fresh();
   await expect(dir.personKeys.set(bob, "openai", " ")).rejects.toThrow(/Paste the OpenAI API key/);
   await expect(dir.personKeys.set(bob, "mistral", OPENAI)).rejects.toThrow(/no key "mistral"/);
-  await expect(fresh(null).dir.personKeys.set(bob, "openai", OPENAI)).rejects.toThrow(/no FACTORY_KEY/);
+  await expect(fresh(null).dir.personKeys.set(bob, "openai", OPENAI)).rejects.toThrow(/no SECRETS_KEY/);
 });
 
 test("the agent's settings: only that person's own keys, and the admin's choices", async () => {

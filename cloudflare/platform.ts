@@ -11,7 +11,7 @@ import * as Result from "effect/Result";
 import { OWNER, type Route } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { sessionOf, type SignIn, signInOf } from "../server/identity/index.ts";
-import { directoryOf, factoryKey, grantsOf } from "./d1";
+import { directoryOf, secretsKey, grantsOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
 import { githubIssues } from "../server/feedback";
@@ -144,7 +144,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       domains: domainsOf(settings.deployFacts),
       app: appOf(settings.deployFacts),
     },
-    signIn: { ...signInOfEnv(env), devLogin: settings.devLogin || null, encryptionKey: factoryKey(env) },
+    signIn: { ...signInOfEnv(env), devLogin: settings.devLogin || null, encryptionKey: secretsKey(env) },
     own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
     site: (domain) => siteOf(env, domain),
     news: env.NEWS.getByName("news"),
