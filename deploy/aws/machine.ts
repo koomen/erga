@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { FRONT } from "../../gate/mounts/web.ts";
 import { CHROME_DEVTOOLS } from "../deployer/aws";
 import { DEPLOYER } from "../deployer/aws-cloud";
-import type { Aws } from "./cli";
+import { type Aws, pause } from "./cli";
 import { CELLD_PORT, paramFolder } from "./template";
 
 /** celld (Deno, Apache-2.0) for Linux ARM64, at a fixed version. */
@@ -95,7 +95,7 @@ export async function onMachine(aws: Aws, machine: string, script: string, timeo
     JSON.stringify({ commands: [script], executionTimeout: [String(timeoutS)] })
   );
   for (let wait = 250; ; wait = Math.min(3000, wait * 2)) {
-    await Bun.sleep(wait);
+    await pause(wait);
     const r = await aws<{ Status: string; StandardOutputContent: string; StandardErrorContent: string }>(
       "ssm",
       "get-command-invocation",
@@ -127,7 +127,7 @@ export async function untilReachable(aws: Aws, machine: string, log: (l: string)
     if (r.InstanceInformationList[0]?.PingStatus == "Online") return;
     if (i == 0) log(`wait for the machine ${machine} to answer Systems Manager...`);
     if (i > 90) throw new Error(`The machine ${machine} doesn't answer Systems Manager: does its subnet have a way out?`);
-    await Bun.sleep(5000);
+    await pause(5000);
   }
 }
 

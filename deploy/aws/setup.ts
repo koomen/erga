@@ -18,7 +18,7 @@ import type { Seen } from "../own/flow";
 import type { Answers } from "../own/plan";
 import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";
 import { DIR, githubIdOf, loadSecrets } from "../own/store";
-import { type Aws, awsCli, whoAmI, type Where } from "./cli";
+import { type Aws, awsCli, awsNow, whoAmI, type Where } from "./cli";
 import { factsOnAws, healthOnAws, liveOnAws } from "./deploy";
 import { hasDeployer } from "./deployer";
 import { gateCode, putEdgeKey, putGateHash } from "./gate";
@@ -105,17 +105,16 @@ export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape>
 
 /** What the AWS CLI's configuration says, or "": no AWS call, so it works before the login. */
 export const configured = (key: string, profile: string) => {
-  const r = Bun.spawnSync(["aws", "configure", "get", key, "--profile", profile], { stdout: "pipe", stderr: "ignore" });
-  return r.exitCode == 0 ? r.stdout.toString().trim() : "";
+  const r = awsNow("configure", "get", key, "--profile", profile);
+  return r.exitCode == 0 ? r.stdout.trim() : "";
 };
 
 /** The CLI's profiles, each with its account if its configuration names one (an SSO profile's). */
 function profiles(): Seen["choices"] {
-  const r = Bun.spawnSync(["aws", "configure", "list-profiles"], { stdout: "pipe", stderr: "ignore" });
+  const r = awsNow("configure", "list-profiles");
   const names =
     r.exitCode == 0
       ? r.stdout
-          .toString()
           .split("\n")
           .map((l) => l.trim())
           .filter(Boolean)

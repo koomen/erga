@@ -8,7 +8,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Aws, awsCli, type Where } from "./cli";
+import { type Aws, awsCli, pause, type Where } from "./cli";
 import { type AwsShape, certificatesTemplate, stackTemplate, TEMPLATE_MAX } from "./template";
 
 /** CloudFront takes certificates only from this region. */
@@ -166,7 +166,7 @@ export async function planStack(where: Where, stack: string, templateFile: strin
       if (/didn't contain changes|No updates/.test(d.StatusReason ?? "")) return { stack, where, changeSet: null, changes: [] };
       throw new Error(`AWS refused the template of ${stack}: ${d.StatusReason}`);
     }
-    await Bun.sleep(3000);
+    await pause(3000);
   }
 }
 
@@ -205,7 +205,6 @@ export async function applyStack(p: Planned, log: (line: string) => void, takes 
         `${p.stack} ${creating ? "was not made" : "did not change"} (${s.status}): ${why ? `${why.LogicalResourceId}: ${why.ResourceStatusReason}` : "see the CloudFormation console"}`
       );
     }
-    await Bun.sleep(10_000);
+    await pause(10_000);
   }
 }
-

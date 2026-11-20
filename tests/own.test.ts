@@ -1,8 +1,8 @@
 // bun erga setup: the options (deploy/own/cli.ts, readOptions), the flow (flow.ts), the answers and what follows from
 // them (plan.ts), and the GitHub App's page on the loopback (browser.ts). The flow is pure: each test gives it the
-// answers and what the command saw, as the command does. The last test runs the command itself, with a fake AWS CLI.
+// answers and what the command saw, as the command does. The last tests run the command itself, with a pretend AWS.
 import { expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { githubApp, openTerminal } from "../deploy/own/browser";
@@ -20,8 +20,10 @@ import {
   varsOf,
 } from "../deploy/own/plan";
 import { loadSecrets } from "../deploy/own/store";
+import { MARK } from "./helpers/aws-setup";
 
 const HOST = "erga.example.com";
+const AWS_SETUP = join(import.meta.dir, "helpers/aws-setup.ts");
 const ADA = "a".repeat(32);
 /** A Cloudflare login with one account that holds example.com. */
 const CF: Partial<Seen> = { login: { ok: true }, choices: [{ id: ADA, name: "Ada Lovelace" }], zones: ["example.com"], account: ADA };
@@ -461,243 +463,132 @@ test("a run again with other sign-in answers writes the entry again and deploys,
 });
 
 /**
- * A fake AWS CLI: `aws` answers each call with the JSON of the first pattern (the shell's) that its arguments match,
- * and writes the call's first line into aws.log beside it. The account has one instance that runs, with an admin.
+ * Runs of `bun erga setup` for HOST on AWS, one after the other, in one process with a pretend AWS in place of the AWS
+ * CLI (tests/helpers/aws-setup.ts): the account has one instance that runs, with an admin. Each run: its lines, its
+ * AWS calls (each call's first line), and the templates in .erga/aws after it.
  */
-function fakeAws(dir: string) {
-  const stack = {
-    StackStatus: "UPDATE_COMPLETE",
-    Outputs: Object.entries({
-      Machine: "i-0abc",
-      Bucket: "erga-bucket",
-      Key: "arn:aws:kms:us-west-2:444455556666:key/1",
-      AppCertificate: "arn:app",
-      PagesCertificate: "arn:pages",
-    }).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })),
-  };
-  const zone = (Id: string, Name: string) => ({ Id: `/hostedzone/${Id}`, Name, Config: { PrivateZone: false } });
-  const ran = (out: string) => ({ Status: "Success", StandardOutputContent: out, StandardErrorContent: "" });
-  // The deployer's stack and its function, as two files beside the fake: the stack's status, and that the function has its code.
-  const DEPLOYER = "erga-example-com-deployer";
-  const change = (LogicalResourceId: string, ResourceType: string) => ({
-    ResourceChange: { Action: "Add", LogicalResourceId, ResourceType },
-  });
-  const answers: [string, unknown][] = [
-    [
-      '"lambda get-function-configuration"*',
-      {
-        sh: `if [ -f "$0.code" ]; then echo '{"CodeSize": 400000}'; else echo "An error occurred (ResourceNotFoundException): Function not found" >&2; exit 254; fi`,
-      },
-    ],
-    [
-      `"cloudformation describe-stacks --stack-name ${DEPLOYER} "*`,
-      {
-        sh: `if [ -f "$0.stack" ]; then printf '{"Stacks":[{"StackStatus":"%s","Tags":[{"Key":"erga","Value":"${DEPLOYER}"}]}]}' "$(cat "$0.stack")"; else echo "An error occurred (ValidationError): Stack with id ${DEPLOYER} does not exist" >&2; exit 254; fi`,
-      },
-    ],
-    [
-      `"cloudformation create-change-set --stack-name ${DEPLOYER} "*`,
-      { sh: `[ -f "$0.stack" ] || echo REVIEW_IN_PROGRESS > "$0.stack"; echo '{}'` },
-    ],
-    [
-      `"cloudformation describe-change-set --stack-name ${DEPLOYER} "*`,
-      { Status: "CREATE_COMPLETE", Changes: [change("Role", "AWS::IAM::Role"), change("Deployer", "AWS::Lambda::Function")] },
-    ],
-    [`"cloudformation execute-change-set --stack-name ${DEPLOYER} "*`, { sh: `echo CREATE_COMPLETE > "$0.stack"; echo '{}'` }],
-    [`"cloudformation delete-stack --stack-name ${DEPLOYER} "*`, { sh: `rm -f "$0.stack" "$0.code"; echo '{}'` }],
-    ['"cloudformation wait"*', {}],
-    ['"lambda update-function-code"*', { sh: `touch "$0.code"; echo '{}'` }],
-    ['"lambda wait"*', {}],
-    // Auto-deploy on: one statement on the machine.
-    // (The log keeps a call's first line only, and the statement is in the script's last: the fake says it in a line of its own.)
-    [
-      '"ssm send-command"*"INSERT INTO deploy_control"*',
-      { sh: `echo "auto-deploy on" >> "$0.log"; echo '{"Command":{"CommandId":"auto"}}'` },
-    ],
-    ['"ssm get-command-invocation --command-id auto"*', ran("")],
-    ['"configure list-profiles"*', "default"],
-    ['"configure get region"*', "us-west-2"],
-    ['"sts get-caller-identity"*', { Account: "444455556666", Arn: "arn:aws:iam::444455556666:user/ada" }],
-    ['"route53 list-hosted-zones"*', { HostedZones: [zone("Z1", "example.com."), zone("Z2", "example-pages.com.")] }],
-    ['"ec2 describe-managed-prefix-lists"*', { PrefixLists: [{ PrefixListId: "pl-1" }] }],
-    ['"cloudformation describe-stacks"*', { Stacks: [stack] }],
-    ['"ssm get-parameters-by-path"*', { Parameters: [] }],
-    ['"ssm get-parameter "*', { Parameter: { Value: "abc123" } }],
-    // What the machine runs: the admin's row, the server's health, the release's settings.
-    [`"ssm send-command"*"'admin:'"*`, { Command: { CommandId: "admin" } }],
-    ['"ssm send-command"*"/api/health"*', { Command: { CommandId: "health" } }],
-    ['"ssm send-command"*', { Command: { CommandId: "facts" } }],
-    ['"ssm get-command-invocation --command-id admin"*', ran("admin:ada")],
-    ['"ssm get-command-invocation --command-id health"*', ran(JSON.stringify({ ok: true, version: "abc123" }))],
-    ['"ssm get-command-invocation"*', ran("null")],
-    // The template differs from the main stack in one resource, and from the certificates' stack in none.
-    [
-      '"cloudformation describe-change-set --stack-name erga-example-com-certs "*',
-      { Status: "FAILED", StatusReason: "No updates", Changes: [] },
-    ],
-    [
-      '"cloudformation describe-change-set"*',
-      {
-        Status: "CREATE_COMPLETE",
-        Changes: [{ ResourceChange: { Action: "Modify", LogicalResourceId: "Nat", ResourceType: "AWS::EC2::Instance" } }],
-      },
-    ],
-    ['"cloudformation "*"-change-set"*', {}],
-  ];
-  const cases = answers.map(([pattern, json]) =>
-    typeof json == "object" && json && "sh" in json
-      ? `  ${pattern}) ${json.sh} ;;`
-      : `  ${pattern}) cat <<'JSON'\n${typeof json == "string" ? json : JSON.stringify(json)}\nJSON\n  ;;`
-  );
-  writeFileSync(
-    join(dir, "aws"),
-    [
-      "#!/bin/sh",
-      'echo "$*" | head -1 >> "$0.log"',
-      'case "$*" in',
-      ...cases,
-      '  *) echo "no answer for: $*" >&2; exit 1 ;;',
-      "esac",
-      "",
-    ].join("\n")
-  );
-  chmodSync(join(dir, "aws"), 0o755);
-  /** The change-set calls since the last read: "<call> <stack> [<kind>]". */
-  return () => {
-    const calls = readFileSync(join(dir, "aws.log"), "utf8").split("\n");
-    writeFileSync(join(dir, "aws.log"), "");
-    return calls.flatMap((c) => {
-      const m = /^cloudformation (\S+-change-set) --stack-name (\S+)(?:.* --change-set-type (\S+))?/.exec(c);
-      return m ? [m.slice(1).filter(Boolean).join(" ")] : [];
-    });
-  };
-}
-
-test("AWS: setup on an instance that is done updates its stacks to the code's template; a dry run makes no change set", async () => {
+async function awsSetups(...runs: string[][]): Promise<{ out: string[]; calls: string[]; files: string[] }[]> {
   const tmp = mkdtempSync(join(tmpdir(), "erga-aws-"));
   try {
-    const changeSets = fakeAws(tmp);
     // The command's .erga folder is beside its clone's .git (deploy/cli/config.ts, ergaDir): a new clone, so a folder of its own.
     Bun.spawnSync(["git", "init", "-q", tmp]);
     // No SSH_CONNECTION: over SSH the command takes --remote by itself.
-    const env = { ...process.env, GIT_DIR: join(tmp, ".git"), PATH: `${tmp}:${process.env.PATH}`, SSH_CONNECTION: undefined };
-    const setup = async (...more: string[]) => {
-      const main = join(import.meta.dir, "../deploy/cli/main.ts");
-      const args = ["setup", HOST, "--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com", "--deploys", "local", ...more];
-      const p = Bun.spawn([process.execPath, main, ...args], { env, stdout: "pipe", stderr: "pipe" });
-      const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-      expect([code, err]).toEqual([0, ""]);
-      return out.trim().split("\n");
-    };
-
-    // The dry run: the plan says that the stacks follow the code. It writes the templates, and asks AWS for no change.
-    const dry = await setup("--dry-run");
-    expect(dry.slice(0, 2)).toEqual([
-      `PASS  ${HOST} runs already, with an admin.`,
-      "PLAN  Its stacks change to this code's template, if it differs (each change shows as it's made).",
-    ]);
-    expect(dry.at(-1)).toStartWith("DRY RUN  Nothing is made.");
-    expect(readdirSync(join(tmp, ".erga/aws")).sort()).toEqual(["erga-example-com-certs.json", "erga-example-com.json"]);
-    expect(changeSets()).toEqual([]);
-
-    // The run: a change set for each stack, shown; AWS applies the one that has a change.
-    const real = await setup();
-    expect(real).toContain("    no change");
-    expect(real).toContain("    Modify  Nat (AWS::EC2::Instance)");
-    expect(real.at(-1)).toStartWith(`DONE  Tell the user: Erga is live at https://${HOST}`);
-    expect(changeSets()).toEqual([
-      "create-change-set erga-example-com-certs UPDATE",
-      "describe-change-set erga-example-com-certs",
-      "delete-change-set erga-example-com-certs",
-      "create-change-set erga-example-com UPDATE",
-      "describe-change-set erga-example-com",
-      "execute-change-set erga-example-com",
-    ]);
+    const env = { ...process.env, GIT_DIR: join(tmp, ".git"), SSH_CONNECTION: undefined };
+    const all = runs.map((more) => [HOST, "--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com", ...more]);
+    const p = Bun.spawn([process.execPath, AWS_SETUP, JSON.stringify(all)], { env, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    // A run that failed says why in its lines.
+    expect([code, err, code ? out : ""]).toEqual([0, "", ""]);
+    const ran: { out: string[]; calls: string[]; files: string[] }[] = [];
+    let lines: string[] = [];
+    for (const line of out.split("\n")) {
+      if (!line.startsWith(MARK)) lines.push(line);
+      else {
+        ran.push({ out: lines.join("\n").trim().split("\n"), ...JSON.parse(line.slice(MARK.length)) });
+        lines = [];
+      }
+    }
+    expect(ran.length).toBe(runs.length);
+    return ran;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+test("AWS: setup on an instance that is done updates its stacks to the code's template; a dry run makes no change set", async () => {
+  const [dry, real] = await awsSetups(["--deploys", "local", "--dry-run"], ["--deploys", "local"]);
+  /** A run's change-set calls: "<call> <stack> [<kind>]". */
+  const changeSets = (calls: string[]) =>
+    calls.flatMap((c) => {
+      const m = /^cloudformation (\S+-change-set) --stack-name (\S+)(?:.* --change-set-type (\S+))?/.exec(c);
+      return m ? [m.slice(1).filter(Boolean).join(" ")] : [];
+    });
+
+  // The dry run: the plan says that the stacks follow the code. It writes the templates, and asks AWS for no change.
+  expect(dry.out.slice(0, 2)).toEqual([
+    `PASS  ${HOST} runs already, with an admin.`,
+    "PLAN  Its stacks change to this code's template, if it differs (each change shows as it's made).",
+  ]);
+  expect(dry.out.at(-1)).toStartWith("DRY RUN  Nothing is made.");
+  expect(dry.files).toEqual(["erga-example-com-certs.json", "erga-example-com.json"]);
+  expect(changeSets(dry.calls)).toEqual([]);
+
+  // The run: a change set for each stack, shown; AWS applies the one that has a change.
+  expect(real.out).toContain("    no change");
+  expect(real.out).toContain("    Modify  Nat (AWS::EC2::Instance)");
+  expect(real.out.at(-1)).toStartWith(`DONE  Tell the user: Erga is live at https://${HOST}`);
+  expect(changeSets(real.calls)).toEqual([
+    "create-change-set erga-example-com-certs UPDATE",
+    "describe-change-set erga-example-com-certs",
+    "delete-change-set erga-example-com-certs",
+    "create-change-set erga-example-com UPDATE",
+    "describe-change-set erga-example-com",
+    "execute-change-set erga-example-com",
+  ]);
 });
 
 test("AWS: --deploys cloud installs the deployer's stack and code and turns auto-deploy on; again, it updates them; local removes it", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "erga-aws-"));
-  try {
-    fakeAws(tmp);
-    Bun.spawnSync(["git", "init", "-q", tmp]);
-    const env = { ...process.env, GIT_DIR: join(tmp, ".git"), PATH: `${tmp}:${process.env.PATH}`, SSH_CONNECTION: undefined };
-    /** One run of setup with the answer --deploys: its lines, and each call that made or changed something. */
-    const setup = async (deploys: "cloud" | "local", ...more: string[]) => {
-      writeFileSync(join(tmp, "aws.log"), "");
-      const main = join(import.meta.dir, "../deploy/cli/main.ts");
-      const args = ["setup", HOST, "--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com", "--deploys", deploys, ...more];
-      const p = Bun.spawn([process.execPath, main, ...args], { env, stdout: "pipe", stderr: "pipe" });
-      const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-      expect([code, err]).toEqual([0, ""]);
-      const calls = readFileSync(join(tmp, "aws.log"), "utf8")
-        .split("\n")
-        .flatMap((c) => {
-          const stack = /^cloudformation (create-change-set|execute-change-set|delete-stack) --stack-name (\S+)/.exec(c);
-          if (stack) return [`${stack[1]} ${stack[2]}`];
-          if (c.startsWith("lambda update-function-code")) return ["update-function-code erga-example-com-deployer"];
-          return c == "auto-deploy on" ? [c] : [];
-        });
-      return { out: out.trim().split("\n"), calls };
-    };
-    const DEPLOYER = "erga-example-com-deployer";
-    const stacks = [
-      "create-change-set erga-example-com-certs",
-      "create-change-set erga-example-com",
-      "execute-change-set erga-example-com",
-    ];
-    const install = [`create-change-set ${DEPLOYER}`, `execute-change-set ${DEPLOYER}`, `update-function-code ${DEPLOYER}`];
+  const [dry, cloud, again, plan, dryLocal, local, localAgain] = (
+    await awsSetups(
+      ["--deploys", "cloud", "--dry-run"],
+      ["--deploys", "cloud"],
+      ["--deploys", "cloud"],
+      ["--deploys", "cloud", "--dry-run"],
+      ["--deploys", "local", "--dry-run"],
+      ["--deploys", "local"],
+      ["--deploys", "local"]
+    )
+  ).map((run) => ({
+    ...run,
+    // Each call that made or changed something.
+    calls: run.calls.flatMap((c) => {
+      const stack = /^cloudformation (create-change-set|execute-change-set|delete-stack) --stack-name (\S+)/.exec(c);
+      if (stack) return [`${stack[1]} ${stack[2]}`];
+      if (c.startsWith("lambda update-function-code")) return ["update-function-code erga-example-com-deployer"];
+      return c == "auto-deploy on" ? [c] : [];
+    }),
+  }));
+  const DEPLOYER = "erga-example-com-deployer";
+  const stacks = ["create-change-set erga-example-com-certs", "create-change-set erga-example-com", "execute-change-set erga-example-com"];
+  const install = [`create-change-set ${DEPLOYER}`, `execute-change-set ${DEPLOYER}`, `update-function-code ${DEPLOYER}`];
 
-    // The dry run says what the run will make, and makes nothing.
-    const dry = await setup("cloud", "--dry-run");
-    expect(dry.out.filter((l) => l.startsWith("PLAN"))).toEqual([
-      `PLAN  ${HOST} runs. I will install its deployer, as the stack ${DEPLOYER}, and turn auto-deploy on:`,
-      `PLAN  • a deployer (the Lambda function ${DEPLOYER}, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`,
-      "PLAN  The stack's resources (7): Document (AWS::SSM::Document), Log (AWS::Logs::LogGroup), Role (AWS::IAM::Role), Deployer (AWS::Lambda::Function), Once (AWS::Lambda::EventInvokeConfig), Schedule (AWS::Events::Rule), Start (AWS::Lambda::Permission)",
-    ]);
-    expect(dry.out.at(-1)).toStartWith("DRY RUN  Nothing is made.");
-    expect(dry.calls).toEqual([]);
+  // The dry run says what the run will make, and makes nothing.
+  expect(dry.out.filter((l) => l.startsWith("PLAN"))).toEqual([
+    `PLAN  ${HOST} runs. I will install its deployer, as the stack ${DEPLOYER}, and turn auto-deploy on:`,
+    `PLAN  • a deployer (the Lambda function ${DEPLOYER}, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`,
+    "PLAN  The stack's resources (7): Document (AWS::SSM::Document), Log (AWS::Logs::LogGroup), Role (AWS::IAM::Role), Deployer (AWS::Lambda::Function), Once (AWS::Lambda::EventInvokeConfig), Schedule (AWS::Events::Rule), Start (AWS::Lambda::Permission)",
+  ]);
+  expect(dry.out.at(-1)).toStartWith("DRY RUN  Nothing is made.");
+  expect(dry.calls).toEqual([]);
 
-    // The run: the deployer's stack (its change set shows), then its code, then auto-deploy on. No step of the user's.
-    const cloud = await setup("cloud");
-    expect(cloud.out).toContain("    Add     Role (AWS::IAM::Role)");
-    expect(cloud.out).toContain(
-      `PASS  The deployer of ${HOST} is installed: it deploys each new release of main by itself (auto-deploy is on).`
-    );
-    expect(cloud.out.some((l) => l.startsWith("WAIT"))).toBe(false);
-    expect(cloud.out.at(-1)).toContain("its deployer, in their own account, deploys each new release of that branch by itself");
-    // (Then the instance is done: its own stacks follow the code, as in each run. The deployer is not installed twice.)
-    expect(cloud.calls).toEqual([...install, "auto-deploy on", ...stacks]);
-    expect(readdirSync(join(tmp, ".erga/aws")).sort()).toEqual(
-      ["erga-example-com-certs.json", `${DEPLOYER}.json`, "erga-example-com.json"].sort()
-    );
+  // The run: the deployer's stack (its change set shows), then its code, then auto-deploy on. No step of the user's.
+  expect(cloud.out).toContain("    Add     Role (AWS::IAM::Role)");
+  expect(cloud.out).toContain(
+    `PASS  The deployer of ${HOST} is installed: it deploys each new release of main by itself (auto-deploy is on).`
+  );
+  expect(cloud.out.some((l) => l.startsWith("WAIT"))).toBe(false);
+  expect(cloud.out.at(-1)).toContain("its deployer, in their own account, deploys each new release of that branch by itself");
+  // (Then the instance is done: its own stacks follow the code, as in each run. The deployer is not installed twice.)
+  expect(cloud.calls).toEqual([...install, "auto-deploy on", ...stacks]);
+  expect(cloud.files).toEqual(["erga-example-com-certs.json", `${DEPLOYER}.json`, "erga-example-com.json"].sort());
 
-    // A run again with the same answer: the deployer's stack and code follow this code. The switch is not touched:
-    // an admin may have turned auto-deploy off.
-    const again = await setup("cloud");
-    expect(again.calls).toEqual([...stacks, ...install]);
-    expect(again.out.join("\n")).not.toContain("auto-deploy is on");
-    const plan = await setup("cloud", "--dry-run");
-    expect(plan.out).toContain(
-      "PLAN  Its deployer changes to this code's too: its stack, and the function's code. Auto-deploy stays as it is."
-    );
-    expect(plan.calls).toEqual([]);
+  // A run again with the same answer: the deployer's stack and code follow this code. The switch is not touched:
+  // an admin may have turned auto-deploy off.
+  expect(again.calls).toEqual([...stacks, ...install]);
+  expect(again.out.join("\n")).not.toContain("auto-deploy is on");
+  expect(plan.out).toContain(
+    "PLAN  Its deployer changes to this code's too: its stack, and the function's code. Auto-deploy stays as it is."
+  );
+  expect(plan.calls).toEqual([]);
 
-    // The other answer: the dry run says that the stack goes; the run deletes it; then nothing is left to remove.
-    const dryLocal = await setup("local", "--dry-run");
-    expect(dryLocal.out.filter((l) => l.startsWith("PLAN"))).toEqual([
-      `PLAN  ${HOST} runs. I will remove its deployer (the stack ${DEPLOYER}: the Lambda function, its role, its schedule and the instance's document):`,
-      `PLAN  • no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${HOST}`,
-    ]);
-    expect(dryLocal.calls).toEqual([]);
-    const local = await setup("local");
-    expect(local.out).toContain(`PASS  The deployer of ${HOST} is removed, with its role: no credential stays in the cloud.`);
-    expect(local.out.at(-1)).toContain(`bun erga deploy ${HOST} gives it that branch's newest commit`);
-    expect(local.calls).toEqual([`delete-stack ${DEPLOYER}`, ...stacks]);
-    expect((await setup("local")).calls).toEqual(stacks);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-}, 60_000);
+  // The other answer: the dry run says that the stack goes; the run deletes it; then nothing is left to remove.
+  expect(dryLocal.out.filter((l) => l.startsWith("PLAN"))).toEqual([
+    `PLAN  ${HOST} runs. I will remove its deployer (the stack ${DEPLOYER}: the Lambda function, its role, its schedule and the instance's document):`,
+    `PLAN  • no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${HOST}`,
+  ]);
+  expect(dryLocal.calls).toEqual([]);
+  expect(local.out).toContain(`PASS  The deployer of ${HOST} is removed, with its role: no credential stays in the cloud.`);
+  expect(local.out.at(-1)).toContain(`bun erga deploy ${HOST} gives it that branch's newest commit`);
+  expect(local.calls).toEqual([`delete-stack ${DEPLOYER}`, ...stacks]);
+  expect(localAgain.calls).toEqual(stacks);
+});
