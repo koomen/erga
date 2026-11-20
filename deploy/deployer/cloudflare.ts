@@ -151,7 +151,7 @@ export interface RestorePoint { versionId: string | null; version: string | null
 export async function restorePoint(
   cf: Cloudflare,
   target: Pick<CloudflareTarget, "account" | "worker">,
-  o: { dbId: string; existing: boolean; at: number }
+  o: { database: Database; existing: boolean; at: number }
 ): Promise<{ point: RestorePoint; why: string }> {
   const acc = `/accounts/${target.account}`;
   const point: RestorePoint = { versionId: null, version: null, bookmark: null, at: o.at };
@@ -170,9 +170,8 @@ export async function restorePoint(
     }
   } else why.push("a new Worker");
   try {
-    const b = await cf.call<{ bookmark?: string }>("GET", `${acc}/d1/database/${o.dbId}/time_travel/bookmark`, "read the database's Time Travel bookmark");
-    point.bookmark = b?.bookmark ?? null;
-    if (!point.bookmark) why.push("D1 gave no bookmark");
+    point.bookmark = await o.database.bookmark();
+    if (!point.bookmark) why.push("no bookmark of the database");
   } catch (e) { why.push(`the database's bookmark couldn't be read: ${(e as Error).message}`); }
   return { point, why: why.join("; ") };
 }
@@ -243,12 +242,11 @@ const checksOf = Schema.decodeUnknownOption(
 );
 
 /**
- * The health row of the server on the database `db`, read through D1's API. Null: no row yet (its scheduled run did
- * not run), or no table (a release from before the row).
+ * The health row of the server on the database `db`. Null: no row yet (its scheduled run did not run), or no table (a
+ * release from before the row).
  */
-export async function healthRow(cf: Cloudflare, acc: string, db: string): Promise<HealthRow | null> {
-  const rows = await d1(cf, acc, db, "SELECT at, version, ok, checks FROM health WHERE id = 1", [], "read the server's health").catch(
-    (e) => {
+export async function healthRow(db: Database): Promise<HealthRow | null> {
+  const rows = await db.query("SELECT at, version, ok, checks FROM health WHERE id = 1", [], "read the server's health").catch((e) => {
       if (e instanceof DeployError && /no such table/i.test(e.message)) return [];
       throw e;
     }
@@ -300,10 +298,10 @@ export function readHealth(row: HealthRow | null, want: string | null, now: numb
  * Cloudflare gives a Durable Object the new code seconds to minutes after the Worker: a first row can say that a
  * document does not open (2026-11-14: 42 seconds), and the next one that it does.
  */
-export const settledHealth = (cf: Cloudflare, acc: string, db: string, want: string, ms: number): Effect.Effect<Checked, DeployError> => {
+export const settledHealth = (db: Database, want: string, ms: number): Effect.Effect<Checked, DeployError> => {
   const read = Effect.gen(function* () {
     const row = yield* Effect.tryPromise({
-      try: () => healthRow(cf, acc, db),
+      try: () => healthRow(db),
       catch: (e) => (e instanceof DeployError ? e : new DeployError({ message: String(e) })),
     });
     return readHealth(row, want, yield* Clock.currentTimeMillis);
@@ -442,6 +440,38 @@ const jwtClaims = (jwt: string): Record<string, unknown> =>
   });
 const claimsOf = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)));
 
+/**
+ * The instance's database, as the deploy's steps reach it. A machine reaches it through D1's API, with a person's own
+ * login (d1Api). The deployer in the cloud holds no permission for D1 (Cloudflare has none for one database, only for
+ * all of an account's): it reaches the database through its own Worker's binding (d1-binding.ts).
+ */
+export interface Database {
+  /** One statement: its rows. */
+  query: (sql: string, params: readonly (string | number | null)[], what: string) => Promise<Record<string, unknown>[]>;
+  /** A migration's file and the statement that records it: all of their statements, or none. */
+  apply: (file: string, record: string, what: string) => Promise<void>;
+  /** The database's Time Travel bookmark, for the restore point that the log says. null: this way to the database gives none. */
+  bookmark: () => Promise<string | null>;
+}
+
+/** The database `db` of the account, through D1's API. */
+export const d1Api = (cf: Cloudflare, acc: string, db: string): Database => ({
+  query: async (sql, params, what) => (await d1(cf, acc, db, sql, [...params], what)) ?? [],
+  // One /query call (its statements run as one batch, so all or nothing), as wrangler's `d1 migrations apply --remote` sends it.
+  apply: async (file, record, what) => {
+    const sql = file.trim();
+    await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\n${record}`, [], what);
+  },
+  bookmark: async () =>
+    (
+      await cf.call<{ bookmark?: string }>(
+        "GET",
+        `${acc}/d1/database/${db}/time_travel/bookmark`,
+        "read the database's Time Travel bookmark"
+      )
+    )?.bookmark ?? null,
+});
+
 /** One statement (or a few, separated by semicolons) on a D1 database, through the API: the first statement's rows. */
 export async function d1(
   cf: Cloudflare,
@@ -513,6 +543,8 @@ export interface CloudflareRun {
   secrets?: Record<string, string>;
   /** How long the live step waits for the release's health row. Default: 3 minutes; 15 for a Cron Trigger that is new. */
   waitMs?: number;
+  /** The deployer's own way to the instance's database (its binding). With none: D1's API, with `cf`. */
+  database?: Database;
 }
 
 const accountOf = (run: CloudflareRun) => `/accounts/${run.spec.target.account}`;
@@ -534,38 +566,46 @@ async function databaseOf(run: CloudflareRun): Promise<string> {
   return bound;
 }
 
+/**
+ * The way to the instance's database: the run's own, or D1's API. Both for the database that the Worker is bound to:
+ * an instance with no Worker or no database stops here, whatever the way.
+ */
+const reach = async (run: CloudflareRun): Promise<Database> => {
+  const id = await databaseOf(run);
+  return run.database ?? d1Api(run.cf, accountOf(run), id);
+};
+
 // server/migrations/, each once, recorded in d1_migrations as the cf CLI does.
 // First, the restore point: the last thing before the deploy changes what the target runs on.
 const migrations = (run: CloudflareRun) =>
   Effect.flatMap(Clock.currentTimeMillis, (now) =>
     tried(async () => {
       const { cf, release, carry } = run;
-      const acc = accountOf(run);
-      const db = await databaseOf(run);
-      const restore = await restorePoint(cf, run.spec.target, { dbId: db, existing: !!carry.existing, at: now });
+      const db = await reach(run);
+      const restore = await restorePoint(cf, run.spec.target, { database: db, existing: !!carry.existing, at: now });
       carry.restore = restore.point;
       const noted =
         restore.point.versionId || restore.point.bookmark
           ? `restore point: ${restore.point.versionId ? `version ${restore.point.versionId.slice(0, 8)}${restore.point.version ? ` (release ${restore.point.version})` : ""}` : "no version"}, ${restore.point.bookmark ? `database bookmark ${restore.point.bookmark}` : "no database bookmark"}`
           : `no restore point (${restore.why})`;
-      await d1(
-        cf,
-        acc,
-        db,
+      await db.query(
         "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)",
         [],
         "set up the database"
       );
       const done = new Set(
-        ((await d1(cf, acc, db, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name))
+        (await db.query("SELECT name FROM d1_migrations", [], "read the database's migrations")).map((r) => String(r.name))
       );
       const pending = Object.keys(release.migrations)
         .sort()
         .filter((n) => !done.has(n));
       for (const name of pending) {
-        // The file and its record in d1_migrations, in one /query call (statements run as one batch, so all or nothing), as wrangler's `d1 migrations apply --remote` sends it.
-        const sql = release.migrations[name].trim();
-        await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
+        // The file and its record in d1_migrations: all or nothing.
+        await db.apply(
+          release.migrations[name],
+          `INSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`,
+          `apply the database migration ${name}`
+        );
       }
       return `${pending.length ? `applied ${pending.join(", ")}` : "already up to date"}; ${noted}`;
     })
@@ -593,7 +633,7 @@ const worker = (run: CloudflareRun) =>
       if (!assetsJwt) throw new DeployError({ message: "The editor's files weren't uploaded first: deploy again." });
       const dbId = await databaseOf(run);
       // Whether the server's scheduled run runs already (a row of the last minutes): the live step waits by it.
-      carry.ticking = readHealth(await healthRow(cf, acc, dbId).catch(() => null), null, now).healthy != null;
+      carry.ticking = readHealth(await healthRow(await reach(run)).catch(() => null), null, now).healthy != null;
       const form = new FormData();
       form.set("metadata", JSON.stringify(workerMetadata(release, run.spec, { dbId, assetsJwt, secrets: run.secrets })));
       for (const [module, bytes] of Object.entries(release.modules))
@@ -607,7 +647,7 @@ const worker = (run: CloudflareRun) =>
   );
 
 // Healthy: the release's own health row, which its scheduled run writes into its database each minute (the database,
-// a document), read through D1's API. A server whose Cron Trigger ran before the deploy writes the new release's
+// a document), read from the database (D1's API, or the deployer's binding). A server whose Cron Trigger ran before the deploy writes the new release's
 // row in about a minute: three minutes without a healthy one is an unhealthy release, which the caller rolls back.
 // A new Cron Trigger (the first deploy with one) can take up to 15 minutes to start, by Cloudflare's own words:
 // the step waits that long, and then stops with no rollback.
@@ -616,8 +656,8 @@ const live = (run: CloudflareRun) =>
     const want = run.release.version;
     const name = run.spec.target.worker;
     const ticking = !!run.carry.ticking;
-    const dbId = yield* tried(() => databaseOf(run));
-    const h = yield* settledHealth(run.cf, accountOf(run), dbId, want, run.waitMs ?? (ticking ? 180_000 : 900_000));
+    const db = yield* tried(() => reach(run));
+    const h = yield* settledHealth(db, want, run.waitMs ?? (ticking ? 180_000 : 900_000));
     if (h.healthy) return `release ${want}, healthy (${h.summary})`;
     if (h.healthy === false)
       return yield* Effect.fail(new Unhealthy(`Release ${want} is deployed to ${name}, but its health check fails: ${h.why}`, h.why));

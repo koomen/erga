@@ -10,7 +10,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { Aws, Where } from "../aws/cli";
-import { healthRow, liveDeployment, liveRelease, readHealth } from "../deployer/cloudflare";
+import { d1Api, healthRow, liveDeployment, liveRelease, readHealth } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { holds, type Job, readJobs, readLog, type Sql } from "../deployer/instance";
 import { AwsFacts, CloudflareFacts, type Entry, isAws } from "./config";
@@ -71,7 +71,7 @@ export function instanceReader(o: ReaderOptions = {}): Ask {
       seen.set(e.host, release);
     }
     const h = release.database
-      ? readHealth(await healthRow(cf, `/accounts/${e.account}`, release.database), release.version, Date.now())
+      ? readHealth(await healthRow(d1Api(cf, `/accounts/${e.account}`, release.database)), release.version, Date.now())
       : { healthy: null, why: "the Worker binds no database" };
     return { version: release.version, healthy: h.healthy, ...(h.healthy ? {} : { health: h.why }) };
   };

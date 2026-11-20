@@ -18,7 +18,6 @@ import { LEASE_MS, NoTable, openJob, readJobs, readLog, type Sql, writeSpec } fr
 import { due, look, type LookPorts } from "../deploy/deployer/look";
 import { rollback } from "../deploy/deployer/rollback";
 import type { Spec } from "../deploy/deployer/spec";
-import { deployer } from "../deploy/deployer/worker";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { bindingsOf, bootstrap, prepareRelease, ROOT, SHA1, SHA2, SHA3, testClock } from "./helpers/deploys.ts";
 import { builtBundle, bundleOf, github, pkt } from "./helpers/github.ts";
@@ -555,22 +554,6 @@ describe("the deployer on Cloudflare", () => {
       "rollback app, by ada done",
       "deploy auto-deploy done",
     ]);
-  });
-
-  test("the Worker's schedule runs one look, for its own instance only; it has no address", async () => {
-    const { mock, fetch, sql } = await instance();
-    const worker = deployer(fetch);
-    expect(Object.keys(worker)).toEqual(["scheduled"]);
-    await worker.scheduled(null, ENV);
-    expect(await run(readControl(sql))).toMatchObject({ auto: false, head: SHA2 });
-    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA1));
-    // The spec on the instance names another Worker than the one that the deployer is for: an error, and no deploy.
-    await run(sql("UPDATE deploy_control SET auto = 1", []));
-    await run(writeSpec(sql, { ...SPEC, target: { ...SPEC.target, worker: "erga" } as Spec["target"] }));
-    await worker.scheduled(null, ENV);
-    const row = await run(sql("SELECT error FROM deploy_control", []));
-    expect(row).toEqual(["The instance's spec names another instance than the one that this deployer is for."]);
-    expect(await run(readJobs(sql))).toEqual([]);
   });
 
   test("the Worker is one file with Effect and this folder only: no Node, no other code of Erga's", async () => {

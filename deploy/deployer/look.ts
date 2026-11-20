@@ -40,7 +40,7 @@ export interface LookPorts {
   /** The way to GitHub and to its registry. */
   fetch: Fetch;
   /** The API of the deployer's cloud, as deploy() takes it. */
-  cloud: Pick<Ports, "cloudflare" | "aws">;
+  cloud: Pick<Ports, "cloudflare" | "database" | "aws">;
   /** Whether the spec's target is the instance that this deployer is installed for: it deploys to no other. */
   mine: (target: Spec["target"]) => boolean;
 }

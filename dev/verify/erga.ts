@@ -24,7 +24,7 @@ import https from "node:https";
 import { join, resolve } from "node:path";
 import { DEFAULT_BRANCH, DEFAULT_REPO } from "../../deploy/cli/config.ts";
 import { heldSecrets, specOf } from "../../deploy/cli/instance.ts";
-import { type Carry, d1, d1Sql, healthRow, readHealth } from "../../deploy/deployer/cloudflare.ts";
+import { type Carry, d1, d1Api, d1Sql, healthRow, readHealth } from "../../deploy/deployer/cloudflare.ts";
 import { findDatabase } from "../../deploy/pipeline/account.ts";
 import { DeployError } from "../../deploy/deployer/cloudflare-api.ts";
 import type { Release } from "../../deploy/deployer/release-format.ts";
@@ -243,7 +243,7 @@ export async function ergaChecks(run: Run, report: Report): Promise<void> {
   const h = await healthOf(run, ada);
   report.add("Erga's health report, through the gate", h.ok, h.said);
   if (cloud) {
-    const row = readHealth(await healthRow(cloud.cf, cloud.acc, run.erga!.database), run.erga!.version, Date.now());
+    const row = readHealth(await healthRow(d1Api(cloud.cf, cloud.acc, run.erga!.database)), run.erga!.version, Date.now());
     report.add("Erga's scheduled run writes its health row (the Cron Trigger)", row.healthy, row.healthy ? row.summary : row.why);
     const applied = (
       (await d1(cloud.cf, cloud.acc, run.erga!.database, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []

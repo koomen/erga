@@ -6,7 +6,7 @@
 import { entryOf, readConfig } from "../cli/config";
 import { mocked, netOf } from "../cli/deploy";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
-import { healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
+import { d1Api, healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
 import { machineCredential } from "../local-credential";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, varsOf, zoneOf } from "./plan";
@@ -65,7 +65,7 @@ export async function liveOf(
   const live = await liveDeployment(cf, account, worker).catch(() => null);
   if (!live) return { version: null, healthy: false, signIn: null };
   const r = await liveRelease(cf, account, worker, live.versionId);
-  const row = r.database ? await healthRow(cf, `/accounts/${account}`, r.database).catch(() => null) : null;
+  const row = r.database ? await healthRow(d1Api(cf, `/accounts/${account}`, r.database)).catch(() => null) : null;
   return { version: r.version, healthy: readHealth(row, r.version, Date.now()).healthy === true, signIn: signInOf(a, githubId, r.vars) };
 }
 
