@@ -66,9 +66,17 @@ journey("an admin on the admin pages", () => {
   /** How many more times each of the last three readers opens the document: they are the most active, in this order. */
   const AGAIN = { reader12: 3, reader11: 2, reader10: 1 };
   const VIEWS = 12 + 3 + 2 + 1;
-  /** Today's numbers, as the server counted them. */
-  const today = async () =>
-    (await runTool(root, "analytics", { days: 7 })).result.days.at(-1) as { views: number; edits: number; activePeople: number };
+  /** Each of the last 7 days (UTC), as the server counted it. */
+  const days = async () =>
+    (await runTool(root, "analytics", { days: 7 })).result.days as { date: string; views: number; edits: number; activePeople: number }[];
+  /**
+   * The day of the first step, which has the views: by the server's clock, not the test's. It is the last day, but for
+   * a run that goes past midnight (UTC): then it is the day before, and the last day has no views.
+   */
+  const theDay = async () => {
+    const all = await days();
+    return all.find((d) => d.views) ?? all.at(-1)!;
+  };
   /** The issues the pretend GitHub opened in the server's pretend repository. */
   const issues = async (): Promise<Issue[]> => (await fetch(`${root}/__github/api/repos/erga/pretend/issues`)).json();
   /** A link of the sidebar shows another admin page in place: its path, and what the page has. */
@@ -463,13 +471,17 @@ journey("an admin on the admin pages", () => {
   // (Cut list, brought back.) The counts are those of the first step: nothing after it opened or edited a document.
   test("Analytics: the day's people, views and edits, the lists ten at a time with Load more, 7 days in place; nobody else sees the page", async () => {
     // The counts land after each answer, and the edit when its version is cut: the admin is the 13th active person.
-    await soon(today, 10_000).toMatchObject({ views: VIEWS, edits: 1, activePeople: 13 });
+    await soon(theDay, 10_000).toMatchObject({ views: VIEWS, edits: 1, activePeople: 13 });
+    const { date } = await theDay();
     await go("/admin", "[data-chart]");
     expect(await page.locator(".admin-side a[aria-current=page]").innerText()).toBe("Analytics");
     const big = (chart: string) => page.locator(`[data-chart="${chart}"] [data-big]`).innerText();
-    expect([await big("people"), await big("views"), await big("edits")]).toEqual(["13", String(VIEWS), "1"]);
+    // The people of the page's last day (that day's 13; past midnight, the new day's); the views and edits of all its days.
+    const last = await page.locator("#chart-people-svg > g[data-date]").last().getAttribute("data-date");
+    const people = (await days()).find((d) => d.date == last)!.activePeople;
+    expect([await big("people"), await big("views"), await big("edits")]).toEqual([String(people), String(VIEWS), "1"]);
     expect(await page.locator("#chart-views-svg > g").count()).toBe(30);
-    expect(await page.locator("#chart-views-svg > g[data-date] title").last().textContent()).toMatch(new RegExp(`: ${VIEWS} views$`));
+    expect(await page.locator(`#chart-views-svg > g[data-date="${date}"] title`).textContent()).toMatch(new RegExp(`: ${VIEWS} views$`));
     // The most active: reader12 first, with 4 views; then by name. Ten, then the other three with Load more.
     const logins = (list: string) =>
       page.locator(`ol.people-rows[data-list="${list}"] > li`).evaluateAll((lis) => lis.map((li) => (li as HTMLElement).dataset.login));
