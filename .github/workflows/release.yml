@@ -62,7 +62,10 @@ jobs:
           node-version: 26.10.0
           package-manager-cache: false
       - run: bun install --frozen-lockfile
-      - run: bun run test:browsers --with-deps
+      # The browser only (7 s). Not its system packages (--with-deps): the runner has every library that it needs, and
+      # apt took 130 to 240 s more for fonts that no journey needs. If a later runner lacks a library, the browser
+      # says which, at its start.
+      - run: bun run test:browsers
       # One journey at a time, and the unit tests and the typecheck after the journeys, so that each step of a
       # journey has the machine: with more at once, its slow runs failed journeys on time (e2e/COVERAGE.md).
       - run: bun run test --journeys-first
