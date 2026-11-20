@@ -218,12 +218,15 @@ export function checksOf(a: Answers, s: Seen): string[] {
   ];
 }
 
-/** Who deploys each new release, as the plan says it. */
-export const deploysText = (a: Answers) =>
+/**
+ * Who deploys each new release, as the plan says it. `worker`: the instance's Worker, when it is not a new instance's
+ * (an instance that runs has its entry's name: store.ts, namesAt). The user makes the token for that name.
+ */
+export const deploysText = (a: Answers, worker = namesOf(a.host).worker) =>
   a.deploys == "cloud" && a.where == "aws"
     ? `• a deployer (the Lambda function ${stackOf(a)}-deployer, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`
     : a.deploys == "cloud"
-      ? `• a deployer (the Worker ${namesOf(a.host).worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${namesOf(a.host).worker}, which you make on Cloudflare and paste ${a.remote ? "in your terminal" : "on a page that opens"}`
+      ? `• a deployer (the Worker ${worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${worker}, which you make on Cloudflare and paste ${a.remote ? "in your terminal" : "on a page that opens"}`
       : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
 /** The plan, as the agent says it before the user's yes. */

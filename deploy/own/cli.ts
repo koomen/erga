@@ -292,7 +292,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       }
       say(
         state.do == "install"
-          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a)}`
+          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a, namesAt(a.host).worker)}`
           : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${namesAt(a.host).worker}-deployer, with the token that it holds):\nPLAN  ${deploysText(a)}`
       );
       return "dry";

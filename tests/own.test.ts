@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { githubApp, openTerminal } from "../deploy/own/browser";
 import { readOptions } from "../deploy/own/cli";
-import { checksOf, missing, nothingSeen, planText, type Seen, step } from "../deploy/own/flow";
+import { checksOf, deploysText, missing, nothingSeen, planText, type Seen, step } from "../deploy/own/flow";
 import {
   type Answers,
   firstRows,
@@ -163,6 +163,10 @@ test("--deploys: cloud opens the deployer's step on an instance that runs, the u
     "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-example-com, which you make on Cloudflare and paste on a page that opens"
   );
   expect(planText({ ...f, remote: true }, seen(CF))[4]).toContain("and paste in your terminal");
+  // An instance that runs has its own Worker's name (its entry's): the user makes the token for that name.
+  expect(deploysText(f, "erga-staging")).toContain(
+    "(the Worker erga-staging-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-staging,"
+  );
   expect(options("--deploys", "sometimes").problems).toEqual(["--deploys: deploys is cloud or local."]);
 });
 
