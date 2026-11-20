@@ -2,7 +2,7 @@
 // `bun erga deploy`). A Worker can't run `bun install` or Vite, so this is the one part of a deploy
 // that runs outside the Cloudflare API.
 //
-//   1. bun install --frozen-lockfile    (or the checkout's own node_modules, linked)
+//   1. bun install --frozen-lockfile    (the commit's own packages, as its bun.lock names them)
 //   2. bun run build                     (the client's files, into .build/)
 //   3. bun run release                   (cf build: the Worker and its config, into .build/release/)
 //   4. pack .build/release/ as one bundle
@@ -13,8 +13,11 @@
 //
 //   bun deploy/pipeline/build.ts <file>    this checkout's HEAD, steps 1 to 4, the bundle into <file>: the release
 //                                          workflow's build (.github/workflows/release.yml)
+//
+// Trap: never link another folder's node_modules into the build's folder. That folder's packages are those of its own
+// last install, not of this commit's bun.lock: a commit with a new package then fails at "Cannot find module".
 
-import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { DeployError } from "../deployer/cloudflare-api";
@@ -22,8 +25,11 @@ import { loadRelease, type Release, unpackRelease } from "../deployer/release-fo
 import { git, ROOT } from "../root";
 
 
-/** Builds `commit` of this clone in a scratch worktree: the release. Under the mock, the checkout's own .build/release/, stamped. */
-export async function buildHere(commit: string, log: Log, mock = false): Promise<Release> {
+/**
+ * Builds `commit` of this clone in a scratch worktree: the release. Under the mock, the checkout's own .build/release/,
+ * stamped. `at` is for the tests: a clone of their own, and a fake runner.
+ */
+export async function buildHere(commit: string, log: Log, mock = false, at: { clone?: string; run?: Runner } = {}): Promise<Release> {
   if (mock) {
     const dir = join(ROOT, ".build/release");
     if (!existsSync(join(dir, "release.json"))) throw new Error("no .build/release/: run bun run build and bun run release first");
@@ -33,14 +39,14 @@ export async function buildHere(commit: string, log: Log, mock = false): Promise
   }
   const dir = mkdtempSync(join(tmpdir(), "erga-build-"));
   rmSync(dir, { recursive: true, force: true });
-  const add = Bun.spawnSync(["git", "worktree", "add", "--detach", dir, commit], { cwd: ROOT });
+  const clone = at.clone ?? ROOT;
+  const add = Bun.spawnSync(["git", "worktree", "add", "--detach", dir, commit], { cwd: clone });
   if (add.exitCode != 0) throw new Error(`git worktree add failed: ${add.stderr.toString()}`);
   try {
-    // This checkout's packages, linked (a commit whose lockfile differs needs `bun install` here first).
-    const bytes = await buildIn({ dir, commit, log: (l) => log(`build: ${l}`), nodeModules: existsSync(join(ROOT, "node_modules")) ? join(ROOT, "node_modules") : undefined });
+    const bytes = await buildIn({ dir, commit, log: (l) => log(`build: ${l}`), run: at.run });
     return unpackRelease(bytes, commit.slice(0, 12));
   } finally {
-    Bun.spawnSync(["git", "worktree", "remove", "--force", dir], { cwd: ROOT });
+    Bun.spawnSync(["git", "worktree", "remove", "--force", dir], { cwd: clone });
   }
 }
 
@@ -49,10 +55,10 @@ export type Log = (line: string) => void;
 export type Runner = (cmd: string[], o: { cwd: string; env?: Record<string, string>; log: Log; secret?: string; signal?: AbortSignal }) => Promise<void>;
 
 /** Steps 1 to 4 in a checkout of `commit` at `dir`: the release bundle's bytes. */
-export async function buildIn(o: { dir: string; commit: string; log: Log; run?: Runner; nodeModules?: string }): Promise<Uint8Array> {
+export async function buildIn(o: { dir: string; commit: string; log: Log; run?: Runner }): Promise<Uint8Array> {
   const run = o.run ?? spawnRunner;
-  if (o.nodeModules) { symlinkSync(o.nodeModules, join(o.dir, "node_modules"), "dir"); o.log(`node_modules: ${o.nodeModules}`); }
-  else await run(["bun", "install", "--frozen-lockfile"], { cwd: o.dir, log: o.log });
+  // The packages that the commit's bun.lock names, in the folder that builds: quick when the folder has them already.
+  await run(["bun", "install", "--frozen-lockfile"], { cwd: o.dir, log: o.log });
   // The commit's own package.json says how it builds (bun run build, then bun run release).
   await run(["bun", "run", "build"], { cwd: o.dir, log: o.log });
   await run(["bun", "run", "release"], { cwd: o.dir, log: o.log, env: { WORKERS_CI_COMMIT_SHA: o.commit } });
