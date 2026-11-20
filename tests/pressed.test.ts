@@ -14,12 +14,13 @@ function setup() {
   const button = { contains: (n: unknown) => n === button };
   const card = { contains: (n: unknown) => n === card || n === button };
   const other = { contains: (n: unknown) => n === other };
-  const fire = (type: string, on: object) => {
+  const fire = (type: string, on: object, button = 0) => {
     const e = new Event(type);
     Object.defineProperty(e, "target", { value: on });
+    Object.defineProperty(e, "button", { value: button });
     target.dispatchEvent(e);
   };
-  return { p, later, button, card, other, fire };
+  return { p, later, button, card, other, fire, target };
 }
 
 test("with no press, a draw runs at once", () => {
@@ -48,7 +49,7 @@ test("a draw during a press on the element waits for the release, and runs after
 });
 
 test("a press elsewhere holds nothing back; a press that a drag takes, or a window that loses the focus, ends too", () => {
-  const { p, later, button, card, other, fire } = setup();
+  const { p, later, button, card, other, fire, target } = setup();
   let n = 0;
   fire("pointerdown", other);
   p.afterPress(card as unknown as Node, () => n++);
@@ -59,10 +60,36 @@ test("a press elsewhere holds nothing back; a press that a drag takes, or a wind
   fire("pointercancel", button);
   later.splice(0).forEach((f) => f());
   expect(n).toBe(2);
-  for (const end of ["dragend", "blur"]) {
+  for (const [end, on] of [
+    ["dragend", button],
+    ["blur", target],
+  ] as const) {
     fire("pointerdown", button);
     expect(p.pressedIn(card as unknown as Node)).toBe(true);
-    fire(end, button);
+    fire(end, on);
     expect(p.pressedIn(card as unknown as Node)).toBe(false);
   }
+});
+
+test("a press of another button than the main one holds nothing back: it gives no click, and its release may never come", () => {
+  const { p, button, card, fire } = setup();
+  let n = 0;
+  fire("pointerdown", button, 2);
+  expect(p.pressedIn(card as unknown as Node)).toBe(false);
+  p.afterPress(card as unknown as Node, () => n++);
+  expect(n).toBe(1);
+});
+
+// Was a bug: a real press moves the focus to the button, and the row that had it says blur. That ended the wait.
+test("the blur of the element that had the focus, as the press takes it, does not end the press", () => {
+  const { p, later, button, card, other, fire } = setup();
+  let n = 0;
+  fire("pointerdown", button);
+  fire("blur", other);
+  expect(p.pressedIn(card as unknown as Node)).toBe(true);
+  p.afterPress(card as unknown as Node, () => n++);
+  expect(n).toBe(0);
+  fire("pointerup", button);
+  later.splice(0).forEach((f) => f());
+  expect(n).toBe(1);
 });

@@ -9,7 +9,9 @@
 export function presses(target: Pick<EventTarget, "addEventListener">, later: (run: () => void) => void = (run) => setTimeout(run)) {
   let held: unknown = null;
   const waiting = new Set<() => void>();
-  target.addEventListener("pointerdown", (e) => void (held = e.target), true);
+  // (The main button's press: only that one ends in a click. Another button's opens the browser's menu, which may
+  // take the release.)
+  target.addEventListener("pointerdown", (e) => void (held = (e as PointerEvent).button ? null : e.target), true);
   // The release, or another end of the press. What waited runs after the click, which the browser gives right after
   // the release.
   const end = () => {
@@ -21,9 +23,12 @@ export function presses(target: Pick<EventTarget, "addEventListener">, later: (r
       for (const run of all) run();
     });
   };
-  // (A drag takes the press: some browsers say pointercancel as it starts, each says dragend. A window that loses the
-  // focus may never hear the release.)
-  for (const name of ["pointerup", "pointercancel", "dragend", "blur"]) target.addEventListener(name, end, true);
+  // (A drag takes the press: some browsers say pointercancel as it starts, each says dragend.)
+  for (const name of ["pointerup", "pointercancel", "dragend"]) target.addEventListener(name, end, true);
+  // A window that loses the focus may never hear the release.
+  // Trap: only the window's own blur. A press moves the focus to what it is on, and the element that had the focus
+  // says blur too, right after the press's start: with that one, the wait ended as each real press began.
+  target.addEventListener("blur", (e) => void (e.target == target && end()), true);
   const pressedIn = (el: Node) => held != null && el.contains(held as Node);
   return {
     /** Whether a press is in progress on `el` or in it. */

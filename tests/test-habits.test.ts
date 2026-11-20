@@ -55,7 +55,8 @@ const PRESSES: Record<string, number> = {
   "e2e/agent/tools.e2e.ts": 1,
   "e2e/comments/comments.ts": 1,
   "e2e/documents/list.e2e.ts": 1,
-  "e2e/documents/tree.e2e.ts": 5,
+  // (One more: a press held on a row's button while the tree's news comes.)
+  "e2e/documents/tree.e2e.ts": 6,
   "e2e/editor/format.e2e.ts": 1,
   // (A button on a file's badge, in a shadow root of the page's frame: pressOn reaches the tab's own document.)
   "e2e/editor/steady-helpers.ts": 1,

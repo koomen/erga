@@ -16,6 +16,7 @@ import { listenNews, person } from "./people";
 import {
   act,
   answered,
+  centre,
   changing,
   edges,
   editorFocused,
@@ -196,33 +197,40 @@ journey("a project's tree in the editor", () => {
   test("a folder's name that the server refuses (a # in it): its words show in place, and nothing changes", async ({ tab }) => {
     // Was a bug (a flaky failure of this step): the server's answer drew the rows again between a press and its
     // release. The press was on the old button and the release on the new one, so the browser gave no click, and the
-    // menu did not open. The rows now wait for the release (client/common/pressed.ts). Here: a press, the tree's news
-    // and the server's answer, then the release.
+    // menu did not open. The rows now wait for the release (client/common/pressed.ts). A real press: it takes the
+    // focus from the row that had it, and that row's blur ended the wait. Here: the press, the tree's news and the
+    // server's answer, then the release.
     const more = `${row("notes")} [data-act="more"]`;
-    const held = await page.evaluate(async (sel) => {
-      const w = window as unknown as { __more: Element };
+    await page.evaluate((sel) => (document.querySelector<HTMLElement>(sel)!.focus(), 0), row("about.html"));
+    const over = await centre(page, row("notes"));
+    await page.mouse.move(over.x, over.y);
+    const at = await centre(page, more);
+    await page.mouse.move(at.x, at.y);
+    await page.evaluate((sel) => {
+      const w = window as unknown as { __more: Element; __down: EventTarget | null };
       w.__more = document.querySelector(sel)!;
-      // (The answer's body, read: what the tree does with it comes before the next task.)
-      const answered = new Promise<void>((done) => {
-        const json = Response.prototype.json;
-        Response.prototype.json = function (this: Response) {
-          Response.prototype.json = json;
-          const body = json.call(this);
-          void body.finally(() => setTimeout(done));
-          return body;
-        };
-      });
-      w.__more.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-      window.dispatchEvent(new CustomEvent("erga-tree", { detail: {} }));
-      await answered;
-      const during = w.__more.isConnected;
-      w.__more.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-      return during;
+      w.__down = null;
+      addEventListener("pointerdown", (e) => (w.__down = e.target), { capture: true, once: true });
     }, more);
+    await page.mouse.down();
+    const held = await page.evaluate(async () => {
+      const w = window as unknown as { __more: Element; __down: Node | null; __calls: number };
+      if (!w.__down || !w.__more.contains(w.__down)) return "the press is not on the button";
+      const before = w.__calls;
+      window.dispatchEvent(new CustomEvent("erga-tree", { detail: {} }));
+      if (w.__calls == before) return "the tree did not ask the server";
+      // (Each call has its answer, and the tree has done what it does with it: watchTree.)
+      await new Promise<void>((done) => {
+        const look = () => (w.__calls ? setTimeout(look) : done());
+        look();
+      });
+      return w.__more.isConnected;
+    });
     expect(held, "the pressed button is still in the tree when the answer has come").toBe(true);
-    // After the release, the answer's rows come.
+    await page.mouse.up();
+    // The release gives its click: the menu opens. After it, the answer's rows come.
+    await until(() => page.evaluate(`!!document.querySelector(".et-menu")`), 3000, "the release opens the menu");
     await expect.poll(() => page.evaluate(() => (window as unknown as { __more: Element }).__more.isConnected)).toBe(false);
-    await act(page, "notes", "more");
     await menuItem(page, "Rename folder");
     await page.evaluate(`document.activeElement.select()`);
     await type(page, "notes#1");
@@ -277,11 +285,26 @@ journey("a project's tree in the editor", () => {
       const r = document.querySelector('.et-row[data-path="blog"]')!.getBoundingClientRect();
       return { x: r.left + 120, y: r.top + r.height / 2 };
     });
-    // The files' bytes wait, so that their rows show on their way.
-    let go!: () => void;
-    const wait = new Promise<void>((done) => (go = done));
-    const going: Promise<void>[] = [];
-    await page.route(/\/api\/blobs\//, (r) => void going.push(wait.then(() => r.continue())));
+    // The files' bytes wait, so that their rows show on their way. They wait in the tab, not at a route of the test's.
+    // (Was a flaky failure: a request of the tab that starts while the test takes its last route away gets no answer,
+    // ever. An upload's row stayed at 0%, or the tree's next read never came.)
+    await page.evaluate(() => {
+      const w = window as unknown as { __bytes: { held: number; go(): void } };
+      const send = XMLHttpRequest.prototype.send;
+      let go!: () => void;
+      const wait = new Promise<void>((done) => (go = done));
+      w.__bytes = {
+        held: 0,
+        go() {
+          XMLHttpRequest.prototype.send = send;
+          go();
+        },
+      };
+      XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, ...body: Parameters<XMLHttpRequest["send"]>) {
+        w.__bytes.held++;
+        void wait.then(() => send.apply(this, body));
+      };
+    });
     const over = await dragAt(page, at, [onDisk("notes.txt"), onDisk("terms.txt")]);
     expect(
       await page.evaluate(() => ({
@@ -300,9 +323,9 @@ journey("a project's tree in the editor", () => {
     expect(
       await page.evaluate(() => [document.querySelectorAll(".et-row.drop").length, !!document.querySelector(".drop-chip:not([hidden])")])
     ).toEqual([0, false]);
-    go();
-    await Promise.all(going);
-    await page.unroute(/\/api\/blobs\//);
+    // (The server has taken both: their bytes are next.)
+    await expect.poll(() => js(page, "__bytes.held")).toBe(2);
+    await page.evaluate("__bytes.go()");
     await expect.poll(pending).toEqual([]);
     await expect
       .poll(async () => (await paths(page)).filter((x) => /^blog\/(notes|terms)\.txt$/.test(x)).sort())
