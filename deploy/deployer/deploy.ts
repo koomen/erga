@@ -33,6 +33,12 @@ export interface Ports {
    */
   onBranch: (version: string) => Effect.Effect<boolean, DeployError>;
   log: (line: string) => void;
+  /**
+   * On Cloudflare, what the caller does when the release's code is up, before the wait for its health: the release's
+   * first scheduled run, which writes its health row, sees it. (A machine's --remove-domain: the rows that tell the
+   * server which domains left.) A failure fails the deploy.
+   */
+  uploaded?: Effect.Effect<void, DeployError>;
   /** How long the wait for the release's health row lasts, on Cloudflare (cloudflare.ts, CloudflareRun): a test's, or the mock's. Default: the step's own time. */
   waitMs?: number;
 }
@@ -55,6 +61,7 @@ function driverOf(spec: Read, release: Release, ports: Ports): Driver | string {
       release,
       carry: {},
       waitMs: ports.waitMs,
+      uploaded: ports.uploaded,
     };
     return (
       bindingsProblem(release) ?? {

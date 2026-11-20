@@ -452,6 +452,8 @@ export interface CloudflareRun {
   secrets?: Record<string, string>;
   /** How long the live step waits for the release's health row. Default: 3 minutes; 15 for a Cron Trigger that is new. */
   waitMs?: number;
+  /** What the caller does when the release's code is up, before the wait for its health (deploy.ts, Ports). */
+  uploaded?: Effect.Effect<void, DeployError>;
 }
 
 const accountOf = (run: CloudflareRun) => `/accounts/${run.spec.target.account}`;
@@ -601,6 +603,10 @@ const live = (run: CloudflareRun) =>
 export const CLOUDFLARE_STEPS = [
   { id: "migrations", title: "Set up the database's tables", run: migrations },
   { id: "assets", title: "Upload the editor's files", run: assets },
-  { id: "worker", title: "Upload the Worker, with its settings and secrets", run: worker },
+  {
+    id: "worker",
+    title: "Upload the Worker, with its settings and secrets",
+    run: (run: CloudflareRun) => Effect.flatMap(worker(run), (detail) => Effect.as(run.uploaded ?? Effect.void, detail)),
+  },
   { id: "live", title: "Wait for its health", run: live },
 ] as const satisfies readonly (Step & { run: (run: CloudflareRun) => Effect.Effect<string, DeployError> })[];

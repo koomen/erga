@@ -724,7 +724,7 @@ describe("bun erga deploy --remove-domain", () => {
     const plan = await removalPlan({ dir, host: "example.com", domains: ["Example.org"], net: mock.fetch });
     expect(plan[0]).toBe("A dry run: nothing changes. bun erga deploy example.com --remove-domain example.org does this:");
     expect(plan.join("\n")).toContain("1. The custom domain example.org of the Worker erga is deleted on Cloudflare");
-    expect(plan.join("\n")).toContain("4. The server: it unpublishes the document that is published to example.org");
+    expect(plan.join("\n")).toContain("3. The server: it unpublishes the document that is published to example.org");
     expect([changes(mock).length, entry(), attached().includes("example.org")]).toEqual([
       before,
       ["example.org", "blog.example.org"],
@@ -739,13 +739,29 @@ describe("bun erga deploy --remove-domain", () => {
     await expect(deploy({ removeDomains: ["example.org"], domains: ["new.example.org"] })).rejects.toThrow("a deploy of its own");
     expect(changes(mock).length).toBe(before);
 
-    await deploy({ removeDomains: ["Example.org"] });
+    // The server's row goes in when the new code is up, before the wait for its health: the release's first scheduled
+    // run takes it.
+    const from = lines.length;
+    const uploadedFirst: boolean[] = [];
+    const net: typeof mock.fetch = (input, init) => {
+      if (typeof init?.body == "string" && init.body.includes("INTO removed_domains"))
+        uploadedFirst.push(
+          changes(mock)
+            .slice(before)
+            .some((c) => /^PUT .*\/workers\/scripts\/erga$/.test(c))
+        );
+      return mock.fetch(input, init);
+    };
+    await deploy({ removeDomains: ["Example.org"], net });
+    const said = (text: string) => lines.findIndex((l, i) => i >= from && l.includes(text));
+    expect(uploadedFirst).toEqual([true]);
+    expect(said("The server unpublishes the document that is published to example.org")).toBeLessThan(said("Wait for its health..."));
     expect(attached()).toEqual(expect.arrayContaining(["example.com", "blog.example.org"]));
     expect(attached()).not.toContain("example.org");
     expect([facts(), entry()]).toEqual([["blog.example.org"], ["blog.example.org"]]);
     expect((await specOn(await sqlOn(mock, fleet)))!.target).toMatchObject({ domains: ["blog.example.org"] });
     expect((await jobsOn(mock, fleet))[0].command).toBe("bun erga deploy HEAD example.com --remove-domain example.org");
-    // The domain leaves Cloudflare before the Worker's upload; the server's row comes after.
+    // The domain leaves Cloudflare before the Worker's upload.
     const made = changes(mock).slice(before);
     const gone = made.findIndex((c) => /^DELETE .*\/workers\/domains\//.test(c));
     expect(gone).toBeGreaterThanOrEqual(0);

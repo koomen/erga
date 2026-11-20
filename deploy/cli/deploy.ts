@@ -27,7 +27,7 @@ import { type Carry, liveDeployment, liveRelease, rollbackTo } from "../deployer
 import { deploy } from "../deployer/deploy";
 import { fetchRelease, releaseAddress } from "../deployer/registry";
 import { movedNames, readsSecretsKey } from "../deployer/secrets-key";
-import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../deployer/cloudflare-api";
+import { Cloudflare, DeployError, type Fetch, tried, Unhealthy } from "../deployer/cloudflare-api";
 import {
   STEPS,
   boundDatabaseName,
@@ -400,16 +400,23 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       } else {
         // The code only: the deployer's own steps, by the instance's spec, as the deployer in the cloud runs them. It
         // refuses a release that is not a commit of the spec's branch, and puts back the version before an unhealthy one.
-        const ports = { cloudflare: cf, onBranch: (version: string) => Effect.sync(() => onBranch(version)), log, waitMs: quick.waitMs };
         // --remove-domain: the domain leaves Cloudflare first, and the deploy's facts have the entry's domains without it.
         const now = entryOf(readConfig(o.dir), o.host) as CloudflareEntry;
         const left = withoutDomains(now, removed);
+        const ports = {
+          cloudflare: cf,
+          onBranch: (version: string) => Effect.sync(() => onBranch(version)),
+          log,
+          waitMs: quick.waitMs,
+          // The rows that tell the server to unpublish what was published there, as soon as the new code is up: its
+          // first scheduled run takes them, the one that writes the health row that the deploy waits for.
+          ...(removed.length ? { uploaded: tried(() => askUnpublish(cf, now, removed, Date.now(), log)) } : {}),
+        };
         for (const d of removed) await detach(cf, now, d, log);
         const done = await runWith(quick.sleep, Effect.result(deploy(removed.length ? specOf(left, held) : specNow(), release, ports)));
         if (done._tag == "Failure") throw new Error(done.failure.message);
         if (removed.length) {
-          // The server unpublishes what was published there; then the entry, which the instance's spec takes below.
-          await askUnpublish(cf, now, removed, Date.now(), log);
+          // The entry, which the instance's spec takes below.
           writeConfig(o.dir, withEntry(readConfig(o.dir), left));
           log(`${removed.join(", ")} left ${o.host}'s custom domains: the Worker's deploy facts, and the entry.`);
         }

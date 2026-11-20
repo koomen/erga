@@ -3,12 +3,17 @@
 //
 // 1. Cloudflare: the Worker's custom domain is deleted. From then on, nothing answers at the domain.
 // 2. The instance: a deploy with the domain off its custom domains (the Worker's deploy facts, and its spec).
-// 3. .erga/config.json: the domain leaves the entry.
-// 4. The server: a row in `removed_domains`, through D1's API. The server's scheduled run unpublishes the document that
-//    is published to the domain (server/sites/domains.ts): only the server reaches a domain's publishing.
+// 3. The server: a row in `removed_domains`, through D1's API, when the deploy's new code is up and before the deploy
+//    waits for its health. The server's scheduled run unpublishes the document that is published to the domain
+//    (server/sites/domains.ts): only the server reaches a domain's publishing.
+// 4. .erga/config.json: the domain leaves the entry.
+//
+// Trap: the row goes in after the upload, never before: a release that still has the domain takes the row and
+// unpublishes nothing. And not after the health wait: that wait ends just after a scheduled run, so the next one is a
+// whole minute away.
 //
 // --dry-run says these, with what Cloudflare has now, and changes nothing. A run that stops goes on when it runs again:
-// the domain is in the entry until step 3.
+// the domain is in the entry until step 4.
 
 import { boundDatabase, d1 } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
@@ -73,8 +78,8 @@ export async function removalPlan(o: {
       `  ${d}:`,
       `    1. ${(await onCloudflare(cf, entry, d)).says.replace(/^./, (c) => c.toUpperCase())}.`,
       `    2. The instance: a deploy of ${entry.branch}'s head takes ${d} off its custom domains (the Worker's deploy facts, and its spec).`,
-      `    3. .erga/config.json: ${d} leaves ${o.host}'s entry.`,
-      `    4. The server: it unpublishes the document that is published to ${d}, within a minute of the deploy.`
+      `    3. The server: it unpublishes the document that is published to ${d}, within a minute of the deploy.`,
+      `    4. .erga/config.json: ${d} leaves ${o.host}'s entry.`
     );
   }
   lines.push("  It keeps each document, and each zone on Cloudflare.");
