@@ -1,8 +1,9 @@
 // Why an agent's turn ended with no reply (shared/agent-log.ts, turnEnded): a comment's thread says it. Which tool
-// calls have a line in the panel (callShown). What the card of a call that waits for Approve shows (asked).
+// calls, and which of the model's thinking, have a line in the panel (shown, progress). What the card of a call that
+// waits for Approve shows (asked).
 
 import { expect, test } from "bun:test";
-import { asked, callShown, emptyLog, reduce, turnEnded, type Log, type LogEvent } from "../shared/agent-log.ts";
+import { asked, emptyLog, progress, reduce, shown, turnEnded, type Log, type LogEvent } from "../shared/agent-log.ts";
 
 const log = (...items: Log["items"]): Log => ({ items, busy: false, undoable: 0 });
 
@@ -17,21 +18,22 @@ test("a turn's end says why there's no reply: an error, a call that waits for th
   );
 });
 
+const call = (id: string, name: string, status: "running" | "asking" | "done" | "error", more: object = {}): LogEvent => ({
+  t: "tool",
+  id,
+  name,
+  path: "index.html",
+  status,
+  ...more,
+});
+
 test("the panel has one line for a turn's tool calls: the last call while the turn runs; what the person must see stays", () => {
   const l = emptyLog();
   /** Applies the events; then the items that have a line, each as its text or "name status". */
   const lines = (...evs: LogEvent[]) => {
     for (const ev of evs) reduce(l, ev);
-    return l.items.flatMap((it, i) => (!callShown(l, i) ? [] : it.kind == "tool" ? `${it.name} ${it.status}` : it.text));
+    return l.items.flatMap((it, i) => (!shown(l, i) ? [] : it.kind == "tool" ? `${it.name} ${it.status}` : it.text));
   };
-  const call = (id: string, name: string, status: "running" | "asking" | "done" | "error", more: object = {}): LogEvent => ({
-    t: "tool",
-    id,
-    name,
-    path: "index.html",
-    status,
-    ...more,
-  });
   expect(lines({ t: "user", text: "Go" }, { t: "busy", busy: true }, { t: "text", delta: "First." }, call("1", "read", "running"))).toEqual(
     ["Go", "First.", "read running"]
   );
@@ -59,6 +61,35 @@ test("the panel has one line for a turn's tool calls: the last call while the tu
   ]);
   // A call that waits for the person shows after the run stopped.
   expect(lines(call("8", "delete_document", "asking")).at(-1)).toBe("delete_document asking");
+});
+
+test("the panel has one line for the model's thinking: the last block's last line with text, while the turn runs", () => {
+  const l = emptyLog();
+  /** Applies the events (thinking: its deltas, as the provider sends them); then the lines of the calls and the thinking. */
+  const lines = (...evs: (LogEvent | string[])[]) => {
+    for (const ev of evs.flatMap((e) => (Array.isArray(e) ? e.map((delta): LogEvent => ({ t: "thinking", delta })) : [e]))) reduce(l, ev);
+    return l.items.flatMap((it, i) =>
+      !shown(l, i) ? [] : it.kind == "tool" ? `${it.name} ${it.status}` : it.kind == "thinking" ? `(${progress(it.text)})` : it.text
+    );
+  };
+  // Claude (Effect AI's Anthropic provider): a summary in small deltas, with paragraphs.
+  const claude = ["The page sits in a white", " card.\n\nI will read the", " stylesheet first."];
+  expect(lines({ t: "user", text: "Go" }, { t: "busy", busy: true }, claude)).toEqual(["Go", "(I will read the stylesheet first.)"]);
+  expect(lines(call("1", "read", "running"))).toEqual(["Go", "(I will read the stylesheet first.)", "read running"]);
+  // OpenAI (the Pi router): a title, then the text; each part of the summary ends with the delta "\n\n".
+  const openai = ["**Find", "ing the card**", "\n\n", "The white comes from the host.", "\n\n"];
+  expect(lines(call("1", "read", "done"), openai.slice(0, 3))).toEqual(["Go", "read done", "(**Finding the card**)"]);
+  expect(lines(openai.slice(3), call("2", "eval_in_page", "running"))).toEqual([
+    "Go",
+    "(The white comes from the host.)",
+    "eval_in_page running",
+  ]);
+  // A block of white space has no line, and the block before it has none any more. What the model says removes it too.
+  expect(lines(call("2", "eval_in_page", "done"), ["\n\n"])).toEqual(["Go", "eval_in_page done"]);
+  expect(lines(call("3", "edit", "done"), ["Now the check."], { t: "text", delta: "Fixed. " })).toEqual(["Go", "edit done", "Fixed. "]);
+  // The turn's end leaves the answers only.
+  expect(lines(["A last thought."], { t: "text", delta: "Done." }, { t: "busy", busy: false })).toEqual(["Go", "Fixed. ", "Done."]);
+  expect(l.items.filter((it) => it.kind == "thinking").length, "the transcript keeps each block").toBe(5);
 });
 
 test("the card of a call that waits shows the tool's sentence and the whole call: the tool, its op, each argument", () => {

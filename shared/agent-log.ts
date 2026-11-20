@@ -74,15 +74,23 @@ export function turnEnded(log: Log): string {
 }
 
 /**
+ * A thinking block's one line in the panel: its last line with text, as the model wrote it. A block of white space
+ * has none (Pi's OpenAI adapter ends each part of a summary with "\n\n").
+ */
+export const progress = (text: string): string => text.trimEnd().split("\n").at(-1)!.trim();
+
+/**
  * Whether item `i` has a line in the panel. A tool call that the person must see or answer has one: a call that waits
  * for them, a picture that a tool returned, an error that nothing got past (a later call on the same file that worked
  * makes it history). Of the other calls, one line only: the turn's last call, while the turn runs. The next call takes
- * its place, and the turn's end removes it.
+ * its place, and the turn's end removes it. Of the model's thinking, one line only too (progress): the last block,
+ * while the turn runs, until the model says something or thinks again.
  */
-export function callShown(log: Log, i: number): boolean {
+export function shown(log: Log, i: number): boolean {
   const item = log.items[i];
-  if (item.kind != "tool" || item.status == "asking" || item.image) return true;
   const after = log.items.slice(i + 1);
+  if (item.kind == "thinking") return log.busy && !!progress(item.text) && after.every((x) => x.kind == "tool");
+  if (item.kind != "tool" || item.status == "asking" || item.image) return true;
   if (item.status == "error")
     return !after.some((x) => x.kind == "tool" && x.status == "done" && x.path == item.path && (x.name == item.name || x.name == "write"));
   return log.busy && !after.some((x) => x.kind == "tool") && (item.status == "running" || !after.some((x) => x.kind == "user"));

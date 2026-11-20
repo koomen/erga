@@ -15,7 +15,7 @@ import { hold } from "../helpers/hold";
 import { agentPrompt } from "../../client/common/agent-prompt";
 import { getter, mint, signIn, soon, tool, unique, upload } from "./access";
 import { markOf } from "../helpers/save-mark";
-import { watchCalls } from "../agent/panel";
+import { watchLines } from "../agent/panel";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("tokens")]);
 
@@ -274,11 +274,11 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     // answer stays. Neon's tool call shows as one line, and then it answers.
     await ask("gemini-4-argon");
     await soon(replies).toContain("Gemini 4 Argon");
-    const lines = await watchCalls(page);
+    const lines = await watchLines(page);
     await ask("gemini-4-neon", '[{"tool": "documents", "args": {"op": "list_documents"}}, {"model": true}]');
     await soon(replies).toContain("Gemini 4 Neon");
     expect(await replies()).toContain("Gemini 4 Argon");
-    expect([...new Set((await lines()).flat())]).toEqual(["list_documents"]);
+    expect([...new Set((await lines()).flatMap((l) => l.calls))]).toEqual(["list_documents"]);
     await openSettings(page);
     await page.click("#erga-settings li[data-name=google] .remove");
     await soon(() => page.textContent("#erga-settings li[data-name=google] .state")).toBe("Not set");

@@ -6,7 +6,7 @@
 // "Not sent" and a way to try again): sends.ts has each message's states. The
 // styles are style.css's (.agent-log, .msg-*), so both panels look the same.
 
-import { asked, callShown, emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
+import { asked, emptyLog, progress, reduce, shown, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
 import type { FileRef } from "../../shared/attach";
 import { fileChip } from "./attach-ui";
 import { sendStep, type SendEvent, type SendState } from "./sends";
@@ -78,9 +78,10 @@ export function chat(opts: ChatOptions): Chat {
     const el = document.createElement("div");
     el.className = "msg-" + item.kind;
     if (item.kind == "user") userMessage(el, item.text, item.files);
-    else if (item.kind == "thinking" || item.kind == "error") el.textContent = item.text;
+    else if (item.kind == "error") el.textContent = item.text;
     else if (item.kind == "assistant") el.innerHTML = inline(item.text);
-    else if (!callShown(log, i)) el.hidden = true;
+    else if (!shown(log, i)) el.hidden = true;
+    else if (item.kind == "thinking") el.innerHTML = inline(progress(item.text));
     else {
       const [doing, done] = verbs[item.name] ?? [item.name, item.name];
       const what = item.path ? ` <code>${esc(item.path)}</code>` : "";
@@ -220,18 +221,19 @@ export function chat(opts: ChatOptions): Chat {
       render();
       return;
     }
-    if (i >= 0 && i < before && ev.t == "text" && !document.hidden) {
-      // More of an answer that is drawn already: each word comes as an event, and the answer is drawn whole. One draw
-      // for each screen frame, with all that came. (A hidden tab has no frames: there, at once.)
+    if (i >= 0 && i < before && (ev.t == "text" || ev.t == "thinking") && !document.hidden) {
+      // More of an answer (or of the model's thinking) that is drawn already: each word comes as an event, and the
+      // answer is drawn whole. One draw for each screen frame, with all that came. (A hidden tab has no frames: there,
+      // at once.)
       later.add(i);
       if (later.size == 1) requestAnimationFrame(drawLater);
     } else if (i >= 0) {
       later.delete(i);
       draw(i, i >= before);
     }
-    // A call, a message or the turn's end may remove the line of an earlier call (callShown).
-    if (ev.t == "tool" || ev.t == "busy" || ev.t == "user") {
-      for (let j = 0; j < els.length; j++) if (j != i && els[j].hidden == callShown(log, j)) draw(j);
+    // A new item, a call's end or the turn's end may remove the line of an earlier call or thought (shown).
+    if (i >= before || ev.t == "tool" || ev.t == "busy") {
+      for (let j = 0; j < els.length; j++) if (j != i && els[j].hidden == shown(log, j)) draw(j);
     }
     pin();
   }

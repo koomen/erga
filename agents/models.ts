@@ -391,12 +391,15 @@ export function cutShort(parts: readonly Response.AnyPart[]): string | null {
  *   { "text": "Hi", "tokens": 5000 }      ... and say it used that many output tokens (a test of the limits)
  *
  * Any step may add "delay": ms, to wait before answering (so a test can act
- * between two tool calls). Once the steps run out it says "(script done)".
+ * between two tool calls), and "thinking": the deltas of a thinking block that comes first, each as the provider
+ * sends it (Pi's OpenAI adapter ends each part of a summary with the delta "\n\n"). Once the steps run out it says
+ * "(script done)".
  */
 const Step = Schema.Struct({
   tool: Schema.optionalKey(Schema.String),
   args: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
   text: Schema.optionalKey(Schema.String),
+  thinking: Schema.optionalKey(Schema.Array(Schema.String)),
   error: Schema.optionalKey(Schema.String),
   delay: Schema.optionalKey(Schema.Finite),
   inputs: Schema.optionalKey(Schema.Boolean),
@@ -433,8 +436,16 @@ const scriptStep = Effect.fnUntraced(function* (prompt: Prompt.Prompt, model: st
   if (!step) return said("(script done)");
   if (step.error)
     return yield* AiError.make({ module: "script", method: "streamText", reason: new AiError.UnknownError({ description: step.error }) });
+  const thought: Part[] = step.thinking
+    ? [
+        { type: "reasoning-start", id: "r" },
+        ...step.thinking.map((delta): Part => ({ type: "reasoning-delta", id: "r", delta })),
+        { type: "reasoning-end", id: "r" },
+      ]
+    : [];
   if (step.tool)
     return [
+      ...thought,
       ...(step.text ? said(step.text).slice(0, 3) : []),
       { type: "tool-call", id: `call-${crypto.randomUUID()}`, name: step.tool, params: step.args ?? {} },
       { type: "finish", reason: "tool-calls", usage: { inputTokens: {}, outputTokens: {} } },
@@ -449,7 +460,7 @@ const scriptStep = Effect.fnUntraced(function* (prompt: Prompt.Prompt, model: st
         files: [...text.matchAll(/<file name="([^"]*)">/g)].map((x) => x[1]),
     }));
   }
-  return said(step.text ?? "", step.tokens);
+  return [...thought, ...said(step.text ?? "", step.tokens)];
 });
 
 /** The scripted model, standing in for `model` (its name, for the step "model"). */

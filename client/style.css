@@ -445,8 +445,8 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .send-failed button { border: 0; background: none; padding: 0; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .msg-user { align-self: flex-end; max-width: 88%; background: var(--code-bg); border-radius: 12px; padding: 7px 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg-assistant { white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg-assistant code, .msg-tool code { font: 0.88em var(--font-mono); background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.3em; }
-.msg-thinking { color: var(--chrome); font-size: 12.5px; white-space: pre-wrap; max-height: 4.8em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.6em); mask-image: linear-gradient(to bottom, transparent, #000 1.6em); display: flex; flex-direction: column; justify-content: flex-end; }
+.msg-assistant code, .msg-thinking code, .msg-tool code { font: 0.88em var(--font-mono); background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.3em; }
+.msg-thinking { flex: none; padding-left: 13px; color: var(--soft); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.75; }
 .msg-tool { color: var(--soft); font-size: 12.5px; display: flex; gap: 7px; align-items: baseline; }
 .msg-tool::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--chrome); transform: translateY(-1px); }
 .msg-tool.running::before { background: var(--caret); animation: agent-pulse 1s ease-in-out infinite alternate; }

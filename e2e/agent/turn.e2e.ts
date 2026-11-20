@@ -8,7 +8,7 @@ import { agentClosed, expect, goto, journey, servers, settle, test, until, type 
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { hold } from "../helpers/hold";
 import { runTool } from "../helpers/tools";
-import { agentOn, answered, answers, button, calls, edit, paneOpen, say, script, turnEnded, turnLine, watchCalls } from "./panel";
+import { agentOn, answered, answers, button, calls, edit, paneOpen, say, script, turnEnded, turnLine, watchLines } from "./panel";
 
 const s = await servers.main();
 /**
@@ -50,24 +50,44 @@ journey("a turn of the agent in the editor", () => {
     await bo.loaded();
     await page.bringToFront();
 
-    // One turn: an edit, and a look at the page (the server's browser renders it).
-    const seen = await watchCalls(page);
+    // One turn: an edit, and a look at the page (the server's browser renders it). The model thinks before each call,
+    // in the deltas that the providers send: Claude's summary in pieces, with paragraphs; OpenAI's (the Pi router) with
+    // a title, and "\n\n" after each part; a block of white space.
+    const seen = await watchLines(page);
     await say(
       page,
       script("Check it", [
-        edit("Typing never waits.", "Typing never waits, by agent."),
-        { text: "Now a look.", tool: "page", args: { op: "view_page", selector: "h1" } },
-        { text: "Looked." },
+        {
+          thinking: ["The quote has no", " author.\n\nI will edit", " the quote first."],
+          text: "First an edit.",
+          ...edit("Typing never waits.", "Typing never waits, by agent."),
+        },
+        {
+          thinking: ["**Look", "ing**", "\n\n", "Now I will look at the `h1` heading.", "\n\n"],
+          tool: "page",
+          args: { op: "view_page", selector: "h1" },
+        },
+        { thinking: ["\n\n"], text: "Looked." },
       ])
     );
     await answered(page, "Looked.", 13_000);
-    expect((await answers(page)).at(-2), "what the agent says between its calls stays").toBe("Now a look.");
-    // The turn's calls have one line: the look takes the edit's place. After the turn, only the picture stays.
+    expect((await answers(page)).at(-2), "what the agent says before a call stays").toBe("First an edit.");
+    // The turn's calls have one line: the look takes the edit's place. Its thinking has one line at most: a block's
+    // last line, in the place of the block before. No item shows empty. After the turn, only the picture stays.
     const lines = await seen();
-    expect(Math.max(...lines.map((l) => l.length)), JSON.stringify(lines)).toBe(1);
-    const order = lines.flat().filter((l, i, all) => l != all[i - 1]);
+    const all = JSON.stringify(lines);
+    expect(Math.max(...lines.map((l) => l.calls.length)), all).toBe(1);
+    expect(Math.max(...lines.map((l) => l.thinking.length)), all).toBe(1);
+    expect(Math.max(...lines.map((l) => l.blank)), all).toBe(0);
+    expect(Math.max(...lines.map((l) => l.high)), all).toBeLessThan(22);
+    expect(
+      lines.some((l) => l.thinking[0] == "Now I will look at the h1 heading." && l.calls[0] == "Looking at the page"),
+      all
+    ).toBe(true);
+    const order = lines.flatMap((l) => l.calls).filter((l, i, every) => l != every[i - 1]);
     expect(order.slice(0, 3)).toEqual(["Editing", "Edited", "Looking at the page"]);
     expect(await calls(page), "view_page answers a picture of the page").toEqual(["Looked at the page [picture]"]);
+    expect(lines.at(-1)!.thinking, "the turn's end removes the thinking's line").toEqual([]);
     await expect.poll(() => turnLine(page)).toBe("Done. 1 change in index.html. [See changes] [Undo the turn]");
 
     await expect.poll(() => bo.textOf("blockquote p")).toBe("Typing never waits, by agent.");

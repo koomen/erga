@@ -31,13 +31,30 @@ export const answers = (page: Page) =>
 const CALLS = `[...document.querySelectorAll("#agent-log .msg-tool:not([hidden])")].map((e) => e.textContent + (e.querySelector("img.shot")?.naturalWidth > 0 ? " [picture]" : ""))`;
 export const calls = (page: Page) => page.evaluate<string[]>(CALLS);
 
-/** Records the tool calls' lines (calls) each time the panel's log changes, from now on: the answer reads the records. */
-export async function watchCalls(page: Page) {
+/** The panel's lines at one moment: the tool calls' and the thinking's; the shown items with no text or picture; the tallest thinking line (px). */
+export interface Lines {
+  calls: string[];
+  thinking: string[];
+  blank: number;
+  high: number;
+}
+
+/** Records the panel's lines each time its log changes, from now on: the answer reads the records. */
+export async function watchLines(page: Page) {
   await page.evaluate(`(() => {
-    const seen = (window.__calls = []);
-    new MutationObserver(() => seen.push(${CALLS})).observe(document.getElementById("agent-log"), { childList: true, subtree: true });
+    const seen = (window.__lines = []);
+    const log = document.getElementById("agent-log");
+    new MutationObserver(() => {
+      const thinking = [...log.querySelectorAll(".msg-thinking")].filter((e) => e.getClientRects().length);
+      seen.push({
+        calls: ${CALLS},
+        thinking: thinking.map((e) => e.textContent),
+        blank: [...log.children].filter((e) => e.getClientRects().length && !e.textContent.trim() && !e.querySelector("img")).length,
+        high: Math.max(0, ...thinking.map((e) => e.offsetHeight)),
+      });
+    }).observe(log, { childList: true, subtree: true });
   })()`);
-  return () => page.evaluate<string[][]>("window.__calls");
+  return () => page.evaluate<Lines[]>("window.__lines");
 }
 
 /**
