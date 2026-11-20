@@ -1,4 +1,4 @@
-// Signing in on a custom domain (Platform's deploy.domains), for its pages' model (window.ergaLLM) only. The session
+// Signing in on a custom domain (Platform's deploy.domains), for its Document LLM API (window.ergaLLM) only. The session
 // cookie is the Erga domain's, and a browser never sends it to another domain; so a round trip through the Erga domain
 // gives the custom domain a cookie of its own:
 //

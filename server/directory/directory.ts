@@ -112,7 +112,7 @@ export class Directory {
   readonly credentials: Credentials;
   /** Each person's own API keys, for their own agent. */
   readonly personKeys: PersonKeys;
-  /** Pages that call a model as their visitor: each document's setting, and the log of the calls. */
+  /** The Document LLM API (a document's script calls a model as its viewer): each document's setting, and the log of the calls. */
   readonly pageLlm: PageLlm;
   /** The feedback people sent, and the GitHub issue of each. */
   readonly feedback: Feedback;

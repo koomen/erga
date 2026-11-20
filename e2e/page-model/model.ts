@@ -1,4 +1,4 @@
-// Helpers for the page model's journeys (window.ergaLLM, agents/page-llm.ts): what a page's own script gets from
+// Helpers for the Document LLM API's journeys (window.ergaLLM, agents/page-llm.ts): what a page's own script gets from
 // ergaLLM in the viewer's frame and on a published site, the sign-in dialog as the viewer shows it, the owner's tool calls,
 // and a published site with an essay page. The model is the scripted one: a message "@script [...]" is its answer.
 
@@ -27,9 +27,9 @@ export async function newDoc(s: Server) {
   return { id, path: at, address: s.root + at };
 }
 
-/** What a document's settings say of its page's model, as the owner's agent reads them (ls). */
+/** What a document's settings say of its Document LLM API, as the owner's agent reads them (ls). */
 export const pageLlmOf = async (s: Server, id: string) =>
-  (await owner<{ access?: { pageLlm?: { on: boolean; model: string; who: string } } }>(s, "ls", { document: id })).access?.pageLlm;
+  (await owner<{ access?: { llmApi?: { on: boolean; model: string; who: string } } }>(s, "ls", { document: id })).access?.llmApi;
 
 /**
  * The cookie of a browser that signed out, on the test server (which signs in every other one). Its name carries the
@@ -76,20 +76,19 @@ export const signInState = (page: Page) =>
   });
 export const signInOpen = async (page: Page) => (await signInState(page)).open;
 
-// The admin's limits on pages' models, on the Agents and models page (/admin/agents) and as the admin's agent reads them.
+// The admin's settings of the Document LLM API, on the Agents and models page (/admin/agents) and as the admin's agent reads them.
 
-/** Today's use of pages' models, as the admin's agent reads it (the operation `settings`). */
+/** The API's use, as the admin's agent reads it (the operation `settings`): this month's, and today's part of the daily limit. */
 export interface Use {
-  calls: number;
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
-  limitUsd: number;
-  limitUsed: string;
-  costliest: { document: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }[];
+  thisMonth: { calls: number; inputTokens: number; outputTokens: number; costUsd: number };
+  today: { costUsd: number; limitUsd: number; limitUsed: string };
 }
-const settings = (s: Server) => owner<{ settings: { key: string; value: unknown }[]; pageModelsToday: Use }>(s, "settings", {});
-export const useToday = async (s: Server) => (await settings(s)).pageModelsToday;
+const settings = (s: Server) => owner<{ settings: { key: string; value: unknown }[]; documentLlmApiUsage: Use }>(s, "settings", {});
+/** The use so far (a test server is younger than a day: the month's use is today's). */
+export const useToday = async (s: Server) => {
+  const u = (await settings(s)).documentLlmApiUsage;
+  return { ...u.thisMonth, ...u.today };
+};
 /** A setting's value now. */
 export const setting = async (s: Server, key: string) => (await settings(s)).settings.find((e) => e.key == key)?.value;
 /** Puts a setting back to its default. */
@@ -102,7 +101,7 @@ export const haikuCost = (input: number, output: number) => (input * 0.1 + outpu
 
 /** A setting's row on its admin page. */
 export const row = (admin: Page, key: string) => admin.locator(`li.setting[data-key="${key}"]`);
-/** The view of today's use on the Agents and models page, as the page shows it. */
+/** The view of the API's use on the Agents and models page, as the page shows it. */
 export const usage = (admin: Page) => admin.locator("section.llm-use").innerText();
 
 // The Erga domain's published site (server/sites/): / as served to someone signed out, and a project uploaded with an
@@ -144,7 +143,7 @@ export async function siteWithEssay(s: Server): Promise<string> {
   const id = await upload(s, HOME, "Home with an essay");
   await toErga(s, id);
   await expect.poll(async () => (await front(s)).includes("Home with an essay")).toBe(true);
-  await owner(s, "share_document", { document: id, page_llm: true, page_llm_who: "all" });
+  await owner(s, "share_document", { document: id, llm_api: true, llm_api_who: "all" });
   return id;
 }
 

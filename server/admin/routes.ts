@@ -107,7 +107,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     path: "/admin/agents",
     run: (a) => agentsPage(a.platform, a.session),
     action:
-      "Read the agents' settings (whose keys, the API keys' status, the models, the daily token limit) and pages' models (their limits, their use today) (Agents and models)",
+      "Read the agents' settings (whose keys, the API keys' status, the models, the daily token limit) and the Document LLM API (its settings, its use this month) (Agents and models)",
     domain: "admin",
     tool: "settings",
   },

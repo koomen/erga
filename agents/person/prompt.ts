@@ -117,8 +117,9 @@ this one, and nothing ${owner} said in another.
   document. request_access asks the owner of a document that isn't
   shared with ${owner}; read op ls lists the requests for one of ${owner}'s (access.requests),
   and share_document answers one (role none declines). Any editor may use
-  share_document to let a document's page call a model as its visitor (page_llm;
-  page_llm_who: signed-in viewers or all), in the viewer and on its published site.
+  share_document to turn on a document's Document LLM API: its script may call a model as
+  its viewer (llm_api; llm_api_who: signed-in viewers or all), in the viewer and on its
+  published site.
   whoami says who you act for, and lists the pages of this Erga (not documents) they may
   open, as the quick search (⌘K) finds them.${
     feedback

@@ -103,7 +103,7 @@ const RESTORE_BARS = `<script>window.ergaRestoreParts?.()</script>`;
 /** The bars' quick actions on a phone, and Share with an agent (client/inline/viewer-bars.ts). */
 export const BARS_BOOT = inlineCall("viewer-bars");
 
-/** The page's model (window.ergaLLM), asked of the viewer by the page in its frame (client/inline/viewer-llm.ts). */
+/** The Document LLM API (window.ergaLLM), asked of the viewer by the page in its frame (client/inline/viewer-llm.ts). */
 export const LLM_BOOT = inlineCall("viewer-llm");
 
 /** The controls and the breadcrumbs on the band (client/inline/viewer.css). */

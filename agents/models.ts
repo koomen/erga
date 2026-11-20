@@ -226,7 +226,7 @@ const pi = (options: Parameters<typeof piLanguageModel>[0]): Layer.Layer<Languag
 export function pageModel(cfg: AgentConfig, choice: ModelChoice, maxTokens: number): Layer.Layer<LanguageModel.LanguageModel> | null {
   if (isScript(cfg)) return scriptModel(MODELS[choice].label);
   const m: (typeof MODELS)[ModelChoice] & { fast?: boolean } = MODELS[choice];
-  const apiKey = pageLlmChoices({ ...keySetup(cfg), own: [] }).includes(choice) ? cfg.server[m.provider] : undefined;
+  const apiKey = pageLlmChoices(keySetup(cfg), []).includes(choice) ? cfg.server[m.provider] : undefined;
   if (!apiKey) return null;
   if (m.provider == "openai") return pi({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens, fast: m.fast });
   const config = { max_tokens: maxTokens, structuredOutputs: false, ...(m.fast ? { speed: "fast" } : {}) } as unknown as AnthropicConfig;

@@ -132,7 +132,7 @@ export interface Answer {
   csp: string | null;
   /** The body as the server sent it. */
   text: string;
-  /** The body without the page model's script, which each HTML page of the site gets first. */
+  /** The body without the Document LLM API's script, which each HTML page of the site gets first. */
   page: string;
 }
 
@@ -181,7 +181,7 @@ export const ask = (page: Page, content: string) =>
       ) as Promise<{ text?: string; code?: string; message?: string }>,
     content
   );
-/** The page model's state, as the page's script reads it. */
+/** The Document LLM API's state, as the page's script reads it. */
 export const llmStatus = (page: Page) =>
   page.evaluate(() => (window as any).ergaLLM.status() as { on: boolean; model: string; signedIn: boolean });
 

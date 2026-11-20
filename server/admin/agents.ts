@@ -2,9 +2,10 @@
 // server runs. The users' agents: whose keys they use (the agent_keys setting); when the server provides them, one row
 // for each provider: its key (set, replace, remove: the page shows only its last 4 characters) and, once the server
 // has one, the provider's models it runs (the agent_models_off setting holds the ones not ticked); and the daily token
-// limit for each user. Pages' models, which run on the same keys: their daily spend limit, whether guests may call
-// them, and their use today (./page-llm.ts). Last, the deploy's secret that the keys are encrypted with. The setting
-// rows are ./settings.ts's, saved by client/inline/admin-settings.ts.
+// limit for each user. Then the Document LLM API, which runs on the same keys: its switch and, while it is on, whether
+// viewers who aren't signed in may call it, its daily spend limit, and the models a document's author may choose (the
+// document_llm_models_off setting holds the ones not ticked); and its use this month (./page-llm.ts). The setting rows
+// are ./settings.ts's, saved by client/inline/admin-settings.ts.
 
 import type { CredentialEntry } from "../directory/index.ts";
 import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
@@ -14,8 +15,8 @@ import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { setAt } from "./parts.ts";
 import { pageLlmSection, pageLlmUsage } from "./page-llm.ts";
-import { chip, deploySection, PAGE_SETTINGS, settingLiveRows, settingsSection } from "./settings.ts";
-import { MODELS, type ModelChoice } from "../../shared/models.ts";
+import { chip, PAGE_SETTINGS, settingLiveRows, settingsSection } from "./settings.ts";
+import { MODELS, PAGE_LLM_MODELS, type ModelChoice } from "../../shared/models.ts";
 
 /** The providers' models, by provider. */
 const modelsOf = (name: string) => (Object.keys(MODELS) as ModelChoice[]).filter((m) => MODELS[m].provider == name);
@@ -59,19 +60,43 @@ export function credentialRow(c: CredentialEntry, session: Session, place: numbe
   </li>`;
 }
 
+/** The Document LLM API's models' row, as live pages know it: its setting. */
+const LLM_MODELS = "setting:document_llm_models_off";
+
+/**
+ * The Document LLM API's models: a box for each model of a provider that the server has a key for, ticked if a
+ * document's author may choose it. A save keeps the others as they are (data-off: client/inline/admin-agents.ts).
+ */
+function llmModelsRow(credentials: CredentialEntry[], off: readonly string[]): string {
+  const keyed = credentials.filter((c) => (c.set && !c.unreadable) || (!c.set && c.fallback)).map((c) => c.name);
+  const models = PAGE_LLM_MODELS.filter((m) => keyed.includes(MODELS[m].provider));
+  const boxes = models.length
+    ? `<div class="models" role="group" aria-label="Document LLM API models available">${models
+        .map((m) => `<label><input type="checkbox" value="${esc(m)}"${off.includes(m) ? "" : " checked"}> ${esc(MODELS[m].label)}</label>`)
+        .join("")}</div>`
+    : `<p class="state">No model yet: set an Anthropic or OpenAI key above.</p>`;
+  return `  <li class="setting llm-models" data-live="${LLM_MODELS}" data-sort="0" data-off="${esc(off.join(" "))}">
+    <div class="about"><span class="key" title="document_llm_models_off">Models</span><p class="desc">The models that a document's author can choose.</p></div>
+    ${boxes}
+    <p class="hint" role="status"></p>
+  </li>`;
+}
+
 /** /admin/agents. The page never has a key. */
 export async function agentsPage(platform: Platform, session: Session) {
   const who = whoOf(session);
-  const [credentials, limit, pages, use, deployed, mode, off] = await Promise.all([
-    platform.directory.credentials.list(who),
-    platform.directory.config
+  const { config } = platform.directory;
+  const credentials = await platform.directory.credentials.list(who);
+  const [limit, llmApi, llmApiOn, use, mode, off, llmOff] = await Promise.all([
+    config
       .get("agent_keys")
       .then((keys) => settingsSection(platform, session, PAGE_SETTINGS.agents, "agents", { more: "server-only", hidden: keys == "own" })),
-    settingsSection(platform, session, PAGE_SETTINGS.pages, "agents-pages"),
+    settingsSection(platform, session, PAGE_SETTINGS.llmApi, "agents-llm"),
+    settingsSection(platform, session, PAGE_SETTINGS.llmApiOn, "agents-llm-on"),
     pageLlmUsage(platform.directory),
-    platform.directory.credentials.deployed(who),
-    platform.directory.config.get("agent_keys"),
-    platform.directory.config.get("agent_models_off"),
+    config.get("agent_keys"),
+    config.get("agent_models_off"),
+    config.get("document_llm_models_off"),
   ]);
   const own = mode == "own";
   return adminPage({
@@ -96,10 +121,18 @@ ${credentials.map((c, place) => credentialRow(c, session, place, off)).join("\n"
     </ol>
     ${limit}
   </section>
-  <section class="pages-models" aria-labelledby="pages-models-head">
-    <h3 class="sub-head" id="pages-models-head">Pages' models</h3>
-    ${pages}
-  </section>${pageLlmSection(use, session)}${deploySection(deployed, ["FACTORY_KEY"])}
+  <section class="llm-api" aria-labelledby="llm-api-head">
+    <h3 class="sub-head" id="llm-api-head">Document LLM API</h3>
+    <p class="lede">An LLM API that users can expose to their documents.</p>
+    ${llmApi}
+    <div class="llm-api-on">
+    <p class="empty llm-own-note"${own ? "" : " hidden"}>The API runs on the server's keys: no call runs while users provide their own keys.</p>
+    ${llmApiOn}
+    <ol class="rows llm-models-list" data-live-kind="setting" data-live-view="agents-llm-models" data-live-order="asc" data-live-at="${Date.now()}">
+${llmModelsRow(credentials, llmOff)}
+    </ol>
+    </div>
+  </section>${pageLlmSection(use, session)}
 <script>${TIMES_SCRIPT}${inlineCall("admin-agents")}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
   });
 }
@@ -115,8 +148,25 @@ export const agentsRows: LiveRows = async (platform, session, keys) => {
   return out;
 };
 
-/** The rows of the page's second list of settings (pages' models), in a view of its own: both lists show setting rows. */
-export const agentsPagesRows: LiveRows = async (platform, session, keys) => ({
-  ...Object.fromEntries(keys.map((k) => [k, null])),
-  ...(await settingLiveRows(platform, session, keys, PAGE_SETTINGS.pages)),
-});
+/** The rows of one of the page's other lists of settings (the Document LLM API's), each in a view of its own: every list shows setting rows. */
+const llmRows =
+  (of: readonly string[]) =>
+  async (platform: Platform, session: Session, keys: string[]): Promise<Record<string, LiveRow>> => ({
+    ...Object.fromEntries(keys.map((k) => [k, null])),
+    ...(await settingLiveRows(platform, session, keys, of)),
+  });
+export const agentsLlmRows: LiveRows = llmRows(PAGE_SETTINGS.llmApi);
+export const agentsLlmOnRows: LiveRows = llmRows(PAGE_SETTINGS.llmApiOn);
+/**
+ * The models' row, in a list and a view of its own, as the server's keys and the setting are now: the page's own script
+ * saves it and keeps it live (client/inline/admin-agents.ts), since a key's change changes it too.
+ */
+export const agentsLlmModelsRows: LiveRows = async (platform, session, keys) => {
+  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  if (!keys.includes(LLM_MODELS)) return out;
+  const [credentials, off] = await Promise.all([
+    platform.directory.credentials.list(whoOf(session)),
+    platform.directory.config.get("document_llm_models_off"),
+  ]);
+  return { ...out, [LLM_MODELS]: { html: llmModelsRow(credentials, off), sort: 0 } };
+};

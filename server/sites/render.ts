@@ -103,7 +103,7 @@ export async function renderSite(opts: {
   gen: string;
   title: string;
   doc: string;
-  /** The document's address in the viewer: where signing in for the page's model comes back to. */
+  /** The document's address in the viewer: where signing in for the Document LLM API comes back to. */
   address: string;
 }): Promise<RenderedSite> {
   const { index, gen } = opts;
@@ -127,7 +127,7 @@ export async function renderSite(opts: {
   const headPart = source.slice(0, Math.max(0, source.search(/<body[\s>]/i)) || source.length);
   const titled = /<title[\s>]/i.test(headPart);
   const title = tabTitle(headOf(source), opts.title);
-  // And first, window.ergaLLM, the page's model, before any script of its own (client/inline/site-llm.ts), with the slot
+  // And first, window.ergaLLM, the Document LLM API, before any script of its own (client/inline/site-llm.ts), with the slot
   // for its page token, which serve.ts fills for each visitor (withToken).
   const extra = `${VIEWPORT}<script>${inlineCall("site-llm", opts.doc, TOKEN_SLOT, opts.address)}</script>${STILL}${titled ? "" : `<title>${esc(title)}</title>`}`;
   let css = "", titleDone = false;

@@ -44,7 +44,7 @@
 //                              page calls only its own origin)
 //   /erga-sw.js                Erga's service worker (pages/worker.ts), here and on a document's own pages origin: the
 //                              editor opens with no connection. The only service worker a pages origin takes
-//   /api/llm                   a document's page calls a model as its signed-in visitor (agents/page-llm.ts)
+//   /api/llm                   the Document LLM API: a document's script calls a model as its viewer (agents/page-llm.ts)
 //   /api/news, /api/news/rows  live pages: an open page's socket, and the rows it asks for when they change
 //   /api/release               which of them this release has: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
@@ -117,7 +117,7 @@ export const app = (outside: Outside): Route =>
     // An agent whose grant isn't good (revoked, ended): refused, whatever it asks, so its app signs in again.
     if (yield* call(() => refusedAgent(p, request))) return unauthorized(url.origin, true);
     // A custom domain is its site's alone: the published files as they are, and nothing of Erga's.
-    // Under /_erga/ only, Erga's: the pages' model (window.ergaLLM) and signing in for it (identity/domain-pass.ts);
+    // Under /_erga/ only, Erga's: the Document LLM API (window.ergaLLM) and signing in for it (identity/domain-pass.ts);
     // not while nothing is published there.
     const domain = domainOf(p, url);
     if (domain != ERGA) {
@@ -289,7 +289,7 @@ const route = (url: URL, outside: Outside): Route =>
     if (path.startsWith(LIVE_FILES)) return yield* serveLiveFile;
     // Each person's agent, its conversation and panel: before the server's API, which has the rest of /api/.
     if (isAgentPath(path)) return yield* agentApi;
-    // A page's model, called as its visitor (window.ergaLLM): before the server's API too.
+    // The Document LLM API, called as its visitor (window.ergaLLM): before the server's API too.
     if (isPageLlmPath(path)) return yield* pageLlmApi;
     // Live pages: an open page's socket, and the rows it asks for when they change.
     if (path == "/api/news" || path.startsWith("/api/news/")) return yield* newsRoutes;

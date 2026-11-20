@@ -78,9 +78,9 @@ test("a document grant: its one document, with the person's rights there, and no
   // Not its person's tokens, keys or pages: those reach beyond one document.
   expect([me.token.scope, me.tokens, me.apiKeys]).toEqual(["document", undefined, undefined]);
   // Its own document: the document's own tools reach it (sharing is the owner's right there).
-  expect((await call(id, "share_document", { document: "oneoneon", page_llm: false })).status).toBe(200);
+  expect((await call(id, "share_document", { document: "oneoneon", llm_api: false })).status).toBe(200);
   // Another of the same person's documents: refused.
-  expect((await call(id, "share_document", { document: "twotwotw", page_llm: false })).status).toBe(403);
+  expect((await call(id, "share_document", { document: "twotwotw", llm_api: false })).status).toBe(403);
   // No listing, making or deleting other documents, and no token tools.
   for (const name of ["list_documents", "create_document", "revoke"]) {
     const r = await call(id, name);
@@ -96,7 +96,7 @@ test("a documents grant: every document, but not the admin tools, even an admin'
   const list = await call(id, "list_documents");
   expect(list.status).toBe(200);
   expect(list.body.result.documents.map((d: { id: string }) => d.id).sort()).toEqual(["oneoneon", "twotwotw"]);
-  expect((await call(id, "share_document", { document: "twotwotw", page_llm: false })).status).toBe(200);
+  expect((await call(id, "share_document", { document: "twotwotw", llm_api: false })).status).toBe(200);
   const users = await call(id, "people");
   expect(users.status).toBe(403);
   expect(users.body.error).toMatch(/admin token/);

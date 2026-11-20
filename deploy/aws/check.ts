@@ -305,8 +305,8 @@ await check("homepage's files (CloudFront)", async () => {
   return seen.join("; ");
 });
 
-await check("page LLM (window.ergaLLM)", async () => {
-  await tool("documents", { op: "share_document", document, page_llm: true });
+await check("Document LLM API (window.ergaLLM)", async () => {
+  await tool("documents", { op: "share_document", document, llm_api: true });
   const id = JSON.stringify(await tool("read", { op: "ls", document })).match(/"id":"([^"]+)"/)?.[1];
   const r = await fetch(`${root}/api/llm`, {
     method: "POST",

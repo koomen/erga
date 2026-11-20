@@ -1,4 +1,4 @@
-// The page's model (window.ergaLLM: client/common/page-llm.ts), for every document's page (server/pages/viewer.ts): the
+// The Document LLM API (window.ergaLLM: client/common/page-llm.ts), for every document's page (server/pages/viewer.ts): the
 // page in the frame asks by postMessage (client/inline/reader.ts), and this calls Erga with the visitor's session, for
 // the document this page shows (meta erga-doc), never one the frame names. The frame gets the answer, never the session.
 // Signed out, a call shows the sign-in dialog here, around the frame (unless the owner lets all viewers call it: then

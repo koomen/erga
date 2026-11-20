@@ -52,7 +52,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
     label: "Read the server's settings",
     activity: "reading the server's settings",
     admin: true,
-    description: "The server's settings, API keys and pages' model use today, or the settings' changelog (changes).",
+    description: "The server's settings, API keys and the Document LLM API's use this month, or the settings' changelog (changes).",
     parameters: Schema.Struct({
       changes: Schema.optionalKey(
         Schema.Boolean.annotate({
@@ -76,23 +76,24 @@ export const ADMIN_OPERATIONS: Operation[] = [
       const [settings, keys, use] = await Promise.all([dir.config.list(who), dir.credentials.list(who), pageLlmUsage(dir)]);
       return {
         settings: settings.map(entryOf),
-        pageModelsToday: {
-          since: iso(use.since),
-          calls: use.calls,
-          inputTokens: use.input,
-          outputTokens: use.output,
-          costUsd: round(use.cost),
-          limitUsd: use.limit,
-          limitUsed: `${Math.round(use.used * 100)}%`,
-          costliest: use.docs.map((d) => ({
-            document: d.address ?? d.id,
-            ...(d.title ? { title: d.title } : {}),
-            calls: d.calls,
-            inputTokens: d.input,
-            outputTokens: d.output,
-            costUsd: round(d.cost),
-          })),
-          note: "Pages' model calls since midnight UTC; the cost is an estimate from their tokens.",
+        documentLlmApiUsage: {
+          thisMonth: {
+            since: iso(use.since),
+            calls: use.calls,
+            inputTokens: use.input,
+            outputTokens: use.output,
+            costUsd: round(use.cost),
+            documents: use.docs.map((d) => ({
+              document: d.address ?? d.id,
+              ...(d.title ? { title: d.title } : {}),
+              calls: d.calls,
+              inputTokens: d.input,
+              outputTokens: d.output,
+              costUsd: round(d.cost),
+            })),
+          },
+          today: { costUsd: round(use.today), limitUsd: use.limit, limitUsed: `${Math.round(use.used * 100)}%` },
+          note: "The Document LLM API's calls; a month and a day are UTC, and the cost is an estimate from the tokens.",
         },
         apiKeys: keys.map((c) => ({
           name: c.name,
@@ -310,7 +311,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
         );
       return {
         ...(await analytics(dir, who, isSpan(args.days) ? args.days : 30)),
-        note: "Days are UTC. Active: opened a document, edited one (a version: a burst of edits), or used a model (their agent, a page's model). Tokens: input and output of every model, by the server's keys or the user's own. Each list's more: true means list with an offset gives the next.",
+        note: "Days are UTC. Active: opened a document, edited one (a version: a burst of edits), or used a model (their agent, the Document LLM API). Tokens: input and output of every model, by the server's keys or the user's own. Each list's more: true means list with an offset gives the next.",
       };
     },
   },

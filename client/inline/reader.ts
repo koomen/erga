@@ -59,7 +59,7 @@ export default function reader(C: ReaderConfig): void {
   function editing() {
     return root.hasAttribute("data-erga-editing");
   }
-  // The page's model (client/common/page-llm.ts): each ask goes to the viewer, which calls Erga as the visitor
+  // The Document LLM API (client/common/page-llm.ts): each ask goes to the viewer, which calls Erga as the visitor
   // (client/inline/viewer-llm.ts) and answers it. A viewer that never answers: off, or an error.
   let llmId = 0;
   const llmWaits = new Map<number, (a: LlmAnswer) => void>();

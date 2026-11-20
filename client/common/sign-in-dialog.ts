@@ -1,4 +1,4 @@
-// The sign-in dialog: a page's model was asked by someone signed out (client/common/page-llm.ts, llmFetch). The viewer
+// The sign-in dialog: the Document LLM API was asked by someone signed out (client/common/page-llm.ts, llmFetch). The viewer
 // shows it around the document's frame; a published site, which isn't in the viewer, shows it in the page itself. It offers
 // the providers that are on (shared/sign-in.ts), each back to `next`. One dialog for each page: a call while it is open
 // changes nothing. Escape, its close button and a click outside it close it.

@@ -4,7 +4,7 @@
 //
 //   view      the viewer sends a document's page (server/documents/view.ts, after the answer)
 //   edit      a document cuts a version: a burst of edits, by each of its authors (document/history/history.ts)
-//   in:*      a model's tokens: the person's agent at each model turn (agents/person/sessions.ts), a page's model at the
+//   in:*      a model's tokens: the person's agent at each model turn (agents/person/sessions.ts), the Document LLM API at the
 //   out:*     end of its call (page-llm.ts), a version's description (document/history/history.ts, nobody's); `server`: the server's
 //             API keys, `own`: the person's own key
 //

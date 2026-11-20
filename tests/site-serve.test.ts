@@ -104,7 +104,7 @@ test("the header bar: off, no page has Erga's controls or room for them; on, eve
   }
 });
 
-test("a custom domain: the site's files as they are, and nothing of Erga's but the page's model; nothing published, nothing", async () => {
+test("a custom domain: the site's files as they are, and nothing of Erga's but the Document LLM API; nothing published, nothing", async () => {
   const p = platform(true);
   (p.edge as { cache: unknown }).cache = undefined;
   await forgetSite(p, URL_ROOT, "site.test");

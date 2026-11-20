@@ -27,7 +27,7 @@ export interface ModelInfo {
 
 /**
  * Our short list, by key: the current models of each provider. Each provider's models go from the smallest to the
- * largest, and every list a person sees has this order (the picker, the Agents and models page, a page's models): the
+ * largest, and every list a person sees has this order (the picker, the Agents and models page, a document's models): the
  * reverse of the order on the provider's own models page (read on 2026-11-19), a model's fast mode after it;
  * OpenRouter's, of three makers, by price. The keys are kept in conversations: don't rename one.
  */
@@ -106,16 +106,22 @@ export function fitModel(k: KeySetup, wanted: ModelChoice | null): ModelChoice |
 }
 
 /**
- * The models a document's page may call as its visitor (window.ergaLLM: agents/page-llm.ts), with the server's keys:
- * Anthropic's and OpenAI's, which take a cap on the tokens they answer. Its owner chooses one (share_document page_llm); Haiku at first.
+ * The Document LLM API's models: the ones a document's script may call as its viewer (window.ergaLLM:
+ * agents/page-llm.ts), with the server's keys. Anthropic's and OpenAI's, which take a cap on the tokens they answer.
+ * The document's author chooses one (share_document llm_api_model); Haiku at first.
  */
 const PAGE_LLM_PROVIDERS: readonly Provider[] = ["anthropic", "openai"];
 export const PAGE_LLM_MODELS = (Object.keys(MODELS) as ModelChoice[]).filter((m) => PAGE_LLM_PROVIDERS.includes(MODELS[m].provider));
 export const DEFAULT_PAGE_LLM_MODEL: ModelChoice = "haiku";
 export const isPageLlmModel = (s: string): s is ModelChoice => (PAGE_LLM_MODELS as string[]).includes(s);
 
-/** The page models the owner may choose now: Claude's always, and the others where the server's keys run them. */
-export function pageLlmChoices(k: KeySetup): ModelChoice[] {
-  const server = usableModels({ ...k, own: [] }).map((u) => u.choice);
-  return PAGE_LLM_MODELS.filter((m) => MODELS[m].provider == "anthropic" || server.includes(m));
+/** The ones the admin's switches have off at first (the document_llm_models_off setting's default): as for the agents. */
+export const PAGE_LLM_OFF_AT_FIRST = PAGE_LLM_MODELS.filter((m) => MODELS_OFF_AT_FIRST.includes(m));
+
+/**
+ * The models a document's author may choose now, by one rule for every provider: the server provides keys, it has a
+ * key for the model's provider, and the admin left the model on (`off`: the document_llm_models_off setting).
+ */
+export function pageLlmChoices(k: Pick<KeySetup, "server" | "mode">, off: readonly string[]): ModelChoice[] {
+  return k.mode == "server" ? PAGE_LLM_MODELS.filter((m) => k.server.includes(MODELS[m].provider) && !off.includes(m)) : [];
 }

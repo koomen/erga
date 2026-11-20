@@ -1,13 +1,13 @@
 // The operations on documents as wholes: who you are (your tokens, keys and Erga's pages too), the documents list
 // (/documents: list, make, delete; an admin's search of everyone's), sharing (the Share dialogs of the list and the editor,
-// and the page's model), writing files into one, and revoking a token or a key. What a person does inside one
+// and its Document LLM API), writing files into one, and revoking a token or a key. What a person does inside one
 // document (its name, pages, files and versions) is editor.ts's; its text is edited over the room's socket, and by the
 // document tools (document/api/operations.ts), which agents/tools.ts offers for any document.
 
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Base64 } from "effect/encoding";
-import { ANYONE, type DocRow, type Grant, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
+import { ADMIN_OFF, ANYONE, type DocRow, type Grant, modelOff, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
 import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
 import type { FileData } from "../../document/life/document.ts";
@@ -370,7 +370,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Share the document",
     activity: "sharing the document",
     ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Viewer settings",
-    description: "Shares a document or answers a request for access (owner); sets its page's model (editors).",
+    description: "Shares a document or answers a request for access (owner); sets its Document LLM API (editors).",
     // Only a share with anyone: a person is named, and sees it in their list.
     asks: (args) =>
       args.login == "*" && args.role != "none"
@@ -384,15 +384,16 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         )
       ),
       role: Schema.optionalKey(Schema.Literals(["editor", "commenter", "viewer", "none"]).annotate({ description: "none stops sharing." })),
-      page_llm: bool("Its script may call a model (window.ergaLLM)."),
-      page_llm_model: Schema.optionalKey(
+      llm_api: bool("The Document LLM API: its script may call a model as each viewer (window.ergaLLM)."),
+      llm_api_model: Schema.optionalKey(
         Schema.Literals(PAGE_LLM_MODELS).annotate({
-          description: "OpenAI's only where the server has an OpenAI key (ls: access.pageLlm.models).",
+          description: "Only one the server offers now (ls: access.llmApi.models).",
         })
       ),
-      page_llm_who: Schema.optionalKey(
+      llm_api_who: Schema.optionalKey(
         Schema.Literals(PAGE_LLM_WHO).annotate({
-          description: "Who may call it: signed_in viewers, or all (signed out too, with a smaller limit).",
+          description:
+            "Who may call it: signed_in viewers, or all (signed out too, with a smaller limit, where the server lets them: ls's access.llmApi.guests).",
         })
       ),
     }),
@@ -401,25 +402,24 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       const login = String(args.login ?? "")
         .trim()
         .replace(/^@/, "");
-      // Roles are the owner's; the page's model, anyone's who may edit it.
+      // Roles are the owner's; the Document LLM API, anyone's who may edit it.
       const doc = await findDocument(caller, args.document, login ? "share" : "edit");
-      const llm = args.page_llm != null || args.page_llm_model != null || args.page_llm_who != null;
+      const llm = args.llm_api != null || args.llm_api_model != null || args.llm_api_who != null;
       if (!login && !llm)
-        throw new OperationError({ message: "Give a login and a role, page_llm, page_llm_model or page_llm_who.", status: 400 });
+        throw new OperationError({ message: "Give a login and a role, llm_api, llm_api_model or llm_api_who.", status: 400 });
       if (!login != !args.role)
         throw new OperationError({ message: "Give a login and its role (editor, viewer or none) together.", status: 400 });
-      const asked = args.page_llm_model as ModelChoice | undefined;
-      if (asked != null && !(await pageLlmModels(caller)).includes(asked))
-        throw new OperationError({
-          message: `The server has no API key that runs ${MODELS[asked].label} for pages.`,
-          status: 409,
-        });
+      const asked = args.llm_api_model as ModelChoice | undefined;
+      const server = llm ? await llmApiNow(caller) : null;
+      if (args.llm_api === true && !server!.enabled) throw new OperationError({ message: ADMIN_OFF, status: 409 });
+      if (asked != null && !server!.models.includes(asked))
+        throw new OperationError({ message: unavailable(asked, server!.off), status: 409 });
       if (login) await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
       if (llm) {
         const had = await dir.pageLlm.setting(doc.id);
-        const model = args.page_llm_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
-        const on = args.page_llm == null ? had.on : args.page_llm === true;
-        await dir.pageLlm.set(doc.id, { on, model: String(model), who: (args.page_llm_who as PageLlmWho | undefined) ?? had.who });
+        const model = args.llm_api_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
+        const on = args.llm_api == null ? had.on : args.llm_api === true;
+        await dir.pageLlm.set(doc.id, { on, model: String(model), who: (args.llm_api_who as PageLlmWho | undefined) ?? had.who });
       }
       const owner = !!login || (await dir.may(caller.who, "share", doc));
       return { document: described(doc, caller), ...(owner ? await accessOf(caller, doc) : await viewersOf(caller, doc)) };
@@ -499,30 +499,62 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
 
 const named = (document: unknown) => (typeof document == "string" && document.trim() ? said(document) : "the document open on the page");
 
-/** The page models the owner may choose now: Claude's, and the others the server's keys run (pageLlmChoices). */
-async function pageLlmModels(caller: Caller): Promise<ModelChoice[]> {
-  const cfg = await caller.platform?.agentSettings();
-  const server = cfg && !("missing" in cfg) ? PROVIDERS.filter((p) => cfg.server[p]) : [];
-  return pageLlmChoices({
-    own: [],
-    server,
-    mode: cfg && !("missing" in cfg) ? cfg.mode : "server",
-    off: cfg && !("missing" in cfg) ? cfg.off : [],
-  });
+/**
+ * The Document LLM API as the server's admin has it now: on or not, whether viewers who aren't signed in may call it,
+ * the models an author may choose (pageLlmChoices), and the ones the admin switched off.
+ */
+async function llmApiNow(caller: Caller) {
+  const { config } = caller.dir;
+  const [cfg, enabled, guests, off] = await Promise.all([
+    caller.platform?.agentSettings(),
+    config.get("document_llm_api"),
+    config.get("document_llm_guests"),
+    config.get("document_llm_models_off"),
+  ]);
+  const keys = cfg && !("missing" in cfg) ? cfg : null;
+  // (The scripted test model stands in for every provider's.)
+  const server = keys ? PROVIDERS.filter((p) => keys.model == "script" || keys.server[p]) : [];
+  return { enabled, guests, off, models: pageLlmChoices({ server, mode: keys ? keys.mode : "own" }, off) };
 }
 
-/** The page's model, which anyone who may edit the document may see and change, and whether anyone with the link may open it. */
+/** Why an author can't have `model` now: the admin switched it off, or no key of the server's runs it. */
+const unavailable = (model: ModelChoice, off: readonly string[]) =>
+  off.includes(model) ? modelOff(model) : `The server has no API key that runs ${MODELS[model].label} for the Document LLM API.`;
+
+/**
+ * The document's Document LLM API, which anyone who may edit the document may see and change, and whether anyone with
+ * the link may open it. `note`: why it doesn't work now, or not for everyone it is on for (the admin's switch, the
+ * chosen model, viewers who aren't signed in).
+ */
 export async function viewersOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
-  const [permissions, llm, models] = await Promise.all([dir.permissions(doc.id), dir.pageLlm.setting(doc.id), pageLlmModels(caller)]);
+  const [permissions, llm, server] = await Promise.all([dir.permissions(doc.id), dir.pageLlm.setting(doc.id), llmApiNow(caller)]);
+  const model = llm.model && isPageLlmModel(llm.model) ? llm.model : DEFAULT_PAGE_LLM_MODEL;
+  const note = !server.enabled
+    ? ADMIN_OFF
+    : !llm.on
+      ? null
+      : !server.models.includes(model)
+        ? unavailable(model, server.off)
+        : llm.who == "all" && !server.guests
+          ? "On this server, viewers who aren't signed in can't use the Document LLM API: they sign in first."
+          : null;
   return {
-    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL, models, who: llm.who },
+    llmApi: {
+      enabled: server.enabled,
+      on: llm.on,
+      model,
+      models: server.models,
+      who: llm.who,
+      guests: server.guests,
+      ...(note ? { note } : {}),
+    },
     // (A share with anyone counts only while the server lets users share publicly.)
     anyoneWithLink: permissions.some((p) => p.login == ANYONE) && (await dir.sharing()),
   };
 }
 
-/** Who a document is shared with, as the Share dialogs show it (its owner only), and its page's model: ls's `access`. */
+/** Who a document is shared with, as the Share dialogs show it (its owner only), and its Document LLM API: ls's `access`. */
 export async function accessOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
   const [permissions, viewers] = await Promise.all([dir.permissions(doc.id), viewersOf(caller, doc)]);

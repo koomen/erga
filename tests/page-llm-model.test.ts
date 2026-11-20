@@ -1,5 +1,5 @@
-// The model a document's page calls (agents/models.ts, pageModel): which models its owner may choose (Claude's, and
-// OpenAI's where the server has an OpenAI key), and an OpenAI model on the real path, through Pi, with fetch answering
+// The model a document's script calls (the Document LLM API: agents/models.ts, pageModel): which models its author may
+// choose (those the server has a key for, and that the admin left on), and an OpenAI model on the real path, through Pi, with fetch answering
 // in the Responses API's place: the request it sends (the model, the key, the cap on tokens, no reasoning) and the text.
 
 import { afterAll, expect, test } from "bun:test";
@@ -7,38 +7,42 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
-import { pageLlmChoices, type KeySetup } from "../shared/models";
+import { PAGE_LLM_OFF_AT_FIRST, pageLlmChoices, type Provider } from "../shared/models";
 import { pageModel, type AgentConfig } from "../agents/models";
 
-const setup = (k: Partial<KeySetup>): KeySetup => ({ own: [], server: [], mode: "server", off: [], ...k });
-const choices = (k: Partial<KeySetup>): string[] => pageLlmChoices(setup(k));
+const choices = (server: Provider[], off: string[] = [], mode: "server" | "own" = "server"): string[] =>
+  pageLlmChoices({ server, mode }, off);
 const claude: string[] = ["haiku", "sonnet", "opus", "opus-fast", "fable", "fable-fast"];
+const gpt: string[] = [
+  "gpt-6-luna",
+  "gpt-6-luna-fast",
+  "gpt-6.1-terra",
+  "gpt-6.1-terra-fast",
+  "gpt-6.2-sol",
+  "gpt-6.2-sol-fast",
+  "gpt-6.2-astra",
+  "gpt-6.2-astra-fast",
+];
 
-test("the page models an owner may choose: Claude's, and OpenAI's where the server's keys run them", () => {
-  expect(choices({ server: ["anthropic"] })).toEqual(claude);
-  expect(choices({ server: ["anthropic", "openai", "google"] })).toEqual([
-    ...claude,
+test("the models a document's author may choose, by one rule for every provider: the server has its key, and the admin left the model on", () => {
+  expect(choices([])).toEqual([]);
+  expect(choices(["anthropic"])).toEqual(claude);
+  expect(choices(["openai", "google"])).toEqual(gpt);
+  expect(choices(["anthropic", "openai", "google"])).toEqual([...claude, ...gpt]);
+  // The admin's switches (the document_llm_models_off setting), Claude's as OpenAI's.
+  expect(choices(["anthropic", "openai"], ["sonnet", "gpt-6.2-astra", ...PAGE_LLM_OFF_AT_FIRST])).toEqual([
+    "haiku",
+    "opus",
+    "opus-fast",
+    "fable",
     "gpt-6-luna",
-    "gpt-6-luna-fast",
     "gpt-6.1-terra",
-    "gpt-6.1-terra-fast",
-    "gpt-6.2-sol",
-    "gpt-6.2-sol-fast",
-    "gpt-6.2-astra",
-    "gpt-6.2-astra-fast",
-  ]);
-  // The admin turned one off, or each person brings their own keys: the server's key doesn't run it for pages.
-  expect(choices({ server: ["openai"], off: ["gpt-6.2-astra", "gpt-6.2-astra-fast", "gpt-6.2-sol-fast"] })).toEqual([
-    ...claude,
-    "gpt-6-luna",
-    "gpt-6-luna-fast",
-    "gpt-6.1-terra",
-    "gpt-6.1-terra-fast",
     "gpt-6.2-sol",
   ]);
-  expect(choices({ server: ["openai"], mode: "own" })).toEqual(claude);
-  // A person's own key never pays for a page.
-  expect(choices({ own: ["openai"] })).toEqual(claude);
+  // At first, the fast modes are off, but Opus 5.5's (as for the agents).
+  expect<string[]>(PAGE_LLM_OFF_AT_FIRST).toEqual(["fable-fast", ...gpt.filter((m) => m.endsWith("-fast"))]);
+  // Each person brings their own keys: the server's keys run nothing, for documents too. A person's key never pays for a document.
+  expect(choices(["anthropic", "openai"], [], "own")).toEqual([]);
 });
 
 const cfg = (o: Partial<AgentConfig>): AgentConfig => ({

@@ -20,13 +20,14 @@ export const PAGE_SETTINGS = {
   auth: ["auto_usernames", "sign_in_days"],
   /** Documents: new documents, and the files' limits. */
   documents: ["delete_docs_after_hours", "max_file_mb", "max_project_gb"],
-  /** Agents and models: the agents on the server's keys, then pages' models. */
+  /** Agents and models: the agents on the server's keys, then the Document LLM API: its switch, and what shows while it's on. */
   agents: ["agent_daily_tokens"],
-  pages: ["page_llm_daily_usd", "page_llm_guests"],
+  llmApi: ["document_llm_api"],
+  llmApiOn: ["document_llm_guests", "document_llm_daily_usd"],
   feedback: ["feedback", "feedback_repository"],
 } as const;
 /** Settings with a control of their own: the Access page's menu and switch, and the Agents and models page's choice and models' boxes. */
-export const OWN = ["anyone_access", "public_sharing", "agent_keys", "agent_models_off"] as const;
+export const OWN = ["anyone_access", "public_sharing", "agent_keys", "agent_models_off", "document_llm_models_off"] as const;
 
 /**
  * The control a setting's value is set with: by its kind, its choices, else

@@ -1,7 +1,7 @@
 // What people did each day (server/directory/activity.ts) and the operation `analytics` that reads it for the Analytics
 // page (/admin): a month of a small team's views, edits and tokens, added one event at a time as the server adds them,
 // then read back as each day's numbers and the two lists, a page at a time. Load more's state machine
-// (client/common/load-more.ts). The pages' models' tokens count once, at the end of a call; the migration brings in
+// (client/common/load-more.ts). The Document LLM API's tokens count once, at the end of a call; the migration brings in
 // the log's last 30 days.
 
 import { expect, test } from "bun:test";
@@ -127,7 +127,7 @@ test("the operation: the most active of the last 7 days, 10 at a time, and the n
   await expect(runOperation(analytics, {}, { dir, who: { login: "p01" } })).rejects.toThrow();
 });
 
-test("a page's model call counts its tokens once, when it finishes; a failed one's reservation doesn't count", async () => {
+test("the Document LLM API call counts its tokens once, when it finishes; a failed one's reservation doesn't count", async () => {
   const { sql, dir } = await setup();
   const now = Date.now();
   const before = await dir.activity.days(ada, 1, now);
@@ -151,7 +151,7 @@ test("a page's model call counts its tokens once, when it finishes; a failed one
   expect(p01() - had).toBe(320);
 });
 
-test("the migration brings in the pages' models' tokens the log has; a visitor who isn't a user is nobody's", () => {
+test("the migration brings in the Document LLM API's tokens the log has; a visitor who isn't a user is nobody's", () => {
   const at = Date.parse("2026-11-01T10:00:00Z");
   const sql = memory({
     at: "0400",

@@ -1,4 +1,4 @@
-// One call of a page's model (agents/page-llm.ts), as its row of page_llm_use counts it. The call reserves the most it
+// One call of the Document LLM API (agents/page-llm.ts), as its row of page_llm_use counts it. The call reserves the most it
 // can cost when it starts, so calls at the same moment see each other's cost; its end replaces the reservation:
 //
 //   started (reserved) --answered--> finished (the tokens the model used)

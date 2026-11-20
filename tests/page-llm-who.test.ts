@@ -1,4 +1,4 @@
-// Who may call a page's model (server/migrations/0360_page_llm_who.sql): every document keeps what it had. Signed-in
+// Who may call the Document LLM API (server/migrations/0360_page_llm_who.sql): every document keeps what it had. Signed-in
 // viewers, but the homepage, whose model took guests already; a new document starts with signed-in viewers.
 
 import { expect, test } from "bun:test";

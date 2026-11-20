@@ -1,12 +1,15 @@
-// A document's page may call a model as its visitor (window.ergaLLM: agents/page-llm.ts has the route): its owner's
-// setting (on or off, the model, and who: signed-in viewers or all: share_document page_llm), the log of each call (page_llm_use,
-// server/migrations/0320_page_llm.sql), and the limits that log is counted against. The calls spend the server's model
-// keys, so each visitor, and the whole server, has a limit for each hour; and all the calls of a day (UTC) together have the
-// admin's spend limit (the setting page_llm_daily_usd), from an estimate of their cost (PAGE_LLM_PRICES).
+// The Document LLM API: a document's script may call a model as its viewer (window.ergaLLM: agents/page-llm.ts has the
+// route). Here: the document's setting, its author's (on or off, the model, and who: signed-in viewers or all:
+// share_document llm_api), the log of each call (page_llm_use, server/migrations/0320_page_llm.sql), and the limits that
+// log is counted against. The calls spend the server's model keys, so each visitor, and the whole server, has a limit
+// for each hour; and all the calls of a day (UTC) together have the admin's spend limit (the setting
+// document_llm_daily_usd), from an estimate of their cost (PAGE_LLM_PRICES). (The tables and the code keep the API's
+// first name, the page's model.)
 
 import type { Sql, Statement } from "./model.ts";
 import { ADD_COUNT, DAY_MS } from "./activity.ts";
 import { countedTokens, type CallState, type Tokens } from "./page-llm-call.ts";
+import { MODELS, type ModelChoice } from "../../shared/models.ts";
 
 /**
  * The limits. A call answers at most MAX_TOKENS tokens (the page asks for fewer, or gets this many), and sends at most
@@ -28,7 +31,7 @@ export const PAGE_LLM_LIMITS = {
 } as const;
 
 /**
- * What a page's model costs, in US dollars for a million tokens, input and output: the providers' standard prices for a
+ * What the Document LLM API's models cost, in US dollars for a million tokens, input and output: the providers' standard prices for a
  * short prompt (a page's call is at most PAGE_LLM_LIMITS.inputChars), with no cache; a fast mode costs two times its
  * model's. Read on 2026-11-06 (Fable 5.2, GPT-6.2 Sol, GPT-6.2 Astra and the fast modes: 2026-11-19) from
  * https://platform.claude.com/docs/en/about-claude/pricing (Model pricing; Fast mode pricing) and
@@ -66,6 +69,14 @@ export function costOf(model: string, input: number, output: number): number {
 const DAY = 86_400_000;
 /** The start of `now`'s day: midnight UTC. */
 export const dayStart = (now: number) => now - (now % DAY);
+/** The start of `now`'s month: midnight UTC of its first day. */
+export const monthStart = (now: number) => Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1);
+
+/** What a call, and a document's author, read while the admin has the API off. */
+export const ADMIN_OFF = "This server's admin turned the Document LLM API off.";
+/** And while the admin has the document's chosen model off. */
+export const modelOff = (model: ModelChoice) =>
+  `This server's admin turned ${MODELS[model].label} off for the Document LLM API. The document's author can choose another model.`;
 
 /** Use: calls, tokens, and the estimated cost in US dollars. */
 export interface PageLlmDayUse {
@@ -75,7 +86,7 @@ export interface PageLlmDayUse {
   cost: number;
 }
 
-/** Today's use (since midnight UTC, `since`): in total, and for each document, the costliest first. */
+/** The use since `since` (midnight UTC of a day): in total, and for each document, the costliest first. */
 export interface PageLlmToday extends PageLlmDayUse {
   since: number;
   docs: (PageLlmDayUse & { docId: string })[];
@@ -86,10 +97,10 @@ const COST_SQL = `(CASE model ${Object.entries(PAGE_LLM_PRICES)
   .map(([m, p]) => `WHEN '${m}' THEN input_tokens * ${p.input} + output_tokens * ${p.output}`)
   .join(" ")} ELSE input_tokens * ${HIGHEST.input} + output_tokens * ${HIGHEST.output} END) / 1000000.0`;
 
-/** How long the log keeps a call. */
-const KEEP_MS = 30 * 86_400_000;
+/** How long the log keeps a call: a month and a day, so this month's use is whole on its last day. */
+const KEEP_MS = 32 * 86_400_000;
 
-/** Who may call a page's model: its signed-in viewers, or all of them (someone signed out too, with the guest limit). */
+/** Who may call a document's API: its signed-in viewers, or all of them (someone signed out too, with the guest limit). */
 export const PAGE_LLM_WHO = ["signed_in", "all"] as const;
 export type PageLlmWho = (typeof PAGE_LLM_WHO)[number];
 
@@ -121,7 +132,7 @@ export class PageLlm {
     return { on: !!row?.on, model: row?.model ?? null, who: row?.guests ? "all" : "signed_in" };
   }
 
-  /** Sets it (share_document page_llm checks who may, and the model). */
+  /** Sets it (share_document llm_api checks who may, and the model). */
   async set(docId: string, s: { on: boolean; model: string; who: PageLlmWho }): Promise<void> {
     await this.sql.run(
       "UPDATE documents SET page_llm = ?2, page_llm_model = ?3, page_llm_guests = ?4 WHERE id = ?1",
@@ -153,9 +164,8 @@ export class PageLlm {
     return { requests: Number(row?.n ?? 0), tokens: Number(row?.t ?? 0) };
   }
 
-  /** The use since midnight UTC before `now`: in total, and by document. */
-  async today(now: number): Promise<PageLlmToday> {
-    const since = dayStart(now);
+  /** The use since `since` (dayStart or monthStart of now): in total, and by document. */
+  async usedSince(since: number): Promise<PageLlmToday> {
     const rows = await this.sql.all<{ doc: string; model: string; n: number; i: number | null; o: number | null }>(
       "SELECT doc_id AS doc, model, COUNT(*) AS n, SUM(input_tokens) AS i, SUM(output_tokens) AS o FROM page_llm_use WHERE at >= ?1 GROUP BY doc_id, model",
       since

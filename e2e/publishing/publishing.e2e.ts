@@ -3,7 +3,7 @@
 // Two servers, because a server has custom domains or it has not:
 //   own    a server of this file's, new as the file starts, with two custom domains (site.localhost, blog.localhost).
 //          Its journey goes from the new server on: nothing at /, the default homepage that the deploy's step makes and
-//          publishes, a document published to a custom domain from its settings, the page model and its sign-in there,
+//          publishes, a document published to a custom domain from its settings, the Document LLM API and its sign-in there,
 //          a domain that another document has, "Not published", and an editor who is not an admin.
 //   main   the suite's server, with the Erga domain alone, where the default homepage is published. A document takes
 //          the domain, publishes and fails, what wins at an address, who may publish, the header bar, and the default
@@ -184,7 +184,7 @@ journey("custom domains, from a new server on", () => {
   });
 
   test("on a custom domain, /_erga/ is Erga's: the model for the document it serves only, a pass that must be good, nothing else", async () => {
-    await shared({ page_llm: true, page_llm_who: "all" });
+    await shared({ llm_api: true, llm_api_who: "all" });
     const json = { "Content-Type": "application/json", Origin: origin };
     const body = (o: Record<string, unknown>) =>
       JSON.stringify({ messages: [{ role: "user", content: '@script [{"text": "Hi."}]' }], ...o });
@@ -237,7 +237,7 @@ journey("custom domains, from a new server on", () => {
     expect(JSON.parse(status.text)).toMatchObject({ on: true, signedIn: true });
     expect(await llm({ document: id }, { Cookie: cookie })).toMatchObject({ status: 200, text: JSON.stringify({ text: "Hi." }) });
     const other = await runTool<{ id: string }>(own.root, "create_document", { files: { "index.html": "<h1>Other</h1>" } });
-    expect((await runTool(own.root, "share_document", { document: other.result!.id, page_llm: true })).error).toBeUndefined();
+    expect((await runTool(own.root, "share_document", { document: other.result!.id, llm_api: true })).error).toBeUndefined();
     expect(await llm({ document: other.result!.id }, { Cookie: cookie })).toMatchObject({ status: 403 });
     // The Erga domain's session never counts here.
     const session = (await get(own, `/api/llm?document=${id}`).then((r) => r.json())) as { signedIn: boolean };
@@ -305,7 +305,7 @@ journey("custom domains, from a new server on", () => {
   });
 
   test("on a custom domain, a site for signed-in viewers only asks a guest to sign in, there", async ({ tab }) => {
-    await shared({ page_llm_who: "signed_in" });
+    await shared({ llm_api_who: "signed_in" });
     const p = tab.page;
     await p.goto(essay);
     expect(await llmStatus(p)).toMatchObject({ on: true, signedIn: false });

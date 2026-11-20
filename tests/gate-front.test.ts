@@ -151,7 +151,7 @@ test("the server asks the gate: sign-out, a token to paste, and MCP's code, each
   const me = await ask("/api/tools/whoami", agent, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   expect(((await me.json()) as { result: { login: string } }).result.login).toBe("ada");
   expect((await ask("/api/tools/whoami", { ...agent, sub: "sub-eve" }, { method: "POST", body: "{}" })).status).toBe(401);
-  // What is a person's own, in a browser, is not her agent's: the panel refuses it, and a page's model takes it for
+  // What is a person's own, in a browser, is not her agent's: the panel refuses it, and the Document LLM API takes it for
   // nobody. The server knows the agent by the caller alone (no token reaches it: the gate keeps it).
   const panel = await ask("/api/agent", agent);
   expect([panel.status, await panel.json()]).toEqual([403, { error: "Sign in as yourself to talk to your agent." }]);

@@ -3,7 +3,8 @@
 // a key that is set shows as its last 4 characters, with Replace, which opens the box to paste another, and Remove; a
 // key pasted in the box sets or replaces the key (the answer never holds the key, and the row is drawn again); and its
 // models' boxes (agent_models_off: every model not ticked, on every row; and the models that were off and have no box,
-// their provider with no key: they stay off). Each saves by itself, with no Save
+// their provider with no key: they stay off); and the Document LLM API's models' boxes, in one row, saved the same
+// way (document_llm_models_off). Each saves by itself, with no Save
 // button (client/common/autosave.ts), and the save mark left of the buttons' bar says how far it is: refused, the value
 // stays, with the server's reason under it. The daily token limit's row is a setting row: admin-settings.ts saves it,
 // and it shows only when the server provides keys.
@@ -14,11 +15,10 @@ import { autosave } from "../common/autosave";
 import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 
+/** The Document LLM API's models: the setting their boxes save. Its row shows the models of the providers with a key. */
+const LLM_MODELS = "document_llm_models_off";
 /** A key is longer than this: a shorter text in its box is saved only as the focus leaves it, never in a pause of the typing. */
 const KEY_LENGTH = 20;
-/** The models' boxes in the save mark: one setting, on every row. */
-const MODELS = "setting:agent_models_off";
-
 export default function adminAgents(): void {
   const mark = saveMark();
   /**
@@ -59,7 +59,7 @@ export default function adminAgents(): void {
           input.value = "";
           input.blur();
           auto = arm();
-          void refresh(live);
+          void refresh(live, `setting:${LLM_MODELS}`);
         },
       });
     let auto = arm();
@@ -98,7 +98,7 @@ export default function adminAgents(): void {
         await runTool("clear_api_key", { name: li.dataset.name! });
         say(hintOf(li), "");
         mark.set(live, "saved");
-        void refresh(live);
+        void refresh(live, `setting:${LLM_MODELS}`);
       } catch (err) {
         const why = (err as Error).message;
         say(hintOf(li), why, true);
@@ -135,43 +135,55 @@ export default function adminAgents(): void {
       mode.toggleAttribute("aria-invalid", !!why);
       if (why) return;
       for (const el of [list, document.querySelector<HTMLElement>("ol.server-only")!]) el.hidden = mode.value == "own";
-      document.querySelector<HTMLElement>(".own-note")!.hidden = mode.value != "own";
+      for (const note of document.querySelectorAll<HTMLElement>(".own-note, .llm-own-note")) note.hidden = mode.value != "own";
     },
   });
   mode.addEventListener("change", () => keys.changed(true));
-  // A model's box: the setting is every model not ticked, on any row, and the ones off that have no box (data-off: the
-  // setting as the page has it). Refused, the boxes keep the person's choice.
-  list.addEventListener("change", (e) => {
-    const box = e.target as HTMLInputElement;
-    if (!box.matches(".models input[type=checkbox]")) return;
-    const li = box.closest("li")!;
-    // The box as the page has it after the answer: a row drawn again meanwhile shows the setting from before the save.
-    const shown = () => now(li).querySelector<HTMLInputElement>(`.models input[value="${CSS.escape(box.value)}"]`) ?? box;
-    const wanted = box.checked;
-    const save = async () => {
-      shown().checked = wanted;
-      const boxes = [...list.querySelectorAll<HTMLInputElement>(".models input[type=checkbox]")];
-      const off = [
-        ...(list.dataset.off ?? "").split(" ").filter((m) => m && !boxes.some((b) => b.value == m)),
-        ...boxes.filter((b) => !b.checked).map((b) => b.value),
-      ];
-      mark.set(MODELS, "saving");
-      try {
-        await runTool("set_setting", { key: "agent_models_off", value: off });
-        list.dataset.off = off.join(" ");
+  // A model's box: the setting `key` is every model not ticked in `root`, and the ones off that have no box there
+  // (data-off, on `root` or on its row: the setting as the page has it). Refused, the boxes keep the person's choice.
+  const modelBoxes = (root: HTMLElement, key: string) =>
+    root.addEventListener("change", (e) => {
+      const box = e.target as HTMLInputElement;
+      if (!box.matches(".models input[type=checkbox]")) return;
+      const li = box.closest("li")!,
+        live = `setting:${key}`;
+      // The row, and the box, as the page has them after the answer: a row drawn again meanwhile shows the setting
+      // from before the save.
+      const row = () => root.querySelector<HTMLElement>(`:scope > [data-live="${CSS.escape(li.dataset.live!)}"]`) ?? li;
+      const held = () => root.querySelector<HTMLElement>("[data-off]") ?? root;
+      const shown = () => row().querySelector<HTMLInputElement>(`.models input[value="${CSS.escape(box.value)}"]`) ?? box;
+      const hint = () => row().querySelector(".hint")!;
+      const wanted = box.checked;
+      const save = async () => {
         shown().checked = wanted;
-        say(hintOf(li), "");
-        mark.set(MODELS, "saved");
-      } catch (err) {
-        const why = (err as Error).message;
-        shown().checked = wanted;
-        say(hintOf(li), why, true);
-        mark.set(MODELS, "error", { title: "The models are not saved", detail: `${why} The boxes keep your choice.` }, save);
-      }
-    };
-    void save();
-  });
+        const boxes = [...root.querySelectorAll<HTMLInputElement>(".models input[type=checkbox]")];
+        const off = [
+          ...(held().dataset.off ?? "").split(" ").filter((m) => m && !boxes.some((b) => b.value == m)),
+          ...boxes.filter((b) => !b.checked).map((b) => b.value),
+        ];
+        mark.set(live, "saving");
+        try {
+          await runTool("set_setting", { key, value: off });
+          held().dataset.off = off.join(" ");
+          shown().checked = wanted;
+          say(hint(), "");
+          mark.set(live, "saved");
+        } catch (err) {
+          const why = (err as Error).message;
+          shown().checked = wanted;
+          say(hint(), why, true);
+          mark.set(live, "error", { title: "The models are not saved", detail: `${why} The boxes keep your choice.` }, save);
+        }
+      };
+      void save();
+    });
+  // The agents' models, on the providers' rows; and the Document LLM API's, in one row.
+  modelBoxes(list, "agent_models_off");
+  const llmModels = document.querySelector<HTMLElement>("ol.llm-models-list")!;
+  modelBoxes(llmModels, LLM_MODELS);
   for (const li of list.querySelectorAll<HTMLElement>(":scope > li.provider")) wire(li);
   // Changes made elsewhere (another admin, an agent) show here as they're made (client/common/live-rows.ts).
   liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);
+  // The Document LLM API's models' row too: a key's change changes it (refresh, above), and so does the setting's.
+  liveList(llmModels, { wire: () => {} }, window.ergaView?.signal);
 }

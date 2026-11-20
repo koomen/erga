@@ -6,7 +6,7 @@
 // The Erga domain (the server's own): / is the published page, with Erga's controls if the document's publishing
 // setting has them; its files are at /_home-files/<gen>/<path>, cached for good; the site's other addresses answer
 // after Erga's own (server/app.ts). A custom domain (the deploy's `--domain`, Platform's deploy.domains) gets only the
-// site's files (serveDomain): on it, Erga has only `/_erga/` (server/app.ts): the pages' model and its sign-in, a round
+// site's files (serveDomain): on it, Erga has only `/_erga/` (server/app.ts): the Document LLM API and its sign-in, a round
 // trip through the Erga domain (server/identity/domain-pass.ts) that needs the facts' `app`. The Erga domain's session
 // never counts there. A domain with nothing published answers with nothing (`nothing`).
 //
@@ -273,7 +273,7 @@ async function siteFile(
   if (!/^text\/html/i.test(file.type)) return new Response(request.method == "HEAD" ? null : (file.bytes as BodyInit), { status, headers });
   const html = new TextDecoder().decode(file.bytes);
   const token = await pageToken(platform.secret, page.docId, Date.now());
-  // On a custom domain, the page's model is at that domain's /_erga/ (agents/page-llm.ts, domainLlmApi), and a page's
+  // On a custom domain, the Document LLM API is at that domain's /_erga/ (agents/page-llm.ts, domainLlmApi), and a page's
   // libraries of Erga's (/erga/<name>/editor.js) are at the Erga domain (the facts' `app`).
   if (domain != ERGA) {
     const app = new URL(request.url);

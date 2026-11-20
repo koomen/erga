@@ -1,6 +1,7 @@
-// A page calls a model as its visitor (window.ergaLLM, agents/page-llm.ts): who may, and the limits. The owner turns
-// the model on in Document settings, and the page's script gets the model's text. The admin's daily spend limit stops
-// all pages' calls, and the admin's switch for guests gives every signed-out visitor "sign_in". Someone signed out may
+// The Document LLM API: a page calls a model as its visitor (window.ergaLLM, agents/page-llm.ts): who may, and the
+// limits. The owner turns the API on in Document settings, and the page's script gets the model's text. The admin's
+// switch turns the API off for every document, the daily spend limit stops all calls, and the admin's switch for
+// viewers who aren't signed in gives every signed-out visitor "sign_in". Someone signed out may
 // call the model only where the owner lets all viewers; else the call gets "sign_in", and the viewer shows one sign-in
 // dialog, which comes back to the page. A published site's pages have the model too, for a visitor signed out: from its
 // own pages only, with the page's token, up to the visitor's hour. The model is the scripted one: no real model.
@@ -40,7 +41,7 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
   let page: Page, admin: Page;
   let doc: Awaited<ReturnType<typeof newDoc>>;
   test.afterAll(async () => {
-    for (const key of ["page_llm_daily_usd", "page_llm_guests"]) await resetSetting(s, key);
+    for (const key of ["document_llm_api", "document_llm_daily_usd", "document_llm_guests"]) await resetSetting(s, key);
   });
 
   test("off at first; the owner turns it on in Document settings, and the page's script gets the model's text", async ({ tab }) => {
@@ -54,6 +55,7 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     await clickOn(page, "#btn-settings");
     await page.locator("#ds-llm-on").waitFor();
     expect(await page.locator("#ds-llm-on").isChecked()).toBe(false);
+    expect((await page.locator("#ds-llm").innerText()).trim()).toBe("Viewers have access to the Document LLM API");
     expect(await page.locator("#ds-llm-model").inputValue()).toBe("haiku");
     // Who may call it: only while it is on; signed-in viewers, as it starts.
     expect(await page.locator("#ds-llm-who").isVisible()).toBe(false);
@@ -66,13 +68,13 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     expect(await status(page)).toEqual({ on: true, model: "Haiku 5.5", signedIn: true });
     expect(await ask(page, '@script [{"text": "Hello from the model."}]')).toEqual({ text: "Hello from the model." });
     // Off again: "off". Then on, for the steps after.
-    await owner(s, "share_document", { document: doc.id, page_llm: false });
+    await owner(s, "share_document", { document: doc.id, llm_api: false });
     expect((await ask(page, "Hi")).code).toBe("off");
-    await owner(s, "share_document", { document: doc.id, page_llm: true });
+    await owner(s, "share_document", { document: doc.id, llm_api: true });
     expect(await pageLlmOf(s, doc.id)).toMatchObject({ on: true, who: "all" });
   });
 
-  test("the daily spend limit stops pages' calls at today's estimated cost; the view shows the use; 0 turns them off", async () => {
+  test("the admin's section: the API's switch turns it off for every document; the daily spend limit stops the calls at today's estimated cost; the view shows the use; 0 turns them off", async () => {
     // Today's use so far on this server: the calls of the step before, and other files'. All were Haiku's.
     const before = await useToday(s);
     const cost = haikuCost(before.inputTokens, before.outputTokens);
@@ -80,11 +82,28 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     // The admin page: the limit, $5 at first.
     admin = await page.context().newPage();
     await admin.goto(`${s.root}/admin/agents`); // page load 2: the Agents and models page, in a tab of its own
-    const limit = row(admin, "page_llm_daily_usd");
-    expect(await limit.locator(".key").innerText()).toBe("Pages' models: daily spend limit");
+    // The section, with no secret of the deploy's on this page.
+    const section = admin.locator("section.llm-api");
+    expect((await section.innerText()).split(/\s*\n\s*/).slice(0, 4)).toEqual([
+      "Document LLM API",
+      "An LLM API that users can expose to their documents.",
+      "Enable Document LLM API",
+      "Users can turn on the API for specific documents.",
+    ]);
+    expect(await admin.locator(".deploy-secrets, [data-env=FACTORY_KEY]").count()).toBe(0);
+    const limit = row(admin, "document_llm_daily_usd");
+    // The switch, off: its other settings go, and the document's script gets "off"; on again, they are back.
+    const enable = admin.locator("#set-document_llm_api");
+    await enable.click();
+    await expect.poll(() => setting(s, "document_llm_api")).toBe(false);
+    expect([await limit.isVisible(), await admin.locator("li.llm-models").isVisible()]).toEqual([false, false]);
+    expect(await ask(page, "Hi")).toMatchObject({ code: "off", message: "This server's admin turned the Document LLM API off." });
+    await enable.click();
+    await expect.poll(() => setting(s, "document_llm_api")).toBe(true);
+    expect(await limit.locator(".key").innerText()).toBe("Document LLM API daily spend limit");
     expect(await limit.locator("input[name=value]").inputValue()).toBe("5");
     expect(await limit.locator(".unit").innerText()).toBe("US$");
-    expect(await usage(admin)).toContain(`${usd(cost)} of $5.00 today (${before.limitUsed})`);
+    expect(await usage(admin)).toContain(`Today: ${usd(cost)} of the daily limit of $5.00 (${before.limitUsed})`);
     // The admin sets the next cent above today's cost. With no cost before, that is one cent: what 20,000 of Haiku
     // 5.5's output tokens cost ($0.50 for a million).
     const to = (Math.floor(cost * 100 + 1e-6) + 1) / 100;
@@ -92,7 +111,7 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     // (No Save button: the value saves as the focus leaves its field.)
     await limit.locator("input[name=value]").fill(String(to));
     await limit.locator("input[name=value]").blur();
-    await expect.poll(() => setting(s, "page_llm_daily_usd")).toBe(to);
+    await expect.poll(() => setting(s, "document_llm_daily_usd")).toBe(to);
     // One call that uses all of it; the next gets "limit".
     expect(await ask(page, `@script [{"text": "One.", "tokens": ${tokens}}]`)).toEqual({ text: "One." });
     const stopped = await ask(page, '@script [{"text": "Two."}]');
@@ -101,17 +120,23 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     // The view: one call more, its tokens and cost, all of the limit, and the document (two calls: one in the step before).
     await admin.reload(); // page load 3
     const shown = await usage(admin);
-    expect(shown).toContain(`${usd(to)} of $${to.toFixed(2)} today (100%)`);
-    expect(shown).toContain("Pages' calls stop until midnight UTC.");
+    expect(shown).toContain(`Today: ${usd(to)} of the daily limit of $${to.toFixed(2)} (100%)`);
+    expect(shown).toContain("The calls stop until midnight UTC.");
+    expect(shown.split(/\s*\n\s*/).slice(0, 2)).toEqual(["Document LLM API Usage", expect.stringMatching(/^This Month \w+ \d{4}, UTC$/)]);
+    // This month's documents, each with its spend, and the total.
     const n = (x: number) => x.toLocaleString("en-US");
-    expect((await admin.locator(".use-totals").innerText()).split(/\s*\n\s*/)).toEqual([
+    expect(await admin.locator(".use-docs thead th").allInnerTexts()).toEqual([
+      "Document",
       "Calls",
-      n(before.calls + 1),
       "Input tokens",
-      n(before.inputTokens),
       "Output tokens",
+      "Spend",
+    ]);
+    expect(await admin.locator(".use-docs tfoot :is(th, td)").allInnerTexts()).toEqual([
+      "Total",
+      n(before.calls + 1),
+      n(before.inputTokens),
       n(before.outputTokens + tokens),
-      "Estimated cost",
       usd(to),
     ]);
     const mine = admin.locator(".use-docs tbody tr", { has: admin.locator(`a[href^="${doc.path}"]`) });
@@ -125,16 +150,16 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
       limitUsd: to,
       limitUsed: "100%",
     });
-    // 0: pages' models are off.
+    // 0: no call runs.
     await limit.locator("input[name=value]").fill("0");
     await limit.locator("input[name=value]").blur();
-    await expect.poll(() => setting(s, "page_llm_daily_usd")).toBe(0);
+    await expect.poll(() => setting(s, "document_llm_daily_usd")).toBe(0);
     await admin.reload(); // page load 4
-    expect(await usage(admin)).toContain("Pages' models are off");
+    expect(await usage(admin)).toContain("No call runs (daily spend limit $0).");
     expect(await status(page)).toMatchObject({ on: false });
     expect((await ask(page, "Hi")).code).toBe("off");
     // The limit of the start again, for the steps after.
-    await resetSetting(s, "page_llm_daily_usd");
+    await resetSetting(s, "document_llm_daily_usd");
     expect(await status(page)).toMatchObject({ on: true });
   });
 
@@ -147,14 +172,14 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     expect((await signInState(page)).open).toBeFalsy();
   });
 
-  test("the admin's switch for guests, off: someone signed out gets sign_in, where the owner lets all viewers call the model", async () => {
+  test("the admin's switch for viewers who aren't signed in, off: someone signed out gets sign_in, where the owner lets all viewers call the model", async () => {
     // The admin turns the switch off on the Agents and models page. (Signed in: with no cookie, a browser is the server's own person.)
     await page.context().clearCookies();
-    const guests = admin.locator("#set-page_llm_guests");
-    expect(await row(admin, "page_llm_guests").locator(".key").innerText()).toBe("Guests can call pages' models");
+    const guests = admin.locator("#set-document_llm_guests");
+    expect(await row(admin, "document_llm_guests").locator(".key").innerText()).toBe("Unauthenticated viewers can access Document LLM API");
     expect(await guests.isChecked()).toBe(true);
     await guests.click();
-    await expect.poll(() => setting(s, "page_llm_guests")).toBe(false);
+    await expect.poll(() => setting(s, "document_llm_guests")).toBe(false);
     // Signed in: the model still answers. Signed out: sign_in, and the dialog.
     expect(await ask(page, '@script [{"text": "Hello, Ada."}]')).toEqual({ text: "Hello, Ada." });
     await signOut(page, s);
@@ -165,14 +190,14 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     // On again: a guest may call it again.
     await page.context().clearCookies();
     await guests.click();
-    await expect.poll(() => setting(s, "page_llm_guests")).toBe(true);
+    await expect.poll(() => setting(s, "document_llm_guests")).toBe(true);
     await signOut(page, s);
     expect(await ask(page, '@script [{"text": "Hello again, guest."}]')).toEqual({ text: "Hello again, guest." });
     await admin.close();
   });
 
   test("signed-in viewers only: each call gets sign_in, and the viewer shows one sign-in dialog, which comes back to the page", async () => {
-    await owner(s, "share_document", { document: doc.id, page_llm_who: "signed_in" });
+    await owner(s, "share_document", { document: doc.id, llm_api_who: "signed_in" });
     const frame = page.frameLocator("#frame");
     // Three calls at once: each gets sign_in, and the viewer (not the page) shows one dialog.
     const codes = await frame
@@ -233,21 +258,30 @@ journey("a published site's model, for a visitor signed out", () => {
     expect((await call(s, { document: home, token }, { ...ip, Origin: "https://elsewhere.example" })).status).toBe(403);
     expect((await call(s, { document: home, token }, { ...ip, "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
     // No token, or one that is not this server's.
-    expect(await call(s, { document: home }, ip)).toMatchObject({ status: 403, error: "Reload this page to use its model." });
+    expect(await call(s, { document: home }, ip)).toMatchObject({ status: 403, error: "Reload this page to use the Document LLM API." });
     expect((await call(s, { document: home, token: token!.replace(/\.[\w-]+$/, ".AAAA") }, ip)).status).toBe(403);
     expect((await call(s, { document: home, token: "AAAA.AAAA" }, ip)).status).toBe(403);
-    // Signed-in viewers only (share_document page_llm_who): sign_in, even from the page.
-    await owner(s, "share_document", { document: home, page_llm_who: "signed_in" });
+    // Signed-in viewers only (share_document llm_api_who): sign_in, even from the page.
+    await owner(s, "share_document", { document: home, llm_api_who: "signed_in" });
     expect(await call(s, { document: home, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });
-    await owner(s, "share_document", { document: home, page_llm_who: "all" });
+    await owner(s, "share_document", { document: home, llm_api_who: "all" });
     // Another document's model: signed out, only where it is shared with anyone and open to all viewers.
     const other = await upload(s, { "index.html": "<h1>Other</h1>" });
-    await owner(s, "share_document", { document: other, page_llm: true });
+    await owner(s, "share_document", { document: other, llm_api: true });
     await owner(s, "share_document", { document: other, login: "*", role: "viewer" });
     expect(await call(s, { document: other, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });
     // Open to all viewers: still not with the published page's token, which is for its own document.
-    await owner(s, "share_document", { document: other, page_llm_who: "all" });
-    expect(await call(s, { document: other, token }, ip)).toMatchObject({ status: 403, error: "Reload this page to use its model." });
+    await owner(s, "share_document", { document: other, llm_api_who: "all" });
+    expect(await call(s, { document: other, token }, ip)).toMatchObject({
+      status: 403,
+      error: "Reload this page to use the Document LLM API.",
+    });
+    // Users can't share publicly: the published site is public all the same, and its visitors still call the model; the
+    // document shared with anyone opens for nobody signed out.
+    await owner(s, "set_setting", { key: "public_sharing", value: false });
+    expect(await call(s, { document: home, token }, ip)).toEqual({ status: 200, text: "Hi." });
+    expect(await call(s, { document: other, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });
+    await owner(s, "set_setting", { key: "public_sharing", value: true });
     // One answer that used the visitor's whole hour (PAGE_LLM_LIMITS.guest.tokens: 30,000); then "limit".
     const long = { document: home, token, messages: [{ role: "user", content: '@script [{"text": "Long.", "tokens": 30000}]' }] };
     expect(await call(s, long, ip)).toEqual({ status: 200, text: "Long." });
@@ -256,9 +290,9 @@ journey("a published site's model, for a visitor signed out", () => {
     expect(await call(s, { document: home, token }, { "cf-connecting-ip": "198.51.100.7" })).toEqual({ status: 200, text: "Hi." });
   });
 
-  test("every page of the published site has ergaLLM, which answers where page_llm is on", async ({ tab }) => {
+  test("every page of the published site has ergaLLM, which answers where the document's API is on", async ({ tab }) => {
     const p = tab.page;
-    await owner(s, "share_document", { document: home, page_llm: false });
+    await owner(s, "share_document", { document: home, llm_api: false });
     await signOut(p, s);
     await p.goto(`${s.root}/`); // page load 1: the published page
     expect(await p.locator("h1").textContent()).toBe("Home with an essay");
@@ -269,7 +303,7 @@ journey("a published site's model, for a visitor signed out", () => {
     expect(await p.evaluate(() => (window as unknown as { early: boolean }).early)).toBe(true);
     expect(await p.evaluate(() => window.ergaLLM!.status())).toEqual({ on: false, model: null, signedIn: false });
     expect((await askIn(p, "Hi")).code).toBe("off");
-    await owner(s, "share_document", { document: home, page_llm: true });
+    await owner(s, "share_document", { document: home, llm_api: true });
     expect(await askIn(p, '@script [{"text": "Hello from the essay."}]')).toEqual({ text: "Hello from the essay." });
     await p.goto(`${s.root}/`); // page load 3: the published page again
     expect(await askIn(p, '@script [{"text": "Hello from home."}]')).toEqual({ text: "Hello from home." });

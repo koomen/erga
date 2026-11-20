@@ -1,6 +1,6 @@
 // The page token: each HTML page of a published site, as served (serve.ts), carries one for its window.ergaLLM
 // (client/inline/site-llm.ts), and so does the viewer for someone signed out (server/documents/view.ts); a signed-out
-// call to a page's model must send it (agents/page-llm.ts). It is the document's id, signed
+// call to the Document LLM API must send it (agents/page-llm.ts). It is the document's id, signed
 // (server/signed.ts), good for an hour; a reload makes a new one. It stops a copy of the call on another site or in a script that never opens the
 // page; a script that opens the page first gets one, and the per-IP limit is for that.
 

@@ -1,4 +1,4 @@
-// A page's model (server/directory/page-llm.ts): each call is logged as it starts, with the tokens it reserves, gets the
+// The Document LLM API (server/directory/page-llm.ts): each call is logged as it starts, with the tokens it reserves, gets the
 // tokens it used when it ends (page-llm-call.ts), and counts against the visitor's hour, the server's and the day's
 // spend limit; a call older than the hour counts no more.
 
@@ -8,6 +8,7 @@ import {
   costOf,
   countedTokens,
   dayStart,
+  monthStart,
   PageLlm,
   PAGE_LLM_LIMITS,
   PAGE_LLM_PRICES,
@@ -54,7 +55,7 @@ test("signed-out visitors (login ip:...) count together, apart from the signed-i
   expect(await llm.used(t)).toEqual({ requests: 3, tokens: 300 });
 });
 
-test("the cost estimate: each page model has its price; a model with no known price counts at the highest", () => {
+test("the cost estimate: each model of the Document LLM API has its price; a model with no known price counts at the highest", () => {
   for (const m of PAGE_LLM_MODELS) expect(PAGE_LLM_PRICES[m]).toBeDefined();
   expect(costOf("haiku", 1_000_000, 1_000_000)).toBeCloseTo(0.6);
   expect(costOf("opus", 10_000, 2_000)).toBeCloseTo(0.08);
@@ -68,7 +69,7 @@ test("the cost estimate: each page model has its price; a model with no known pr
   expect(costOf("no-such-model", 0, 1_000_000)).toBe(80);
 });
 
-test("today's use: calls, tokens and cost since midnight UTC, in total and by document, the costliest first", async () => {
+test("the use of a day and of a month: calls, tokens and cost since its first midnight UTC, in total and by document, the costliest first", async () => {
   const llm = new PageLlm(memory());
   const midnight = Date.UTC(2026, 10, 6);
   const call = async (docId: string, model: string, at: number, input: number, output: number) =>
@@ -78,7 +79,7 @@ test("today's use: calls, tokens and cost since midnight UTC, in total and by do
   await call("d2", "opus", midnight + 60_000, 1_000, 1_000);
   await call("d1", "sonnet", midnight + 120_000, 0, 1_000);
   const now = midnight + 3_600_000;
-  const today = await llm.today(now);
+  const today = await llm.usedSince(dayStart(now));
   expect(today).toMatchObject({ since: midnight, calls: 3, input: 101_000, output: 22_000 });
   expect(today.cost).toBeCloseTo(0.02 + 0.024 + 0.01);
   expect(today.docs.map((d) => [d.docId, d.calls])).toEqual([
@@ -87,8 +88,27 @@ test("today's use: calls, tokens and cost since midnight UTC, in total and by do
   ]);
   expect(today.docs[0].cost).toBeCloseTo(0.02 + 0.01);
   // At midnight UTC the day starts again.
-  expect(await llm.today(midnight + 86_400_000)).toMatchObject({ calls: 0, cost: 0, docs: [] });
+  expect(await llm.usedSince(dayStart(midnight + 86_400_000))).toMatchObject({ calls: 0, cost: 0, docs: [] });
   expect(dayStart(midnight + 86_400_000 - 1)).toBe(midnight);
+  // This month: the call before midnight too, and one of the month's first day; none of the month before.
+  const first = Date.UTC(2026, 10, 1);
+  expect(monthStart(now)).toBe(first);
+  await call("d3", "haiku", first, 1_000_000, 0);
+  await call("d3", "haiku", first - 1, 1_000_000, 0);
+  const month = await llm.usedSince(monthStart(now));
+  expect(month).toMatchObject({ since: first, calls: 5 });
+  expect(month.docs.map((d) => [d.docId, d.calls])).toEqual([
+    ["d1", 3],
+    ["d3", 1],
+    ["d2", 1],
+  ]);
+  expect(month.docs[0].cost).toBeCloseTo(0.1 + 0.02 + 0.01);
+  // The log keeps a call for longer than any month: on the month's last day, its first day's calls are still there.
+  await begin(llm, { login: "ada", docId: "d1", model: "haiku", now: Date.UTC(2026, 10, 30, 23) });
+  expect((await llm.usedSince(first)).calls).toBe(6);
+  // The month starts again at its first midnight UTC.
+  expect(monthStart(Date.UTC(2026, 11, 1))).toBe(Date.UTC(2026, 11, 1));
+  expect(monthStart(Date.UTC(2026, 11, 1) - 1)).toBe(first);
 });
 
 test("a call's states: it reserves at its start; an answer counts its tokens; a failure keeps the reservation", () => {
@@ -111,7 +131,7 @@ test("a call that fails still counts: its reservation stays in the day's cost an
   const reserved = { input: 0, output: 1_000_000 };
   const id = (await llm.start({ login: "ada", docId: "d1", model: "haiku", now, reserved, budget: 5 }))!;
   await llm.write(id, callStep({ state: "started", reserved }, { type: "failed" }));
-  expect((await llm.today(now)).cost).toBeCloseTo(0.5);
+  expect((await llm.usedSince(dayStart(now))).cost).toBeCloseTo(0.5);
   expect(await llm.used(now + 1, "ada")).toEqual({ requests: 1, tokens: 1_000_000 });
 });
 

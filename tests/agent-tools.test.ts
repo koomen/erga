@@ -182,7 +182,7 @@ test("access: a group rule added, changed and removed, Anyone's level set, publi
   expect((await failure(run(root, "set_user", { action: "deploy", login: "root" }))).status).toBe(400);
 });
 
-test("sharing: the owner sees and changes who has access; editors change the page's model; the document agent defaults to its document", async () => {
+test("sharing: the owner sees and changes who has access; editors change the Document LLM API; the document agent defaults to its document", async () => {
   // Users can share content publicly here (anyone with the link): the Access page's switch.
   const dir = fresh({ defaults: { anyone_access: "public", public_sharing: true }, admins: ["root"] });
   // Bo and Cy may sign in here (a share goes only to someone who may).
@@ -193,17 +193,17 @@ test("sharing: the owner sees and changes who has access; editors change the pag
   expect(r.permissions.map((p: { login: string; role: string }) => `${p.login}:${p.role}`)).toEqual(["ada:owner", "bo:editor"]);
   r = await run({ ...ada, here: "aaaaaaaa" }, "share_document", { login: "*", role: "viewer" });
   expect(r.document.address).toBe("/ada/plan");
-  // The page's model, set alone: the answer says who has access too.
-  r = await run(ada, "share_document", { document: "plan", page_llm: true });
-  expect([r.permissions.length, r.pageLlm.on]).toEqual([3, true]);
+  // The Document LLM API, set alone: the answer says who has access too.
+  r = await run(ada, "share_document", { document: "plan", llm_api: true });
+  expect([r.permissions.length, r.llmApi.on]).toEqual([3, true]);
   // The viewer's bars and the readers' agent are no options: the viewer always has both.
   expect((await failure(run(ada, "share_document", { document: "plan" }))).status).toBe(400);
   const e = await failure(run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", login: "cy", role: "editor" }));
   expect([e.status, /owner/.test(e.message)]).toEqual([403, true]);
-  // Bo, an editor, changes the page's model, and doesn't see who has access; Cy, not shared with, may not.
-  r = await run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", page_llm: false });
-  expect([r.pageLlm.on, r.anyoneWithLink, r.permissions]).toEqual([false, true, undefined]);
-  expect((await failure(run({ dir, who: { login: "cy" } }, "share_document", { document: "aaaaaaaa", page_llm: true }))).status).toBe(403);
+  // Bo, an editor, changes the Document LLM API, and doesn't see who has access; Cy, not shared with, may not.
+  r = await run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", llm_api: false });
+  expect([r.llmApi.on, r.anyoneWithLink, r.permissions]).toEqual([false, true, undefined]);
+  expect((await failure(run({ dir, who: { login: "cy" } }, "share_document", { document: "aaaaaaaa", llm_api: true }))).status).toBe(403);
   expect((await failure(run(ada, "share_document", { login: "cy", role: "editor" }))).status).toBe(400);
   expect((await failure(run(ada, "share_document", { document: "/ada/none", login: "cy", role: "editor" }))).status).toBe(404);
   expect((await failure(run(ada, "share_document", { document: "plan", login: "cy" }))).status).toBe(400);
@@ -215,7 +215,7 @@ test("sharing: the owner sees and changes who has access; editors change the pag
   await run({ dir, who: { login: "root", admin: true } }, "set_access", { action: "public", on: false });
   const off = await failure(run(ada, "share_document", { document: "aaaaaaaa", login: "*", role: "editor" }));
   expect([off.status, /Public sharing is off on this server/.test(off.message)]).toEqual([403, true]);
-  r = await run(ada, "share_document", { document: "aaaaaaaa", page_llm: true });
+  r = await run(ada, "share_document", { document: "aaaaaaaa", llm_api: true });
   expect([r.publicSharing, r.anyoneWithLink]).toEqual([false, false]);
   expect(await dir.access({ login: "cy" }, (await dir.get("aaaaaaaa"))!)).toBeNull();
   r = await run(ada, "share_document", { document: "aaaaaaaa", login: "*", role: "none" });
@@ -423,17 +423,17 @@ test("list_documents' all is an admin's: someone else is refused", async () => {
 
 // The cases below run on the whole app in memory (tests/helpers/app.ts): real documents, the tools over HTTP.
 
-test("an admin changes the page's model on the default homepage (/_home), which has no owner", async () => {
+test("an admin changes the Document LLM API on the default homepage (/_home), which has no owner", async () => {
   const s = server();
   // (The server's scheduled run makes the default homepage.)
   await makeHome(s.platform);
-  const on = async () => ((await overHttp(s, "ls", { document: "/_home" })).result?.access as { pageLlm?: { on: boolean } })?.pageLlm?.on;
+  const on = async () => ((await overHttp(s, "ls", { document: "/_home" })).result?.access as { llmApi?: { on: boolean } })?.llmApi?.on;
   const was = await on();
   expect(was).toBe(false);
-  expect((await overHttp(s, "share_document", { document: "/_home", page_llm: !was })).status).toBe(200);
+  expect((await overHttp(s, "share_document", { document: "/_home", llm_api: !was })).status).toBe(200);
   expect(await on()).toBe(!was);
   // Someone who isn't an admin can't.
-  expect((await overHttp(s, "share_document", { document: "/_home", page_llm: was }, { user: "Bo" })).status).toBe(403);
+  expect((await overHttp(s, "share_document", { document: "/_home", llm_api: was }, { user: "Bo" })).status).toBe(403);
   expect(await on()).toBe(!was);
 });
 

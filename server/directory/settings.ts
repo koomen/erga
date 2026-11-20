@@ -21,7 +21,7 @@ import type { Sql, Statement } from "./model.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
 import { type Anyone, ANYONE_LABEL, ANYONE_LEVELS } from "./access.ts";
-import { isModelChoice, MODELS, MODELS_OFF_AT_FIRST } from "../../shared/models.ts";
+import { isModelChoice, isPageLlmModel, MODELS, MODELS_OFF_AT_FIRST, PAGE_LLM_MODELS, PAGE_LLM_OFF_AT_FIRST } from "../../shared/models.ts";
 import { SIGN_IN_DAYS, SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 /** A write another write came in on the middle of: it tries again. */
@@ -49,6 +49,15 @@ export interface Setting<T = unknown> {
   kind?: "users";
   /** The values the admin page offers, as a select (as a switch when they're "off" and "on"). The parser may take others too. */
   choices?: string[];
+}
+
+/** A list of model names (or one text of them), each one of `all`, each one time. */
+function modelList(v: unknown, is: (m: string) => boolean, all: readonly string[]): string[] {
+  const list = typeof v == "string" ? v.split(/[\s,]+/).filter(Boolean) : v;
+  if (!Array.isArray(list) || list.some((m) => typeof m != "string")) throw new ConfigError({ message: "must be a list of model names" });
+  const bad = (list as string[]).find((m) => !is(m));
+  if (bad) throw new ConfigError({ message: `has "${bad}", which isn't one of the models: ${all.join(", ")}` });
+  return [...new Set(list as string[])];
 }
 
 /** A whole number from `min` to `max`. */
@@ -129,24 +138,38 @@ export const SETTINGS = {
     default: false,
     parse: boolean,
   }),
-  page_llm_daily_usd: setting<number>({
-    label: "Pages' models: daily spend limit",
-    description: "The most all pages' model calls can cost each day.",
+  document_llm_api: setting<boolean>({
+    label: "Enable Document LLM API",
+    description: "Users can turn on the API for specific documents.",
+    values: "false: no document's script can call a model (window.ergaLLM), whatever the document's own setting says.",
+    default: true,
+    parse: boolean,
+  }),
+  document_llm_guests: setting<boolean>({
+    label: "Unauthenticated viewers can access Document LLM API",
+    description:
+      "Where the author lets all viewers use it: on a published site always; in a document opened by its link, only while users can share publicly.",
     values:
-      'US dollars a day (UTC), estimated from tokens. Over it, each call gets "limit" until midnight UTC. 0: pages can\'t call a model.',
+      "false: they must sign in first, everywhere. true: a published site's visitors call it also while public_sharing is off; a document opened by its link has no signed-out viewers then.",
+    default: true,
+    parse: boolean,
+  }),
+  document_llm_daily_usd: setting<number>({
+    label: "Document LLM API daily spend limit",
+    description: "The most all calls of the API can cost each day.",
+    values: 'US dollars a day (UTC), estimated from tokens. Over it, each call gets "limit" until midnight UTC. 0: no call runs.',
     default: 5,
     parse: (v) => {
       if (typeof v != "number" || !Number.isFinite(v) || v < 0 || v > 100_000)
-        throw new ConfigError({ message: "must be a number of US dollars from 0 to 100000 (0: pages' models are off)" });
+        throw new ConfigError({ message: "must be a number of US dollars from 0 to 100000 (0: no call runs)" });
       return Math.round(v * 100) / 100;
     },
   }),
-  page_llm_guests: setting<boolean>({
-    label: "Guests can call pages' models",
-    description: "Only on pages whose owner lets all viewers call the model.",
-    values: "false: they must sign in first, on every page.",
-    default: true,
-    parse: boolean,
+  document_llm_models_off: setting<string[]>({
+    label: "Models the Document LLM API doesn't offer",
+    description: `The models a document's author can't choose for the Document LLM API. A list of: ${PAGE_LLM_MODELS.join(", ")}.`,
+    default: PAGE_LLM_OFF_AT_FIRST,
+    parse: (v) => modelList(v, isPageLlmModel, PAGE_LLM_MODELS),
   }),
   feedback: setting<boolean>({
     label: "Send feedback",
@@ -215,14 +238,7 @@ export const SETTINGS = {
     label: "Models a server key doesn't run",
     description: `The models that a server key doesn't run; a user's own key still runs them. A list of: ${Object.keys(MODELS).join(", ")}.`,
     default: MODELS_OFF_AT_FIRST,
-    parse: (v) => {
-      const list = typeof v == "string" ? v.split(/[\s,]+/).filter(Boolean) : v;
-      if (!Array.isArray(list) || list.some((m) => typeof m != "string"))
-        throw new ConfigError({ message: "must be a list of model names" });
-      const bad = (list as string[]).find((m) => !isModelChoice(m));
-      if (bad) throw new ConfigError({ message: `has "${bad}", which isn't one of the models: ${Object.keys(MODELS).join(", ")}` });
-      return [...new Set(list as string[])];
-    },
+    parse: (v) => modelList(v, isModelChoice, Object.keys(MODELS)),
   }),
 };
 

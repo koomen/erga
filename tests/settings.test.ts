@@ -68,7 +68,7 @@ const platform = {
       ],
     },
     get: async () => null,
-    pageLlm: { today: async () => ({ calls: 0, input: 0, output: 0, cost: 0, since: 0, docs: [] }) },
+    pageLlm: { usedSince: async () => ({ calls: 0, input: 0, output: 0, cost: 0, since: 0, docs: [] }) },
   },
   // No custom domain, and nothing linked to the Erga domain: the Sites row has one line, "Free".
   deploy: { domains: [], app: null },

@@ -1,4 +1,4 @@
-// The page's model (window.ergaLLM: client/common/page-llm.ts) on a published site's pages, which run on the domain
+// The Document LLM API (window.ergaLLM: client/common/page-llm.ts) on a published site's pages, which run on the domain
 // itself (server/sites/render.ts): it calls Erga directly, for the published document `doc`, with the page's `token`
 // (server/sites/llm-token.ts), so a visitor signed out may call it too. On the Erga domain, signing in comes back to
 // the document in the viewer (`address`): someone signed in never sees / (it sends them to /documents). On a custom

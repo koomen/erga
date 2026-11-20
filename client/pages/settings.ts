@@ -8,9 +8,10 @@
 // (data-tip, which tip() sets). It holds, top to bottom:
 //   - Page details: the page shown now, with its icon, title and description, and Edit, which opens its details
 //     (client/pages/page-head.ts: its title, description, icon and link picture, in its <head>).
-//   - Viewer settings, for anyone who may edit it (their state from ls's access): whether its page may call a model as
-//     its visitor, which, and for whom: signed-in viewers or all of them (page_llm, page_llm_model, page_llm_who:
-//     window.ergaLLM). It holds in the viewer and on the published site.
+//   - Viewer settings, for anyone who may edit it (their state from ls's access): the Document LLM API: whether its
+//     script may call a model as its viewer, which, and for whom: signed-in viewers or all of them (llm_api,
+//     llm_api_model, llm_api_who: window.ergaLLM). It holds in the viewer and on the published site. Where the
+//     server's admin rules something out (the API, the chosen model, viewers who aren't signed in), a line says so.
 //   - Publishing, for anyone who may edit it (settings-publishing.ts): the document's domain, its header bar there,
 //     and Publish.
 //   - Versions: the latest ten, each with its number, the model's five-word
@@ -46,8 +47,11 @@ interface Tree {
 }
 /** ls's access, as far as Viewer settings need it (for anyone who may edit it). */
 type Access = {
-  /** models: the ones the owner may choose now (Claude's, and OpenAI's where the server has a key). */
-  pageLlm: { on: boolean; model: string; models: string[]; who: "signed_in" | "all" };
+  /**
+   * enabled: the server's admin has the API on. models: the ones the author may choose now. guests: viewers who
+   * aren't signed in may call it on this server. note: why it doesn't work now.
+   */
+  llmApi: { enabled: boolean; on: boolean; model: string; models: string[]; who: "signed_in" | "all"; guests: boolean; note?: string };
 };
 interface Doc extends Tree {
   publishing?: Publishing;
@@ -138,7 +142,9 @@ span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparen
 .ds-page-desc { grid-column: 1; margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .ds-page-desc:empty { display: none; }
 .ds-page-row .ds-btn { grid-column: 2; grid-row: 1 / span 2; }
-/* Viewer settings: the page's model, for anyone who may edit it. */
+/* Viewer settings: the Document LLM API, for anyone who may edit it. */
+.ds-llm-note { margin: 0 0 0 23px; font-size: 12.5px; line-height: 1.45; color: var(--soft); }
+.ds-llm-note:empty { display: none; }
 .ds-checks { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 10px; }
 .ds-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
 .ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
@@ -170,7 +176,7 @@ ${PUBLISHING_CSS}.ds-btn { flex: none; font: 600 12.5px var(--font-text); border
 `;
 
 
-/** The page model menu's options, under their providers' names. */
+/** The Document LLM API's model menu's options, under their providers' names. */
 function modelOptions(models: string[]): string {
   const known = models.filter(isModelChoice);
   return [...new Set(known.map((m) => MODELS[m].provider))]
@@ -202,11 +208,12 @@ function mount(host: SettingsHost): Settings {
     <section class="ds-agent" id="ds-agent" hidden aria-labelledby="ds-agent-title">
       <h3 id="ds-agent-title">Viewer settings</h3>
       <div class="ds-checks">
-        <label class="ds-check" id="ds-llm" data-tip="The page's script can ask this model for each viewer (window.ergaLLM). The server pays, with an hourly limit."><input type="checkbox" id="ds-llm-on">Viewers have access to the LLM API</label>
+        <label class="ds-check" id="ds-llm" data-tip="The document's script can ask this model for each viewer (window.ergaLLM). The server pays, with an hourly limit."><input type="checkbox" id="ds-llm-on">Viewers have access to the Document LLM API</label>
         <div class="ds-llm-opts">
           <select class="ds-llm-model" id="ds-llm-who" aria-label="Who may use it" hidden><option value="signed_in">Signed-in viewers</option><option value="all">All viewers</option></select>
           <select class="ds-llm-model" id="ds-llm-model" aria-label="The model"></select>
         </div>
+        <p class="ds-llm-note" id="ds-llm-note" role="status"></p>
       </div>
       <p class="ds-error" id="ds-agent-error" role="alert"></p>
     </section>
@@ -229,7 +236,8 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
     agentError = $("ds-agent-error"),
     llmOn = $<HTMLInputElement>("ds-llm-on"),
     llmModel = $<HTMLSelectElement>("ds-llm-model"),
-    llmWho = $<HTMLSelectElement>("ds-llm-who");
+    llmWho = $<HTMLSelectElement>("ds-llm-who"),
+    llmNote = $("ds-llm-note");
 
   /** A hover tip ("" removes it): the same words for a screen reader. */
   const tip = (el: Element, text: string) => {
@@ -266,7 +274,7 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
     docSeq = 0;
   /** The tree as last read: its pages and whether you may change it. */
   let tree: Tree | null = null;
-  /** Viewer settings, for anyone who may edit it (ls answers no one else): the page's model. */
+  /** Viewer settings, for anyone who may edit it (ls answers no one else): the Document LLM API. */
   let access: Access | null = null;
   let agentBusy = false;
 
@@ -394,16 +402,22 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
   function renderAgent() {
     agentSec.hidden = !access;
     if (!access) return;
-    llmOn.checked = access.pageLlm.on;
-    // The choices, and the model chosen now even when the server's keys no longer run it.
-    const { model, models } = access.pageLlm;
+    const api = access.llmApi;
+    llmOn.checked = api.on;
+    // The choices, and the model chosen now even when the server no longer offers it.
+    const { model, models } = api;
     const shown = models.includes(model) ? models : [model, ...models];
     if ([...llmModel.options].map((o) => o.value).join() != shown.join()) llmModel.innerHTML = modelOptions(shown);
     llmModel.value = model;
-    llmWho.value = access.pageLlm.who;
-    // Who may call it: only while it's on.
-    llmWho.hidden = !access.pageLlm.on;
-    llmOn.disabled = llmModel.disabled = llmWho.disabled = agentBusy;
+    llmWho.value = api.who;
+    // Who may call it: only while it's on. All viewers: only where the server lets those who aren't signed in.
+    llmWho.hidden = !api.on;
+    llmWho.querySelector<HTMLOptionElement>('option[value="all"]')!.disabled = !api.guests && api.who != "all";
+    llmModel.disabled = llmWho.disabled = agentBusy;
+    // The admin has the API off: nobody turns it on here (a document that has it on may turn it off).
+    llmOn.disabled = agentBusy || (!api.enabled && !api.on);
+    // Why it doesn't work now, in the server's words: the admin's switch, the chosen model, viewers who aren't signed in.
+    llmNote.textContent = api.note ?? "";
   }
   /** One of the switches (share_document's options): the server's answer says what holds now. */
   async function setReader(options: Record<string, boolean | string>) {
@@ -418,10 +432,10 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
     agentBusy = false;
     renderAgent();
   }
-  // Each sends only its own change: a model the server's keys no longer run stays chosen (share_document refuses it).
-  llmOn.addEventListener("change", () => setReader({ page_llm: llmOn.checked }));
-  llmModel.addEventListener("change", () => setReader({ page_llm_model: llmModel.value }));
-  llmWho.addEventListener("change", () => setReader({ page_llm_who: llmWho.value }));
+  // Each sends only its own change: a model the server no longer offers stays chosen (share_document refuses it).
+  llmOn.addEventListener("change", () => setReader({ llm_api: llmOn.checked }));
+  llmModel.addEventListener("change", () => setReader({ llm_api_model: llmModel.value }));
+  llmWho.addEventListener("change", () => setReader({ llm_api_who: llmWho.value }));
 
   /** How long "Restored v3. Undo" stays. */
   const UNDO_MS = 10_000;

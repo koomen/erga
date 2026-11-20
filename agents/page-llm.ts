@@ -1,17 +1,20 @@
-// A document's page calls a model as its visitor, where its owner turned it on (share_document page_llm): the page's
-// script has window.ergaLLM (client/inline/reader.ts), which asks the viewer around it (client/inline/viewer-llm.ts),
-// which calls this with the visitor's session. A published site's page, on its domain itself, calls it directly
-// (server/sites/).
+// The Document LLM API: a document's script calls a model as its viewer, where its author turned the API on
+// (share_document llm_api). The page's script has window.ergaLLM (client/inline/reader.ts), which asks the viewer
+// around it (client/inline/viewer-llm.ts), which calls this with the visitor's session. A published site's page, on its
+// domain itself, calls it directly (server/sites/).
 //
 // The routes are ROUTES, below: /api/llm, and the same on a custom domain, for the document published there only.
 //
 // The pages origin never gets the session or a key: only this site's own pages may call this (their Origin), with the
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
 // the whole server's (server/directory/page-llm.ts, PAGE_LLM_LIMITS); max_tokens is capped here. All the calls of a day
-// (UTC) together stop at the admin's spend limit (page_llm_daily_usd: "limit"; 0: "off"), and the admin's switch
-// page_llm_guests off gives every signed-out visitor "sign_in", whatever the document's setting says.
+// (UTC) together stop at the admin's spend limit (document_llm_daily_usd: "limit"; 0: "off"). The admin's other
+// settings hold here too, whatever the document's setting says: document_llm_api off gives "off"; a model in
+// document_llm_models_off gives "off", with words for the document's author; and document_llm_guests off gives every signed-out
+// visitor "sign_in" (on, a published site's visitors may call it also while public sharing is off: its pages are
+// always public; a document shared with anyone opens for nobody signed out then).
 //
-// Where the owner lets all viewers call it (page_llm_who "all"), a signed-out visitor may too, on a page anyone may open
+// Where the author lets all viewers call it (llm_api_who "all"), a signed-out visitor may too, on a page anyone may open
 // (the document the Erga domain serves, or a document shared with anyone), from the page only: the request must come
 // from this site (Origin, and Sec-Fetch-Site when the browser sends it) and carry the page's token
 // (server/sites/llm-token.ts: `token`, an hour old at most; a published site's pages and the viewer carry one). Such a
@@ -32,6 +35,8 @@ import { hex, sha256 } from "../shared/bytes.ts";
 import { callerAddress } from "../shared/http.ts";
 import {
   callStep,
+  ADMIN_OFF,
+  modelOff,
   PAGE_LLM_LIMITS,
   reserve,
   roleMay,
@@ -49,7 +54,7 @@ import { modelError, pageModel } from "./models.ts";
 
 export const isPageLlmPath = (path: string) => path == "/api/llm";
 
-/** The page model's path on a custom domain. */
+/** The API's path on a custom domain. */
 export const DOMAIN_LLM_PATH = "/_erga/api/llm";
 
 const Message = Schema.Struct({ role: Schema.Literals(["user", "assistant"]), content: Schema.String });
@@ -82,15 +87,23 @@ async function decide(
   const dir = p.directory;
   const doc = await dir.get(docId);
   const setting = doc ? await dir.pageLlm.setting(doc.id) : null;
-  if (!doc || !setting?.on) return { off: "The owner of this page didn't let it call a model." };
+  if (!doc || !setting?.on) return { off: NOT_ON };
   const seen = live == doc.id || (session ? roleMay(await dir.access(whoOf(session), doc), "open") : await dir.isPublic(doc.id));
-  if (!seen) return { off: "The owner of this page didn't let it call a model.", unseen: true };
-  if ((await dir.config.get("page_llm_daily_usd")) <= 0) return { off: "This server's admin turned pages' models off." };
+  if (!seen) return { off: NOT_ON, unseen: true };
+  const [enabled, budget, modelsOff] = await Promise.all([
+    dir.config.get("document_llm_api"),
+    dir.config.get("document_llm_daily_usd"),
+    dir.config.get("document_llm_models_off"),
+  ]);
+  if (!enabled || budget <= 0) return { off: ADMIN_OFF };
   const model = setting.model && isPageLlmModel(setting.model) ? setting.model : DEFAULT_PAGE_LLM_MODEL;
+  if (modelsOff.includes(model)) return { off: modelOff(model) };
   const cfg = await p.agentSettings();
   if ("missing" in cfg || !pageModel(cfg, model, 1)) return { off: `The server has no API key that runs ${MODELS[model].label} now.` };
   return { doc, model, who: setting.who };
 }
+
+const NOT_ON = "The author of this document didn't turn the Document LLM API on.";
 
 /** Who a signed-out visitor is counted as: "ip:" and a hash of their IP address (the log never keeps the address). */
 async function guestOf(request: Request): Promise<string> {
@@ -176,10 +189,10 @@ const askModel = ({ request, platform, visitor, allowed, live }: Asked): Route =
   // Signed out: a guest (their IP address), only where the owner lets all viewers call it and anyone may open the page,
   // from the page itself (its token).
   const guest = !visitor;
-  const guestsOn = yield* call(() => platform.directory.config.get("page_llm_guests"));
+  const guestsOn = guest && (yield* call(() => platform.directory.config.get("document_llm_guests")));
   if (guest && (!guestsOn || ("off" in now ? now.unseen : now.who != "all")))
     return json(
-      { error: "Sign in to use this page's model.", code: "sign_in", providers: yield* call(() => signInChoices(platform)) },
+      { error: "Sign in to use this document's LLM API.", code: "sign_in", providers: yield* call(() => signInChoices(platform)) },
       401
     );
   if ("off" in now) return fail("off", now.off);
@@ -187,7 +200,7 @@ const askModel = ({ request, platform, visitor, allowed, live }: Asked): Route =
     const site = request.headers.get("sec-fetch-site");
     if (site != null && site != "same-origin") return fail("error", "Forbidden", 403);
     if (!(yield* call(() => tokenOk(platform.secret, ask.token, ask.document, Date.now()))))
-      return fail("error", "Reload this page to use its model.", 403);
+      return fail("error", "Reload this page to use the Document LLM API.", 403);
   }
   const wrong = tooBig(ask);
   if (wrong) return fail("error", wrong);
@@ -199,23 +212,26 @@ const askModel = ({ request, platform, visitor, allowed, live }: Asked): Route =
       pageLlm.used(at, login),
       guest ? pageLlm.usedByGuests(at) : null,
       pageLlm.used(at),
-      platform.directory.config.get("page_llm_daily_usd"),
+      platform.directory.config.get("document_llm_daily_usd"),
     ])
   );
   if (!underLimit(mine, visitor ? PAGE_LLM_LIMITS.visitor : PAGE_LLM_LIMITS.guest))
-    return fail("limit", "You reached this hour's limit for pages' models. Try again later.", 429);
+    return fail("limit", "You reached this hour's limit for the Document LLM API. Try again later.", 429);
   if (guests && !underLimit(guests, PAGE_LLM_LIMITS.guests))
-    return fail("limit", "This page's model reached its limit for this hour. Try again later, or sign in.", 429);
+    return fail(
+      "limit",
+      "The Document LLM API reached this hour's limit for viewers who aren't signed in. Try again later, or sign in.",
+      429
+    );
   if (!underLimit(all, PAGE_LLM_LIMITS.server))
-    return fail("limit", "Pages' models reached this server's limit for this hour. Try again later.", 429);
-  if (budget <= 0) return fail("off", "This server's admin turned pages' models off.");
+    return fail("limit", "The Document LLM API reached this server's limit for this hour. Try again later.", 429);
   const cfg = yield* call(() => platform.agentSettings());
   const layer = "missing" in cfg ? null : pageModel(cfg, now.model, capped(ask.max_tokens));
   if (!layer) return fail("off", `The server has no API key that runs ${MODELS[now.model].label} now.`);
   // The call reserves the most it can cost, under the day's spend limit (server/directory/page-llm-call.ts).
   const reserved = reserve(charsOf(ask), capped(ask.max_tokens));
   const id = yield* call(() => pageLlm.start({ login, docId: now.doc.id, model: now.model, now: at, reserved, budget }));
-  if (!id) return fail("limit", "Pages' models reached this server's spend limit for today. Try again after midnight UTC.", 429);
+  if (!id) return fail("limit", "The Document LLM API reached this server's spend limit for today. Try again after midnight UTC.", 429);
   const prompt = Prompt.make([
     ...(ask.system ? [{ role: "system" as const, content: ask.system }] : []),
     ...ask.messages.map((m) => ({ role: m.role, content: [{ type: "text" as const, text: m.content }] })),
@@ -242,16 +258,16 @@ const askModel = ({ request, platform, visitor, allowed, live }: Asked): Route =
   );
   yield* call(() => pageLlm.write(id, state));
   if (answer._tag == "Failure") {
-    console.log(`page model: ${login} on ${now.doc.id} (${now.model}) failed: ${modelError(answer.failure)}`);
+    console.log(`document LLM API: ${login} on ${now.doc.id} (${now.model}) failed: ${modelError(answer.failure)}`);
     return fail("error", `The model failed: ${modelError(answer.failure)}`, 502);
   }
   const { text, input, output } = answer.success;
-  console.log(`page model: ${login} on ${now.doc.id} (${now.model}): ${input} in, ${output} out`);
+  console.log(`document LLM API: ${login} on ${now.doc.id} (${now.model}): ${input} in, ${output} out`);
   return json({ text });
   });
 
-const STATUS_ACTION = "Whether a document's page may call a model as its visitor (window.ergaLLM.status)";
-const ASK_ACTION = "A document's page calls a model as its visitor (window.ergaLLM.ask)";
+const STATUS_ACTION = "Whether a document's script may call the Document LLM API as its viewer (window.ergaLLM.status)";
+const ASK_ACTION = "A document's script calls the Document LLM API as its viewer (window.ergaLLM.ask)";
 const ROW = { domain: "none", exempt: PAGE_SCRIPT } as const;
 
 export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [

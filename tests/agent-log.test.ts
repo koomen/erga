@@ -64,7 +64,7 @@ test("the panel has one line for a turn's tool calls: the last call while the tu
 test("the card of a call that waits shows the tool's sentence and the whole call: the tool, its op, each argument", () => {
   const call = {
     tool: "documents",
-    args: { op: "share_document", login: "*", role: "editor", page_llm: true, list: [1, { a: "<b>" }], none: "" },
+    args: { op: "share_document", login: "*", role: "editor", llm_api: true, list: [1, { a: "<b>" }], none: "" },
   };
   expect(asked({ name: "share_document", detail: "Share /ada/notes with anyone who has the link (editor)", call })).toEqual({
     says: "Share /ada/notes with anyone who has the link (editor)",
@@ -72,7 +72,7 @@ test("the card of a call that waits shows the tool's sentence and the whole call
     args: [
       { key: "login", text: "*", cut: null },
       { key: "role", text: "editor", cut: null },
-      { key: "page_llm", text: "true", cut: null },
+      { key: "llm_api", text: "true", cut: null },
       { key: "list", text: '[1,{"a":"<b>"}]', cut: null },
       { key: "none", text: '""', cut: null },
     ],
