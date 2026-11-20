@@ -153,6 +153,7 @@ journey("an admin on the admin pages", () => {
       "Feedback",
       "Deploy",
       "Changelog",
+      "About",
     ]);
     // A mark on this window, for the steps after: still here after the links, so the pages came in place.
     await page.evaluate(() => {
@@ -432,7 +433,7 @@ journey("an admin on the admin pages", () => {
     expect(await stayed()).toBe(true);
   });
 
-  test("Deploy: Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch turns auto-deploy on", async () => {
+  test("Deploy: Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch turns auto-deploy on; About has the repository, the branch, the commit and its release", async () => {
     const sql = deployerSql(own!);
     const run = Effect.runPromise;
     const sha = (n: number) => String(n).repeat(40);
@@ -485,6 +486,13 @@ journey("an admin on the admin pages", () => {
     await page.waitForSelector("#auto-deploy");
     await clickOn(page, "li:has(#auto-deploy) .switch .track");
     await soon(async () => (await run(readControl(sql)))?.auto).toBe(true);
+    // About, the last link of the sidebar: the spec's repository and branch, the commit that the server runs (as the
+    // deployer's look saw it), and the release tag that GitHub (the pretend one) has at that commit.
+    await go("/admin/about", ".server dl");
+    const about = (await text(".server dl")).split("\n").map((line) => line.trim());
+    expect(about.slice(0, 7)).toEqual(["Repository", "github.com/example/erga", "Branch", "main", "Commit", "222222222222", "Change 2"]);
+    expect(about.slice(-2)).toEqual(["Release", "v0.2.0"]);
+    expect(await page.getAttribute('[data-about="release"] a', "href")).toBe("https://github.com/example/erga/releases/tag/v0.2.0");
     expect(await stayed()).toBe(true);
   });
 

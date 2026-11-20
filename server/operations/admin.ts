@@ -22,7 +22,7 @@ import {
 } from "../directory/index.ts";
 import { type AuthOps, type AuthStatus, type Provider, providerOf, PROVIDERS, usernameFacts, whyNot } from "../identity/index.ts";
 import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
-import { ACTIVE_DAYS, analytics, analyticsList, isSpan, pageLlmUsage, SPANS } from "../admin/index.ts";
+import { aboutOf, aboutRead, ACTIVE_DAYS, analytics, analyticsList, isSpan, pageLlmUsage, SPANS } from "../admin/index.ts";
 import { type Caller, iso, LOGIN, type Operation, OperationError, said } from "./operation.ts";
 
 const OAUTH = Object.keys(PROVIDERS) as Provider[];
@@ -50,11 +50,12 @@ export const ADMIN_OPERATIONS: Operation[] = [
   // ------------------------------------------------------------ the server's settings and API keys (admins)
   {
     name: "settings",
-    ui: "The settings on Sign-in (/admin/auth), Access (/admin/access), Documents (/admin/documents), Agents and models (/admin/agents) and Feedback (/admin/feedback), and Changelog (/admin/changes)",
+    ui: "The settings on Sign-in (/admin/auth), Access (/admin/access), Documents (/admin/documents), Agents and models (/admin/agents) and Feedback (/admin/feedback), Changelog (/admin/changes) and About (/admin/about)",
     label: "Read the server's settings",
     activity: "reading the server's settings",
     admin: true,
-    description: "The server's settings, API keys and the Document LLM API's use this month, or the settings' changelog (changes).",
+    description:
+      "The server's settings, API keys, version (about) and the Document LLM API's use this month, or the settings' changelog (changes).",
     parameters: Schema.Struct({
       changes: Schema.optionalKey(
         Schema.Boolean.annotate({
@@ -121,6 +122,8 @@ export const ADMIN_OPERATIONS: Operation[] = [
             : {}),
         })),
         keysNote: "An admin sets or replaces a key only on /admin/agents, never in a conversation.",
+        // The version this server runs, as /admin/about shows it.
+        ...(platform ? { about: aboutRead(await aboutOf(platform, who)) } : {}),
       };
     },
   },

@@ -4,6 +4,7 @@
 
 export { ADMIN_PAGES, adminGate, isAdminPath } from "./layout.ts";
 export { adminRoutes } from "./routes.ts";
+export { aboutOf, aboutRead } from "./about.ts";
 export { accessRows } from "./access.ts";
 export { ACTIVE_DAYS, analytics, analyticsList, isSpan, SPANS } from "./analytics.ts";
 export { agentsLlmModelsRows, agentsLlmOnRows, agentsLlmRows, agentsRows } from "./agents.ts";

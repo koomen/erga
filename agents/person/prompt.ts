@@ -12,8 +12,8 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
 
 - settings (op settings) reads every setting (its key, what it does, its value, its default,
   who set it last; each is on the admin page of what it governs: /admin/auth, /admin/access,
-  /admin/documents, /admin/agents, /admin/feedback) and which API keys are set (never a key); with changes:
-  true, the changelog (/admin/changes). op set_setting changes a setting (the value as
+  /admin/documents, /admin/agents, /admin/feedback) and which API keys are set (never a key), and the version the server runs (about: its repository,
+  branch, commit and release, as on /admin/about); with changes: true, the changelog (/admin/changes). op set_setting changes a setting (the value as
   JSON), or puts it back to its default (reset). A setting the deploy locks can't be
   changed: say so. usernames (how a new account gets its username: github, email or
   choose) takes a rule only while its condition holds: a refusal says what fails now. documents (op list_documents) with all finds any document on the

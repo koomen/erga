@@ -1,10 +1,10 @@
 // The layout every admin page shares (/admin, /admin/auth, /admin/access, /admin/documents, /admin/agents,
-// /admin/feedback, /admin/deploy, /admin/changes): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
+// /admin/feedback, /admin/deploy, /admin/changes, /admin/about): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
 // left; upper right the quick actions, with Share with an agent, whose menu is admin-share.js, built from
 // client/admin/admin-share.ts, and left of them the save mark: every setting saves by itself, and the mark says how far
 // it is, client/common/admin-save.ts), the person's agent in the lower left (server/pages/agent.ts, as on every page),
-// and, on the left, a sidebar that links to Analytics, Sign-in, Access, Documents, Agents and models, Feedback, Deploy and
-// the Changelog.
+// and, on the left, a sidebar that links to Analytics, Sign-in, Access, Documents, Agents and models, Feedback, Deploy,
+// the Changelog and About.
 //
 // The sidebar collapses to a rail of icons and expands again, with an animation, and this browser remembers which
 // (localStorage "erga:admin-sidebar"), set before the sidebar paints, so it doesn't jump. On a phone it is a row of
@@ -27,10 +27,10 @@ import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
 import { actingAdmin } from "../identity/index.ts";
 
-export type AdminSection = "analytics" | "auth" | "access" | "documents" | "agents" | "feedback" | "deploy" | "changes";
+export type AdminSection = "analytics" | "auth" | "access" | "documents" | "agents" | "feedback" | "deploy" | "changes" | "about";
 
 /**
- * The admin pages, in the sidebar's order. But for Analytics and the Changelog, each is one thing an admin governs,
+ * The admin pages, in the sidebar's order. But for Analytics, the Changelog and About, each is one thing an admin governs,
  * with every setting of it: how people sign in; who may use the server; the documents; the agents and the models;
  * feedback.
  */
@@ -82,6 +82,12 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
     label: "Changelog",
     path: "/admin/changes",
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4.2l2.8 1.8"/></svg>`,
+  },
+  {
+    key: "about",
+    label: "About",
+    path: "/admin/about",
+    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.6v.4"/></svg>`,
   },
 ];
 

@@ -3,6 +3,8 @@
 //
 //   GET  /login/oauth/authorize              GitHub's sign-in page: Authorize goes back to the app's callback with a code
 //   POST /login/oauth/access_token           the code for the person's token (the app's client id and secret checked)
+//   GET  /<owner>/<name>.git/info/refs       git's list of a repository's refs, for the About page's release
+//                                            (server/admin/about.ts): the same for each repository, REFS below
 //   /api/...                                 api.github.com: a person's profile (/users/<login>), the person (/user),
 //                                            their organizations (/user/memberships/orgs)
 //
@@ -35,6 +37,17 @@ export interface MockGithubState {
   /** The tokens minted for people. */
   tokens: { token: string; kind: "user"; login?: string }[];
 }
+
+/** Each repository's refs: main at commit 333…, the release v0.1.0 (a tag with a message) at 111… and v0.2.0 at 222…. */
+const REFS = [
+  "001e# service=git-upload-pack",
+  `0000015b${"3".repeat(40)} HEAD\0multi_ack side-band-64k`,
+  `003d${"3".repeat(40)} refs/heads/main`,
+  `003e${"a".repeat(40)} refs/tags/v0.1.0`,
+  `0041${"1".repeat(40)} refs/tags/v0.1.0^{}`,
+  `003e${"2".repeat(40)} refs/tags/v0.2.0`,
+  "0000",
+].join("\n");
 
 /** When the pretend GitHub's rate limit resets (x-ratelimit-reset, in seconds): 2030-01-01 12:34 UTC. */
 const RESET = Date.UTC(2030, 0, 1, 12, 34) / 1000;
@@ -111,6 +124,9 @@ export function mockGithub(opts: MockGithubOptions) {
       state.tokens.push({ token, kind: "user", login });
       return json({ access_token: token, token_type: "bearer", scope: "", expires_in: 28800 });
     }
+
+    // ---- github.com: a repository's refs, as git reads them
+    if (/^\/[^/]+\/[^/]+\.git\/info\/refs$/.test(path) && request.method == "GET") return new Response(REFS);
 
     // ---- api.github.com
     if (!path.startsWith("/api/")) return json({ message: "Not Found" }, 404);

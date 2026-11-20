@@ -46,6 +46,7 @@ import { accessPage } from "./access.ts";
 import { changesPage } from "./changes.ts";
 import { feedbackPage } from "./feedback.ts";
 import { deployLive, deployPage } from "./deploy.ts";
+import { aboutPage } from "./about.ts";
 
 /** Who asks, checked: an admin, in their browser. */
 interface Asked {
@@ -136,6 +137,14 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     action: "Read the same again, for the open page (Deploy)",
     domain: "admin",
     tool: "deploys",
+  },
+  {
+    method: "GET",
+    path: "/admin/about",
+    run: (a) => aboutPage(a.platform, a.session),
+    action: "Read the version this server runs: its repository, branch, commit and release (About)",
+    domain: "admin",
+    tool: "settings",
   },
   {
     method: "GET",

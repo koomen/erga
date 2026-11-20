@@ -255,3 +255,86 @@ test("a job's state is the one that the ops page of a machine reads from the sam
   expect(mine.map((j) => j.phase)).toEqual(["running", "stopped", "ok", "failed"]);
   expect(mine[3].error).toBe("the release was not healthy");
 });
+
+test("About: the repository, the branch, the commit and its release tag, as the server knows them; the settings' read has the same", async () => {
+  // GitHub's list of the repository's refs, as git reads it. v0.1.0 has a message: its own line, then its commit's.
+  const refs = [
+    "001e# service=git-upload-pack",
+    `0000015b${sha(4)} HEAD\0multi_ack side-band-64k`,
+    `003d${sha(4)} refs/heads/main`,
+    `003e${sha(9)} refs/tags/v0.1.0`,
+    `0041${sha(1)} refs/tags/v0.1.0^{}`,
+    `003e${sha(2)} refs/tags/v0.9.0`,
+    `003f${sha(2)} refs/tags/v0.10.0`,
+    `003d${sha(2)} refs/tags/nightly`,
+    "0000",
+  ].join("\n");
+  const asked: string[] = [];
+  let github: "up" | "down" = "up";
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!String(input).includes("/info/refs")) return real(input, init);
+    asked.push(String(input));
+    if (github == "down") throw new TypeError("no network");
+    return new Response(refs);
+  }) as typeof fetch;
+  try {
+    const { s, sql } = await world();
+    const about = async () =>
+      /<section class="server" aria-label="Version">.*?<\/section>/s.exec(await (await s.fetch("/admin/about")).text())![0];
+    const cell = (html: string, name: string) => new RegExp(`<dd data-about="${name}">(.*?)</dd>`, "s").exec(html)![1];
+    const read = async () => (await runTool(s, "settings")).result.about;
+    // The server runs commit 2, which the deployer's look saw: its full name, title and date. Its newest tag is the release.
+    let html = await about();
+    const out = (href: string, text: string) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+    expect(cell(html, "repository")).toBe(out("https://github.com/example/erga", "github.com/example/erga"));
+    expect(cell(html, "branch")).toBe(out("https://github.com/example/erga/tree/main", "main"));
+    expect(cell(html, "commit")).toStartWith(
+      `${out(`https://github.com/example/erga/commit/${sha(2)}`, "<code>222222222222</code>")}<span>Change 2</span><span class="src">`
+    );
+    expect(cell(html, "release")).toBe(out("https://github.com/example/erga/releases/tag/v0.10.0", "v0.10.0"));
+    expect(asked).toEqual(["https://github.com/example/erga.git/info/refs?service=git-upload-pack"]);
+    expect(await read()).toEqual({
+      repository: "github.com/example/erga",
+      branch: "main",
+      commit: { hash: sha(2), title: "Change 2", date: new Date(COMMITS[2].at).toISOString() },
+      release: "v0.10.0",
+    });
+    // A tag with a message is its commit's; a commit with no tag has no release.
+    s.platform.deploy.version = sha(1).slice(0, 12);
+    expect((await read()).release).toBe("v0.1.0");
+    s.platform.deploy.version = sha(3).slice(0, 12);
+    expect(cell(await about(), "release")).toStartWith("no release<span");
+    expect((await read()).release).toBe("no release");
+    // No answer from GitHub: the release is not known, and the rest stays.
+    github = "down";
+    html = await about();
+    expect(cell(html, "release")).toBe('not known<span class="src">GitHub did not give the repository&#39;s tags.</span>');
+    expect(cell(html, "commit")).toContain("Change 3");
+    expect((await read()).release).toBe("not known");
+    // A commit that the look did not see: its full name from the job log, with no title; else the deploy's short name.
+    s.platform.deploy.version = sha(7).slice(0, 12);
+    expect((await read()).commit).toEqual({ hash: sha(7).slice(0, 12) });
+    const job = await run(openJob(sql, { kind: "deploy", command: "bun erga deploy localhost", source: "terminal" }));
+    job.commit(sha(7));
+    expect(await job.end({ at: "done" })).toBeNull();
+    expect((await read()).commit).toEqual({ hash: sha(7) });
+    // Only an admin reads the page; the quick search and the sidebar have it.
+    expect((await s.fetch("/admin/about?user=ada")).status).toBe(404);
+    expect(await (await s.fetch("/admin/about")).text()).toContain('<a href="/admin/about" aria-current="page">');
+    // A server with no spec and no release: nothing is known, and GitHub is not asked.
+    asked.length = 0;
+    const none = server();
+    const bare = await (await none.fetch("/admin/about")).text();
+    for (const name of ["repository", "branch", "commit", "release"]) expect(cell(bare, name)).toStartWith("not known");
+    expect((await runTool(none, "settings")).result.about).toEqual({
+      repository: "not known",
+      branch: "not known",
+      commit: "not known",
+      release: "not known",
+    });
+    expect(asked).toEqual([]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
