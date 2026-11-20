@@ -67,9 +67,11 @@ export function testJobs(opts: { env?: Record<string, string | undefined>; root?
  * From 1 (a quiet machine) to 3. The larger of two measures as the run starts: the load of the last minute for each
  * core, and the cores that other processes use right now (`busy`: the load's minute is late when another test run has
  * just started). With other test runs on the machine, a step took 2 to 3 times as long, and a limit made for a quiet
- * machine failed it.
+ * machine failed it. A machine with fewer than 16 cores always has 3: the limits are the Mac Studio's, and GitHub's
+ * runner (4 cores) is slow in bursts with one journey on it and no load to measure (e2e/COVERAGE.md).
  */
 export function timeFactor(load: number, cores: number, busy = 0): number {
+  if (cores < 16) return 3;
   const n = Math.max(1, cores);
   return Math.min(3, Math.max(1, Math.round(Math.max(load / n, 1 + busy / n) * 10) / 10));
 }

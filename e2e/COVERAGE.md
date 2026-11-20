@@ -25,7 +25,10 @@ failed journey. The unit tests ran beside the journeys then, and they grew (1575
 (2026-11-20) the suite took 247 to 371 s, and journeys still failed on time, each a different one. So there the
 journeys run first, alone, and the other steps after them (`bun run test --journeys-first`): 2 runs took 294 and 288 s
 (the journeys 234 and 230 s, the unit tests 55 and 54 s), with no failure and 3 journeys over their budget, by 3 s at
-most. A failed run keeps what each failed journey showed (the run's artifact failed-journeys).
+most. Of the next 6 runs, 2 failed again, each on a 5 s wait of a different journey (the pointer on the page, the keys
+in the agent's box): the runner is slow in bursts with one journey on it. So a machine with fewer than 16 cores has
+the largest time factor for every wait and limit (3: e2e/helpers/cores.ts, timeFactor): 2 runs then passed, in 292 and
+287 s. A failed run keeps what each failed journey showed (the run's artifact failed-journeys).
 
 The browser has a process for each site, as a person's browser has (e2e/helpers/engine.ts). Measured beside the same
 suite without it (2026-11-13, 4 runs of each in turn, on a busy machine): 216 s of test time with it and 208 s

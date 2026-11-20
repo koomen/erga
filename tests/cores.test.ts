@@ -58,4 +58,6 @@ test("the time limits' factor: 1 on a quiet machine, the load or the busy cores 
   expect(got).toEqual([1, 1, 1.5, 2.5, 3, 3]);
   // The load's minute is late: 12 cores busy right now count, also with a low load.
   expect([timeFactor(2, 16, 0), timeFactor(2, 16, 12), timeFactor(30, 16, 4)]).toEqual([1, 1.8, 1.9]);
+  // A small machine (GitHub's runner has 4 cores) always has the most: it is slow in bursts with no load to measure.
+  expect([timeFactor(0, 4), timeFactor(0, 15), timeFactor(0, 16)]).toEqual([3, 3, 1]);
 });
