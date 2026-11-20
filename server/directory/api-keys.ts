@@ -106,12 +106,6 @@ export const DEPLOY_SECRETS = [
     description: "The secret of the GitHub OAuth app that signs people in.",
     why: "A wrong value stops every sign-in, the admin's too: the Sign-in page checks values with GitHub before it uses them.",
   },
-  {
-    env: "GITHUB_ISSUES_TOKEN",
-    service: "GitHub",
-    description: "Opens an issue for each feedback message. It needs only Issues: read and write.",
-    why: "It writes to a repository on GitHub.",
-  },
 ] as const;
 
 /** A deploy-time secret as an admin sees it: only whether the deploy has it. */

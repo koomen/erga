@@ -82,8 +82,6 @@ export default defineConfig(({ mode }) => ({
       // The GitHub OAuth app's client ID: each instance's own, from its entry's vars. Locally, ERGA_GITHUB_CLIENT_ID only.
       GITHUB_CLIENT_ID: mode == "development" ? local(process.env.ERGA_GITHUB_CLIENT_ID ?? "") : bindings.text(""),
       ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),
-      // Opens an issue in Erga's repository for each feedback (server/feedback.ts). Locally the pretend GitHub takes its own.
-      ...optionalSecret(mode, "GITHUB_ISSUES_TOKEN"),
       SESSION_SECRET: bindings.secret(),
       // Encrypts the secrets that the server stores (cloudflare/d1.ts, secretsKey). Locally, the session secret stands
       // in. A release that declares it reads this name: its deploy gives an older instance's key the name

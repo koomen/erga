@@ -160,7 +160,6 @@ test("the deploy's own secrets only as set or not", async () => {
     ["SESSION_SECRET", true],
     ["SECRETS_KEY", false],
     ["GITHUB_CLIENT_SECRET", true],
-    ["GITHUB_ISSUES_TOKEN", false],
   ]);
   expect(deployed.find((d) => d.env == "SECRETS_KEY")!.standIn).toBe(true);
   await expect(dir.credentials.deployed({ login: "mallory" })).rejects.toThrow(NotAllowed);

@@ -74,8 +74,6 @@ export interface Env {
    * Cloudflare, in the bindings of the Worker's version (deploy/cli/running.ts).
    */
   ERGA_DEPLOY?: string;
-  /** A Worker secret: a GitHub token that may open issues in the setting feedback_repository, for the feedback people send (server/feedback.ts). */
-  GITHUB_ISSUES_TOKEN?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
 

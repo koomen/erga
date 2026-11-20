@@ -1,11 +1,11 @@
 // Feedback: a person sends it from any page (the account menu's Send feedback) or asks their agent to (send_feedback),
-// while the setting feedback is on; the admins read it (feedback, and /admin/feedback), also when it is off. The server
-// keeps it, then opens a GitHub issue for it with no name (server/feedback.ts).
+// while the setting feedback is on. The server keeps it, and only the admins and their agents read it (feedback, and
+// /admin/feedback), also when the setting is off: each one is unresolved until an admin says that it is resolved
+// (set_feedback, the page's Resolve).
 
 import * as Schema from "effect/Schema";
-import { FEEDBACK_MAX } from "../directory/index.ts";
-import { fileFeedback, issuesRepo } from "../feedback.ts";
-import { type Caller, iso, type Operation, OperationError, platformOf, str } from "./operation.ts";
+import { FEEDBACK_MAX, FEEDBACK_STATUSES, type FeedbackRow, type FeedbackStatus } from "../directory/index.ts";
+import { iso, type Operation, OperationError, said, str } from "./operation.ts";
 
 /** The path of the page it was sent from: a path on this site, short; a URL gives its path. */
 export function pageOf(page: unknown): string | null {
@@ -19,11 +19,17 @@ export function pageOf(page: unknown): string | null {
   return path.startsWith("/") ? path.slice(0, 300) : null;
 }
 
-/** Opens the issues that wait, after the answer (the request's background work). */
-function fileLater(caller: Caller) {
-  const platform = platformOf(caller);
-  platform.edge.background(fileFeedback(caller.dir, platform.issues));
+const STATUS = Schema.Literals(FEEDBACK_STATUSES);
+
+/** The status an admin gave (`or`: when they gave none), or the reason it is not one. */
+function statusOf(status: unknown, or?: FeedbackStatus): FeedbackStatus {
+  const found = status == null ? or : FEEDBACK_STATUSES.find((s) => s == status);
+  if (!found) throw new OperationError({ message: `status: ${FEEDBACK_STATUSES.join(" or ")}.`, status: 400 });
+  return found;
 }
+
+/** A feedback as an admin's agent reads it: never who sent it. */
+const answerOf = (f: FeedbackRow) => ({ id: f.id, text: f.text, page: f.page, at: iso(f.at), status: f.status });
 
 export const FEEDBACK_OPERATIONS: Operation[] = [
   {
@@ -33,7 +39,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
     activity: "sending feedback",
     wide: true,
     off: async (caller) => ((await caller.dir.config.get("feedback")) ? null : "Feedback is off on this server."),
-    description: "Sends feedback about Erga to its makers: an issue on GitHub, without your name.",
+    description: "Sends feedback about Erga to this server's admins, without your name.",
     parameters: Schema.Struct({
       text: str(`The feedback, in the user's words (at most ${FEEDBACK_MAX} characters).`),
       page: Schema.optionalKey(str("The page it is about (a path or URL); your own agent may leave it out: the open one.")),
@@ -47,8 +53,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
         text,
         page: pageOf(args.page ?? caller.here),
       });
-      fileLater(caller);
-      return { sent: true, id, message: "Thanks, sent. It goes to Erga's issues on GitHub, without your name." };
+      return { sent: true, id, message: "Thanks, sent. This server's admins read it, without your name." };
     },
   },
   {
@@ -57,25 +62,26 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
     label: "Read the feedback",
     activity: "reading the feedback",
     admin: true,
-    description: "The feedback people sent, newest first, with each one's GitHub issue (none yet: it waits).",
-    parameters: Schema.Struct({}),
-    run: async (_args, caller) => {
-      const rows = await caller.dir.feedback.list(caller.who);
-      const issues = caller.platform?.issues;
-      const repo = await issuesRepo(caller.dir, issues);
-      if (caller.platform) fileLater(caller);
-      return {
-        issues:
-          repo ?? (issues ? "off: the setting feedback_repository is empty (set_setting)" : "off: the server has no GITHUB_ISSUES_TOKEN"),
-        feedback: rows.map((f) => ({
-          id: f.id,
-          text: f.text,
-          page: f.page,
-          at: iso(f.at),
-          issue: f.issue,
-          ...(f.issue != null && issues && repo ? { url: issues.link(repo, f.issue) } : {}),
-        })),
-      };
-    },
+    description: "The feedback people sent, newest first: the unresolved ones, or the resolved.",
+    parameters: Schema.Struct({
+      status: Schema.optionalKey(STATUS.annotate({ description: "Which ones: unresolved (the default) or resolved." })),
+    }),
+    run: async (args, caller) => ({
+      feedback: (await caller.dir.feedback.list(caller.who, statusOf(args.status, "unresolved"))).map(answerOf),
+    }),
+  },
+  {
+    name: "set_feedback",
+    ui: "Feedback (/admin/feedback): Resolve, Reopen",
+    label: "Resolve feedback",
+    activity: "changing a feedback's status",
+    admin: true,
+    description: "Marks one feedback as resolved, or as unresolved again.",
+    asks: (args) => `Mark the feedback ${said(args.id)} as ${said(args.status)}`,
+    parameters: Schema.Struct({
+      id: str("The feedback's id (feedback lists them), e.g. fb-a1b2c3d4."),
+      status: STATUS.annotate({ description: "Its new status." }),
+    }),
+    run: async (args, caller) => answerOf(await caller.dir.feedback.setStatus(caller.who, String(args.id ?? ""), statusOf(args.status))),
   },
 ];

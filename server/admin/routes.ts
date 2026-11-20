@@ -115,7 +115,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     method: "GET",
     path: "/admin/feedback",
     run: (a) => feedbackPage(a.platform, a.session),
-    action: "Read where feedback goes, and the feedback people sent, with each one's issue (Feedback)",
+    action: "Read the feedback people sent, the unresolved first, and resolve it (Feedback)",
     domain: "admin",
     tool: "feedback",
   },

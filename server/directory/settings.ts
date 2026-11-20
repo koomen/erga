@@ -182,20 +182,6 @@ export const SETTINGS = {
     default: true,
     parse: boolean,
   }),
-  feedback_repository: setting<string>({
-    label: "Feedback's repository",
-    description: 'The GitHub repository where "Send feedback" opens issues.',
-    values:
-      "owner/name (the default: Erga's own), or \"\": no issues, and the Feedback page keeps the feedback. An issue never has the sender's name.",
-    placeholder: "owner/name",
-    default: "koomen/erga",
-    parse: (v) => {
-      const repo = (v === null ? "" : text(200)(v)).replace(/^https:\/\/github\.com\//, "").replace(/\/+$/, "");
-      if (repo && !/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo))
-        throw new ConfigError({ message: "must be a GitHub repository: owner/name" });
-      return repo;
-    },
-  }),
   usernames: setting<UsernameRule>({
     label: "Usernames are assigned based on",
     description: "A name that is taken or reserved: that user chooses. Existing accounts keep their usernames.",

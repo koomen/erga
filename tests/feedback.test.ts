@@ -1,16 +1,12 @@
-// Feedback (server/feedback.ts, server/directory/feedback.ts, send_feedback): kept in the database first, then opened
-// as a GitHub issue with no name, on the pretend GitHub (dev/github-mock.ts). A failure keeps the feedback for the next
-// try; only admins list it.
+// Feedback (server/directory/feedback.ts, server/operations/feedback.ts): kept in the database, unresolved, for the
+// admins and their agents only; an admin says that one is resolved, or not after all. Nothing leaves the server.
 
 import { expect, test } from "bun:test";
-import { ISSUE_FAILS, ISSUES_TOKEN, mockGithub } from "../dev/github-mock.ts";
 import { Directory, NotAllowed } from "../server/directory/index.ts";
-import { fileFeedback, githubIssues, issueOf, issuesRepo } from "../server/feedback.ts";
 import { opsOf, toolsFor } from "../agents/tools.ts";
 import { systemPrompt } from "../agents/person/prompt.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
 import { accountMarkup, accountOf } from "../server/pages/index.ts";
-import type { Platform } from "../server/platform.ts";
 import { memory } from "./helpers/memory-sql";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -19,153 +15,87 @@ quietConsole();
 const ada = { login: "ada", admin: true };
 const bob = { login: "Bob" };
 
-const REPO = "owner/feedback-repo";
+const op = (name: string) => OPERATIONS.find((o) => o.name == name)!;
+const send = op("send_feedback"),
+  list = op("feedback"),
+  set = op("set_feedback");
 
-async function setup(token = ISSUES_TOKEN, repo: string | null = REPO) {
+function setup() {
   const sql = memory();
-  const dir = new Directory(sql, { admins: ["ada"] });
-  if (repo != null) await dir.config.set(ada, "feedback_repository", repo);
-  const gh = mockGithub({
-    app: { slug: "erga", clientId: "Iv1.x", clientSecret: "s" },
-    origin: "https://gh.test",
-    callback: "https://erga.test/cb",
-  });
-  const fetch = ((input: string | URL | Request, init?: RequestInit) =>
-    gh.fetch(new Request(input, init)).then((r) => r ?? new Response("", { status: 404 }))) as typeof globalThis.fetch;
-  const issues = githubIssues({ api: "https://gh.test/__github/api", web: "https://gh.test/__github", token }, fetch);
-  return { sql, dir, gh, issues, opened: () => gh.state.issues[REPO] ?? [] };
+  return { sql, dir: new Directory(sql, { admins: ["ada"] }) };
 }
 
-test("an issue: the start of the text as its title, the text and the feedback's id as its body, the label feedback", () => {
-  const long = "The share dialog closes when I press Tab in the login field, and then I lose what I typed";
-  const issue = issueOf({ id: "fb-abc", text: `  ${long}\nSecond line.\n` });
-  expect(issue.title.length).toBeLessThanOrEqual(60);
-  expect(issue.title).toStartWith("The share dialog closes when I press Tab");
-  expect(issue.title).toEndWith("…");
-  expect(issue.body).toBe(`${long}\nSecond line.\n\n---\nFeedback fb-abc`);
-  expect(issue.labels).toEqual(["feedback"]);
-  expect(issueOf({ id: "fb-abc", text: "Short" })).toMatchObject({ title: "Short", labels: ["feedback"] });
-});
-
-test("sent feedback is kept first, then opened as an issue with no name, and the row keeps the issue's number", async () => {
-  const { dir, issues, opened } = await setup();
-  const id = await dir.feedback.add(bob, { text: "Make the bars smaller", page: "/bob/plan" });
-  expect(id).toMatch(/^fb-[a-z0-9]{8}$/);
-  expect((await dir.feedback.list(ada))[0]).toMatchObject({ id, login: "bob", page: "/bob/plan", issue: null });
-  await fileFeedback(dir, issues);
-  expect(opened()).toEqual([
-    { number: 1, title: "Make the bars smaller", body: `Make the bars smaller\n\n---\nFeedback ${id}`, labels: [{ name: "feedback" }] },
-  ]);
-  // No name, login or page in the issue.
-  expect(JSON.stringify(opened())).not.toMatch(/bob|plan/i);
-  expect((await dir.feedback.list(ada))[0].issue).toBe(1);
-  // Opened once: a second try finds nothing to open.
-  await fileFeedback(dir, issues);
-  expect(opened()).toHaveLength(1);
-});
-
-test("if GitHub fails, the feedback stays with no issue, and a later try opens it", async () => {
-  const { dir, sql, issues, opened } = await setup("github_pat_wrong");
-  await dir.feedback.add(bob, { text: "One" });
-  await fileFeedback(dir, issues);
-  expect(opened()).toEqual([]);
-  expect((await dir.feedback.list(ada))[0].issue).toBeNull();
-  // A try a minute later, with a token that may.
-  sql.db.query("UPDATE feedback SET tried = tried - 61000").run();
-  const right = await setup();
-  await fileFeedback(dir, right.issues);
-  expect(right.opened().map((i) => i.title)).toEqual(["One"]);
-  expect((await dir.feedback.list(ada))[0].issue).toBe(1);
-}, 15_000);
-
-test("a 5xx from GitHub is tried again, then left for later", async () => {
-  const { dir, issues, opened } = await setup();
-  await dir.feedback.add(bob, { text: `Broken ${ISSUE_FAILS}` });
-  await fileFeedback(dir, issues);
-  expect(opened()).toEqual([]);
-  expect((await dir.feedback.list(ada))[0].issue).toBeNull();
-}, 15_000);
-
-test("feedback_repository is Erga's own until an admin sets it: an issue opens there; a set value stays; with no token, no issue", async () => {
-  const { dir, gh, issues, opened } = await setup(ISSUES_TOKEN, null);
-  expect(await dir.config.entry("feedback_repository")).toMatchObject({ value: "koomen/erga", default: "koomen/erga", source: "default" });
-  expect(await issuesRepo(dir, issues)).toBe("koomen/erga");
-  // A server with no GITHUB_ISSUES_TOKEN opens no issue: the feedback stays.
-  expect(await issuesRepo(dir, undefined)).toBeNull();
-  await dir.feedback.add(bob, { text: "To Erga" });
-  await fileFeedback(dir, undefined);
-  expect((await dir.feedback.list(ada))[0].issue).toBeNull();
-  await fileFeedback(dir, issues);
-  expect(gh.state.issues["koomen/erga"].map((i) => i.title)).toEqual(["To Erga"]);
-  // A value that an admin saved wins over the default, the empty one too.
-  expect(await dir.config.set(ada, "feedback_repository", REPO)).toMatchObject({ value: REPO, source: "set" });
-  expect(await issuesRepo(dir, issues)).toBe(REPO);
-  expect(await dir.config.set(ada, "feedback_repository", "")).toMatchObject({ value: "", source: "set" });
-  expect(await issuesRepo(dir, issues)).toBeNull();
-  expect(opened()).toEqual([]);
-  expect((await dir.config.reset(ada, "feedback_repository")).value).toBe("koomen/erga");
-});
-
-test("with an empty feedback_repository, the feedback stays with no issue; the setting takes only owner/name", async () => {
-  const { dir, issues, opened } = await setup(ISSUES_TOKEN, "");
-  await dir.feedback.add(bob, { text: "Kept" });
-  await fileFeedback(dir, issues);
-  expect(opened()).toEqual([]);
-  expect((await dir.feedback.list(ada))[0].issue).toBeNull();
-  await expect(dir.config.set(ada, "feedback_repository", "not a repo")).rejects.toThrow(/owner\/name/);
-  expect((await dir.config.set(ada, "feedback_repository", "https://github.com/owner/feedback-repo/")).value).toBe(REPO);
-  await fileFeedback(dir, issues);
-  expect(opened().map((i) => i.title)).toEqual(["Kept"]);
-  expect((await dir.config.set(ada, "feedback_repository", "")).value).toBe("");
-});
-
-test("two tries at once open each issue once", async () => {
-  const { dir, issues, opened } = await setup();
-  for (const text of ["A", "B", "C"]) await dir.feedback.add(bob, { text });
-  await Promise.all([fileFeedback(dir, issues), fileFeedback(dir, issues)]);
-  expect(
-    opened()
-      .map((i) => i.title)
-      .sort()
-  ).toEqual(["A", "B", "C"]);
-});
-
-test("send_feedback keeps the text, the page and how it was sent, answers thanks, and opens the issue after; feedback is for admins", async () => {
-  const { dir, issues, opened } = await setup();
-  const work: Promise<unknown>[] = [];
-  const platform = {
-    edge: { background: (w: Promise<unknown>) => work.push(w) },
-    issues,
-  } as unknown as Platform;
-  const send = OPERATIONS.find((o) => o.name == "send_feedback")!;
-  const list = OPERATIONS.find((o) => o.name == "feedback")!;
-  await expect(runOperation(send, { text: "  " }, { dir, who: bob, platform })).rejects.toThrow("Write the feedback first.");
-  await expect(runOperation(send, { text: "x".repeat(5001) }, { dir, who: bob, platform })).rejects.toThrow(/at most 5000/);
+test("send_feedback keeps the text, the page and how it was sent, unresolved, and answers thanks; only admins read it, never with a name", async () => {
+  const { dir } = setup();
+  await expect(runOperation(send, { text: "  " }, { dir, who: bob })).rejects.toThrow("Write the feedback first.");
+  await expect(runOperation(send, { text: "x".repeat(5001) }, { dir, who: bob })).rejects.toThrow(/at most 5000/);
   const answer = (await runOperation(
     send,
     { text: "Love it" },
-    { dir, who: { ...bob, via: "their agent" }, platform, here: "https://erga.test/bob/plan?x=1" }
-  )) as {
-    sent: boolean;
-    id: string;
-    message: string;
-  };
-  expect(answer).toMatchObject({ sent: true, message: expect.stringContaining("Thanks, sent.") });
-  await Promise.all(work);
-  expect(opened().map((i) => i.body)).toEqual([`Love it\n\n---\nFeedback ${answer.id}`]);
-  expect((await dir.feedback.list(ada))[0]).toMatchObject({ page: "/bob/plan", via: "their agent", issue: 1 });
-  const rows = (await runOperation(list, {}, { dir, who: ada, platform })) as { feedback: { url?: string }[] };
-  expect(rows.feedback[0].url).toBe(`https://gh.test/__github/${REPO}/issues/1`);
-  await expect(runOperation(list, {}, { dir, who: bob, platform })).rejects.toThrow(/admins only/);
+    { dir, who: { ...bob, via: "their agent" }, here: "https://erga.test/bob/plan?x=1" }
+  )) as { sent: boolean; id: string; message: string };
+  expect(answer).toMatchObject({
+    sent: true,
+    id: expect.stringMatching(/^fb-[a-z0-9]{8}$/),
+    message: expect.stringContaining("Thanks, sent."),
+  });
+  expect(await dir.feedback.list(ada)).toMatchObject([
+    { id: answer.id, text: "Love it", login: "bob", page: "/bob/plan", via: "their agent", status: "unresolved" },
+  ]);
+  // An admin's agent reads the text, the page, the time and the status: not who sent it.
+  const read = (await runOperation(list, {}, { dir, who: ada })) as { feedback: object[] };
+  expect(read.feedback).toEqual([{ id: answer.id, text: "Love it", page: "/bob/plan", at: expect.any(String), status: "unresolved" }]);
+  expect(JSON.stringify(read)).not.toMatch(/bob"|their agent/i);
+  await expect(runOperation(list, {}, { dir, who: bob })).rejects.toThrow(/admins only/);
   await expect(dir.feedback.list(bob)).rejects.toThrow(NotAllowed);
 });
 
+test("a feedback is unresolved until an admin resolves it, and unresolved again when they say so; each list has its own, newest first", async () => {
+  const { dir } = setup();
+  const [a, b, c] = [
+    await dir.feedback.add(bob, { text: "A", at: 1000 }),
+    await dir.feedback.add(bob, { text: "B", at: 2000 }),
+    await dir.feedback.add(bob, { text: "C", at: 3000 }),
+  ];
+  const texts = async (status?: string) =>
+    ((await runOperation(list, status ? { status } : {}, { dir, who: ada })) as { feedback: { text: string }[] }).feedback.map(
+      (f) => f.text
+    );
+  expect(await texts()).toEqual(["C", "B", "A"]);
+  expect(await texts("resolved")).toEqual([]);
+  // The agent of an admin asks first, in words; then the feedback is in the other list.
+  expect(set.asks!({ id: b, status: "resolved" })).toBe(`Mark the feedback ${b} as resolved`);
+  expect(await runOperation(set, { id: b, status: "resolved" }, { dir, who: ada })).toMatchObject({ id: b, text: "B", status: "resolved" });
+  await runOperation(set, { id: a, status: "resolved" }, { dir, who: ada });
+  expect(await texts()).toEqual(["C"]);
+  expect(await texts("resolved")).toEqual(["B", "A"]);
+  expect(await runOperation(set, { id: b, status: "unresolved" }, { dir, who: ada })).toMatchObject({ status: "unresolved" });
+  expect(await texts()).toEqual(["C", "B"]);
+  expect(await texts("resolved")).toEqual(["A"]);
+  // Only an admin, only a status there is, only a feedback there is.
+  await expect(runOperation(set, { id: c, status: "resolved" }, { dir, who: bob })).rejects.toThrow(/admins only/);
+  await expect(dir.feedback.setStatus(bob, c, "resolved")).rejects.toThrow(NotAllowed);
+  await expect(runOperation(set, { id: c, status: "done" }, { dir, who: ada })).rejects.toThrow("status: unresolved or resolved.");
+  await expect(runOperation(list, { status: "all" }, { dir, who: ada })).rejects.toThrow("status: unresolved or resolved.");
+  await expect(runOperation(set, { id: "fb-nothere0", status: "resolved" }, { dir, who: ada })).rejects.toMatchObject({
+    message: "No feedback fb-nothere0: the operation feedback lists them.",
+    status: 404,
+  });
+  expect(await texts()).toEqual(["C", "B"]);
+});
+
+test("a feedback kept before it had a status is unresolved", async () => {
+  const { sql, dir } = setup();
+  // (As the server before wrote it: the columns of then, and no status.)
+  sql.db
+    .query("INSERT INTO feedback (id, text, login, target, at, issue, tried) VALUES ('fb-old00000', 'Old', 'bob', '', 500, 7, 600)")
+    .run();
+  expect(await dir.feedback.list(ada)).toMatchObject([{ id: "fb-old00000", text: "Old", status: "unresolved" }]);
+});
+
 test("the setting feedback, off: no menu link, no tool and no word of it in the prompt, a message is refused; the admin still reads the kept ones", async () => {
-  const { dir, issues } = await setup();
-  const platform = { edge: { background: () => {} }, issues } as unknown as Platform;
-  const send = OPERATIONS.find((o) => o.name == "send_feedback")!;
-  const list = OPERATIONS.find((o) => o.name == "feedback")!;
-  const caller = { dir, who: bob, platform };
+  const { dir } = setup();
+  const caller = { dir, who: bob };
   const ops = async () => (await toolsFor(caller)).flatMap(opsOf);
   const menu = async () => accountMarkup(accountOf({ login: "bob", name: "Bob" }, false, await dir.config.get("feedback")), "/documents");
   // On, the default.
@@ -184,11 +114,15 @@ test("the setting feedback, off: no menu link, no tool and no word of it in the 
     message: "Feedback is off on this server.",
     status: 403,
   });
-  const kept = (await runOperation(list, {}, { dir, who: ada, platform })) as { feedback: { text: string }[] };
+  // The admin's agent still reads the kept ones, and resolves them.
+  const admin = { dir, who: ada };
+  expect((await toolsFor(admin)).flatMap(opsOf)).toEqual(expect.arrayContaining(["feedback", "set_feedback"]));
+  const kept = (await runOperation(list, {}, admin)) as { feedback: { id: string; text: string }[] };
   expect(kept.feedback.map((f) => f.text)).toEqual(["Kept"]);
+  expect(await runOperation(set, { id: kept.feedback[0].id, status: "resolved" }, admin)).toMatchObject({ status: "resolved" });
   // On again.
   await dir.config.set(ada, "feedback", true);
   expect(await ops()).toContain("send_feedback");
   await runOperation(send, { text: "Again" }, caller);
-  expect((await dir.feedback.list(ada)).map((f) => f.text).sort()).toEqual(["Again", "Kept"]);
+  expect((await dir.feedback.list(ada)).map((f) => f.text)).toEqual(["Again"]);
 });

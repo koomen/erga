@@ -114,7 +114,7 @@ export class Directory {
   readonly personKeys: PersonKeys;
   /** The Document LLM API (a document's script calls a model as its viewer): each document's setting, and the log of the calls. */
   readonly pageLlm: PageLlm;
-  /** The feedback people sent, and the GitHub issue of each. */
+  /** The feedback people sent, and the status of each. */
   readonly feedback: Feedback;
   /** The instance's deploys and rollbacks, and what it and its deployer tell each other (the Deploy page). */
   readonly deploys: Deploys;

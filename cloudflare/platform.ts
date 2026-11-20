@@ -14,7 +14,6 @@ import { sessionOf, type SignIn, signInOf } from "../server/identity/index.ts";
 import { directoryOf, secretsKey, grantsOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
-import { githubIssues } from "../server/feedback";
 import { ERGA } from "../server/sites/index.ts";
 import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
@@ -115,17 +114,8 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const directory = directoryOf(env);
   const host = (doc: Route) => documentOf(env, doc.id);
   const settings = settingsOf(env);
-  // Local development only (the tests): a stand-in for GitHub.
-  const standIn = (value: string) => (env.DEV_LOGIN && value ? value : null);
   // The server's own storage: its object.
   const own = () => env.OWN.getByName("own");
-  // Feedback's issues (server/feedback.ts), with GITHUB_ISSUES_TOKEN, in the setting feedback_repository. Locally (the
-  // tests): on the pretend GitHub (dev/github-mock.ts), which takes its own token (ISSUES_TOKEN).
-  const pretend = standIn(settings.origins.github);
-  const issuesToken = env.GITHUB_ISSUES_TOKEN?.trim() || (pretend ? "github_pat_mock_issues" : "");
-  const issues = issuesToken
-    ? githubIssues({ api: pretend ? `${pretend}/api` : "https://api.github.com", web: pretend ?? "https://github.com", token: issuesToken })
-    : undefined;
   const p: Platform = {
     directory,
     sessionOf: (request) => sessionOf(p, request),
@@ -149,7 +139,6 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     site: (domain) => siteOf(env, domain),
     news: env.NEWS.getByName("news"),
     personAgent: (login: string) => env.AGENTS.getByName(login),
-    ...(issues ? { issues } : {}),
     agentSettings: (login?: string) => agentSettingsFrom(env, env.DB ? directoryOf(env) : null, login),
     edge: {
       cache: edgeCache(env),

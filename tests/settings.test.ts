@@ -64,7 +64,7 @@ const platform = {
       list: async () => [],
       deployed: async () => [
         { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions.", why: "", set: true, standIn: false },
-        { env: "GITHUB_ISSUES_TOKEN", service: "GitHub", description: "Opens issues.", why: "", set: false, standIn: false },
+        { env: "GITHUB_CLIENT_SECRET", service: "GitHub", description: "Signs people in.", why: "", set: false, standIn: false },
       ],
     },
     get: async () => null,
@@ -103,9 +103,9 @@ test("each setting has one place: a page's list, or a control of its own; each p
   const placed: string[] = [...Object.values(PAGE_SETTINGS).flat(), ...OWN];
   expect([...placed].sort()).toEqual(Object.keys(SETTINGS).sort());
   expect(new Set(placed).size).toBe(placed.length);
-  const feedback = deploySection(await platform.directory.credentials.deployed({ login: "bob" }), ["GITHUB_ISSUES_TOKEN"]);
-  expect(feedback).toContain(`<li class="deploy-secret" data-env="GITHUB_ISSUES_TOKEN">`);
-  expect(feedback).not.toContain(`data-env="SESSION_SECRET"`);
+  const signIn = deploySection(await platform.directory.credentials.deployed({ login: "bob" }), ["GITHUB_CLIENT_SECRET"]);
+  expect(signIn).toContain(`<li class="deploy-secret" data-env="GITHUB_CLIENT_SECRET">`);
+  expect(signIn).not.toContain(`data-env="SESSION_SECRET"`);
   // The pages that are gone: their settings are on the page of what they govern.
   for (const gone of ["/admin/settings", "/admin/users"]) expect((await fetch(`http://localhost:${server.port}${gone}`)).status).toBe(404);
 });

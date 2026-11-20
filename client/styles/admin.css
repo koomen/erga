@@ -271,14 +271,20 @@ section.everyone li.off .switch { cursor: default; }
 .changes .title { color: var(--fg-strong); }
 .changes-empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--rule); border-radius: 12px; text-align: center; font-size: 13.5px; color: var(--soft); }
 
-/* The Feedback page: each feedback's text, then when, the page, its id and its GitHub issue. */
+/* The Feedback page: each feedback's text, then when, the page and its id; at its right, Resolve or Reopen. The
+   resolved ones are under the unresolved, closed until a click on their line. */
 .feedback { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--rule); }
 .feedback[hidden] { display: none; }
-.feedback > li { padding: 12px 4px; border-top: 1px solid var(--rule); }
+.feedback > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; padding: 12px 4px; border-top: 1px solid var(--rule); }
 .feedback .text { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--fg-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
-.feedback .meta { margin: 6px 0 0; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; }
-.feedback .meta .badge { margin: 0; }
-.feedback .issue { font-weight: 600; color: var(--link); }
+.feedback .meta { grid-column: 1; margin: 6px 0 0; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; }
+.feedback .resolve { grid-column: 2; grid-row: 1 / span 2; }
+.feedback-lists { margin-top: 32px; }
+.feedback-lists .resolved { margin: 20px 0 0; }
+.feedback-lists .resolved[hidden] { display: none; }
+.feedback-lists .resolved > summary { padding: 4px; font-size: 13.5px; font-weight: 500; color: var(--fg-strong); cursor: pointer; }
+.feedback-lists .resolved > .feedback { margin-top: 8px; }
+.feedback-lists .resolved .text { color: var(--fg); }
 .changes-more { margin: 12px 4px 0; font-size: 13px; color: var(--soft); }
 
 /* The Document LLM API's use (/admin/agents): this month's documents with their spend and the total, then the part of

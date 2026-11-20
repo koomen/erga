@@ -2,7 +2,8 @@
 // the list of users, the settings and the access rules of the whole server, and reads the whole server's counts.
 // The path: the admin pages as one page. A link shows the next page in place, styled. Users, Settings, Access and the
 // Changelog follow changes that an agent makes with an admin token, with no reload. Feedback sent from the account
-// menu comes to the Feedback page, with its issue on the pretend GitHub; the page's switch turns Send feedback off and on. Deploy
+// menu comes to the Feedback page, unresolved, where the admin resolves it and their agent reopens it; the page's switch
+// turns Send feedback off and on. Deploy
 // shows the server's own deploys: Deploy on a commit asks the server's deployer, played here by the deployer's own code,
 // and its job shows as it runs. Analytics shows the day's counts. Then the
 // editor (the admin pages' bars look as its bars, and Send feedback works from a document), and the pages in dark mode.
@@ -22,13 +23,6 @@ import { markCard, markOf, marksSeen, markThere, watchMark } from "../helpers/sa
 // (The scripted model: the agent's pane is on the pages.)
 // (It runs the release 222222222222: the Deploy page's live commit.)
 const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script", ERGA_VERSION: "2".repeat(12) } });
-
-interface Issue {
-  number: number;
-  title: string;
-  body: string;
-  labels: { name: string }[];
-}
 
 /** Each bar's and the agent's glass, and their boxes, by the selectors in the page (the editor's, or an app page's). */
 const looks = (page: Page, sel: { left: string; right: string }) =>
@@ -78,8 +72,10 @@ journey("an admin on the admin pages", () => {
     const all = await days();
     return all.find((d) => d.views) ?? all.at(-1)!;
   };
-  /** The issues the pretend GitHub opened in the server's pretend repository. */
-  const issues = async (): Promise<Issue[]> => (await fetch(`${root}/__github/api/repos/erga/pretend/issues`)).json();
+  /** The feedback an admin's agent reads: the unresolved ones, or the resolved. */
+  const feedback = async (status?: "resolved") =>
+    (await agent<{ feedback: { id: string; text: string; page: string | null; status: string }[] }>("feedback", status ? { status } : {}))
+      .feedback;
   /** A link of the sidebar shows another admin page in place: its path, and what the page has. */
   const go = async (path: string, shows: string) => {
     await page.click(`.admin-side a[href="${path}"]`);
@@ -158,7 +154,7 @@ journey("an admin on the admin pages", () => {
     await page.evaluate(() => {
       (window as unknown as { stayed: boolean }).stayed = true;
     });
-    await agent("set_setting", { key: "feedback_repository", value: "erga/pretend" });
+    await agent("set_setting", { key: "max_project_gb", value: 6 });
     await soon(() => rows.seen()).toBe(1);
     await go("/admin/agents", "li.provider .about");
     await rows.pass();
@@ -221,15 +217,7 @@ journey("an admin on the admin pages", () => {
     expect(await page.evaluate(() => document.querySelector<HTMLElement>("ol.users")!.dataset.mark)).toBe("same");
   });
 
-  test("Feedback, Documents, Agents and models and Access follow an agent's changes: a setting's value, No limit, a rule added and removed, Anyone's level, the public switch", async () => {
-    // Feedback's repository is a setting on the Feedback page, with the value that the first step set.
-    await go("/admin/feedback", "[data-key=feedback_repository]");
-    const repository = await page.evaluate(() => {
-      const row = document.querySelector<HTMLElement>("[data-key=feedback_repository]");
-      return row ? { text: row.innerText, value: row.querySelector<HTMLInputElement>("#set-feedback_repository")?.value } : null;
-    });
-    expect(repository?.text).toContain("Feedback's repository");
-    expect(repository?.value).toBe("erga/pretend");
+  test("Documents, Agents and models and Access follow an agent's changes: a setting's value, No limit, a rule added and removed, Anyone's level, the public switch", async () => {
     await go("/admin/documents", 'li[data-live="setting:delete_docs_after_hours"]');
     const hours = () =>
       page.evaluate(
@@ -346,44 +334,64 @@ journey("an admin on the admin pages", () => {
     await soon(top).toContain(`${group} added: Can view documents`);
   });
 
-  test("Send feedback in the account menu: type, Send, thanks; the issue on GitHub has no name; the Feedback page lists it with its issue", async () => {
+  test("Send feedback in the account menu: type, Send, thanks; the Feedback page lists it, unresolved; Resolve saves by itself and moves it to Resolved; the agent reopens it", async () => {
     await clickOn(page, "[data-erga-account] button");
     await clickOn(page, "#erga-account-menu a[href='#feedback']");
     await page.waitForSelector("#erga-feedback[open]");
     // The menu closes behind it.
     expect(await page.evaluate(() => document.getElementById("erga-account-menu")!.hidden)).toBe(true);
-    expect(await page.textContent("#erga-feedback")).toContain("Your text goes to Erga's issue list on GitHub, without your name.");
+    expect(await page.textContent("#erga-feedback")).toContain("Your text goes to this server's admins, without your name.");
     const first = `The documents list should sort by name, and keep the order I chose ${Date.now()}`,
       text = `${first}\nAnd remember it.`;
     await sendFeedback(text.split("\n"));
-    // The issue: the first line as its title, the text and the feedback's id as its body, the label; no name, no page.
-    const issue = await until(
-      async () => (await issues()).find((i) => i.body.startsWith(text)),
-      10_000,
-      "the pretend GitHub has the issue"
-    );
-    expect(issue!.title).toBe(first.slice(0, 59).trimEnd() + "…");
-    expect(issue!.body).toMatch(new RegExp(`^${text}\\n\\n---\\nFeedback fb-[a-z0-9]{8}$`));
-    expect(issue!.labels).toEqual([{ name: "feedback" }]);
-    expect(JSON.stringify(issue)).not.toMatch(/tester|\/admin/);
 
-    // The admins' Feedback page: the text, the page it came from, the issue's link.
+    // The admins' Feedback page: the text and the page it came from, under Unresolved, with no name; nothing is resolved.
     await go("/admin/feedback", `.feedback li:has-text("${first}")`);
-    const row = await page.evaluate((first) => {
-      const li = [...document.querySelectorAll<HTMLElement>(".feedback li")].find((l) => l.innerText.includes(first))!;
-      return {
-        text: li.querySelector<HTMLElement>(".text")!.innerText,
-        page: li.querySelector(".page")?.textContent,
-        issue: li.querySelector<HTMLAnchorElement>("a.issue")?.textContent,
-        href: li.querySelector<HTMLAnchorElement>("a.issue")?.getAttribute("href"),
-      };
-    }, first);
-    expect(row).toEqual({
-      text,
-      page: "/admin/changes",
-      issue: `#${issue!.number}`,
-      href: expect.stringMatching(new RegExp(`/__github/erga/pretend/issues/${issue!.number}$`)),
+    const lists = () =>
+      page.evaluate(() => {
+        const rows = (status: string) =>
+          [...document.querySelectorAll<HTMLElement>(`.feedback[data-status=${status}] > li`)].map((li) => ({
+            // (The words, also of a row in the closed list.)
+            text: li.querySelector(".text")!.textContent,
+            page: li.querySelector(".page")?.textContent,
+            button: li.querySelector("button")!.textContent,
+          }));
+        const resolved = document.querySelector<HTMLDetailsElement>("details.resolved")!;
+        return {
+          unresolved: rows("unresolved"),
+          none: document.querySelector<HTMLElement>(".feedback-lists .changes-empty")!.offsetWidth > 0,
+          resolved: resolved.offsetWidth
+            ? { line: resolved.querySelector("summary")!.innerText, open: resolved.open, rows: rows("resolved") }
+            : null,
+        };
+      });
+    expect(await lists()).toEqual({ unresolved: [{ text, page: "/admin/changes", button: "Resolve" }], none: false, resolved: null });
+    expect(await page.innerText(".feedback-lists")).not.toContain("tester");
+    // The admin's agent reads the same, with no name.
+    const [sent] = await feedback();
+    expect([sent.text, sent.page, sent.status]).toEqual([text, "/admin/changes", "unresolved"]);
+    expect(JSON.stringify(sent)).not.toContain("tester");
+
+    // Resolve: it saves by itself (the save mark), and the message goes under Resolved, which is closed until a click.
+    await watchMark(page);
+    await clickOn(page, ".feedback[data-status=unresolved] button.resolve");
+    await soon(lists).toEqual({
+      unresolved: [],
+      none: true,
+      resolved: { line: "Resolved (1)", open: false, rows: [{ text, page: "/admin/changes", button: "Reopen" }] },
     });
+    await soon(() => markOf(page)).toBe("saved");
+    expect(await marksSeen(page)).toEqual(["saving", "saved"]);
+    expect(await feedback()).toEqual([]);
+    expect(await feedback("resolved")).toEqual([{ ...sent, status: "resolved" }]);
+    await clickOn(page, "details.resolved summary");
+    await page.waitForSelector(".feedback[data-status=resolved] button.resolve:visible");
+
+    // The admin's agent says that it is not resolved after all: the page, shown again, has it under Unresolved.
+    expect(await agent<object>("set_feedback", { id: sent.id, status: "unresolved" })).toEqual(sent);
+    await go("/admin/changes", "ol.changes");
+    await go("/admin/feedback", `.feedback[data-status=unresolved] li:has-text("${first}")`);
+    expect(await lists()).toEqual({ unresolved: [{ text, page: "/admin/changes", button: "Resolve" }], none: false, resolved: null });
     expect(await stayed()).toBe(true);
   });
 
@@ -529,8 +537,7 @@ journey("an admin on the admin pages", () => {
     await clickOn(page, "#account-feedback");
     const text = `From the editor ${Date.now()}`;
     await sendFeedback([text]);
-    const issue = await until(async () => (await issues()).find((i) => i.title == text), 10_000, "the pretend GitHub has the issue");
-    expect(issue!.body).toContain(text);
+    await soon(async () => (await feedback()).map((f) => f.text)).toContain(text);
   });
 
   test("in dark mode: dark glass on the bars, the switch's circle in the page's colour, and a link in the editor's link colour", async () => {

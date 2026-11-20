@@ -179,7 +179,7 @@ export const KINDS: readonly {
   {
     name: "settings",
     description: "The server's settings, API keys, changelog and feedback, how people sign in, its deploys (admins).",
-    ops: ["settings", "set_setting", "clear_api_key", "sign_in", "set_sign_in", "feedback", "deploys", "deploy"],
+    ops: ["settings", "set_setting", "clear_api_key", "sign_in", "set_sign_in", "feedback", "set_feedback", "deploys", "deploy"],
   },
   {
     name: "people",
