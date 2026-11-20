@@ -11,7 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AiError, LanguageModel, type Prompt, type Response } from "effect/ai";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient } from "effect/http";
 import type { AnthropicLanguageModel } from "@effect/ai-anthropic";
 import { CREDENTIALS, type Credentials, type PersonKeys } from "../server/directory/index.ts";
 import {
@@ -177,7 +177,7 @@ const failing = (why: string): Layer.Layer<LanguageModel.LanguageModel> => {
 /**
  * The model behind a conversation, for one turn, with the key and effort as they are now; or the scripted model.
  * Claude runs on Effect AI's Anthropic provider: adaptive thinking with summaries (so the panel can show them), the
- * effort, and fast mode (Opus only: the `fast-mode-2026-02-01` beta and `speed: "fast"`); tools go as plain JSON
+ * effort, and fast mode (`speed: "fast"`: Opus 5.5 and Fable 5.2 take it with no beta header); tools go as plain JSON
  * Schema, not strict. The other providers' models run through the Pi router (agents/pi-model.ts).
  */
 export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Layer.Layer<LanguageModel.LanguageModel> {
@@ -185,7 +185,7 @@ export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Lay
   const m: (typeof MODELS)[ModelChoice] & { fast?: boolean } = MODELS[choice];
   const apiKey = keyFor(cfg, choice);
   if (!apiKey) return failing(`${m.label} has no key to run it now`);
-  if (m.provider != "anthropic") return pi({ provider: m.provider, id: m.id, apiKey, effort: cfg.effort });
+  if (m.provider != "anthropic") return pi({ provider: m.provider, id: m.id, apiKey, effort: cfg.effort, fast: m.fast });
   const config = {
     max_tokens: 64_000,
     thinking: { type: "adaptive", display: "summarized" },
@@ -193,24 +193,19 @@ export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Lay
     structuredOutputs: false,
     ...(m.fast ? { speed: "fast" } : {}),
   } as unknown as AnthropicConfig;
-  return anthropic(m.id, config, apiKey, m.fast ? withBeta(FAST_BETA) : undefined);
+  return anthropic(m.id, config, apiKey);
 }
 
 // The providers' code is large (the Anthropic API's schemas, Pi's catalog of models), and only a turn needs it: each
 // loads at its first use, in a module of its own, so the Worker starts without it (tests/worker-start.test.ts).
 
 /** Claude on Effect AI's Anthropic provider. */
-const anthropic = (
-  model: string,
-  config: AnthropicConfig,
-  apiKey: Redacted.Redacted<string>,
-  transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient
-): Layer.Layer<LanguageModel.LanguageModel> =>
+const anthropic = (model: string, config: AnthropicConfig, apiKey: Redacted.Redacted<string>): Layer.Layer<LanguageModel.LanguageModel> =>
   Layer.unwrap(
     Effect.promise(() => import("@effect/ai-anthropic")).pipe(
       Effect.map(({ AnthropicClient, AnthropicLanguageModel }) =>
         AnthropicLanguageModel.layer({ model, config }).pipe(
-          Layer.provide(AnthropicClient.layer({ apiKey, transformClient })),
+          Layer.provide(AnthropicClient.layer({ apiKey })),
           Layer.provide(FetchHttpClient.layer),
           // The fetch of the moment: Effect's default is the first one it saw (a test's stub, say).
           Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))
@@ -225,16 +220,16 @@ const pi = (options: Parameters<typeof piLanguageModel>[0]): Layer.Layer<Languag
 
 /**
  * The model a document's page calls as its visitor (agents/page-llm.ts), with the server's key, answering at most
- * `maxTokens`, with no thinking and no tools: Claude on Effect AI's Anthropic provider, OpenAI's models through Pi; or the
- * scripted model. Null: the server's keys don't run `choice` for pages now.
+ * `maxTokens`, with no thinking and no tools, in fast mode if `choice` is a fast one: Claude on Effect AI's Anthropic
+ * provider, OpenAI's models through Pi; or the scripted model. Null: the server's keys don't run `choice` for pages now.
  */
 export function pageModel(cfg: AgentConfig, choice: ModelChoice, maxTokens: number): Layer.Layer<LanguageModel.LanguageModel> | null {
   if (isScript(cfg)) return scriptModel(MODELS[choice].label);
-  const m = MODELS[choice];
+  const m: (typeof MODELS)[ModelChoice] & { fast?: boolean } = MODELS[choice];
   const apiKey = pageLlmChoices({ ...keySetup(cfg), own: [] }).includes(choice) ? cfg.server[m.provider] : undefined;
   if (!apiKey) return null;
-  if (m.provider == "openai") return pi({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens });
-  const config = { max_tokens: maxTokens, structuredOutputs: false } as unknown as AnthropicConfig;
+  if (m.provider == "openai") return pi({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens, fast: m.fast });
+  const config = { max_tokens: maxTokens, structuredOutputs: false, ...(m.fast ? { speed: "fast" } : {}) } as unknown as AnthropicConfig;
   return anthropic(m.id, config, apiKey);
 }
 
@@ -263,15 +258,6 @@ export function messagesFor<M extends { role: string; content: unknown }>(
 }
 
 type AnthropicConfig = NonNullable<Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]>;
-const FAST_BETA = "fast-mode-2026-02-01";
-
-/** Requests with `beta` added to the betas the provider asks for. */
-const withBeta = (beta: string) =>
-  HttpClient.mapRequest((req) => {
-    const had = req.headers["anthropic-beta"];
-    return HttpClientRequest.setHeader(req, "anthropic-beta", had ? `${had},${beta}` : beta);
-});
-
 type Piece = { type?: string; mediaType?: string; data?: unknown; modelOutput?: readonly Piece[] };
 const isPicture = (p: Piece) => p.type == "file" && typeof p.mediaType == "string" && p.mediaType.startsWith("image/");
 /** The pictures of a message: a person's, and those in a tool's result. */

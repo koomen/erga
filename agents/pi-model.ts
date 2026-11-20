@@ -225,6 +225,8 @@ export function piLanguageModel(o: {
   apiKey: Redacted.Redacted<string>;
   effort: string | null;
   maxTokens?: number;
+  /** OpenAI's Fast mode: `service_tier: "fast"`, at two times the price. */
+  fast?: boolean;
 }): Layer.Layer<LanguageModel.LanguageModel> {
   const stream = (options: LanguageModel.ProviderOptions): Stream.Stream<Part, AiError.AiError> =>
     Stream.unwrap(
@@ -241,6 +243,8 @@ export function piLanguageModel(o: {
           ...(model.api == "google-generative-ai" ? {} : { fetch: ((input, init) => globalThis.fetch(input, init)) as typeof fetch }),
           ...(model.reasoning && o.effort ? { reasoning: LEVELS[o.effort] ?? "medium" } : {}),
           ...(o.maxTokens ? { maxTokens: o.maxTokens } : {}),
+          // Trap: Pi's streamSimple passes no service tier on, so the request's body gets it here.
+          ...(o.fast ? { onPayload: (body: unknown) => ({ ...(body as object), service_tier: "fast" }) } : {}),
         });
         const meta = { provider: model.provider, api: model.api, model: model.id };
         return Stream.fromAsyncIterable(events, (e) => failed("streamText", e instanceof Error ? e.message : String(e))).pipe(

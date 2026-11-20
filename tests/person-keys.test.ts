@@ -113,7 +113,14 @@ test("the agent's settings: the database reads start together, so their stalls d
   await new Promise((r) => setTimeout(r, 0));
   expect(started.sort()).toEqual(["agent_keys", "agent_models_off", "anthropic", "google", "openai", "openrouter", "own"]);
   go();
-  expect(usable((await settings) as AgentConfig).map((u) => u.choice)).toEqual(["haiku", "sonnet", "opus", "opus-fast", "fable"]);
+  expect(usable((await settings) as AgentConfig).map((u) => u.choice)).toEqual([
+    "haiku",
+    "sonnet",
+    "opus",
+    "opus-fast",
+    "fable",
+    "fable-fast",
+  ]);
 });
 
 test("the operations: the person's own list and remove; an agent never sees a key", async () => {

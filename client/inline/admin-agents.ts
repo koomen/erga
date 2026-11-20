@@ -2,7 +2,8 @@
 // the top, the agent_keys setting: the providers show only when the server provides keys); for each provider, its key:
 // a key that is set shows as its last 4 characters, with Replace, which opens the box to paste another, and Remove; a
 // key pasted in the box sets or replaces the key (the answer never holds the key, and the row is drawn again); and its
-// models' boxes (agent_models_off: every model not ticked, on every row). Each saves by itself, with no Save
+// models' boxes (agent_models_off: every model not ticked, on every row; and the models that were off and have no box,
+// their provider with no key: they stay off). Each saves by itself, with no Save
 // button (client/common/autosave.ts), and the save mark left of the buttons' bar says how far it is: refused, the value
 // stays, with the server's reason under it. The daily token limit's row is a setting row: admin-settings.ts saves it,
 // and it shows only when the server provides keys.
@@ -138,7 +139,8 @@ export default function adminAgents(): void {
     },
   });
   mode.addEventListener("change", () => keys.changed(true));
-  // A model's box: the setting is every model not ticked, on any row. Refused, the boxes keep the person's choice.
+  // A model's box: the setting is every model not ticked, on any row, and the ones off that have no box (data-off: the
+  // setting as the page has it). Refused, the boxes keep the person's choice.
   list.addEventListener("change", (e) => {
     const box = e.target as HTMLInputElement;
     if (!box.matches(".models input[type=checkbox]")) return;
@@ -148,10 +150,15 @@ export default function adminAgents(): void {
     const wanted = box.checked;
     const save = async () => {
       shown().checked = wanted;
-      const off = [...list.querySelectorAll<HTMLInputElement>(".models input[type=checkbox]")].filter((b) => !b.checked).map((b) => b.value);
+      const boxes = [...list.querySelectorAll<HTMLInputElement>(".models input[type=checkbox]")];
+      const off = [
+        ...(list.dataset.off ?? "").split(" ").filter((m) => m && !boxes.some((b) => b.value == m)),
+        ...boxes.filter((b) => !b.checked).map((b) => b.value),
+      ];
       mark.set(MODELS, "saving");
       try {
         await runTool("set_setting", { key: "agent_models_off", value: off });
+        list.dataset.off = off.join(" ");
         shown().checked = wanted;
         say(hintOf(li), "");
         mark.set(MODELS, "saved");

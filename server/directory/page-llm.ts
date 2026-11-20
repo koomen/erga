@@ -29,10 +29,10 @@ export const PAGE_LLM_LIMITS = {
 
 /**
  * What a page's model costs, in US dollars for a million tokens, input and output: the providers' standard prices for a
- * short prompt (a page's call is at most PAGE_LLM_LIMITS.inputChars), with no cache. Read on 2026-11-06 (Fable 5.2,
- * GPT-6.2 Sol and GPT-6.2 Astra: 2026-11-19) from
- * https://platform.claude.com/docs/en/about-claude/pricing (Model pricing; Fast mode pricing for Opus 5.5 fast) and
- * https://developers.openai.com/api/docs/pricing (Standard, short context).
+ * short prompt (a page's call is at most PAGE_LLM_LIMITS.inputChars), with no cache; a fast mode costs two times its
+ * model's. Read on 2026-11-06 (Fable 5.2, GPT-6.2 Sol, GPT-6.2 Astra and the fast modes: 2026-11-19) from
+ * https://platform.claude.com/docs/en/about-claude/pricing (Model pricing; Fast mode pricing) and
+ * https://developers.openai.com/api/docs/pricing (Standard and Fast, short context).
  */
 export const PAGE_LLM_PRICES: Record<string, { input: number; output: number }> = {
   haiku: { input: 0.1, output: 0.5 },
@@ -40,10 +40,15 @@ export const PAGE_LLM_PRICES: Record<string, { input: number; output: number }> 
   opus: { input: 4, output: 20 },
   "opus-fast": { input: 8, output: 40 },
   fable: { input: 8, output: 40 },
+  "fable-fast": { input: 16, output: 80 },
   "gpt-6-luna": { input: 0.1, output: 0.5 },
+  "gpt-6-luna-fast": { input: 0.2, output: 1 },
   "gpt-6.1-terra": { input: 1, output: 5 },
+  "gpt-6.1-terra-fast": { input: 2, output: 10 },
   "gpt-6.2-sol": { input: 2, output: 10 },
+  "gpt-6.2-sol-fast": { input: 4, output: 20 },
   "gpt-6.2-astra": { input: 8, output: 40 },
+  "gpt-6.2-astra-fast": { input: 16, output: 80 },
 };
 
 /** A model with no known price counts at the highest of each. */

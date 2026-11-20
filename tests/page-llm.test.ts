@@ -58,8 +58,14 @@ test("the cost estimate: each page model has its price; a model with no known pr
   for (const m of PAGE_LLM_MODELS) expect(PAGE_LLM_PRICES[m]).toBeDefined();
   expect(costOf("haiku", 1_000_000, 1_000_000)).toBeCloseTo(0.6);
   expect(costOf("opus", 10_000, 2_000)).toBeCloseTo(0.08);
-  expect(costOf("no-such-model", 1_000_000, 0)).toBe(8);
-  expect(costOf("no-such-model", 0, 1_000_000)).toBe(40);
+  // A fast mode costs two times its model.
+  for (const m of PAGE_LLM_MODELS.filter((m) => m.endsWith("-fast"))) {
+    const slow = PAGE_LLM_PRICES[m.slice(0, -"-fast".length)];
+    expect(PAGE_LLM_PRICES[m], m).toEqual({ input: slow.input * 2, output: slow.output * 2 });
+  }
+  expect(costOf("gpt-6.2-sol-fast", 1_000_000, 1_000_000)).toBe(24);
+  expect(costOf("no-such-model", 1_000_000, 0)).toBe(16);
+  expect(costOf("no-such-model", 0, 1_000_000)).toBe(80);
 });
 
 test("today's use: calls, tokens and cost since midnight UTC, in total and by document, the costliest first", async () => {

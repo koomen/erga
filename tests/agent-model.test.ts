@@ -1,5 +1,5 @@
 // The agent loop on the real model's path (agents/run.ts, agents/models.ts: Effect AI's Anthropic provider), with
-// fetch answering in the API's place: what the request carries (fast mode's beta and speed, adaptive thinking, the
+// fetch answering in the API's place: what the request carries (fast mode's speed, adaptive thinking, the
 // effort, the tools' JSON Schema, a picture in a tool's result, the prompt cache's marks), and the
 // streamed answer in the transcript and the messages.
 
@@ -127,7 +127,8 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
   expect(requests.length).toBe(2);
   const [first, second] = requests;
   expect(first.headers.get("x-api-key")).toBe("sk-test");
-  expect(first.headers.get("anthropic-beta")).toContain("fast-mode-2026-02-01");
+  // Opus 5.5 takes the speed with no beta header (only Opus 5 and Opus 4.8 need fast-mode-2026-02-01).
+  expect(first.headers.get("anthropic-beta") ?? "").not.toContain("fast-mode");
   expect(first.body).toMatchObject({
     model: "claude-opus-5-5",
     max_tokens: 64_000,

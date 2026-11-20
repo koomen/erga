@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import type { Sql, Statement } from "./model.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
-import { isModelChoice, MODELS } from "../../shared/models.ts";
+import { isModelChoice, MODELS, MODELS_OFF_AT_FIRST } from "../../shared/models.ts";
 import { SIGN_IN_DAYS, SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 /** A write another write came in on the middle of: it tries again. */
@@ -200,7 +200,7 @@ export const SETTINGS = {
   agent_models_off: setting<string[]>({
     label: "Models a server key doesn't run",
     description: `The models that a server key doesn't run; a user's own key still runs them. A list of: ${Object.keys(MODELS).join(", ")}.`,
-    default: [],
+    default: MODELS_OFF_AT_FIRST,
     parse: (v) => {
       const list = typeof v == "string" ? v.split(/[\s,]+/).filter(Boolean) : v;
       if (!Array.isArray(list) || list.some((m) => typeof m != "string"))

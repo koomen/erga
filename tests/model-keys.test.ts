@@ -4,12 +4,24 @@
 // a turn on each Gemini 4 model, with fetch in the place of Google's API.
 
 import { afterAll, expect, test } from "bun:test";
+import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { fitModel, isModelChoice, isPageLlmModel, MODELS, usableModels, type KeySetup, type ModelChoice } from "../shared/models";
+import * as Stream from "effect/Stream";
+import { LanguageModel, Prompt } from "effect/ai";
+import {
+  fitModel,
+  isModelChoice,
+  isPageLlmModel,
+  MODELS,
+  MODELS_OFF_AT_FIRST,
+  usableModels,
+  type KeySetup,
+  type ModelChoice,
+} from "../shared/models";
 import { Directory } from "../server/directory/index.ts";
 import { memory } from "./helpers/memory-sql";
-import { keyFor, type AgentConfig } from "../agents/models";
+import { keyFor, pageModel, type AgentConfig } from "../agents/models";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { piModel } from "../agents/pi-model";
@@ -23,9 +35,22 @@ const names = (k: Partial<KeySetup>) => usableModels(setup(k)).map((u) => `${u.c
 test("the models a person can use, for each key setup", () => {
   expect(names({})).toEqual([]);
   // A server key opens its provider's models, for everyone.
-  expect(names({ server: ["anthropic"] })).toEqual(["haiku:server", "sonnet:server", "opus:server", "opus-fast:server", "fable:server"]);
+  expect(names({ server: ["anthropic"] })).toEqual([
+    "haiku:server",
+    "sonnet:server",
+    "opus:server",
+    "opus-fast:server",
+    "fable:server",
+    "fable-fast:server",
+  ]);
   // The admin turned one off: a server key doesn't run it.
-  expect(names({ server: ["anthropic"], off: ["opus-fast"] })).toEqual(["haiku:server", "sonnet:server", "opus:server", "fable:server"]);
+  expect(names({ server: ["anthropic"], off: ["opus-fast"] })).toEqual([
+    "haiku:server",
+    "sonnet:server",
+    "opus:server",
+    "fable:server",
+    "fable-fast:server",
+  ]);
   // The person's own key wins, and runs every model of its provider, the ones turned off too.
   expect(names({ server: ["anthropic"], own: ["anthropic"], off: ["opus-fast"] })).toEqual([
     "haiku:own",
@@ -33,22 +58,54 @@ test("the models a person can use, for each key setup", () => {
     "opus:own",
     "opus-fast:own",
     "fable:own",
+    "fable-fast:own",
   ]);
   // Own keys only: the server's keys run nothing.
   expect(names({ server: ["anthropic", "openai"], mode: "own" })).toEqual([]);
   expect(names({ server: ["anthropic"], own: ["openrouter"], mode: "own" })).toEqual(["kimi-k3:own", "deepseek-v4-pro:own", "grok:own"]);
-  // Both, side by side, in the short list's order: each provider's models from the smallest to the largest.
+  // Both, side by side, in the short list's order: each provider's models from the smallest to the largest, a model's
+  // fast mode after it.
   expect(names({ server: ["google"], own: ["openai"] })).toEqual([
     "gpt-6-luna:own",
+    "gpt-6-luna-fast:own",
     "gpt-6.1-terra:own",
+    "gpt-6.1-terra-fast:own",
     "gpt-6.2-sol:own",
+    "gpt-6.2-sol-fast:own",
     "gpt-6.2-astra:own",
+    "gpt-6.2-astra-fast:own",
     "gemini-3.8-flash:server",
     "gemini-4-argon:server",
     "gemini-4-hydrogen:server",
     "gemini-4-neon:server",
     "gemini-4-carbon:server",
   ]);
+});
+
+test("the fast modes start off for a server key, but the default model's; an admin turns one on, and a person's own key runs them all", async () => {
+  const fast = ["fable-fast", "gpt-6-luna-fast", "gpt-6.1-terra-fast", "gpt-6.2-sol-fast", "gpt-6.2-astra-fast"];
+  expect<string[]>(MODELS_OFF_AT_FIRST).toEqual(fast);
+  const dir = new Directory(memory(), { admins: ["ada"] });
+  const off = await dir.config.get("agent_models_off");
+  expect(off).toEqual(fast);
+  expect(names({ server: ["anthropic", "openai"], off })).toEqual([
+    "haiku:server",
+    "sonnet:server",
+    "opus:server",
+    "opus-fast:server",
+    "fable:server",
+    "gpt-6-luna:server",
+    "gpt-6.1-terra:server",
+    "gpt-6.2-sol:server",
+    "gpt-6.2-astra:server",
+  ]);
+  expect(names({ server: ["anthropic"], own: ["openai"], off }).filter((n) => n.includes("-fast"))).toEqual([
+    "opus-fast:server",
+    ...fast.slice(1).map((m) => `${m}:own`),
+  ]);
+  // The admin ticks one on the Agents and models page: the list without it.
+  await dir.config.set({ login: "ada", admin: true }, "agent_models_off", fast.slice(1));
+  expect(names({ server: ["anthropic"], off: await dir.config.get("agent_models_off") })).toContain("fable-fast:server");
 });
 
 test("the model to be on: the one asked for if it can be used, else the default, else the first", () => {
@@ -63,11 +120,11 @@ test("a model that left the short list (GPT-6 Astra): the setting takes its name
   const dir = new Directory(sql, { admins: ["ada"] });
   const ada = { login: "ada", admin: true };
   await expect(dir.config.set(ada, "agent_models_off", ["gpt-6-astra"])).rejects.toThrow(/isn't one of the models/);
-  // A list stored before, with its name: the default stands (every model is on), until an admin sets the list again.
+  // A list stored before, with its name: the default stands, until an admin sets the list again.
   await dir.config.set(ada, "agent_models_off", ["gpt-6.2-astra"]);
   expect(await dir.config.get("agent_models_off")).toEqual(["gpt-6.2-astra"]);
   sql.db.run(`UPDATE server_config SET value = '["gpt-6-astra","gpt-6.2-astra"]' WHERE key = 'agent_models_off'`);
-  expect(await new Directory(sql, { admins: ["ada"] }).config.get("agent_models_off")).toEqual([]);
+  expect(await new Directory(sql, { admins: ["ada"] }).config.get("agent_models_off")).toEqual(MODELS_OFF_AT_FIRST);
   // A conversation's stored choice of it, and a page's: not a model, so the default.
   expect([isModelChoice("gpt-6-astra"), isPageLlmModel("gpt-6.1-sol")]).toEqual([false, false]);
   expect(fitModel(setup({ server: ["anthropic", "openai"] }), null)).toBe("opus-fast");
@@ -269,34 +326,118 @@ test("a turn on each Gemini 4 model through Pi, with a tool call: Google gets th
   }
 });
 
-test("a turn on Fable 5.2: Anthropic gets its id, adaptive thinking and the effort, and nothing that Fable refuses", async () => {
+test("a turn on Fable 5.2, and in its fast mode: Anthropic gets its id, adaptive thinking, the effort and the speed, and nothing that Fable refuses", async () => {
   const read: AgentTool = {
     name: "read",
     description: "Reads a file.",
     parameters: Schema.Struct({ path: Schema.String }),
     execute: async () => ({ content: [{ type: "text", text: "hello" }] }),
   };
-  const keys = cfg({ server: { anthropic: Redacted.make("sk-ant-server-key") }, model: "fable" });
-  const events: LogEvent[] = [];
-  const loop = startLoop({ cfg: keys, stored: null, store: null, meta: {}, tag: "page", hooks: { about: () => null } });
-  loop.start(keys, "You are a test.", [read]);
-  loop.subscribe((e) => events.push(e));
-  expect(loop.modelChoice).toBe("fable");
-  requests.length = 0;
-  answers.push(messages("Hi."));
-  loop.prompt("Hello", null, []);
-  await until(() => events.some((e) => e.t == "busy" && !e.busy));
-  expect(events.filter((e) => e.t == "error")).toEqual([]);
-  // Fable refuses a forced tool call, and a temperature, top_p or top_k (its page of Anthropic's documentation).
-  const { system: _s, messages: _m, tools: _t, ...sent } = requests[0].body;
-  expect(sent).toEqual({
-    model: "claude-fable-5-2",
-    max_tokens: 64000,
-    thinking: { type: "adaptive", display: "summarized" },
-    tool_choice: { type: "auto" },
-    output_config: { effort: "medium" },
-    stream: true,
-  });
+  for (const choice of ["fable", "fable-fast"] as const) {
+    const keys = cfg({ server: { anthropic: Redacted.make("sk-ant-server-key") }, model: choice });
+    const events: LogEvent[] = [];
+    const loop = startLoop({ cfg: keys, stored: null, store: null, meta: {}, tag: "page", hooks: { about: () => null } });
+    loop.start(keys, "You are a test.", [read]);
+    loop.subscribe((e) => events.push(e));
+    expect(loop.modelChoice).toBe(choice);
+    requests.length = 0;
+    answers.push(messages("Hi."));
+    loop.prompt("Hello", null, []);
+    await until(() => events.some((e) => e.t == "busy" && !e.busy));
+    expect(events.filter((e) => e.t == "error")).toEqual([]);
+    // Fable refuses a forced tool call, and a temperature, top_p or top_k (its page of Anthropic's documentation).
+    const { system: _s, messages: _m, tools: _t, ...sent } = requests[0].body;
+    expect(sent).toEqual({
+      model: "claude-fable-5-2",
+      max_tokens: 64000,
+      thinking: { type: "adaptive", display: "summarized" },
+      tool_choice: { type: "auto" },
+      output_config: { effort: "medium" },
+      stream: true,
+      ...(choice == "fable-fast" ? { speed: "fast" } : {}),
+    });
+    // Fast mode needs no beta header on Fable 5.2 (nor on Opus 5.5).
+    expect(requests[0].headers.get("anthropic-beta") ?? "").not.toContain("fast-mode");
+  }
+});
+
+/** A streamed answer of OpenAI's Responses API with one text. */
+function responses(text: string) {
+  const ev = (data: object) => `event: ${(data as { type: string }).type}\ndata: ${JSON.stringify(data)}\n\n`;
+  const item = { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] };
+  const done = { ...item, status: "completed", content: [{ type: "output_text", text, annotations: [] }] };
+  const body =
+    ev({ type: "response.created", response: { id: "resp_1", status: "in_progress", output: [] } }) +
+    ev({ type: "response.output_item.added", output_index: 0, item }) +
+    ev({
+      type: "response.content_part.added",
+      output_index: 0,
+      item_id: "msg_1",
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    }) +
+    ev({ type: "response.output_text.delta", output_index: 0, item_id: "msg_1", content_index: 0, delta: text }) +
+    ev({ type: "response.output_item.done", output_index: 0, item: done }) +
+    ev({
+      type: "response.completed",
+      response: {
+        id: "resp_1",
+        status: "completed",
+        service_tier: "fast",
+        output: [done],
+        usage: { input_tokens: 12, output_tokens: 4, total_tokens: 16, input_tokens_details: { cached_tokens: 0 } },
+      },
+    });
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
+test("a turn on each GPT model in its fast mode through Pi: OpenAI gets the model's own id and the service tier fast; the model alone gets no tier", async () => {
+  for (const [choice, id, tier] of [
+    ["gpt-6-luna-fast", "gpt-6-luna", "fast"],
+    ["gpt-6.1-terra-fast", "gpt-6.1-terra", "fast"],
+    ["gpt-6.2-sol-fast", "gpt-6.2-sol", "fast"],
+    ["gpt-6.2-astra-fast", "gpt-6.2-astra", "fast"],
+    ["gpt-6.2-sol", "gpt-6.2-sol", undefined],
+  ] as const) {
+    const keys = cfg({ own: { openai: Redacted.make("sk-proj-own-key") }, model: choice });
+    const events: LogEvent[] = [];
+    const loop = startLoop({ cfg: keys, stored: null, store: null, meta: {}, tag: "page", hooks: { about: () => null } });
+    loop.start(keys, "You are a test.", []);
+    loop.subscribe((e) => events.push(e));
+    expect(loop.modelChoice).toBe(choice);
+    requests.length = 0;
+    answers.push(responses("Hi."));
+    loop.prompt("Hello", null, []);
+    await until(() => events.some((e) => e.t == "busy" && !e.busy));
+    expect(events.filter((e) => e.t == "error")).toEqual([]);
+    expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer sk-proj-own-key");
+    expect(requests[0].body).toMatchObject({ model: id, stream: true, reasoning: { effort: "medium" } });
+    expect(requests[0].body.service_tier).toBe(tier);
+    expect(
+      events
+        .filter((e) => e.t == "text")
+        .map((e) => (e as { delta: string }).delta)
+        .join("")
+    ).toBe("Hi.");
+  }
+});
+
+test("Claude's fast modes for a page: the request has the speed; the model alone has none", async () => {
+  for (const [choice, id, speed] of [
+    ["opus-fast", "claude-opus-5-5", "fast"],
+    ["fable-fast", "claude-fable-5-2", "fast"],
+    ["opus", "claude-opus-5-5", undefined],
+  ] as const) {
+    requests.length = 0;
+    answers.push(messages("Hi."));
+    const layer = pageModel(cfg({ server: { anthropic: Redacted.make("sk-ant-server-key") } }), choice, 300);
+    const prompt = Prompt.make([{ role: "user", content: [{ type: "text", text: "Hi" }] }]);
+    await Effect.runPromise(LanguageModel.streamText({ prompt }).pipe(Stream.runCollect, Effect.provide(layer!)));
+    expect(requests[0].body).toMatchObject({ model: id, max_tokens: 300, stream: true });
+    expect(requests[0].body.speed).toBe(speed);
+    expect(requests[0].headers.get("anthropic-beta") ?? "").not.toContain("fast-mode");
+  }
 });
 
 test("a key that Google refuses: the panel has Google's words, not its JSON", async () => {

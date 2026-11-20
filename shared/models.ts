@@ -21,7 +21,7 @@ export interface ModelInfo {
   /** The provider's own name for it (Pi's catalog has the same). */
   readonly id: string;
   readonly label: string;
-  /** Anthropic's fast mode (Opus only). */
+  /** The provider's fast mode, at two times the price: Anthropic's `speed`, OpenAI's `service_tier`. */
   readonly fast?: boolean;
 }
 
@@ -37,10 +37,15 @@ export const MODELS = {
   opus: { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5" },
   "opus-fast": { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true },
   fable: { provider: "anthropic", id: "claude-fable-5-2", label: "Fable 5.2" },
+  "fable-fast": { provider: "anthropic", id: "claude-fable-5-2", label: "Fable 5.2 fast", fast: true },
   "gpt-6-luna": { provider: "openai", id: "gpt-6-luna", label: "GPT-6 Luna" },
+  "gpt-6-luna-fast": { provider: "openai", id: "gpt-6-luna", label: "GPT-6 Luna fast", fast: true },
   "gpt-6.1-terra": { provider: "openai", id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
+  "gpt-6.1-terra-fast": { provider: "openai", id: "gpt-6.1-terra", label: "GPT-6.1 Terra fast", fast: true },
   "gpt-6.2-sol": { provider: "openai", id: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+  "gpt-6.2-sol-fast": { provider: "openai", id: "gpt-6.2-sol", label: "GPT-6.2 Sol fast", fast: true },
   "gpt-6.2-astra": { provider: "openai", id: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
+  "gpt-6.2-astra-fast": { provider: "openai", id: "gpt-6.2-astra", label: "GPT-6.2 Astra fast", fast: true },
   "gemini-3.8-flash": { provider: "google", id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
   "gemini-4-argon": { provider: "google", id: "gemini-4-argon", label: "Gemini 4 Argon" },
   "gemini-4-hydrogen": { provider: "google", id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen" },
@@ -53,6 +58,13 @@ export const MODELS = {
 export type ModelChoice = keyof typeof MODELS;
 export const DEFAULT_MODEL: ModelChoice = "opus-fast";
 export const isModelChoice = (s: string): s is ModelChoice => Object.hasOwn(MODELS, s);
+/**
+ * The models that a server key doesn't run until an admin turns them on (the agent_models_off setting's default): the
+ * fast modes, at two times the price, but the default model's own.
+ */
+export const MODELS_OFF_AT_FIRST = (Object.keys(MODELS) as ModelChoice[]).filter(
+  (m) => (MODELS[m] as ModelInfo).fast && m != DEFAULT_MODEL
+);
 
 /** What decides the models a person can use: the providers with a key (theirs, the server's), and the admin's settings. */
 export interface KeySetup {

@@ -91,7 +91,7 @@ export async function agentsPage(platform: Platform, session: Session) {
       </li>
     </ol>
     <p class="empty own-note"${own ? "" : " hidden"}>Each user adds their own keys in their Settings.</p>
-    <ol class="rows providers" data-live-kind="apikey" data-live-view="agents" data-live-order="asc" data-live-at="${Date.now()}"${own ? " hidden" : ""}>
+    <ol class="rows providers" data-off="${esc(off.join(" "))}" data-live-kind="apikey" data-live-view="agents" data-live-order="asc" data-live-at="${Date.now()}"${own ? " hidden" : ""}>
 ${credentials.map((c, place) => credentialRow(c, session, place, off)).join("\n")}
     </ol>
     ${limit}

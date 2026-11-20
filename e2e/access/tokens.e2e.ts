@@ -484,7 +484,15 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     await soon(() => markOf(page)).toBe("saved");
     const unticked = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
     await page.uncheck(box("gpt-6.2-astra"));
-    await unticked;
+    // The fast modes start off, and stay off: OpenAI's, whose boxes show, and Fable's, with no box (Anthropic has no key here).
+    expect((await unticked).request().postDataJSON().value).toEqual([
+      "fable-fast",
+      "gpt-6-luna-fast",
+      "gpt-6.1-terra-fast",
+      "gpt-6.2-sol-fast",
+      "gpt-6.2-astra",
+      "gpt-6.2-astra-fast",
+    ]);
     await soon(() => markOf(page)).toBe("saved");
     expect(await hint()).toBe("");
 
