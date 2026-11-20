@@ -70,7 +70,7 @@ export const MANIFEST: AssetManifest = {
     "/_erga/main-aaaa1111.js": "sha384-main",
   },
   fonts: {
-    css: "@font-face{font-family:'Inter';src:url(/_erga/fonts/inter-iiii9999.woff2) format('woff2')}",
+    css: "@font-face{font-family:'Erga Inter';src:url(/_erga/fonts/inter-iiii9999.woff2) format('woff2')}",
     preload: "/_erga/fonts/inter-iiii9999.woff2",
     page: "",
   },

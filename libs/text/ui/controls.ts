@@ -32,7 +32,7 @@ export interface ControlsPage {
 /** The controls' colours and font, light and dark (the comments' cards take them too: comments.ts). */
 export const LOOK = `.c { --bg: #ffffff; --fg: #1c1c1f; --soft: #6b6b73; --chrome: #a1a1a9; --chrome-hover: #3f3f46; --rule: #e6e6ea;
   --caret: #3b7cf0; --link: #2563c9; --panel-border: #e6e6ea; --shadow: 0 8px 30px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; --ease: cubic-bezier(0.65, 0, 0.35, 1); --morph-ms: 240ms;
+  --font: "Erga Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; --ease: cubic-bezier(0.65, 0, 0.35, 1); --morph-ms: 240ms;
   font: 13px/1 var(--font); color: var(--fg); color-scheme: light; }
 .c.dark { --bg: #18181b; --fg: #cacad2; --soft: #8f8f99; --chrome: #6c6c75; --chrome-hover: #d4d4da; --rule: #2c2c31;
   --caret: #6aa1ff; --link: #7aa9ff; --panel-border: #2f2f35; --shadow: 0 10px 34px rgba(0, 0, 0, 0.45); color-scheme: dark; }`;

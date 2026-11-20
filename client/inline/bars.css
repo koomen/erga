@@ -57,7 +57,7 @@ html.page-dark body :is(.erga-bar, .chrome) {
    same padding, your avatar at the right of the buttons' bar and its menu under it, where the editor's is. */
 :is(.erga-view-buttons, .erga-crumbs) { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73;
   position: fixed; z-index: 1000; display: flex; align-items: center;
-  font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  font: 500 13px/1 "Erga Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 .erga-view-buttons { right: max(8px, env(safe-area-inset-right)); gap: 2px; padding: 0 5px 0 7.5px; }
 .erga-crumbs { left: max(6px, env(safe-area-inset-left)); min-width: 0; max-width: calc(100vw - 200px); margin: 0; padding: 3.5px 8px; font-size: 13.5px; }
 /* Each step's box and arrow as the editor's, so going into the editor and out moves nothing. */

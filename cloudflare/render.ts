@@ -69,7 +69,7 @@ import { sourceDigest } from "../shared/page-html";
 import { PICTURE, pictureParts } from "../shared/picture";
 import { reachable } from "./private-address";
 import { pagesOrigin, readPagesClaims } from "../server/documents/index";
-import { cookieName, SIGNED_OUT, viewRequest } from "../server/identity/index";
+import { cookieName, fontsAt, SIGNED_OUT, viewRequest } from "../server/identity/index";
 import { loadAssets, readerPage } from "../server/pages/index";
 import type { Platform } from "../server/platform";
 import { browsers } from "./browser";
@@ -463,6 +463,7 @@ async function ergaAnswer(
     o.served.served = true;
     const html = readerPage(job.html, {
       shell: claims.shell,
+      fonts: fontsAt(place.server.platform, claims.shell),
       prefix: `/t/${token}/`,
       src: sourceDigest(job.html),
       editor: !!claims.edit,

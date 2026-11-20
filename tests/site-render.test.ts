@@ -2,8 +2,9 @@
 // where the snapshot serves them, and the place for the controls.
 
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { renderSite, siteHeader } from "../server/sites/index.ts";
-import { pageInter, withBand, withControls, withLlm } from "../server/sites/render.ts";
+import { withBand, withControls, withLlm } from "../server/sites/render.ts";
 
 const files = {
   "index.html": "",
@@ -109,8 +110,12 @@ test("the header bar is the site's setting, read when the page is served: only w
   expect(barred).toContain("<erga-controls></erga-controls></body>");
 });
 
-test("a page that declares Inter itself", () => {
-  expect(pageInter(`<style>@font-face { font-family: "Inter"; src: url(fonts/inter.woff2) }</style>`)).toBe(true);
-  expect(pageInter(`<style>@font-face{font-family:Inter;src:url(a.woff2)}</style>`)).toBe(true);
-  expect(pageInter(`<style>@font-face { font-family: "Inter Display"; } body { font-family: "Inter" }</style>`)).toBe(false);
+
+test("Erga's typeface has a family name of its own: no style of the app's names Inter, which is a page's name for its own", async () => {
+  const named: string[] = [];
+  for (const pattern of ["client/**/*.{css,ts,html}", "libs/**/*.ts", "deploy/cli/*.css"])
+    for await (const file of new Bun.Glob(pattern).scan(join(import.meta.dir, "..")))
+      for (const rule of (await Bun.file(join(import.meta.dir, "..", file)).text()).match(/font[\w-]*\s*:[^;{}]*/g) ?? [])
+        if (/\bInter\b/.test(rule.replaceAll("Erga Inter", ""))) named.push(`${file}: ${rule}`);
+  expect(named).toEqual([]);
 });

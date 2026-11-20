@@ -57,7 +57,7 @@ const STYLE = `
 .erga-agent-menu { --am-bg: #fff; --am-fg: #1c1c1f; --am-soft: #6b6b73; --am-ring: #e6e6ea; --am-hover: rgba(161, 161, 169, .14); --am-field: #f6f6f8;
   position: fixed; z-index: 2147483000; width: min(320px, calc(100vw - 24px)); max-height: calc(100vh - 80px); overflow: auto; box-sizing: border-box; padding: 6px;
   color: var(--am-fg); background: var(--am-bg); border: 1px solid var(--am-ring); border-radius: 12px; text-align: left;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .05); font: 400 14px/1.35 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .05); font: 400 14px/1.35 "Erga Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 .erga-agent-menu[hidden] { display: none; }
 .erga-agent-menu * { font: inherit; letter-spacing: normal; text-transform: none; box-sizing: border-box; }
 .erga-agent-menu p { margin: 0; }

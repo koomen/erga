@@ -28,7 +28,7 @@ declare global {
 const CSS = `
 .erga-qs { --qs-bg: #fff; --qs-fg: #1c1c1f; --qs-soft: #6b6b73; --qs-ring: #e6e6ea; --qs-pick: rgba(59, 124, 240, .1);
   position: fixed; inset: 0; z-index: 2147483647; display: flex; justify-content: center; align-items: flex-start; padding: 14vh 16px 16px;
-  background: rgba(0, 0, 0, .18); font: 400 14px/1.4 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  background: rgba(0, 0, 0, .18); font: 400 14px/1.4 "Erga Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 @media (prefers-color-scheme: dark) { .erga-qs { --qs-bg: #1f1f23; --qs-fg: #ececf1; --qs-soft: #8f8f99; --qs-ring: #2f2f35; --qs-pick: rgba(59, 124, 240, .22); background: rgba(0, 0, 0, .4); } }
 .erga-qs[hidden] { display: none; }
 .erga-qs-card { width: min(560px, 100%); max-height: 70vh; display: flex; flex-direction: column; overflow: hidden; color: var(--qs-fg); background: var(--qs-bg);

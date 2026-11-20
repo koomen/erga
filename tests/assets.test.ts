@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import { HEADERS } from "../client/build.ts";
 import { runOn } from "../server/http.ts";
 import { asset, assetScripts, fontTags, scriptTag, serveAsset, serveLibrary, useAssets } from "../server/pages/index.ts";
+import { fontsAt } from "../server/identity/index.ts";
 import { readerPage, readerVersion } from "../server/pages/reader.ts";
 import type { Platform } from "../server/platform.ts";
 import { ASSET_PREFIX, stemOf, type AssetManifest } from "../shared/assets.ts";
@@ -26,7 +27,7 @@ const MANIFEST: AssetManifest = {
     "/_erga/main-aaaa1111.js": "sha384-main",
   },
   fonts: {
-    css: "@font-face{font-family:'Inter';font-display:swap;src:url(/_erga/fonts/inter-latin-normal-iiii9999.woff2) format('woff2')}",
+    css: "@font-face{font-family:'Erga Inter';font-display:swap;src:url(/_erga/fonts/inter-latin-normal-iiii9999.woff2) format('woff2')}",
     preload: "/_erga/fonts/inter-latin-normal-iiii9999.woff2",
     page: '@font-face{font-family:"Literata";src:url(/_erga/fonts/literata-llll0000.woff2) format("woff2")}',
   },
@@ -50,6 +51,7 @@ test("an editor's page names the editor's half on its own origin, with the integ
   useAssets(MANIFEST);
   const page = readerPage('<!doctype html><html><head><script type="module" src="app.js"></script></head><body></body></html>', {
     shell: "https://erga.test",
+    fonts: "",
     prefix: "/t/x/",
     src: "s",
     editor: true,
@@ -74,6 +76,7 @@ test("an editor's page names the editor's half on its own origin, with the integ
   // A page that brings its own editor gets none added.
   const own = readerPage(`<meta name="erga-editor" content="own"><p>x</p>`, {
     shell: "https://erga.test",
+    fonts: "",
     prefix: "/t/x/",
     src: "s",
     editor: true,
@@ -81,9 +84,19 @@ test("an editor's page names the editor's half on its own origin, with the integ
   });
   expect(JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(own)![1]).editor).toMatchObject({ src: "", preload: [] });
   // A reader's page has none of the editor's.
-  const reader = readerPage("<p>x</p>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: false, worker: true });
+  const reader = readerPage("<p>x</p>", { shell: "https://erga.test", fonts: "", prefix: "/t/x/", src: "s", editor: false, worker: true });
   expect(reader).not.toContain("importmap");
   expect(reader).not.toContain("frame-bbbb2222");
+  // The templates' typefaces: at the app's origin, one address for every document. Behind a gate in front, which
+  // refuses a font's request from another origin (it has no cookie), at the page's own origin.
+  const open = { signIn: { mode: "oauth" } } as Parameters<typeof fontsAt>[0];
+  const gated = { signIn: { mode: "gate" } } as Parameters<typeof fontsAt>[0];
+  const fontsOf = (fonts: string) =>
+    /<style data-erga>(@font-face.*?)<\/style>/.exec(
+      readerPage("<p>x</p>", { shell: "https://erga.test", fonts, prefix: "/t/x/", src: "s", editor: false, worker: true })
+    )![1];
+  expect(fontsOf(fontsAt(open, "https://erga.test"))).toContain("src:url(https://erga.test/_erga/fonts/literata-llll0000.woff2)");
+  expect(fontsOf(fontsAt(gated, "https://erga.test"))).toContain("src:url(/_erga/fonts/literata-llll0000.woff2)");
   // Another frame build is another version of what goes in a page: a page kept by its ETag never names a script that's gone.
   const before = readerVersion();
   useAssets({ ...MANIFEST, files: { ...MANIFEST.files, "frame.js": "/_erga/frame-zzzz0000.js" } });

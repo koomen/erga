@@ -50,7 +50,7 @@ export const assetScripts = (name: string) => [asset(name), ...(manifest?.deps[n
 export const scriptTag = (name: string) => `<script type="module" src="${asset(name)}"></script>`;
 
 /**
- * The app's typeface (Inter) for a page: its @font-face rules in the page itself, so nothing waits for a stylesheet,
+ * The app's typeface (Inter, under the family name Erga Inter) for a page: its @font-face rules in the page itself, so nothing waits for a stylesheet,
  * each with font-display: swap (the text shows at once in a system font). `preload`: the Latin face is fetched with the page.
  */
 export function fontTags(preload = false): string {
@@ -59,10 +59,12 @@ export function fontTags(preload = false): string {
 }
 
 /**
- * The templates' typefaces for a document's page, on its own origin: their @font-face rules, with the files there too
- * (a font is fetched only by a page that uses it).
+ * The typefaces for a document's page, on its own origin: the templates', by name, and the app's (Erga Inter, a name
+ * that no page's font has) for Erga's controls there. Their @font-face rules, with the files at the origin `at` (a font
+ * is fetched only by a page that uses it). The app's origin: one address for every document, so the browser fetches
+ * each file one time, not one time for each document. "": the page's own origin.
  */
-export const pageFonts = () => manifest?.fonts.page ?? "";
+export const pageFonts = (at: string) => `${manifest?.fonts.page ?? ""}${manifest?.fonts.css ?? ""}`.replace(/url\(\//g, `url(${at}/`);
 
 /** The editor's shell (client/editor.html, as the build split it): its styles and its controls, for a document's page. */
 export const editorShell = () => manifest?.shell ?? { style: "", body: "" };

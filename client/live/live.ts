@@ -157,7 +157,7 @@ function showNote() {
     note.setAttribute("role", "status");
     note.style.cssText =
       "position:fixed;left:50%;transform:translateX(-50%);bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;white-space:nowrap;" +
-      "font:500 12px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:var(--soft,#6b6b73);background:var(--panel-bg,rgba(255,255,255,.92));" +
+      "font:500 12px/1.2 'Erga Inter',ui-sans-serif,system-ui,sans-serif;color:var(--soft,#6b6b73);background:var(--panel-bg,rgba(255,255,255,.92));" +
       "padding:6px 10px;border-radius:999px;box-shadow:0 0 0 1px var(--panel-border,rgba(0,0,0,.06)),0 2px 8px rgba(0,0,0,.08);pointer-events:none";
     document.body.append(note);
   }

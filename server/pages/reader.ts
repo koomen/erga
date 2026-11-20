@@ -59,7 +59,10 @@ const LIVE_WATCH = inlineCall("page-live-watch");
  * each of its modules against it, and it must come before any module loads), and after it, the scripts the editor needs
  * from the page's first moment (its problems and its live log, the text guard, ergaEditor).
  */
-export function readerPage(html: string, o: { shell: string; prefix: string; src: string; editor: boolean; worker: boolean }): string {
+export function readerPage(
+  html: string,
+  o: { shell: string; fonts: string; prefix: string; src: string; editor: boolean; worker: boolean }
+): string {
   // erga/text, unless the page brings its editor: it imports erga/text itself (/erga/text/editor.js), or has its own
   // (<meta name="erga-editor" content="own">). Then the page's editor hears the viewer's word (erga-mode) itself.
   const scripts = o.editor ? frameScripts() : undefined;
@@ -67,8 +70,9 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
   const head =
     (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
     `<script data-erga>${readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, worker: o.worker, ...(editor ? { editor } : {}) })}</script>` +
-    // The templates' typefaces, by name, from Erga's own files: a page asks no other site for them.
-    (pageFonts() ? `<style data-erga>${pageFonts()}</style>` : "") +
+    // The templates' typefaces, by name, and the one of Erga's controls, from Erga's own files (at the origin `fonts`):
+    // a page asks no other site for them.
+    (pageFonts(o.fonts) ? `<style data-erga>${pageFonts(o.fonts)}</style>` : "") +
     (editor
       ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${LIVE_WATCH}</script><script data-erga>${TEXT_GUARD}</script><script data-erga>${EDITING_API}</script>`
       : "");
@@ -84,7 +88,7 @@ export const readerVersion = () =>
       EDITING_API +
       LIVE_WATCH +
       asset("frame.js") +
-      pageFonts()
+      pageFonts("")
   );
 
 /** A digest of text (FNV-1a), which changes whenever it does. */

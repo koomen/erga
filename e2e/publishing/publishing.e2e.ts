@@ -17,6 +17,7 @@ import { runTool } from "../helpers/tools";
 import {
   ask,
   BLOG,
+  choose,
   docOf,
   ergaOf,
   events,
@@ -28,10 +29,13 @@ import {
   makeSite,
   onDomain,
   openRoot,
+  openSettings,
   originOf,
   publish,
   publishedSite,
   publishingOf,
+  rests,
+  section,
   setPublishing,
   signedOut,
   SITE,
@@ -49,71 +53,6 @@ const own = await servers.of("publishing", {
 });
 
 const DOT = `<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#123"/></svg>`;
-
-/** Opens a document's settings in the editor, with the gear, once the editor's controls are in (they fade in as it comes up). */
-async function openSettings(p: Page, at: string) {
-  await agentClosed(p);
-  await p.goto(at);
-  const gear = () =>
-    p.evaluate(() => {
-      const g = document.getElementById("btn-settings"),
-        r = g?.getBoundingClientRect();
-      if (!g || !r?.width || getComputedStyle(g.closest(".chrome")!).opacity != "1") return null;
-      const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      return document.elementFromPoint(at.x, at.y)?.closest("#btn-settings") == g ? at : null;
-    });
-  await until(gear, 10_000, "the gear can be clicked");
-  await pressOn(p, "#btn-settings");
-  // (=== false: the section is there, and shows. Before it is there, hidden is undefined.)
-  await until(() => p.evaluate(() => document.getElementById("ds-pub")?.hidden === false), 5_000, "the settings show Publishing");
-}
-/** The Publishing section, as the person reads it. */
-const section = (p: Page) =>
-  p.evaluate(() => {
-    const $ = (id: string) => document.getElementById(id)!;
-    const off = (id: string) => $(id).getAttribute("aria-disabled") == "true";
-    return {
-      to: $("ds-pub-domain").textContent!.trim(),
-      toOff: off("ds-pub-domain"),
-      menu: $("ds-pub-menu").hidden
-        ? null
-        : [...$("ds-pub-menu").querySelectorAll("li")].map((li) => [...li.children].map((c) => c.textContent).join(" | ")),
-      ask: $("ds-pub-confirm").hidden ? null : $("ds-pub-ask").textContent,
-      bars: [($("ds-bars-on") as HTMLInputElement).checked, ($("ds-bars-on") as HTMLInputElement).disabled],
-      barsTip: $("ds-bars").dataset.tip ?? "",
-      name: $("ds-pub-name").textContent,
-      status: $("ds-status").textContent!.trim(),
-      publish: [$("ds-publish").textContent, off("ds-publish"), $("ds-publish").classList.contains("newer")],
-      publishTip: $("ds-publish").dataset.tip ?? "",
-      tags: [...document.querySelectorAll("#ds-list .ds-tag")].map((t) => t.textContent),
-    };
-  });
-/**
- * Once the section rests at `name` (the domain's, or "Not published"): its change's call has answered, so Publish is
- * not locked by it. (The section also hears of the change from the server, which may come first.)
- */
-const rests = (p: Page, name: string) =>
-  until(
-    async () => {
-      const s = await section(p);
-      return s.name == name && s.ask == null && (name == "Not published" || !s.publish[1]) ? s : null;
-    },
-    5_000,
-    `the section rests at ${name}`,
-    () => section(p)
-  );
-
-/**
- * "Publish to", with real keys: the menu opens, the arrows go `down` rows from the chosen one, and Enter chooses.
- * It is grey while a change's call runs (the section may show the change before that call answers): a press then does nothing.
- */
-async function choose(p: Page, down: number) {
-  await until(async () => !(await section(p)).toOff, 5_000, "Publish to can be pressed");
-  await pressOn(p, "#ds-pub-domain");
-  await until(async () => (await section(p)).menu != null, 5_000, "the menu opens");
-  for (let i = 0; i < Math.abs(down); i++) await p.keyboard.press(down > 0 ? "ArrowDown" : "ArrowUp");
-  await p.keyboard.press("Enter");
-}
 
 journey("custom domains, from a new server on", () => {
   const html = (title: string, body = "") =>
@@ -598,13 +537,16 @@ journey("the Erga domain", () => {
     expect(await canEdit()).toBe(true);
   });
 
-  test("the page's styles can't reach the controls, nor theirs the page; its files load from the publish, and at the root, never over the app's; every page of the site has the controls", async ({
+  test("the page's styles can't reach the controls, nor theirs the page, nor their typeface the page's own; its files load from the publish, and at the root, never over the app's; every page of the site has the controls", async ({
     tab,
   }) => {
+    // The page's own Inter, in a style sheet of its own (here: Erga's italic file, under the page's name for it).
+    const pageFont = /\/_erga\/fonts\/inter-latin-italic-[a-z0-9]+\.woff2/.exec((await front(main)).html)![0];
     // A page with everything it can throw at the controls.
     const hostile = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Second home</title><link rel="stylesheet" href="style.css">
+<html><head><meta charset="utf-8"><title>Second home</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="fonts.css">
 <style>
+  h1 { font-family: "Inter"; }
   a, div, button, svg, span, img { color: rgb(255, 0, 0) !important; background: rgb(0, 255, 0) !important; width: 300px !important; display: block !important; font-size: 40px !important; }
   erga-controls { display: none !important; position: static !important; opacity: 0 !important; }
   body { transform: translateX(0); }
@@ -613,7 +555,11 @@ journey("the Erga domain", () => {
 <body><h1>Second home</h1><a href="about">About</a><div class="erga-view-buttons" id="probe">not a control</div><p class="bg" id="bg">x</p><img id="pic" src="img/dot.svg">
 <script>fetch("data.json").then((r) => r.json()).then((d) => { document.body.dataset.data = d.ok; });</script>
 </body></html>`;
-    await write(main, site.id, { "index.html": hostile, "img/dot.svg": DOT });
+    await write(main, site.id, {
+      "index.html": hostile,
+      "img/dot.svg": DOT,
+      "fonts.css": `@font-face { font-family: "Inter"; src: url(${pageFont}); }`,
+    });
     expect((await publish(main, site.id)).result!.publishing.state).toBe("published");
     await frontShows("Second home");
     const p = tab.page;
@@ -624,7 +570,8 @@ journey("the Erga domain", () => {
     const tone = () =>
       p.evaluate(() => getComputedStyle(document.querySelector("erga-controls")!.shadowRoot!.querySelector(".erga-agent-share")!).color);
     await until(async () => (await tone()) == "rgb(154, 154, 162)", 5_000, "the controls take the page's tone", tone);
-    const iso = await p.evaluate(() => {
+    const iso = await p.evaluate(async () => {
+      await document.fonts.load('40px "Inter"', "Second home");
       const host = document.querySelector("erga-controls")!,
         r = host.shadowRoot!;
       const rect = (e: Element) => {
@@ -643,8 +590,15 @@ journey("the Erga domain", () => {
         picSrc: document.getElementById("pic")!.getAttribute("src"),
         css: document.querySelector('link[rel="stylesheet"]')!.getAttribute("href"),
         cookie: document.cookie,
+        fonts: performance.getEntriesByType("resource").map((e) => new URL(e.name).pathname),
+        inter: [...document.fonts].filter((f) => f.family.replace(/["']/g, "") == "Inter").length,
       };
     });
+    // The page's text in Inter keeps the page's font: the one rule for that family is the page's, and its file loads.
+    // (Erga's typeface has a family name of its own. Before, its rules took the page's text: the page's file never
+    // loaded, and the text was drawn again in Erga's.)
+    expect(iso.inter).toBe(1);
+    expect(iso.fonts).toContain(pageFont);
     expect(iso).toMatchObject({ hostShown: "block", hostPosition: "fixed" });
     // Where the viewer has them, signed out: Share with an agent (no Documents), then Sign in.
     expect(iso).toMatchObject({ agent: [1108, 12, 34, 34], account: [1154, 14, 30, 30] });

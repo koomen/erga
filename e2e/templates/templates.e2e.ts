@@ -72,12 +72,14 @@ journey("a new document from the picker", () => {
     // A click that leaves the page has nothing to settle.
     await settle(page).catch(() => {});
   }
-  /** Every option in Inter (loaded, not a fallback), 14px, 600. */
+  /** Every option in Erga's typeface (Inter under Erga's own name for it; loaded, not a fallback), 14px, 600. */
   async function sameTypeface() {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          document.fonts.load("600 14px Inter").then((f) => f.some((x) => x.family.replace(/["']/g, "") == "Inter" && x.status == "loaded"))
+          document.fonts
+            .load('600 14px "Erga Inter"')
+            .then((f) => f.some((x) => x.family.replace(/["']/g, "") == "Erga Inter" && x.status == "loaded"))
         )
       )
       .toBe(true);
@@ -87,7 +89,7 @@ journey("a new document from the picker", () => {
       return { fonts: [...new Set(els.map(font))], family: els.length ? getComputedStyle(els[0]).fontFamily : "" };
     })()`)) as { fonts: string[]; family: string };
     expect(t.fonts.length).toBe(1);
-    expect(t.family).toMatch(/^"?Inter"?,/);
+    expect(t.family).toMatch(/^"?Erga Inter"?,/);
     expect(t.fonts[0]).toMatch(/ 14px 600 normal$/);
   }
   /** The menu is under its button, in the window. */
@@ -139,6 +141,21 @@ journey("a new document from the picker", () => {
     await expect.poll(typefaces).toContain("Literata");
     expect(await typefaces()).toContain("Instrument Sans");
     expect(askedGoogle).toEqual([]);
+    // Erga's controls on the page have Erga's typeface there, under its own name: never the page's Inter.
+    expect(await inPage<boolean>(page, `[...document.fonts].some((f) => f.family.replace(/["']/g, "") == "Erga Inter")`)).toBe(true);
+    // Their files are at the app's origin, kept for good and open to every origin: one address for every document.
+    const fontFiles = () =>
+      inPage<string[]>(
+        page,
+        `performance.getEntriesByType("resource").map((e) => e.name).filter((n) => /(instrument-sans|literata)-\\w+\\.woff2$/.test(n)).sort()`
+      );
+    const fonts = (await fontFiles()) ?? [];
+    expect(fonts.map((u) => u.replace(/[^/]+$/, ""))).toEqual([`${s.root}/_erga/fonts/`, `${s.root}/_erga/fonts/`]);
+    const file = await fetch(fonts[0]);
+    expect([file.headers.get("cache-control"), file.headers.get("access-control-allow-origin")]).toEqual([
+      "public, max-age=31536000, immutable",
+      "*",
+    ]);
     await page.locator("#btn-edit").click();
     await viewerBack(page);
     // A page without steps has no step controls.
@@ -152,6 +169,9 @@ journey("a new document from the picker", () => {
     await clickIn(".erga-view-buttons .erga-new-btn");
     await clickIn('.erga-new-menu a[data-template="page"]');
     expect(await fileOf(await inNewEditor(from))).toBe(template("doc"));
+    // The second document asks for the same font files as the first: the browser has them, and fetches none again
+    // (on a deployed server, where the documents' hosts are one site; here each document's host is a site of its own).
+    await expect.poll(fontFiles).toEqual(fonts);
   });
 
   test("signed out, the homepage's + opens the picker, with Clone last, and a template goes to sign-in and comes back to make the document", async ({

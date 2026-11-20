@@ -28,7 +28,7 @@ const STYLE = `
 :host { all: initial; }
 .bar, .panel { --bg: rgba(255, 255, 255, .95); --fg: #3f3f46; --soft: #8a8a94; --hover: rgba(161, 161, 169, .18);
   position: fixed; z-index: 2147483646; box-sizing: border-box; background: var(--bg); color: var(--fg);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 4px 18px rgba(0, 0, 0, .14); font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 4px 18px rgba(0, 0, 0, .14); font: 500 13px/1 "Erga Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 .dark :is(.bar, .panel) { --bg: rgba(31, 31, 35, .95); --fg: #e4e4e9; --soft: #8f8f99; --hover: rgba(161, 161, 169, .2);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 4px 18px rgba(0, 0, 0, .4); }
 [hidden] { display: none !important; }

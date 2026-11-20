@@ -19,7 +19,7 @@ import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { type Copy, decide, isServed, type LivePage, type Served, settle, tagOf } from "./snapshot.ts";
-import { LIVE_FILES, pageInter, siteHeader, withBand, withControls, withLlm, withToken } from "./render.ts";
+import { LIVE_FILES, siteHeader, withBand, withControls, withLlm, withToken } from "./render.ts";
 import { pageToken } from "./llm-token.ts";
 import { actingAdmin } from "../identity/index.ts";
 import { fileOf, NOT_FOUND, redirectOf } from "./addresses.ts";
@@ -123,15 +123,14 @@ export const serveRoot = Effect.flatMap(ctx, ({ request, platform }) =>
 );
 
 /**
- * Erga's controls over one of the site's pages (siteHeader), for whoever asks. `html`: the page, whose own Inter the
- * bars may use; `file`: the page's file (null: the document's own page).
+ * Erga's controls over one of the site's pages (siteHeader), for whoever asks. `file`: the page's file (null: the
+ * document's own page).
  */
 async function controlsOf(
   request: Request,
   platform: Platform,
   page: LivePage,
   url: URL,
-  html: string,
   file: string | null
 ): Promise<string> {
   const session = await platform.sessionOf(request);
@@ -150,7 +149,6 @@ async function controlsOf(
     account: accountOf(session, admin, feedback),
     here: url.pathname + url.search,
     doc: page.docId,
-    font: !pageInter(html),
   });
 }
 
@@ -160,7 +158,7 @@ async function rootPage(request: Request, platform: Platform): Promise<Response 
   const served = await live(platform, url, ERGA);
   if (!served) return null;
   const { page, bars, from } = served;
-  const controls = bars ? controlsOf(request, platform, page, url, page.before, null) : Promise.resolve("");
+  const controls = bars ? controlsOf(request, platform, page, url, null) : Promise.resolve("");
   const headers = {
     "Content-Type": "text/html; charset=utf-8",
     // Different for each person (the controls): never kept for someone else; checked each time.
@@ -288,7 +286,7 @@ async function siteFile(
   headers[OWN_ACCOUNT] = "1";
   headers["Cache-Control"] = "private, no-cache";
   let body = withLlm(localLibraries(html, ""), page.docId, token, page.address);
-  if (bars) body = withControls(body, await controlsOf(request, platform, page, new URL(request.url), html, rel));
+  if (bars) body = withControls(body, await controlsOf(request, platform, page, new URL(request.url), rel));
   return new Response(request.method == "HEAD" ? null : body, { status, headers });
 }
 

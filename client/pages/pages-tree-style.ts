@@ -14,7 +14,7 @@ export const ICONS = {
 };
 
 export const STYLE = `
-.et { position: relative; font: 13.5px/1.35 var(--font-text, "Inter", ui-sans-serif, system-ui, sans-serif); color: var(--fg); -webkit-font-smoothing: antialiased; }
+.et { position: relative; font: 13.5px/1.35 var(--font-text, "Erga Inter", ui-sans-serif, system-ui, sans-serif); color: var(--fg); -webkit-font-smoothing: antialiased; }
 .et [hidden] { display: none !important; }
 .et-rows { display: flex; flex-direction: column; gap: 1px; }
 .et-row { position: relative; display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 4px 0 calc(4px + var(--depth, 0) * 16px); border-radius: 7px;
@@ -86,7 +86,7 @@ export const STYLE = `
 @media (pointer: coarse) { .et-row { min-height: 40px; } .et-act { width: 34px; height: 34px; } .et-add { height: 38px; } .et-input { height: 32px; font-size: 16px; } }
 /* A row's menu: the avatar menu's look. */
 .et-menu { position: fixed; z-index: 1000; min-width: 172px; max-width: min(280px, calc(100vw - 24px)); max-height: min(360px, calc(100vh - 24px)); overflow-y: auto; box-sizing: border-box; padding: 5px;
-  font: 13px/1.3 var(--font-text, "Inter", ui-sans-serif, system-ui, sans-serif); color: var(--fg); background: var(--bg); border: 1px solid var(--panel-border, var(--rule)); border-radius: 11px;
+  font: 13px/1.3 var(--font-text, "Erga Inter", ui-sans-serif, system-ui, sans-serif); color: var(--fg); background: var(--bg); border: 1px solid var(--panel-border, var(--rule)); border-radius: 11px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.05); animation: et-pop 120ms ease; }
 @keyframes et-pop { from { opacity: 0; transform: translateY(-3px); } }
 .et-menu [role="menuitem"] { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 6px 9px; padding-left: calc(9px + var(--depth, 0) * 14px); border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; text-align: left; white-space: nowrap; cursor: pointer; outline: none; }

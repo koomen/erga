@@ -17,7 +17,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { signed } from "../signed.ts";
 import { ID, OWNER } from "../directory/index.ts";
-import { handOff } from "../identity/index.ts";
+import { fontsAt, handOff } from "../identity/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./routes.ts";
 import { sourceDigest } from "../../shared/page-html.ts";
@@ -247,6 +247,7 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   return new Response(
     readerPage(text, {
       shell,
+      fonts: fontsAt(platform, shell),
       prefix: `/t/${token}/${ver ? `@${ver}/` : ""}`,
       src: sourceDigest(text),
       editor: !!claims.edit,

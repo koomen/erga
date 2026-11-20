@@ -25,7 +25,7 @@ test("a page brings its own editor when it imports erga/text or says so; else Er
 test("a page names Erga's libraries by their path alone, and loads them from its own origin; its scripts and its text stay as written", () => {
   const html = `<html><head><script type="module" src="/erga/steps/editor.js"></script><script src="/app.js"></script><script src="https://other.example/erga/steps/editor.js"></script></head><body><p>/erga/text/editor.js</p></body></html>`;
   for (const shell of ["https://erga.example", "https://staging.erga.example", "http://localhost:4712"]) {
-    const page = readerPage(html, { shell, prefix: "/t/x/", src: "", editor: false, worker: true });
+    const page = readerPage(html, { shell, fonts: "", prefix: "/t/x/", src: "", editor: false, worker: true });
     expect(page).toContain(`<script type="module" src="/erga/steps/editor.js"></script>`);
     // Another server's library is that page's own choice: no address of any server is special.
     expect(page).toContain(`<script src="/app.js"></script><script src="https://other.example/erga/steps/editor.js"></script>`);

@@ -133,6 +133,13 @@ export function handOff(platform: Pick<Platform, "pagesDomain" | "pagesShared" |
   return accept ? { accept, warm: `${accept.replace("//accept.", "//warm.")}${WARM_PATH}` } : null;
 }
 
+/**
+ * Where a document's page gets the templates' typefaces (server/pages/reader.ts): the viewer's origin `shell`, one
+ * address for every document. Not behind a gate in front: a font's request from another origin carries no cookie, and
+ * the gate refuses it. There, the page's own origin ("").
+ */
+export const fontsAt = (platform: Pick<Platform, "signIn">, shell: string) => (platform.signIn.mode == "gate" ? "" : shell);
+
 /** Whether an access rule reads this provider's groups: then its sign-in asks for them. */
 export async function wantsGroups(platform: Pick<Platform, "directory">, provider: Provider): Promise<boolean> {
   const kind = SIGN_IN_PROVIDERS[provider].groups?.kind;

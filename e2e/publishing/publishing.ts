@@ -1,11 +1,13 @@
 // Helpers for the publishing journeys (publishing.e2e.ts): / as someone signed out gets it, a document's publishing
-// (ls), the operations that change it, a site made and published to a domain, and requests to a custom domain.
+// (ls), the operations that change it, a site made and published to a domain, requests to a custom domain, and the
+// Publishing section of a document's settings.
 //
 // Trap: Node's fetch can't name site.localhost (a custom domain in the tests): `onDomain` sends the Host header with
 // node:http. The browser reaches it.
 import { request } from "node:http";
 import type { Page } from "playwright-core";
-import { until, type Server } from "../helpers/fixtures";
+import { agentClosed, until, type Server } from "../helpers/fixtures";
+import { pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 
 /** ls's publishing (server/operations/publishing.ts, publishingOf). */
@@ -182,3 +184,70 @@ export const ask = (page: Page, content: string) =>
 /** The page model's state, as the page's script reads it. */
 export const llmStatus = (page: Page) =>
   page.evaluate(() => (window as any).ergaLLM.status() as { on: boolean; model: string; signedIn: boolean });
+
+// The Publishing section of a document's settings, in the editor, with real keys.
+
+/** Opens a document's settings in the editor, with the gear, once the editor's controls are in (they fade in as it comes up). */
+export async function openSettings(p: Page, at: string) {
+  await agentClosed(p);
+  await p.goto(at);
+  const gear = () =>
+    p.evaluate(() => {
+      const g = document.getElementById("btn-settings"),
+        r = g?.getBoundingClientRect();
+      if (!g || !r?.width || getComputedStyle(g.closest(".chrome")!).opacity != "1") return null;
+      const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      return document.elementFromPoint(at.x, at.y)?.closest("#btn-settings") == g ? at : null;
+    });
+  await until(gear, 10_000, "the gear can be clicked");
+  await pressOn(p, "#btn-settings");
+  // (=== false: the section is there, and shows. Before it is there, hidden is undefined.)
+  await until(() => p.evaluate(() => document.getElementById("ds-pub")?.hidden === false), 5_000, "the settings show Publishing");
+}
+/** The Publishing section, as the person reads it. */
+export const section = (p: Page) =>
+  p.evaluate(() => {
+    const $ = (id: string) => document.getElementById(id)!;
+    const off = (id: string) => $(id).getAttribute("aria-disabled") == "true";
+    return {
+      to: $("ds-pub-domain").textContent!.trim(),
+      toOff: off("ds-pub-domain"),
+      menu: $("ds-pub-menu").hidden
+        ? null
+        : [...$("ds-pub-menu").querySelectorAll("li")].map((li) => [...li.children].map((c) => c.textContent).join(" | ")),
+      ask: $("ds-pub-confirm").hidden ? null : $("ds-pub-ask").textContent,
+      bars: [($("ds-bars-on") as HTMLInputElement).checked, ($("ds-bars-on") as HTMLInputElement).disabled],
+      barsTip: $("ds-bars").dataset.tip ?? "",
+      name: $("ds-pub-name").textContent,
+      status: $("ds-status").textContent!.trim(),
+      publish: [$("ds-publish").textContent, off("ds-publish"), $("ds-publish").classList.contains("newer")],
+      publishTip: $("ds-publish").dataset.tip ?? "",
+      tags: [...document.querySelectorAll("#ds-list .ds-tag")].map((t) => t.textContent),
+    };
+  });
+/**
+ * Once the section rests at `name` (the domain's, or "Not published"): its change's call has answered, so Publish is
+ * not locked by it. (The section also hears of the change from the server, which may come first.)
+ */
+export const rests = (p: Page, name: string) =>
+  until(
+    async () => {
+      const s = await section(p);
+      return s.name == name && s.ask == null && (name == "Not published" || !s.publish[1]) ? s : null;
+    },
+    5_000,
+    `the section rests at ${name}`,
+    () => section(p)
+  );
+
+/**
+ * "Publish to", with real keys: the menu opens, the arrows go `down` rows from the chosen one, and Enter chooses.
+ * It is grey while a change's call runs (the section may show the change before that call answers): a press then does nothing.
+ */
+export async function choose(p: Page, down: number) {
+  await until(async () => !(await section(p)).toOff, 5_000, "Publish to can be pressed");
+  await pressOn(p, "#ds-pub-domain");
+  await until(async () => (await section(p)).menu != null, 5_000, "the menu opens");
+  for (let i = 0; i < Math.abs(down); i++) await p.keyboard.press(down > 0 ? "ArrowDown" : "ArrowUp");
+  await p.keyboard.press("Enter");
+}

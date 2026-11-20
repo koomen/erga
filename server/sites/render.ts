@@ -232,7 +232,6 @@ export function siteHeader(o: {
   account: Account | null;
   here: string;
   doc?: string;
-  font?: boolean;
 }): string {
   const session = o.account?.session ?? null;
   const bars = barsHtml({
@@ -243,13 +242,10 @@ export function siteHeader(o: {
     edit: o.edit ? editButton(o.edit, false) : "",
     corner: accountMarkup(o.account, o.here),
   });
-  // The font goes outside the shadow root: a font declared inside one isn't used. Not when the page has its own Inter
-  // (font: false, pageInter): the bars use the page's, and the browser loads one copy, not two.
-  return `${o.font == false ? "" : crumbsFont(session, true)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("site-controls")}</style><div class="band"></div>${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}<style>${SHADOW_BARS}</style></template></erga-controls>${inlineScript("site-controls")}`;
+  // The font goes outside the shadow root: a font declared inside one isn't used. Its family has a name of Erga's own
+  // (Erga Inter, client/fonts/inter.css), so its rules never take the text of a page that has an Inter of its own.
+  return `${crumbsFont(session, true)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("site-controls")}</style><div class="band"></div>${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}<style>${SHADOW_BARS}</style></template></erga-controls>${inlineScript("site-controls")}`;
 }
-
-/** Whether a page declares the typeface Inter itself (an @font-face rule for it), which the bars can then use. */
-export const pageInter = (html: string) => /@font-face\s*\{[^}]*font-family:\s*(["']?)Inter\1\s*[;}]/i.test(html);
 
 /**
  * The bars' look (client/inline/bars.css) inside the controls' shadow root, where the page's <html> and <body> can't be

@@ -2,7 +2,7 @@
 // the settings), in its two modes (mode.ts). The rest of the app imports identity through this file.
 
 export { actingAdmin, refusedAgent, sessionOf, signedOut, viewRequest } from "./admit.ts";
-export { handOff, SIGNED_OUT, WARM_PATH } from "./caller.ts";
+export { fontsAt, handOff, SIGNED_OUT, WARM_PATH } from "./caller.ts";
 export { gated } from "./mount.ts";
 export { chooseSignIn, signOut, ssoSignIn, SSO_PATH, startSignIn } from "./sign-in.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";

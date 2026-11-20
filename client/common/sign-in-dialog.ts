@@ -13,7 +13,7 @@ const CSS = `
 @media (prefers-color-scheme: dark) { :host { --bg: #1f1f23; --fg: #c9c9d1; --fg-strong: #ececf1; --soft: #8f8f99; --ring: #2f2f35; } }
 dialog { width: min(360px, calc(100vw - 32px)); box-sizing: border-box; padding: 0; border: 1px solid var(--ring); border-radius: 12px;
   background: var(--bg); color: var(--fg); box-shadow: 0 18px 50px rgba(0, 0, 0, .18), 0 1px 2px rgba(0, 0, 0, .06);
-  font: 400 14px/1.4 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  font: 400 14px/1.4 "Erga Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 dialog::backdrop { background: rgba(0, 0, 0, .18); }
 .body { position: relative; padding: 20px; outline: none; }
 h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
