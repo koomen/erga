@@ -83,7 +83,7 @@ export const units = (): Unit[] => [
   {
     id: "celld",
     name: "aws-celld",
-    title: "AWS, Erga on celld: the deploy, and one journey",
+    title: "AWS, Erga on celld: the deploy, one journey, and deploys from a machine and from the deployer",
     where: "aws",
     needs: CELLD,
     wants: [],

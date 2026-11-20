@@ -447,6 +447,16 @@ export function awsProblem(args: string[], s: AwsScope): string | null {
     case "cloudfront describe-function":
     case "cloudfront test-function":
       return named(opt("--name"));
+    // An instance's deployer, a Lambda function with its stack's name (deploy/aws/deployer.ts): whether it is there,
+    // the wait for it, its code, and one run of it. No other command of Lambda.
+    case "lambda get-function-configuration":
+    case "lambda update-function-code":
+    case "lambda invoke":
+      return named(opt("--function-name"));
+    case "lambda wait":
+      return ["function-active-v2", "function-updated-v2"].includes(rest[0] ?? "")
+        ? named(opt("--function-name"))
+        : no("it is not the wait for a function of the suite's");
     case "cloudfront-keyvaluestore get-key":
     case "cloudfront-keyvaluestore put-key":
     case "cloudfront-keyvaluestore describe-key-value-store":

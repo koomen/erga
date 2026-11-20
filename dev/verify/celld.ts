@@ -3,7 +3,8 @@
 // zone of their own (another site). Celld runs Erga's Worker code, so the gate runs inside it, as its first call
 // (OAuth mode: server/identity/mount.ts). Two units of the suite:
 //
-//   celld   the deploy itself: health, no public address, one journey with the real editor in Chromium
+//   celld   the deploy itself: health, no public address, one journey with the real editor in Chromium; then the
+//           deploy scenarios on AWS (deploys-aws.ts): from this machine, and from the deployer in the account
 //   6       the plan's setting 6 (AWS, OAuth, the gate inside celld): the same deploy, with a stack of its own; the
 //           checks above, the gate's own answers and its checks of each request, an agent's whole way in, and the
 //           journey in each browser, with sign-out
@@ -35,6 +36,7 @@ import { webPort } from "../../gate/port.ts";
 import { edgeKey } from "../../server/identity/caller.ts";
 import { allowHere, answersOf, type AwsRun, type AwsUnit, deployOnAws, GITHUB_CLIENT, loadAws, removeOnAws } from "./aws.ts";
 import { answers } from "./cloudflare.ts";
+import { awsDeployChecks } from "./deploys-aws.ts";
 import { useDedicated } from "./dedicated.ts";
 import { agentChecks, ergas, tool } from "./erga.ts";
 import { type Answer, ask, type Jar } from "./http.ts";
@@ -142,6 +144,8 @@ async function check(browsers: string[]) {
   const address = at ? root + at.replace(/[?&]edit$/, "") : null;
   if (unit == "celld") {
     await journey(report, "chromium", "", run, root, address);
+    // Last, on the same instance: the deploys from this machine, and from the deployer in the account (deploys-aws.ts).
+    await awsDeployChecks(report, run).catch((e: Error) => report.add("The deploy scenarios on AWS ran to their end", false, e.message));
     return report;
   }
   await gateInside(report, run, root);

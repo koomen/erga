@@ -86,7 +86,7 @@ const tokenNow = (): string | null => {
 };
 
 /** The repository that this checkout pushes to, as a spec names it. */
-const repo = () => {
+export const repo = () => {
   const name = repoOf();
   if (!name) throw new Error("This checkout's origin is not a GitHub repository.");
   return `github.com/${name}`;
@@ -152,7 +152,7 @@ async function reach() {
 }
 
 /** Lines of a step, as the suite's log has them. */
-const print = (line: string) => console.log(`  ${line.slice(0, 300)}`);
+export const print = (line: string) => console.log(`  ${line.slice(0, 300)}`);
 
 /**
  * Puts this checkout's branch on `verify` (`bun erga try`), and waits for GitHub's release of it: the commit. GitHub's
@@ -160,12 +160,14 @@ const print = (line: string) => console.log(`  ${line.slice(0, 300)}`);
  */
 /** Frees the try's lock that the deployer's rows keep (onVerify, `keep`). */
 let freeVerify: () => void = () => {};
+/** Ends the lock that the last try kept (also for the scenarios on AWS: deploys-aws.ts). */
+export const endVerify = () => freeVerify();
 
 /**
  * This checkout's branch as a commit on verify, with GitHub's release of it: the commit. `keep`: the try keeps its
  * lock, so no other try moves verify while the deployer's rows wait for that commit (freeVerify ends it).
  */
-async function onVerify(report: Report | null, keep = false): Promise<string> {
+export async function onVerify(report: Report | null, keep = false): Promise<string> {
   const branch = Bun.spawnSync(["git", "branch", "--show-current"], {
     cwd: ROOT,
   })
@@ -253,7 +255,7 @@ function suiteOnly(net: Awaited<ReturnType<typeof suiteNet>>["net"]): Cloudflare
 }
 
 /** Waits for a job of the instance that `is` says is the one, until it ended. null: none in `ms`. */
-async function jobThat(jobs: () => Promise<Job[]>, is: (j: Job) => boolean, ms: number): Promise<Job | null> {
+export async function jobThat(jobs: () => Promise<Job[]>, is: (j: Job) => boolean, ms: number): Promise<Job | null> {
   let found: Job | null = null;
   await until(
     "the job on the instance",
@@ -268,7 +270,7 @@ async function jobThat(jobs: () => Promise<Job[]>, is: (j: Job) => boolean, ms: 
 }
 
 /** An admin's ask, as the app writes it on the instance (server/directory/deploys.ts). */
-const ask = (sql: Parameters<typeof readJobs>[0], what: string, by: string) =>
+export const ask = (sql: Parameters<typeof readJobs>[0], what: string, by: string) =>
   run(
     sql(
       "INSERT INTO deploy_control (id, ask, ask_by, ask_at) VALUES (1, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET ask = excluded.ask, ask_by = excluded.ask_by, ask_at = excluded.ask_at",

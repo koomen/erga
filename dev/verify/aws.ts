@@ -47,6 +47,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { type Aws, awsCli, whoAmI } from "../../deploy/aws/cli.ts";
 import { deployToAws } from "../../deploy/aws/deploy.ts";
+import { removeDeployer } from "../../deploy/aws/deployer.ts";
+import type { AwsEntry } from "../../deploy/cli/config.ts";
 import { liveParam } from "../../deploy/deployer/aws.ts";
 import { CELLD, CHROME, provisionScript } from "../../deploy/aws/machine.ts";
 import { applyStacks, awsEntry, firstSql, prepareMachine, putOidcSecret, whereOf, writePlan } from "../../deploy/aws/setup.ts";
@@ -129,6 +131,24 @@ async function ownAccount(a: Answers): Promise<string> {
       `The AWS profile ${a.profile} reaches the account ...${me.account.slice(-4)}, not the suite's own (...${local().aws.account.slice(-4)}). Nothing was made or removed.`
     );
   return me.account;
+}
+
+/**
+ * The unit's instance as an entry of .erga/config.json (as setup writes one), from its deploy on record: what
+ * `bun erga deploy` and the deployer's install take. The unit must be deployed.
+ */
+export async function entryOfUnit(unit: AwsUnit): Promise<AwsEntry> {
+  const a = answersOf(unit);
+  const account = await ownAccount(a);
+  const had = recorded(unit, a);
+  if (!had?.outputs?.Machine) throw new Error(`No deploy of ${unit} is there: bun erga verify ${unit} --keep deploys it, and keeps it.`);
+  return awsEntry(a, account, had.outputs, unit == "6" ? GITHUB_CLIENT : undefined);
+}
+
+/** Writes the release that the unit's instance runs now into its record: a later check reads the health against it. */
+export function noteDeployed(unit: AwsUnit, version: string): void {
+  const run = loadAws(unit);
+  if (run?.deployed) save({ ...run, deployed: { ...run.deployed, version } });
 }
 
 /** The unit's run on record, if it is of this unit's stack: a file of other settings names nothing that a step may touch. */
@@ -347,6 +367,9 @@ export async function removeOnAws(unit: AwsUnit): Promise<void> {
   if (bucket) mine(bucket);
   const kms = (await physical("Key")) ?? outputs.Key;
 
+  // The instance's deployer first (deploys-aws.ts installs one): its stack reads the main stack's key.
+  if (await removeDeployer(aws, stack, log)) log(`the deployer's stack ${stack}-deployer is gone`);
+  rmSync(join(suiteDir(), "deploys-aws"), { recursive: true, force: true });
   // (The web ACL goes after the distributions that name it.)
   const gone =
     (await deleteStack(aws, stack)) && (await deleteStack(edge, `${stack}-certs`, 15)) && (await deleteStack(edge, onlyHereStack(stack)));

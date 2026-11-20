@@ -349,6 +349,16 @@ test("each command of the AWS CLI names only the suite's own, or it does not run
   no("s3", "ls");
   no("cloudfront", "describe-function", "--name", "erga-example-com-edge");
   no("cloudfront", "delete-distribution", "--id", "E1");
+  // An instance's deployer (a Lambda function): by the suite's name; no other command of Lambda.
+  ok("lambda", "get-function-configuration", "--function-name", `${STACK}-deployer`);
+  ok("lambda", "wait", "function-active-v2", "--function-name", `${STACK}-deployer`);
+  ok("lambda", "wait", "function-updated-v2", "--function-name", `${STACK}-deployer`);
+  ok("lambda", "update-function-code", "--function-name", `${STACK}-deployer`, "--zip-file", "fileb:///tmp/d.zip");
+  ok("lambda", "invoke", "--function-name", `${STACK}-deployer`, "/tmp/out.json");
+  no("lambda", "get-function-configuration", "--function-name", "erga-example-com-deployer");
+  no("lambda", "wait", "function-exists", "--function-name", `${STACK}-deployer`);
+  no("lambda", "delete-function", "--function-name", `${STACK}-deployer`);
+  no("lambda", "list-functions");
   // What has the suite's tag; AWS's own list; nothing else.
   ok("resourcegroupstaggingapi", "get-resources", "--tag-filters", `Key=erga,Values=${STACK}`);
   no("resourcegroupstaggingapi", "get-resources", "--tag-filters", "Key=erga,Values=erga-example-com");
