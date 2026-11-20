@@ -14,11 +14,12 @@ export function fakeMachine(script: string) {
   const tool = (name: string, body: string) => (
     writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`), chmodSync(join(bin, name), 0o755)
   );
-  // The bucket gives release.tgz, and says which object was asked.
+  // The bucket gives release.tgz, and says which object was asked. As the CLI, it writes to the file that the command
+  // names, or to its output for "-". (Trap: with nothing on its input, GNU tar fails and macOS's tar does not.)
   tool(
     "aws",
     `case "$1 $2" in
-  "s3 cp") echo "$3" >> "$FAKE/asked"; cat "$FAKE/release.tgz" > "$4" ;;
+  "s3 cp") echo "$3" >> "$FAKE/asked"; if [ "$4" = - ]; then cat "$FAKE/release.tgz"; else cat "$FAKE/release.tgz" > "$4"; fi ;;
   "s3 ls") echo node ;;
   "ssm get-parameters-by-path") echo '{"Parameters":[{"Name":"/erga/erga-example/SESSION_SECRET","Value":"s"}]}' ;;
 esac`
