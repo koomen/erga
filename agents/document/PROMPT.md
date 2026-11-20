@@ -368,8 +368,8 @@ How to write the controls:
 
 With the Document LLM API, a page's script may call a model as its
 signed-in viewer, when an editor of the document turns it on in Document
-settings (`share_document` with `llm_api`, and `llm_api_model`: Haiku at
-first). The server's API keys pay, so each viewer has an hour's limit, and
+settings (`share_document` with `llm_api`, and `llm_api_model`: one of the
+models the server offers). The server's API keys pay, so each viewer has an hour's limit, and
 so has the server; its admin may turn the API, or a model, off. The page's
 script has `window.ergaLLM` (in the viewer, and on its published site):
 
@@ -377,8 +377,10 @@ script has `window.ergaLLM` (in the viewer, and on its published site):
   the Document LLM API controls only when `on` is true.
 - `ergaLLM.ask({ system, messages, max_tokens })` answers a Promise of
   `{ text }`. `messages` is `[{ role: "user" | "assistant", content }]`,
-  with text only, ending with the user's. At most 1024 tokens come back,
-  and the system prompt and messages hold at most 24,000 characters.
+  with text only, ending with the user's. At most 1024 tokens come back
+  (`max_tokens` asks for fewer; a model that always thinks spends a part of
+  them on it, so leave room), and the system prompt and messages hold at
+  most 24,000 characters.
 - When it fails, the Error has a `code`: `"sign_in"` (the viewer isn't
   signed in), `"off"` (it isn't on for the document, the server's admin
   turned the API or the document's model off, or the server can't run the

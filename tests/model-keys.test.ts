@@ -12,7 +12,6 @@ import { LanguageModel, Prompt } from "effect/ai";
 import {
   fitModel,
   isModelChoice,
-  isPageLlmModel,
   MODELS,
   MODELS_OFF_AT_FIRST,
   usableModels,
@@ -126,7 +125,7 @@ test("a model that left the short list (GPT-6 Astra): the setting takes its name
   sql.db.run(`UPDATE server_config SET value = '["gpt-6-astra","gpt-6.2-astra"]' WHERE key = 'agent_models_off'`);
   expect(await new Directory(sql, { admins: ["ada"] }).config.get("agent_models_off")).toEqual(MODELS_OFF_AT_FIRST);
   // A conversation's stored choice of it, and a page's: not a model, so the default.
-  expect([isModelChoice("gpt-6-astra"), isPageLlmModel("gpt-6.1-sol")]).toEqual([false, false]);
+  expect([isModelChoice("gpt-6-astra"), isModelChoice("gpt-6.1-sol")]).toEqual([false, false]);
   expect(fitModel(setup({ server: ["anthropic", "openai"] }), null)).toBe("opus-fast");
 });
 

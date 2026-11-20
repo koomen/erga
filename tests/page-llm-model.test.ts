@@ -1,48 +1,33 @@
 // The model a document's script calls (the Document LLM API: agents/models.ts, pageModel): which models its author may
-// choose (those the server has a key for, and that the admin left on), and an OpenAI model on the real path, through Pi, with fetch answering
-// in the Responses API's place: the request it sends (the model, the key, the cap on tokens, no reasoning) and the text.
+// choose (the ones a server key runs for the agents, and that the admin left on for documents), and a model of each
+// provider Pi calls on the real path, with fetch answering in the provider's place: the request it sends (the model,
+// the key, the cap on tokens, the least thinking the model has) and the text.
 
 import { afterAll, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
-import { PAGE_LLM_OFF_AT_FIRST, pageLlmChoices, type Provider } from "../shared/models";
+import { MODELS, MODELS_OFF_AT_FIRST, pageLlmChoices, type ModelChoice, type Provider } from "../shared/models";
 import { pageModel, type AgentConfig } from "../agents/models";
 
-const choices = (server: Provider[], off: string[] = [], mode: "server" | "own" = "server"): string[] =>
-  pageLlmChoices({ server, mode }, off);
-const claude: string[] = ["haiku", "sonnet", "opus", "opus-fast", "fable", "fable-fast"];
-const gpt: string[] = [
-  "gpt-6-luna",
-  "gpt-6-luna-fast",
-  "gpt-6.1-terra",
-  "gpt-6.1-terra-fast",
-  "gpt-6.2-sol",
-  "gpt-6.2-sol-fast",
-  "gpt-6.2-astra",
-  "gpt-6.2-astra-fast",
-];
+const choices = (server: Provider[], o: { agentsOff?: string[]; off?: string[]; mode?: "server" | "own" } = {}): string[] =>
+  pageLlmChoices({ server, mode: o.mode ?? "server", off: o.agentsOff ?? [] }, o.off ?? []);
+const of = (p: Provider): string[] => (Object.keys(MODELS) as ModelChoice[]).filter((m) => MODELS[m].provider == p);
 
-test("the models a document's author may choose, by one rule for every provider: the server has its key, and the admin left the model on", () => {
+test("the models a document's author may choose, by one rule for every model: a server key runs it for the agents, and the admin left it on for documents", () => {
   expect(choices([])).toEqual([]);
-  expect(choices(["anthropic"])).toEqual(claude);
-  expect(choices(["openai", "google"])).toEqual(gpt);
-  expect(choices(["anthropic", "openai", "google"])).toEqual([...claude, ...gpt]);
-  // The admin's switches (the document_llm_models_off setting), Claude's as OpenAI's.
-  expect(choices(["anthropic", "openai"], ["sonnet", "gpt-6.2-astra", ...PAGE_LLM_OFF_AT_FIRST])).toEqual([
-    "haiku",
-    "opus",
-    "opus-fast",
-    "fable",
-    "gpt-6-luna",
-    "gpt-6.1-terra",
-    "gpt-6.2-sol",
-  ]);
-  // At first, the fast modes are off, but Opus 5.5's (as for the agents).
-  expect<string[]>(PAGE_LLM_OFF_AT_FIRST).toEqual(["fable-fast", ...gpt.filter((m) => m.endsWith("-fast"))]);
+  // Every provider's models, in the list's own order: no provider is left out.
+  expect(choices(["anthropic"])).toEqual(of("anthropic"));
+  expect(choices(["openai", "google"])).toEqual([...of("openai"), ...of("google")]);
+  expect(choices(["anthropic", "openai", "google", "openrouter"])).toEqual(Object.keys(MODELS));
+  // A model off for the agents (the agent_models_off setting) is not one of them; nor one off for documents (the
+  // document_llm_models_off setting).
+  expect(
+    choices(["anthropic", "google"], { agentsOff: ["sonnet", "gemini-4-neon", ...MODELS_OFF_AT_FIRST], off: ["fable", "gemini-4-carbon"] })
+  ).toEqual(["haiku", "opus", "opus-fast", "gemini-3.8-flash", "gemini-4-argon", "gemini-4-hydrogen"]);
   // Each person brings their own keys: the server's keys run nothing, for documents too. A person's key never pays for a document.
-  expect(choices(["anthropic", "openai"], [], "own")).toEqual([]);
+  expect(choices(["anthropic", "openai"], { mode: "own" })).toEqual([]);
 });
 
 const cfg = (o: Partial<AgentConfig>): AgentConfig => ({
@@ -55,20 +40,21 @@ const cfg = (o: Partial<AgentConfig>): AgentConfig => ({
   ...o,
 });
 
-test("no OpenAI key on the server, or a provider pages don't use: no model", () => {
+test("no key of the server's for the model's provider, or the model off for the agents: no model", () => {
   expect(pageModel(cfg({ server: { anthropic: Redacted.make("sk-ant") } }), "gpt-6-luna", 100)).toBeNull();
-  expect(pageModel(cfg({ server: { google: Redacted.make("g") } }), "gemini-3.8-flash", 100)).toBeNull();
+  expect(pageModel(cfg({ server: { google: Redacted.make("g") }, off: ["gemini-3.8-flash"] }), "gemini-3.8-flash", 100)).toBeNull();
+  expect(pageModel(cfg({ own: { google: Redacted.make("g") } }), "gemini-3.8-flash", 100)).toBeNull();
+  expect(pageModel(cfg({ server: { google: Redacted.make("g") } }), "gemini-3.8-flash", 100)).not.toBeNull();
 });
 
 const real = globalThis.fetch;
 const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const req = new Request(input, init);
-  requests.push({ url: req.url, headers: req.headers, body: (await req.json()) as Record<string, unknown> });
+/** A streamed answer of OpenAI's Responses API with one text. */
+function responses() {
   const ev = (data: object) => `event: ${(data as { type: string }).type}\ndata: ${JSON.stringify(data)}\n\n`;
   const item = { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] };
   const done = { ...item, status: "completed", content: [{ type: "output_text", text: "Hello from Luna.", annotations: [] }] };
-  const body = [
+  return [
     ev({ type: "response.created", response: { id: "resp_1", status: "in_progress", output: [] } }),
     ev({ type: "response.output_item.added", output_index: 0, item }),
     ev({
@@ -90,6 +76,27 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       },
     }),
   ].join("");
+}
+/** One of Google's Gemini API: a text, with the tokens of its thinking beside the answer's. */
+const gemini = () =>
+  `data: ${JSON.stringify({
+    candidates: [{ index: 0, content: { role: "model", parts: [{ text: "Hello from Gemini." }] }, finishReason: "STOP" }],
+    usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: 40, totalTokenCount: 55 },
+  })}\r\n\r\n`;
+/** One of OpenRouter's chat completions. */
+function completions() {
+  const chunk = (delta: object, finish: string | null, usage?: object) =>
+    `data: ${JSON.stringify({ id: "gen-1", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`;
+  return (
+    chunk({ role: "assistant", content: "Hello from OpenRouter." }, null) +
+    chunk({}, "stop", { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 }) +
+    "data: [DONE]\n\n"
+  );
+}
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const req = new Request(input, init);
+  requests.push({ url: req.url, headers: req.headers, body: (await req.json()) as Record<string, unknown> });
+  const body = req.url.includes("googleapis.com") ? gemini() : req.url.includes("openrouter.ai") ? completions() : responses();
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
 }) as typeof fetch;
 afterAll(() => {
@@ -144,5 +151,50 @@ test("GPT-6.2 Sol and Astra for a page: the request names no reasoning effort, a
     expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
     expect(requests[0].body).toMatchObject({ model: choice, max_output_tokens: 300, stream: true });
     expect(requests[0].body.reasoning).toBeUndefined();
+  }
+});
+
+/** The page's call of `choice` on the server's key for `provider`, with at most 300 tokens: the text and the output tokens. */
+async function ask(choice: ModelChoice, provider: Provider) {
+  requests.length = 0;
+  const layer = pageModel(cfg({ server: { [provider]: Redacted.make("server-key") } }), choice, 300);
+  const prompt = Prompt.make([
+    { role: "system", content: "Be brief." },
+    { role: "user", content: [{ type: "text", text: "Hi" }] },
+  ]);
+  const parts = Array.from(await Effect.runPromise(LanguageModel.streamText({ prompt }).pipe(Stream.runCollect, Effect.provide(layer!))));
+  const finish = parts.find((p) => p.type == "finish");
+  return {
+    text: parts.flatMap((p) => (p.type == "text-delta" ? [p.delta] : [])).join(""),
+    output: finish?.type == "finish" ? finish.usage.outputTokens.total : undefined,
+  };
+}
+
+test("each Gemini model for a page, by the same rule: the server's key, the cap on tokens, its lowest thinking level, and the text; its thinking counts as output", async () => {
+  for (const choice of ["gemini-3.8-flash", "gemini-4-argon", "gemini-4-hydrogen", "gemini-4-neon", "gemini-4-carbon"] as const) {
+    expect(await ask(choice, "google")).toEqual({ text: "Hello from Gemini.", output: 45 });
+    expect(requests.map((r) => r.url)).toEqual([
+      `https://generativelanguage.googleapis.com/v1beta/models/${choice}:streamGenerateContent?alt=sse`,
+    ]);
+    expect(requests[0].headers.get("x-goog-api-key")).toBe("server-key");
+    // (Gemini's thinking has no off: Pi asks for the lowest level.)
+    expect(requests[0].body.generationConfig).toMatchObject({ maxOutputTokens: 300, thinkingConfig: { thinkingLevel: "LOW" } });
+    expect(requests[0].body.tools).toBeUndefined();
+  }
+});
+
+test("each OpenRouter model for a page, by the same rule: the server's key, the cap on tokens, no reasoning where the model has an off, and the text", async () => {
+  for (const [choice, reasoning] of [
+    ["kimi-k3", { effort: "none" }],
+    ["deepseek-v4-pro", { effort: "none" }],
+    // (Grok's reasoning has no off: the request names none.)
+    ["grok", undefined],
+  ] as const) {
+    expect(await ask(choice, "openrouter")).toEqual({ text: "Hello from OpenRouter.", output: 6 });
+    expect(requests.length).toBe(1);
+    expect(requests[0].url).toContain("openrouter.ai");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer server-key");
+    expect(requests[0].body).toMatchObject({ model: MODELS[choice].id, max_completion_tokens: 300, stream: true });
+    expect(requests[0].body.reasoning).toEqual(reasoning);
   }
 });

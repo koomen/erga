@@ -219,16 +219,18 @@ const pi = (options: Parameters<typeof piLanguageModel>[0]): Layer.Layer<Languag
   Layer.unwrap(Effect.promise(() => import("./pi-model.ts")).pipe(Effect.map((m) => m.piLanguageModel(options))));
 
 /**
- * The model a document's page calls as its visitor (agents/page-llm.ts), with the server's key, answering at most
- * `maxTokens`, with no thinking and no tools, in fast mode if `choice` is a fast one: Claude on Effect AI's Anthropic
- * provider, OpenAI's models through Pi; or the scripted model. Null: the server's keys don't run `choice` for pages now.
+ * The model a document's page calls as its visitor (agents/page-llm.ts), with the server's key, by one rule for every
+ * model: at most `maxTokens` tokens out, no tools, the least thinking the model has (none, where it can be off; a
+ * model that always thinks spends a part of `maxTokens` on it), and fast mode if `choice` is a fast one. Claude runs
+ * on Effect AI's Anthropic provider, the others through Pi; or the scripted model. Null: no server key runs `choice`
+ * now (pageLlmChoices).
  */
 export function pageModel(cfg: AgentConfig, choice: ModelChoice, maxTokens: number): Layer.Layer<LanguageModel.LanguageModel> | null {
   if (isScript(cfg)) return scriptModel(MODELS[choice].label);
   const m: (typeof MODELS)[ModelChoice] & { fast?: boolean } = MODELS[choice];
   const apiKey = pageLlmChoices(keySetup(cfg), []).includes(choice) ? cfg.server[m.provider] : undefined;
   if (!apiKey) return null;
-  if (m.provider == "openai") return pi({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens, fast: m.fast });
+  if (m.provider != "anthropic") return pi({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens, fast: m.fast });
   const config = { max_tokens: maxTokens, structuredOutputs: false, ...(m.fast ? { speed: "fast" } : {}) } as unknown as AnthropicConfig;
   return anthropic(m.id, config, apiKey);
 }

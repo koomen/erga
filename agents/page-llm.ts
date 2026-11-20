@@ -49,7 +49,7 @@ import { whoOf, type Platform, type Session } from "../server/platform.ts";
 import { domainVisitor, signInChoices } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
 import { domainOf, ERGA, liveDoc, tokenOk } from "../server/sites/index.ts";
-import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, MODELS, type ModelChoice } from "../shared/models.ts";
+import { DEFAULT_PAGE_LLM_MODEL, isModelChoice, MODELS, type ModelChoice } from "../shared/models.ts";
 import { modelError, pageModel } from "./models.ts";
 
 export const isPageLlmPath = (path: string) => path == "/api/llm";
@@ -96,9 +96,10 @@ async function decide(
     dir.config.get("document_llm_models_off"),
   ]);
   if (!enabled || budget <= 0) return { off: ADMIN_OFF };
-  const model = setting.model && isPageLlmModel(setting.model) ? setting.model : DEFAULT_PAGE_LLM_MODEL;
-  if (modelsOff.includes(model)) return { off: modelOff(model) };
+  const model = setting.model && isModelChoice(setting.model) ? setting.model : DEFAULT_PAGE_LLM_MODEL;
   const cfg = await p.agentSettings();
+  // Off for documents, or for the agents (a model the server doesn't run): the same words.
+  if (modelsOff.includes(model) || (!("missing" in cfg) && cfg.off.includes(model))) return { off: modelOff(model) };
   if ("missing" in cfg || !pageModel(cfg, model, 1)) return { off: `The server has no API key that runs ${MODELS[model].label} now.` };
   return { doc, model, who: setting.who };
 }

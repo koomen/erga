@@ -106,22 +106,20 @@ export function fitModel(k: KeySetup, wanted: ModelChoice | null): ModelChoice |
 }
 
 /**
- * The Document LLM API's models: the ones a document's script may call as its viewer (window.ergaLLM:
- * agents/page-llm.ts), with the server's keys. Anthropic's and OpenAI's, which take a cap on the tokens they answer.
- * The document's author chooses one (share_document llm_api_model); Haiku at first.
+ * The Document LLM API: a document's script may call a model as its viewer (window.ergaLLM: agents/page-llm.ts), with
+ * the server's keys. The document's author chooses the model (share_document llm_api_model); a document with none
+ * stored has this one.
  */
-const PAGE_LLM_PROVIDERS: readonly Provider[] = ["anthropic", "openai"];
-export const PAGE_LLM_MODELS = (Object.keys(MODELS) as ModelChoice[]).filter((m) => PAGE_LLM_PROVIDERS.includes(MODELS[m].provider));
 export const DEFAULT_PAGE_LLM_MODEL: ModelChoice = "haiku";
-export const isPageLlmModel = (s: string): s is ModelChoice => (PAGE_LLM_MODELS as string[]).includes(s);
-
-/** The ones the admin's switches have off at first (the document_llm_models_off setting's default): as for the agents. */
-export const PAGE_LLM_OFF_AT_FIRST = PAGE_LLM_MODELS.filter((m) => MODELS_OFF_AT_FIRST.includes(m));
 
 /**
- * The models a document's author may choose now, by one rule for every provider: the server provides keys, it has a
- * key for the model's provider, and the admin left the model on (`off`: the document_llm_models_off setting).
+ * The models a document's author may choose now, by one rule for every model: a server key runs it for the agents
+ * (the server provides keys, it has the provider's key, and the model is on in the agent_models_off setting), and the
+ * admin left it on for documents (`off`: the document_llm_models_off setting). A person's own key never pays for a
+ * document.
  */
-export function pageLlmChoices(k: Pick<KeySetup, "server" | "mode">, off: readonly string[]): ModelChoice[] {
-  return k.mode == "server" ? PAGE_LLM_MODELS.filter((m) => k.server.includes(MODELS[m].provider) && !off.includes(m)) : [];
+export function pageLlmChoices(k: Omit<KeySetup, "own">, off: readonly string[]): ModelChoice[] {
+  return usableModels({ ...k, own: [] })
+    .map((u) => u.choice)
+    .filter((m) => !off.includes(m));
 }

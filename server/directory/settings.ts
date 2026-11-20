@@ -21,7 +21,7 @@ import type { Sql, Statement } from "./model.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
 import { type Anyone, ANYONE_LABEL, ANYONE_LEVELS } from "./access.ts";
-import { isModelChoice, isPageLlmModel, MODELS, MODELS_OFF_AT_FIRST, PAGE_LLM_MODELS, PAGE_LLM_OFF_AT_FIRST } from "../../shared/models.ts";
+import { isModelChoice, MODELS, MODELS_OFF_AT_FIRST } from "../../shared/models.ts";
 import { SIGN_IN_DAYS, SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 /** A write another write came in on the middle of: it tries again. */
@@ -52,11 +52,11 @@ export interface Setting<T = unknown> {
 }
 
 /** A list of model names (or one text of them), each one of `all`, each one time. */
-function modelList(v: unknown, is: (m: string) => boolean, all: readonly string[]): string[] {
+function modelList(v: unknown): string[] {
   const list = typeof v == "string" ? v.split(/[\s,]+/).filter(Boolean) : v;
   if (!Array.isArray(list) || list.some((m) => typeof m != "string")) throw new ConfigError({ message: "must be a list of model names" });
-  const bad = (list as string[]).find((m) => !is(m));
-  if (bad) throw new ConfigError({ message: `has "${bad}", which isn't one of the models: ${all.join(", ")}` });
+  const bad = (list as string[]).find((m) => !isModelChoice(m));
+  if (bad) throw new ConfigError({ message: `has "${bad}", which isn't one of the models: ${Object.keys(MODELS).join(", ")}` });
   return [...new Set(list as string[])];
 }
 
@@ -171,9 +171,9 @@ export const SETTINGS = {
   }),
   document_llm_models_off: setting<string[]>({
     label: "Models the Document LLM API doesn't offer",
-    description: `The models a document's author can't choose for the Document LLM API. A list of: ${PAGE_LLM_MODELS.join(", ")}.`,
-    default: PAGE_LLM_OFF_AT_FIRST,
-    parse: (v) => modelList(v, isPageLlmModel, PAGE_LLM_MODELS),
+    description: `The models a document's author can't choose for the Document LLM API, of those a server key runs (agent_models_off: a model off there is off here too). A list of: ${Object.keys(MODELS).join(", ")}.`,
+    default: [],
+    parse: modelList,
   }),
   feedback: setting<boolean>({
     label: "Send feedback",
@@ -233,7 +233,7 @@ export const SETTINGS = {
     label: "Models a server key doesn't run",
     description: `The models that a server key doesn't run; a user's own key still runs them. A list of: ${Object.keys(MODELS).join(", ")}.`,
     default: MODELS_OFF_AT_FIRST,
-    parse: (v) => modelList(v, isModelChoice, Object.keys(MODELS)),
+    parse: modelList,
   }),
 };
 

@@ -483,6 +483,10 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     expect(await page.isVisible(`${row} .masked`)).toBe(true);
     expect(await page.isHidden("#key-openai")).toBe(true);
     await soon(() => markOf(page)).toBe("saved");
+    // The Document LLM API's models: a box for each model that is ticked here, in the same order.
+    const forDocuments = () =>
+      page.locator("li.llm-models .models input").evaluateAll((boxes) => boxes.map((b) => (b as HTMLInputElement).value));
+    await soon(forDocuments).toEqual(["gpt-6-luna", "gpt-6.1-terra", "gpt-6.2-sol", "gpt-6.2-astra"]);
     const unticked = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
     await page.uncheck(box("gpt-6.2-astra"));
     // The fast modes start off, and stay off: OpenAI's, whose boxes show, and Fable's, with no box (Anthropic has no key here).
@@ -496,6 +500,8 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     ]);
     await soon(() => markOf(page)).toBe("saved");
     expect(await hint()).toBe("");
+    // A model that is off here has no box there.
+    await soon(forDocuments).toEqual(["gpt-6-luna", "gpt-6.1-terra", "gpt-6.2-sol"]);
 
     await page.selectOption("#agent-keys", "own");
     await soon(() => page.isHidden("ol.providers")).toBe(true);

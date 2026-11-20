@@ -16,7 +16,7 @@ import {
   underLimit,
   type CallState,
 } from "../server/directory/index.ts";
-import { PAGE_LLM_MODELS } from "../shared/models.ts";
+import { MODELS } from "../shared/models.ts";
 import { memory } from "./helpers/memory-sql.ts";
 
 const NONE = { input: 0, output: 0 };
@@ -55,12 +55,14 @@ test("signed-out visitors (login ip:...) count together, apart from the signed-i
   expect(await llm.used(t)).toEqual({ requests: 3, tokens: 300 });
 });
 
-test("the cost estimate: each model of the Document LLM API has its price; a model with no known price counts at the highest", () => {
-  for (const m of PAGE_LLM_MODELS) expect(PAGE_LLM_PRICES[m]).toBeDefined();
+test("the cost estimate: each model has its price, but Grok (an alias, with no price of its own); a model with no known price counts at the highest", () => {
+  expect(Object.keys(MODELS).filter((m) => !PAGE_LLM_PRICES[m])).toEqual(["grok"]);
+  expect(costOf("grok", 1_000_000, 1_000_000)).toBe(96);
+  expect(costOf("gemini-4-neon", 1_000_000, 1_000_000)).toBe(18);
   expect(costOf("haiku", 1_000_000, 1_000_000)).toBeCloseTo(0.6);
   expect(costOf("opus", 10_000, 2_000)).toBeCloseTo(0.08);
   // A fast mode costs two times its model.
-  for (const m of PAGE_LLM_MODELS.filter((m) => m.endsWith("-fast"))) {
+  for (const m of Object.keys(MODELS).filter((m) => m.endsWith("-fast"))) {
     const slow = PAGE_LLM_PRICES[m.slice(0, -"-fast".length)];
     expect(PAGE_LLM_PRICES[m], m).toEqual({ input: slow.input * 2, output: slow.output * 2 });
   }

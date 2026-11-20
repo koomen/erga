@@ -31,15 +31,7 @@ import {
 import { sitePages } from "./pages.ts";
 import { addressOf } from "../../document/model/names.ts";
 import { WAIT_MINUTES } from "../../document/api/waits.ts";
-import {
-  DEFAULT_PAGE_LLM_MODEL,
-  isPageLlmModel,
-  MODELS,
-  PAGE_LLM_MODELS,
-  pageLlmChoices,
-  PROVIDERS,
-  type ModelChoice,
-} from "../../shared/models.ts";
+import { DEFAULT_PAGE_LLM_MODEL, isModelChoice, MODELS, pageLlmChoices, PROVIDERS, type ModelChoice } from "../../shared/models.ts";
 
 /** Files as a caller gives them: by path, each text or base64. */
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
@@ -386,7 +378,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       role: Schema.optionalKey(Schema.Literals(["editor", "commenter", "viewer", "none"]).annotate({ description: "none stops sharing." })),
       llm_api: bool("The Document LLM API: its script may call a model as each viewer (window.ergaLLM)."),
       llm_api_model: Schema.optionalKey(
-        Schema.Literals(PAGE_LLM_MODELS).annotate({
+        Schema.Literals(Object.keys(MODELS) as ModelChoice[]).annotate({
           description: "Only one the server offers now (ls: access.llmApi.models).",
         })
       ),
@@ -417,7 +409,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       if (login) await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
       if (llm) {
         const had = await dir.pageLlm.setting(doc.id);
-        const model = args.llm_api_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
+        // With no model chosen yet: the default, or the first the server offers where it doesn't offer that.
+        const first = server!.models.includes(DEFAULT_PAGE_LLM_MODEL)
+          ? DEFAULT_PAGE_LLM_MODEL
+          : (server!.models[0] ?? DEFAULT_PAGE_LLM_MODEL);
+        const model = args.llm_api_model ?? (had.model && isModelChoice(had.model) ? had.model : first);
         const on = args.llm_api == null ? had.on : args.llm_api === true;
         await dir.pageLlm.set(doc.id, { on, model: String(model), who: (args.llm_api_who as PageLlmWho | undefined) ?? had.who });
       }
@@ -501,7 +497,8 @@ const named = (document: unknown) => (typeof document == "string" && document.tr
 
 /**
  * The Document LLM API as the server's admin has it now: on or not, whether viewers who aren't signed in may call it,
- * the models an author may choose (pageLlmChoices), and the ones the admin switched off.
+ * the models an author may choose (pageLlmChoices), and the ones the admin switched off (for documents, or for the
+ * agents: a model the server doesn't run).
  */
 async function llmApiNow(caller: Caller) {
   const { config } = caller.dir;
@@ -514,7 +511,13 @@ async function llmApiNow(caller: Caller) {
   const keys = cfg && !("missing" in cfg) ? cfg : null;
   // (The scripted test model stands in for every provider's.)
   const server = keys ? PROVIDERS.filter((p) => keys.model == "script" || keys.server[p]) : [];
-  return { enabled, guests, off, models: pageLlmChoices({ server, mode: keys ? keys.mode : "own" }, off) };
+  const agentsOff = keys?.off ?? [];
+  return {
+    enabled,
+    guests,
+    off: [...off, ...agentsOff],
+    models: pageLlmChoices({ server, mode: keys ? keys.mode : "own", off: agentsOff }, off),
+  };
 }
 
 /** Why an author can't have `model` now: the admin switched it off, or no key of the server's runs it. */
@@ -529,7 +532,7 @@ const unavailable = (model: ModelChoice, off: readonly string[]) =>
 export async function viewersOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
   const [permissions, llm, server] = await Promise.all([dir.permissions(doc.id), dir.pageLlm.setting(doc.id), llmApiNow(caller)]);
-  const model = llm.model && isPageLlmModel(llm.model) ? llm.model : DEFAULT_PAGE_LLM_MODEL;
+  const model = llm.model && isModelChoice(llm.model) ? llm.model : DEFAULT_PAGE_LLM_MODEL;
   const note = !server.enabled
     ? ADMIN_OFF
     : !llm.on

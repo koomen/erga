@@ -10,7 +10,7 @@ import { allTools, runTool } from "../agents/tools";
 import type { AgentConfig } from "../agents/models";
 import { type Caller, OperationError } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
-import { PAGE_LLM_OFF_AT_FIRST } from "../shared/models";
+import { MODELS_OFF_AT_FIRST } from "../shared/models";
 import { person, ROOT, runTool as overHttp, server } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 
@@ -37,40 +37,60 @@ const cfg = (o: Partial<AgentConfig>): AgentConfig => ({
 test("a document's author: the models the admin left on; a chosen model that goes off, and the API off, are said; nobody turns on what is off", async () => {
   const dir = new Directory(memory(), { defaults: { anyone_access: "public", public_sharing: true }, admins: ["root"] });
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
-  let keys = cfg({ server: { anthropic: Redacted.make("k1"), openai: Redacted.make("k2") }, off: ["sonnet"] });
+  const fast = MODELS_OFF_AT_FIRST;
+  let keys = cfg({ server: { anthropic: Redacted.make("k1"), google: Redacted.make("k2") }, off: ["opus", ...fast] });
   const ada: Caller = { dir, who: { login: "ada" }, platform: { agentSettings: async () => keys } as unknown as Platform };
   const share = async (args: Record<string, unknown>) =>
     ((await runTool(tool("share_document"), { document: "plan", ...args }, ada)) as { llmApi: Record<string, unknown> }).llmApi;
-  // At first: every model of a provider with a key, but the fast modes (the agents' own list of models doesn't count here).
-  expect(await dir.config.get("document_llm_models_off")).toEqual(PAGE_LLM_OFF_AT_FIRST);
+  // At first: every model that a server key runs for the agents (a provider with a key, and the model on there), of
+  // any provider; none is off for documents alone.
+  expect(await dir.config.get("document_llm_models_off")).toEqual([]);
+  const offered = [
+    "haiku",
+    "sonnet",
+    "opus-fast",
+    "fable",
+    "gemini-3.8-flash",
+    "gemini-4-argon",
+    "gemini-4-hydrogen",
+    "gemini-4-neon",
+    "gemini-4-carbon",
+  ];
   expect(await share({ llm_api: true, llm_api_model: "sonnet", llm_api_who: "all" })).toEqual({
     enabled: true,
     on: true,
     model: "sonnet",
-    models: ["haiku", "sonnet", "opus", "opus-fast", "fable", "gpt-6-luna", "gpt-6.1-terra", "gpt-6.2-sol", "gpt-6.2-astra"],
+    models: offered,
     who: "all",
     guests: true,
   });
-  // The admin switches Sonnet off (and the fast modes on): the document keeps its choice, and its author reads why
-  // it doesn't work. Nobody chooses it now.
+  // A model that is off for the agents is not one of them: nobody chooses it.
+  let e = await failure(share({ llm_api_model: "opus" }));
+  expect([e.status, e.message]).toEqual([409, modelOff("opus")]);
+  // The admin switches Sonnet off for documents: the document keeps its choice, and its author reads why it doesn't
+  // work. Nobody chooses it now.
   await dir.config.set(root, "document_llm_models_off", ["sonnet"]);
   let now = await share({ llm_api_who: "all" });
   expect(now.note).toBe(modelOff("sonnet"));
   expect(now.note).toBe(
     "This server's admin turned Sonnet 5.5 off for the Document LLM API. The document's author can choose another model."
   );
-  expect([now.model, (now.models as string[]).includes("sonnet"), (now.models as string[]).includes("fable-fast")]).toEqual([
-    "sonnet",
-    false,
-    true,
-  ]);
-  let e = await failure(share({ llm_api_model: "sonnet" }));
+  expect([now.model, now.models]).toEqual(["sonnet", offered.filter((m) => m != "sonnet")]);
+  e = await failure(share({ llm_api_model: "sonnet" }));
   expect([e.status, e.message]).toEqual([409, modelOff("sonnet")]);
+  // The same when the admin switches the chosen model off for the agents: a Gemini model as any other.
+  expect((await share({ llm_api_model: "gemini-4-neon" })).note).toBeUndefined();
+  keys = cfg({ server: { anthropic: Redacted.make("k1"), google: Redacted.make("k2") }, off: ["gemini-4-neon", ...fast] });
+  expect(await share({ llm_api_who: "all" })).toMatchObject({ model: "gemini-4-neon", note: modelOff("gemini-4-neon") });
   // A model whose provider has no key: the same rule, in other words.
   keys = cfg({ server: { anthropic: Redacted.make("k1") } });
   e = await failure(share({ llm_api_model: "gpt-6-luna" }));
   expect([e.status, e.message]).toEqual([409, "The server has no API key that runs GPT-6 Luna for the Document LLM API."]);
   expect((await share({ llm_api_model: "haiku" })).note).toBeUndefined();
+  // A document with no model chosen yet, turned on: the default, or the first the server offers where it has no Haiku.
+  await dir.add({ id: "bbbbbbbb", owner: "ada", title: "Notes", created: 2 });
+  keys = cfg({ server: { google: Redacted.make("k2") } });
+  expect(await share({ document: "notes", llm_api: true })).toMatchObject({ on: true, model: "gemini-3.8-flash" });
   // Each person brings their own keys: the server's keys run nothing, for documents too.
   keys = cfg({ server: { anthropic: Redacted.make("k1") }, mode: "own" });
   expect(await share({ llm_api_who: "all" })).toMatchObject({
@@ -99,7 +119,7 @@ test("a document's author: the models the admin left on; a chosen model that goe
   expect([e.status, e.message]).toEqual([409, "This server's admin turned the Document LLM API off."]);
 });
 
-test("a document's script: it gets the model's answer; with the API off, its model off, or a spend limit of 0, a clear error (off)", async () => {
+test("a document's script: it gets the model's answer; with the API off, its model off (for documents, or for the agents), or a spend limit of 0, a clear error (off)", async () => {
   const s = server();
   // The scripted model stands in for every provider's.
   s.platform.agentSettings = async () => cfg({ model: "script" });
@@ -127,6 +147,11 @@ test("a document's script: it gets the model's answer; with the API off, its mod
   expect((await overHttp(s, "share_document", { document: doc, llm_api_model: "sonnet" }, { cookie: ada.cookie })).status).toBe(200);
   [status, body] = await ask();
   expect([status, typeof body.text]).toEqual([200, "string"]);
+  // The admin switches it off for the agents: the server doesn't run it, for documents too.
+  s.platform.agentSettings = async () => cfg({ model: "script", off: ["sonnet"] });
+  expect(await ask()).toEqual([403, { code: "off", error: modelOff("sonnet") }]);
+  s.platform.agentSettings = async () => cfg({ model: "script" });
+  expect((await ask())[0]).toBe(200);
   // A daily spend limit of 0, and the admin's switch: off.
   await config.set(root, "document_llm_daily_usd", 0);
   expect(await ask()).toEqual([403, { code: "off", error: ADMIN_OFF }]);
@@ -137,7 +162,7 @@ test("a document's script: it gets the model's answer; with the API off, its mod
   expect(await on()).toBe(false);
 });
 
-test("the Agents and models page: the Document LLM API's section; unauthenticated viewers' switch is the admin's also while users can't share publicly, with a note; no secret of the deploy's", async () => {
+test("the Agents and models page: the Document LLM API's section; unauthenticated viewers' switch is the admin's also while users can't share publicly, with a note; its models are the ones ticked above; no secret of the deploy's", async () => {
   const s = server();
   const { config } = s.platform.directory,
     root = { login: "tester", admin: true };
@@ -155,4 +180,16 @@ test("the Agents and models page: the Document LLM API's section; unauthenticate
     `<p class="desc">Where the author lets all viewers use it: on a published site always; in a document opened by its link, only while users can share publicly.</p>`
   );
   expect(guests).toMatch(/id="set-document_llm_guests" aria-label="[^"]*" data-kind="switch" checked><span/);
+  // Its models: no list of its own. With no key, none; then exactly the models ticked on the providers' rows, in
+  // their order, each with its box (ticked unless it is off for documents).
+  const models = async () => {
+    const row = (await page()).split(`data-live="setting:document_llm_models_off"`)[1].split("</li>")[0];
+    return [...row.matchAll(/value="([^"]+)"( checked)?>/g)].map((m) => m[1] + (m[2] ? "" : ":off"));
+  };
+  expect(html).toContain("No model yet: set a provider's key above, and tick a model there.");
+  await s.platform.directory.credentials.set(root, "google", "AIzaSyExampleExampleExampleExampleExamp");
+  expect(await models()).toEqual(["gemini-3.8-flash", "gemini-4-argon", "gemini-4-hydrogen", "gemini-4-neon", "gemini-4-carbon"]);
+  await config.set(root, "agent_models_off", ["gemini-4-neon"]);
+  await config.set(root, "document_llm_models_off", ["gemini-4-carbon", "gemini-4-neon"]);
+  expect(await models()).toEqual(["gemini-3.8-flash", "gemini-4-argon", "gemini-4-hydrogen", "gemini-4-carbon:off"]);
 });

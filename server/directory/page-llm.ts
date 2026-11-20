@@ -12,7 +12,8 @@ import { countedTokens, type CallState, type Tokens } from "./page-llm-call.ts";
 import { MODELS, type ModelChoice } from "../../shared/models.ts";
 
 /**
- * The limits. A call answers at most MAX_TOKENS tokens (the page asks for fewer, or gets this many), and sends at most
+ * The limits. A call answers at most `maxTokens` tokens (the page asks for fewer, or gets this many; a model that
+ * always thinks spends a part of them on it: the same cap for every model), and sends at most
  * INPUT_CHARS characters (its system prompt and messages, about 6,000 tokens). In each hour, a visitor makes at most
  * `visitor.requests` calls and uses `visitor.tokens` tokens (input and output), across every document: enough for a
  * demo's dozen turns, not for a bot. The whole server has `server`: with Haiku 5.5 a full hour costs a few dollars.
@@ -31,11 +32,16 @@ export const PAGE_LLM_LIMITS = {
 } as const;
 
 /**
- * What the Document LLM API's models cost, in US dollars for a million tokens, input and output: the providers' standard prices for a
- * short prompt (a page's call is at most PAGE_LLM_LIMITS.inputChars), with no cache; a fast mode costs two times its
- * model's. Read on 2026-11-06 (Fable 5.2, GPT-6.2 Sol, GPT-6.2 Astra and the fast modes: 2026-11-19) from
- * https://platform.claude.com/docs/en/about-claude/pricing (Model pricing; Fast mode pricing) and
- * https://developers.openai.com/api/docs/pricing (Standard and Fast, short context).
+ * What the models cost, in US dollars for a million tokens, input and output (a model's thinking counts as output):
+ * the providers' standard prices for a short prompt (a page's call is at most PAGE_LLM_LIMITS.inputChars), with no
+ * cache; a fast mode costs two times its model's. Read on 2026-11-06 (Fable 5.2, GPT-6.2 Sol, GPT-6.2 Astra and the
+ * fast modes: 2026-11-19) from https://platform.claude.com/docs/en/about-claude/pricing (Model pricing; Fast mode
+ * pricing) and https://developers.openai.com/api/docs/pricing (Standard and Fast, short context). Google's and
+ * OpenRouter's, read on 2026-11-19: https://ai.google.dev/gemini-api/docs/pricing (Standard; where the page says a
+ * price rises on a date, the price after it: Argon and Carbon on 2026-12-01, 3.8 Flash on 2027-01-01), and
+ * https://openrouter.ai/moonshotai/kimi-k3 and /deepseek/deepseek-v4-pro (OpenRouter chooses among providers with
+ * their own prices: the highest on the page). Grok has no price here: its name is an alias for xAI's newest model,
+ * whose page names none, so it counts at the highest (HIGHEST).
  */
 export const PAGE_LLM_PRICES: Record<string, { input: number; output: number }> = {
   haiku: { input: 0.1, output: 0.5 },
@@ -52,6 +58,13 @@ export const PAGE_LLM_PRICES: Record<string, { input: number; output: number }> 
   "gpt-6.2-sol-fast": { input: 4, output: 20 },
   "gpt-6.2-astra": { input: 8, output: 40 },
   "gpt-6.2-astra-fast": { input: 16, output: 80 },
+  "gemini-3.8-flash": { input: 1.5, output: 7.5 },
+  "gemini-4-argon": { input: 4, output: 20 },
+  "gemini-4-hydrogen": { input: 1.5, output: 7.5 },
+  "gemini-4-neon": { input: 3, output: 15 },
+  "gemini-4-carbon": { input: 4, output: 20 },
+  "kimi-k3": { input: 4.5, output: 22.5 },
+  "deepseek-v4-pro": { input: 1.95, output: 3.9 },
 };
 
 /** A model with no known price counts at the highest of each. */

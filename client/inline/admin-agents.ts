@@ -15,7 +15,7 @@ import { autosave } from "../common/autosave";
 import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 
-/** The Document LLM API's models: the setting their boxes save. Its row shows the models of the providers with a key. */
+/** The Document LLM API's models: the setting their boxes save. Its row shows the models that are ticked on the providers' rows. */
 const LLM_MODELS = "document_llm_models_off";
 /** A key is longer than this: a shorter text in its box is saved only as the focus leaves it, never in a pause of the typing. */
 const KEY_LENGTH = 20;
@@ -165,6 +165,8 @@ export default function adminAgents(): void {
         try {
           await runTool("set_setting", { key, value: off });
           held().dataset.off = off.join(" ");
+          // The Document LLM API's row has a box for each model the agents have on.
+          if (key != LLM_MODELS) void refresh(`setting:${LLM_MODELS}`);
           shown().checked = wanted;
           say(hint(), "");
           mark.set(live, "saved");
