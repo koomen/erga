@@ -157,7 +157,9 @@ describe("deploying", () => {
     }));
     expect(result.url).toBe("https://erga.ada-example.com");
     expect(state.domains).toEqual([{ hostname: "erga.ada-example.com", service: "erga", zone_id: "zone0000000000000000000000000001" }]);
-    expect(state.dns.zone0000000000000000000000000002).toEqual([{ type: "AAAA", name: "*.ada-pages.net", content: "100::", proxied: true }]);
+    expect(state.dns.zone0000000000000000000000000002).toMatchObject([
+      { type: "AAAA", name: "*.ada-pages.net", content: "100::", proxied: true },
+    ]);
     expect(state.routes.zone0000000000000000000000000002).toEqual([{ pattern: "*.ada-pages.net/*", script: "erga" }]);
     const b = Object.fromEntries(state.scripts.erga.metadata.bindings.map((x: any) => [x.name, x]));
     expect(b.PAGES_DOMAIN.text).toBe("ada-pages.net");

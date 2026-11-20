@@ -27,7 +27,7 @@
 //       --no-tests             the build runs no tests
 //       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
 //                              user types the client secret in their terminal, and the admin's link shows there.
-//   bun erga setup <host> remove --yes       deletes the server: its Workers, database and bucket (AWS: its stacks
+//   bun erga setup <host> remove --yes       deletes the server: its Workers, database, bucket and the pages' DNS record (AWS: its stacks
 //                                            and secrets; the bucket stays, with the data)
 //
 // Each run ends in one of these lines: DRY RUN (the plan), DONE, WAIT (the user's step is still open: run the same
@@ -40,7 +40,6 @@
 import { closeSync, readFileSync } from "node:fs";
 import { Claim } from "../../server/identity/claim-link";
 import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "../cli/config";
-import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, deployerToken, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { cloudflare, type Connection, observe } from "./facts";
@@ -501,35 +500,11 @@ async function remove(host: string, yes: boolean) {
         `NOTE  The bucket ${bucket} stays, with the documents. Delete it by hand if they are gone for good: aws s3 rb s3://${bucket} --force`
       );
   } else {
-    const n = namesAt(host);
-    if (!yes)
-      fail(
-        `This deletes ${host}: the Workers ${n.worker} and ${n.pagesWorker}, the database ${n.database} and the bucket ${n.bucket}, with every document on it.`,
-        only
-      );
+    const { removalText, removeOnCloudflare } = await import("./remove");
+    if (!yes) fail(removalText(host, entry), only);
     const { cf } = await connect();
-    const account = (entry && !isAws(entry) ? entry.account : "") || fail(`${host} has no entry in .erga/config.json.`);
-    const acc = `/accounts/${account}`;
-    const part = async (what: string, f: () => Promise<unknown>) =>
-      f().then(
-        () => pass(what),
-        (e: Error) => say(`SKIP  ${what}: ${e.message}`)
-      );
-    const domains =
-      (await cf
-        .call<{ id: string; hostname: string; service: string }[]>("GET", `${acc}/workers/domains?hostname=${host}`, "read custom domains")
-        .catch(() => [])) ?? [];
-    for (const d of domains.filter((d) => d.service == n.worker))
-      await part(`custom domain ${host} removed`, () => cf.call("DELETE", `${acc}/workers/domains/${d.id}`, "remove the custom domain"));
-    for (const w of [n.pagesWorker, n.worker])
-      await part(`Worker ${w} deleted`, () =>
-        cf.call("DELETE", `${acc}/workers/scripts/${w}?force=true`, "delete the Worker", undefined, { allow404: true })
-      );
-    const db = await findDatabase(cf, acc, n.database).catch(() => null);
-    if (db) await part(`database ${n.database} deleted`, () => cf.call("DELETE", `${acc}/d1/database/${db}`, "delete the database"));
-    await part(`bucket ${n.bucket} deleted (only if empty)`, () =>
-      cf.call("DELETE", `${acc}/r2/buckets/${n.bucket}`, "delete the bucket", undefined, { allow404: true })
-    );
+    if (!entry) return fail(`${host} has no entry in .erga/config.json.`);
+    await removeOnCloudflare(cf, host, entry, { done: pass, skipped: (what, why) => say(`SKIP  ${what}: ${why}`) });
   }
   const secrets = loadSecrets();
   delete secrets[host];

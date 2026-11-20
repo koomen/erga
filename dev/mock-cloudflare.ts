@@ -64,7 +64,7 @@ export interface MockState {
   /** Workers' custom domains; one answers once its certificate is there (readyAt). */
   domains: { hostname: string; service: string; zone_id: string; readyAt?: number }[];
   routes: Record<string, { pattern: string; script: string }[]>;
-  dns: Record<string, { type: string; name: string; content: string; proxied: boolean }[]>;
+  dns: Record<string, { id: string; type: string; name: string; content: string; proxied: boolean }[]>;
   registrations: { domain: string; price?: string }[];
   /** Every call, "METHOD path" (tokens never). */
   calls: string[];

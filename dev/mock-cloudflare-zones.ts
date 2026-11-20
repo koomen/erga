@@ -118,9 +118,17 @@ export async function zones(state: MockState, a: Answers, m: string, path: strin
     }
     if (m == "POST") {
       const d = await body();
-      list.push({ type: d.type, name: d.name, content: d.content, proxied: d.proxied });
-      return ok(d);
+      const record = { id: a.randomHex(16), type: d.type, name: d.name, content: d.content, proxied: d.proxied };
+      list.push(record);
+      return ok(record);
     }
+  }
+  const record = /^\/dns_records\/([0-9a-f]+)$/.exec(rest);
+  if (record && m == "DELETE") {
+    const list = (state.dns[zone] ??= []);
+    if (!list.some((x) => x.id == record[1])) return fail(404, 81044, "Record does not exist.");
+    state.dns[zone] = list.filter((x) => x.id != record[1]);
+    return ok({ id: record[1] });
   }
   // The zone's certificates: one for the zone and its first level, and one for each custom domain (pending until it is ready).
   if (rest == "/ssl/certificate_packs" && m == "GET")

@@ -121,6 +121,12 @@ export async function boundDatabaseName(cf: Cloudflare, acc: string, worker: str
   return all.find((d) => d.uuid == bound)?.name ?? null;
 }
 
+/**
+ * The DNS record that the pages step makes for documents' pages on a zone, *.<pages domain>: an address that answers
+ * nothing by itself (the Worker's route answers). `bun erga setup <host> remove` deletes only a record like this one.
+ */
+export const PAGES_RECORD = { type: "AAAA", content: "100::" } as const;
+
 export const targetHost = (t: Pick<Target, "app" | "workerName" | "subdomain">) =>
   t.app.kind == "domain" ? t.app.hostname : `${t.workerName}.${t.subdomain}.workers.dev`;
 export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain">) =>
@@ -371,10 +377,28 @@ export async function runPipeline(
     async pages() {
       if (target.pages.kind == "zone") {
         const zoneId = target.pages.zoneId ?? (await zoneIdOf(cf, target.accountId, target.pages.zoneName));
-        const zone = `/zones/${zoneId}`, name = target.pages.domain ?? target.pages.zoneName, pattern = `*.${name}/*`;
-        const records = (await cf.call<{ id: string }[]>("GET", `${zone}/dns_records?type=AAAA&name=${encodeURIComponent(`*.${name}`)}`, `read ${target.pages.zoneName}'s DNS records`)) ?? [];
-        if (!records.length) await cf.call("POST", `${zone}/dns_records`, `add the wildcard DNS record *.${name}`, { type: "AAAA", name: `*.${name}`, content: "100::", proxied: true, comment: "Erga: documents' pages" });
-        const routes = (await cf.call<{ pattern: string; script?: string }[]>("GET", `${zone}/workers/routes`, `read ${target.pages.zoneName}'s Worker routes`)) ?? [];
+        const zone = `/zones/${zoneId}`,
+          name = target.pages.domain ?? target.pages.zoneName,
+          pattern = `*.${name}/*`;
+        const records =
+          (await cf.call<{ id: string }[]>(
+            "GET",
+            `${zone}/dns_records?type=AAAA&name=${encodeURIComponent(`*.${name}`)}`,
+            `read ${target.pages.zoneName}'s DNS records`
+          )) ?? [];
+        if (!records.length)
+          await cf.call("POST", `${zone}/dns_records`, `add the wildcard DNS record *.${name}`, {
+            ...PAGES_RECORD,
+            name: `*.${name}`,
+            proxied: true,
+            comment: "Erga: documents' pages",
+          });
+        const routes =
+          (await cf.call<{ pattern: string; script?: string }[]>(
+            "GET",
+            `${zone}/workers/routes`,
+            `read ${target.pages.zoneName}'s Worker routes`
+          )) ?? [];
         const route = routes.find((r) => r.pattern == pattern);
         if (route && route.script != target.workerName)
           throw new DeployError({

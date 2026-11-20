@@ -59,5 +59,7 @@ export function seedFleet(state: MockState) {
   deployVersion(state, "erga", state.scripts.erga);
   state.domains.push({ hostname: "example.com", service: "erga", zone_id: state.zones[0].id });
   state.routes[state.zones[1].id] = [{ pattern: "*.example-pages.com/*", script: "erga" }];
-  state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.example-pages.com", content: "100::", proxied: true }];
+  state.dns[state.zones[1].id] = [
+    { id: "d0000000000000000000000000000001", type: "AAAA", name: "*.example-pages.com", content: "100::", proxied: true },
+  ];
 }
