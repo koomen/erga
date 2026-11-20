@@ -25,7 +25,7 @@ export interface HealthCheck {
 export interface HealthReport {
   ok: boolean;
   version: string | null;
-  /** Which upload of the server's code answers: the name that the deploy gave it (Cloudflare: ERGA_UPLOAD), or null. */
+  /** Which upload of the server's code answers: the name that the deploy gave it (ERGA_UPLOAD), or null. */
   upload: string | null;
   checks: Record<string, HealthCheck>;
 }

@@ -576,7 +576,19 @@ describe("the instance's document", () => {
 esac`
       );
       tool("celld", `echo "$@" >> "$FAKE/celld"; [ "$1" = deploy ] && cp wrangler.json "$FAKE/loaded.json"; true`);
-      tool("curl", `echo '{"ok":true,"version":"bbbbbbbbbbbb","checks":{}}'`);
+      // The server's health report: the Worker that celld loaded last says its load's name. $FAKE/stale: celld took
+      // no new Worker, and the one before answers, healthy, with the same version.
+      tool(
+        "curl",
+        `python3 -c 'import json, os, sys
+d = os.environ["FAKE"]
+stale = os.path.exists(d + "/stale")
+upload = "before" if stale else json.load(open(d + "/loaded.json"))["vars"].get("ERGA_UPLOAD")
+print(json.dumps({"ok": True, "version": "bbbbbbbbbbbb", "upload": upload, "checks": {}}))'`
+      );
+      // (The machine's wait for a healthy answer, without its time: two looks, and no pause.)
+      tool("seq", "echo 1; echo 2");
+      tool("sleep", "true");
       // (macOS's sed needs a suffix after -i.)
       tool(
         "sed",
@@ -606,10 +618,26 @@ esac`
         const load = command({ SSM_action: "load", SSM_version: "bbbbbbbbbbbb", SSM_sql: "" });
         expect([load.code, load.err, load.out.trim().split("\n").at(-1)]).toEqual([0, "", "runs bbbbbbbbbbbb"]);
         expect(said("asked")).toEqual(["s3://bucket/releases/bbbbbbbbbbbb.tgz"]);
-        expect(JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars).toEqual({
+        const loaded = () => JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars;
+        const first = loaded().ERGA_UPLOAD;
+        expect(loaded()).toEqual({
           ERGA_VERSION: "bbbbbbbbbbbb",
           SESSION_SECRET: "s",
+          ERGA_UPLOAD: expect.stringMatching(/^[0-9a-f]{32}$/),
         });
+        expect(command({ SSM_action: "deployed", SSM_version: "", SSM_sql: "" }).out).toBe("bbbbbbbbbbbb\n");
+        // The same release again: a load with a new name. While the Worker of the load before answers (healthy, with
+        // the same version), the load is not healthy: the script fails, and the machine's list stays.
+        writeFileSync(join(dir, "stale"), "");
+        const stale = command({ SSM_action: "load", SSM_version: "bbbbbbbbbbbb", SSM_sql: "" });
+        const second = loaded().ERGA_UPLOAD;
+        expect(second).not.toBe(first);
+        expect([stale.code, stale.err]).toEqual([
+          1,
+          `release bbbbbbbbbbbb is not healthy: its load ${second} gives no healthy answer. The last answer: {"ok": true, "version": "bbbbbbbbbbbb", "upload": "before", "checks": {}}\n`,
+        ]);
+        rmSync(join(dir, "stale"));
+        expect(command({ SSM_action: "load", SSM_version: "bbbbbbbbbbbb", SSM_sql: "" }).code).toBe(0);
         expect(command({ SSM_action: "deployed", SSM_version: "", SSM_sql: "" }).out).toBe("bbbbbbbbbbbb\n");
         // sql: the statement reaches celld whole, as one word, in the release that runs.
         const statement = "SELECT 'erga:' || hex(spec) FROM deploy_spec WHERE id = 1";

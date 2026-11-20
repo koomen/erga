@@ -68,9 +68,10 @@ export interface Env {
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). Its health report says it (server/health.ts). */
   ERGA_VERSION?: string;
   /**
-   * Which upload of the Worker this is: a name that the deploy gives each upload (deploy/deployer/worker-form.ts). The
-   * health route says it, so the deployer knows that the answer is the new upload's, and not the version before's
-   * (Cloudflare gives a new version to its machines in some seconds, and two uploads can be the same release).
+   * Which upload of the Worker this is: a name that the deploy gives each upload (deploy/deployer/worker-form.ts; on
+   * AWS the machine gives it to each load: deploy/aws/machine.ts, deployScript). The health route says it, so the
+   * deploy knows that the answer is the new upload's, and not the version before's (Cloudflare gives a new version to
+   * its machines in some seconds, and two uploads can be the same release).
    */
   ERGA_UPLOAD?: string;
   /**

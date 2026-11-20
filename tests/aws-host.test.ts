@@ -498,9 +498,15 @@ test("a deploy again of the same release runs this deploy's settings, not those 
 esac`
   );
   tool("celld", `[ "$1" = deploy ] && cp wrangler.json "$FAKE/loaded.json"; true`);
-  // The release answers its own health check on the loopback: healthy, as release v1. (As curl does, it reads the
-  // header that comes on its input: else the script's printf may write to a pipe that nothing reads, and fail.)
-  tool("curl", `case "$*" in *"-H @-"*) cat >/dev/null ;; esac; echo '{"ok":true,"version":"v1","checks":{}}'`);
+  // The release answers its own health check on the loopback: healthy, as release v1, with the name of the load that
+  // celld got. (As curl does, it reads the header that comes on its input: else the script's printf may write to a
+  // pipe that nothing reads, and fail.)
+  tool(
+    "curl",
+    `case "$*" in *"-H @-"*) cat >/dev/null ;; esac; python3 -c 'import json, os
+upload = json.load(open(os.environ["FAKE"] + "/loaded.json"))["vars"]["ERGA_UPLOAD"]
+print(json.dumps({"ok": True, "version": "v1", "upload": upload, "checks": {}}))'`
+  );
   // (macOS's sed needs a suffix after -i.)
   tool(
     "sed",
@@ -525,7 +531,10 @@ esac`
   const deploy = (proxy: string, script = scriptOf(), more: Record<string, string> = {}) => {
     const r = run(proxy, script, more);
     expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
-    return JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars;
+    // Each load has a name of its own, which the health check wants (tests/aws-deployer.test.ts): the rest is the release's.
+    const { ERGA_UPLOAD, ...vars } = JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars;
+    expect(ERGA_UPLOAD).toMatch(/^[0-9a-f]{32}$/);
+    return vars;
   };
   try {
     expect(deploy("old")).toEqual({ PROXY_SIGN_IN: "old", SESSION_SECRET: "s" });

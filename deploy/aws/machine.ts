@@ -216,6 +216,10 @@ const healthCurl = (gate: boolean) =>
  * a deploy again of the same version carries other settings (the entry's vars, in its wrangler.json). The script waits, for
  * three minutes at most, until the release answers its own health check, healthy, on the loopback (GET /api/health: its
  * version, the database, a document): a release that does not is an error, and the caller loads the release before.
+ * Trap: the answer must be this load's own. The Worker that ran before answers too until celld has the new one, and
+ * after a load that celld refused; with the same release it says the same version. So the machine gives each load a
+ * name of its own (ERGA_UPLOAD, in the settings on the machine: the server says it in its health report, as
+ * `upload`), and takes only a healthy answer that has it.
  * The release makes the default homepage itself, in its scheduled run (its Cron Trigger, in the project's
  * wrangler.json: server/health.ts). `first`: SQL to run after it answers (setup's first admin). `gateKey`: with the
  * gate in front (deploy/aws/template.ts), the stack's secret that holds the key the distributions send with each
@@ -235,6 +239,8 @@ export function deployScript(o: {
   return `set -euo pipefail
 export AWS_REGION=${o.region}
 export version="${o.version}"
+upload=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
+export upload
 live=$(mktemp -d) && trap 'rm -rf "$live"' EXIT && cd "$live"
 aws s3 cp "s3://${o.bucket}/releases/$version.tgz" - --quiet | tar -xz
 ${
@@ -249,6 +255,7 @@ aws ssm get-parameters-by-path --path ${paramFolder(o.stack)} --with-decryption 
 c = json.load(open("wrangler.json"))
 c["vars"].update({p["Name"].rsplit("/", 1)[1]: p["Value"] for p in json.load(sys.stdin)["Parameters"]})
 if "GATE_KEY" in os.environ: c["vars"]["GATE_KEY"] = os.environ["GATE_KEY"]
+c["vars"]["ERGA_UPLOAD"] = os.environ["upload"]
 json.dump(c, open("wrangler.json", "w"))'
 quiet() { grep -v 'jemalloc\\|allocator' || true; }
 migrate() { celld d1 migrations apply erga . --bucket ${fleet(o.bucket)} 2>&1 | quiet | tail -3; }
@@ -264,9 +271,9 @@ fi
 health() { ${healthCurl(!!o.gateKey)}; }
 healthy() { health | python3 -c 'import json, os, sys
 h = json.load(sys.stdin)
-sys.exit(0 if h.get("ok") is True and h.get("version") == os.environ["version"] else 1)' 2>/dev/null; }
+sys.exit(0 if h.get("ok") is True and h.get("version") == os.environ["version"] and h.get("upload") == os.environ["upload"] else 1)' 2>/dev/null; }
 for i in $(seq 1 90); do healthy && break; sleep 2; done
-healthy || { echo "release $version is not healthy: $(health | head -c 400)" >&2; exit 1; }
+healthy || { echo "release $version is not healthy: its load $upload gives no healthy answer. The last answer: $(health | head -c 400)" >&2; exit 1; }
 ${o.first ? `celld d1 execute erga . --bucket ${fleet(o.bucket)} --command "${o.first.replace(/"/g, '\\"')}" 2>&1 | quiet | tail -1` : ""}
 mkdir -p /var/lib/erga && touch /var/lib/erga/deployed && sed -i "/^$version\\$/d" /var/lib/erga/deployed
 echo "$version" >> /var/lib/erga/deployed
