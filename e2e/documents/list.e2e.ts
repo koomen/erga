@@ -7,10 +7,10 @@
 // whose list holds every file's fixtures: it never counts rows.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Route } from "playwright-core";
 import { editor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { hold, type Hold } from "../helpers/hold";
 import { listenNews, middle, pane, person, quietLogin, type Agent, type Person } from "./people";
 import { clickOn } from "../helpers/press";
 
@@ -64,8 +64,8 @@ journey("a person's documents", () => {
   let life: { gone: string; kept: string; open: string; socket: WebSocket };
   /** What the list's socket hears, and each ask for rows. */
   let news: ReturnType<typeof listenNews>;
-  /** The page's calls of delete_document, held until the journey answers them. */
-  const held: Route[] = [];
+  /** The page's calls of delete_document, held in the tab until the journey answers them. */
+  let deletes: Hold;
   const make = async (name: string, args: Record<string, unknown> = {}) => {
     const made = await agent<{ id: string; address: string }>("create_document", { title: name, ...args });
     expect(made.error).toBe("");
@@ -193,21 +193,20 @@ journey("a person's documents", () => {
   });
 
   test("Delete: the row leaves the screen and the count falls at once, before the server answers", async () => {
-    await page.route("**/api/tools/delete_document*", (r) => void held.push(r));
+    deletes = await hold(page, { url: /\/api\/tools\/delete_document/ });
     await dialogs(page, true);
     await hover(page, "Tax notes 2026");
     await clickOn(page, 'button[aria-label="Delete Tax notes 2026"]');
     await expect.poll(() => shown(page)).toBe("3 documents | Garden plan, spring | A project | Old minutes");
-    await expect.poll(() => held.length).toBe(1);
+    await expect.poll(() => deletes.waiting()).toBe(1);
   });
 
   test("Delete: refused, the row is back in its place, and the page says why", async ({ tab }) => {
-    await held[0].fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ ok: false, error: "Not now." }) });
+    await deletes.answer(409, { ok: false, error: "Not now." });
     await expect.poll(() => shown(page)).toBe("4 documents | Garden plan, spring | Tax notes 2026 | A project | Old minutes");
     expect(await said(page)).toEqual(["Delete “Tax notes 2026”? This can't be undone.", "Not now."]);
-    await page.unroute("**/api/tools/delete_document*");
-    // The refused call is an error in the console: that one only.
-    expect(tab.errors.splice(0).filter((e) => !/Failed to load resource: the server responded with a status of 409/.test(e))).toEqual([]);
+    await deletes.end();
+    expect(tab.errors.splice(0)).toEqual([]);
   });
 
   test("typing in Find filters the rows by title and address, says when none match, and rows that come in obey it; Escape clears it", async () => {

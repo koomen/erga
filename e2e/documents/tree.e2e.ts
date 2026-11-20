@@ -6,9 +6,10 @@
 // by the document's id.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Frame, Route } from "playwright-core";
+import type { Frame } from "playwright-core";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { dragAt, onDisk } from "../helpers/drops";
+import { hold as holdInTab } from "../helpers/hold";
 import { newToken } from "../helpers/new-token";
 import { clickInPage, clickOn } from "../helpers/press";
 import { idOf, runTool, treeOp } from "../helpers/tools";
@@ -44,19 +45,13 @@ const s = await servers.main();
 /** The fixture's tree as it reads on the screen, with the assets folder open. */
 const WANT = ["Field guide index.html", "assets", "owl.svg", "blog", "fonts", "About us about.html", "Contact contact.html", "style.css"];
 
-/** Holds each call of a tool from the page until `refuse` (the server says no) or `pass`. */
+/** Holds each call of a tool from the page, in the tab, until `refuse` (the server's no, said here) or `pass`. */
 async function hold(page: Page, tool: string) {
-  const held: Route[] = [];
-  await page.route(`**/api/tools/${tool}*`, (r) => void held.push(r));
-  const next = async () => {
-    await expect.poll(() => held.length).toBeGreaterThan(0);
-    return held.shift()!;
-  };
+  const calls = await holdInTab(page, { url: new RegExp(`/api/tools/${tool}\\b`) });
   return {
-    refuse: async (error: string) =>
-      (await next()).fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ ok: false, error }) }),
-    pass: async () => (await next()).continue(),
-    end: () => page.unroute(`**/api/tools/${tool}*`),
+    refuse: (error: string) => calls.answer(409, { ok: false, error }),
+    pass: () => calls.pass(),
+    end: () => calls.end(),
   };
 }
 /** The refused calls of a step are errors in the console: those only. */
@@ -285,26 +280,8 @@ journey("a project's tree in the editor", () => {
       const r = document.querySelector('.et-row[data-path="blog"]')!.getBoundingClientRect();
       return { x: r.left + 120, y: r.top + r.height / 2 };
     });
-    // The files' bytes wait, so that their rows show on their way. They wait in the tab, not at a route of the test's.
-    // (Was a flaky failure: a request of the tab that starts while the test takes its last route away gets no answer,
-    // ever. An upload's row stayed at 0%, or the tree's next read never came.)
-    await page.evaluate(() => {
-      const w = window as unknown as { __bytes: { held: number; go(): void } };
-      const send = XMLHttpRequest.prototype.send;
-      let go!: () => void;
-      const wait = new Promise<void>((done) => (go = done));
-      w.__bytes = {
-        held: 0,
-        go() {
-          XMLHttpRequest.prototype.send = send;
-          go();
-        },
-      };
-      XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, ...body: Parameters<XMLHttpRequest["send"]>) {
-        w.__bytes.held++;
-        void wait.then(() => send.apply(this, body));
-      };
-    });
+    // The files' bytes wait in the tab, so that their rows show on their way (e2e/helpers/hold.ts).
+    const bytes = await holdInTab(page, { url: /\/api\/blobs\//, method: "PUT" });
     const over = await dragAt(page, at, [onDisk("notes.txt"), onDisk("terms.txt")]);
     expect(
       await page.evaluate(() => ({
@@ -324,8 +301,8 @@ journey("a project's tree in the editor", () => {
       await page.evaluate(() => [document.querySelectorAll(".et-row.drop").length, !!document.querySelector(".drop-chip:not([hidden])")])
     ).toEqual([0, false]);
     // (The server has taken both: their bytes are next.)
-    await expect.poll(() => js(page, "__bytes.held")).toBe(2);
-    await page.evaluate("__bytes.go()");
+    await expect.poll(() => bytes.waiting()).toBe(2);
+    await bytes.end();
     await expect.poll(pending).toEqual([]);
     await expect
       .poll(async () => (await paths(page)).filter((x) => /^blog\/(notes|terms)\.txt$/.test(x)).sort())
@@ -429,17 +406,13 @@ journey("a project's tree in the editor", () => {
     const share = await hold(page, "share_document");
     // Its sharing changes elsewhere (an agent's link share): the open card reads it again, and that read is on its way
     // while the person is added. Its answer, which has no grace in it, comes after: grace stays.
-    const reads: Route[] = [];
-    await page.route("**/api/tools/ls*", (r) => void reads.push(r));
+    const reads = await holdInTab(page, { url: /\/api\/tools\/ls\b/ });
     expect((await runTool(s.root, "share_document", { document: doc.id, login: "*", role: "viewer" })).ok).toBe(true);
-    await expect.poll(() => reads.length).toBeGreaterThan(0);
+    await expect.poll(() => reads.waiting()).toBeGreaterThan(0);
     await page.keyboard.type("grace");
     await page.keyboard.press("Enter");
     await expect.poll(people).toEqual([...before, "grace"]);
-    const read = page.waitForResponse((r) => r.url().includes("/api/tools/ls"));
-    await page.unroute("**/api/tools/ls*");
-    for (const r of reads.splice(0)) await r.continue();
-    await read;
+    await reads.end();
     await settle(page);
     expect(await people()).toEqual([...before, "grace"]);
     await share.refuse("There's no user grace.");

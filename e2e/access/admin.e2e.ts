@@ -12,6 +12,7 @@ import { openJob, writeSpec } from "../../deploy/deployer/instance";
 import { deployerSql } from "../helpers/deployer";
 import { openEditor } from "../helpers/editor";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { hold } from "../helpers/hold";
 import { joinRoom } from "../helpers/room";
 import { runTool } from "../helpers/tools";
 import { editorUp, mint, newDoc, soon, unique } from "./access";
@@ -136,20 +137,11 @@ journey("an admin on the admin pages", () => {
 
     await page.setViewportSize({ width: 1200, height: 760 });
     await agentClosed(page);
-    // The Changelog hears a change and asks for its row. The answer comes late: after the next page shows. It once
-    // threw there (the Changelog's empty line is not on that page).
-    let asked = 0,
-      release!: () => void;
-    const late = new Promise<void>((done) => {
-      release = done;
-    });
-    await page.route("**/api/news/rows*", async (route) => {
-      asked++;
-      await late;
-      await route.continue();
-    });
     await page.goto(`${root}/admin/changes`);
     await settle(page);
+    // The Changelog hears a change and asks for its row. The answer comes late: after the next page shows. It once
+    // threw there (the Changelog's empty line is not on that page).
+    const rows = await hold(page, { url: /\/api\/news\/rows/ });
     admin = await looks(page, APP);
     // The sidebar: each page is one thing an admin governs, with every setting of it. No Settings page, no Users page.
     expect(await page.locator("#admin-side a .label").allInnerTexts()).toEqual([
@@ -167,12 +159,10 @@ journey("an admin on the admin pages", () => {
       (window as unknown as { stayed: boolean }).stayed = true;
     });
     await agent("set_setting", { key: "feedback_repository", value: "erga/pretend" });
-    await soon(() => asked).toBe(1);
+    await soon(() => rows.seen()).toBe(1);
     await go("/admin/agents", "li.provider .about");
-    const answered = page.waitForResponse("**/api/news/rows*");
-    release();
-    await answered;
-    await page.unroute("**/api/news/rows*");
+    await rows.pass();
+    await rows.end();
     expect(
       await page.evaluate(() => {
         const name = getComputedStyle(document.querySelector("li.provider .key")!),

@@ -3,6 +3,7 @@
 // no text. The page shows a comment's highlight as "{...}" in the visible snapshot: a CSS highlight, never in its HTML.
 import { agentClosed, expect, journey, servers, test, until } from "../helpers/fixtures";
 import { editor, openEditor, type Editor } from "../helpers/editor";
+import { hold } from "../helpers/hold";
 import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
@@ -138,17 +139,8 @@ journey("comments in the editor", () => {
   test("✎ edits one's own comment in its place: Enter saves at once, Esc cancels, a refusal keeps the box; others' have no ✎", async ({
     tab,
   }) => {
-    // The server's answers to an edit wait for the test (or the test answers itself with an error).
-    let release = () => {};
-    let refuse = false;
-    await tab.page.route("**/api/tools/comment", async (route) => {
-      if (route.request().method() != "POST" || !route.request().postData()?.includes('"edit"')) return route.continue();
-      // (The API's refusal as its body says it: a status of 4xx or 5xx would also put an error in the console.)
-      if (refuse)
-        return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":false,"error":"The server is busy."}' });
-      await new Promise<void>((r) => (release = r));
-      await route.continue();
-    });
+    // An edit waits in the tab for the test, which lets it go to the server or answers itself with an error.
+    const edits = await hold(tab.page, { url: /\/api\/tools\/comment/, method: "POST", body: '"edit"' });
     // A reply by another person (a commenter), and one by an agent with the person's token: they come in by themselves.
     expect((await runTool(s.root, "share_document", { document: id, login: cy, role: "commenter" })).error).toBeUndefined();
     const reply = (text: string, as: { cookie?: string; token?: string }) =>
@@ -175,7 +167,7 @@ journey("comments in the editor", () => {
     await ed.press("Enter");
     await expect.poll(pending).toEqual(["June, then."]);
     expect(await editBox()).toBeNull();
-    release();
+    await edits.pass();
     const edited = `T tester now · edited June, then. T tester now Or July. ${others}`;
     await expect.poll(() => cards(ed)).toEqual([edited]);
     await expect.poll(pending).toEqual([]);
@@ -190,17 +182,18 @@ journey("comments in the editor", () => {
     expect(await editBox()).toBeNull();
 
     // Refused: the box stays open with the text it sent, and the reason above it.
-    refuse = true;
     await ed.clickIn("erga-comments", "[data-act=edit]");
     await expect.poll(editBox).toEqual("June, then.");
     await boxFocused(ed, "Edit your comment");
     await ed.type("!");
     await ed.press("Enter");
+    // (The API's refusal as its body says it, with the status of an answer.)
+    await edits.answer(200, { ok: false, error: "The server is busy." });
     await expect.poll(() => ed.comments<string | null>(`C.querySelector(".err")?.textContent ?? null`)).toEqual("The server is busy.");
     expect(await editBox()).toBe("June, then.!");
     await ed.press("Escape");
     await expect.poll(editBox).toEqual(null);
-    await tab.page.unroute("**/api/tools/comment");
+    await edits.end();
 
     // In the table: the new text, and when it was edited.
     const [c] = (await threadsOf(s.root, id))[0].comments;

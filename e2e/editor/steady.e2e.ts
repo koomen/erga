@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, TIMESCALE, type Editor } from "../helpers/editor";
 import { dragAt, dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
+import { hold, holdLoads } from "../helpers/hold";
 import { clickOn, pointerOnPage, pressOn } from "../helpers/press";
 import { newToken } from "../helpers/new-token";
 import { runTool } from "../helpers/tools";
@@ -176,18 +177,12 @@ journey("a page with parts of its own: keys go where the caret is", () => {
     await ed.openAgent();
     // The message is slow on its way to the server: it gets there when the panel is closed, and the agent's error
     // comes then. (Before, the error came 1 s after the message, and the step waited for that second.)
-    let go = () => {};
-    const closed = new Promise<void>((r) => (go = r));
-    const toAgent = (url: URL) => url.pathname.endsWith("/api/agent");
-    await ed.page.route(toAgent, async (route) => {
-      if (route.request().method() == "POST") await closed;
-      await route.continue();
-    });
+    const toAgent = await hold(ed.page, { url: /\/api\/agent(\?|$)/, method: "POST" });
     await agentPlays(ed, [{ error: "overloaded" }]);
     // (The panel's key, as it still slides in: a press on its close button waits until the panel has stopped.)
     await ed.page.keyboard.press("ControlOrMeta+j");
     await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(false);
-    go();
+    await toAgent.end();
     const stopped = {
       title: "Your agent stopped",
       count: "",
@@ -196,7 +191,6 @@ journey("a page with parts of its own: keys go where the caret is", () => {
       buttons: ["Show"],
     };
     await expect.poll(async () => (await ed.alerts()).alerts).toEqual([stopped]);
-    await ed.page.unroute(toAgent);
     // (pressOn: Playwright's click waits first until the card, which comes in, has stopped.)
     await pressOn(ed.page, '#alerts .alert [data-action="show"]');
     await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(true);
@@ -230,27 +224,19 @@ journey("a deck that changes on disk and by an agent while the person types", ()
     await ed.eval(
       `window.__setTimeout = window.setTimeout; window.setTimeout = (f, ms, ...a) => window.__setTimeout(f, ms == ${WAIT_MS} ? 0 : ms, ...a)`
     );
-    let release = () => {};
-    let asked = false;
-    const held = new Promise<void>((r) => (release = r));
-    await tab.page.context().route(/[?&]erga-edit/, async (route) => {
-      asked = true;
-      await held;
-      await route.continue();
-    });
+    const load = await holdLoads(tab.page, /[?&]erga-edit/);
     // The page made afresh, as for a change the editor can't patch in: it loads again.
     await ed.frame(`ergaFrame.page.render()`);
     // (The old page has handed its state over, and asked for the new one: it stays until the new one comes.)
-    await until(() => asked, 5000, "the page asks for the new page");
+    await until(() => load.asked() > 0, 5000, "the page asks for the new page");
     ed.write(ed.disk().replace("The arrows move between slides.", "The arrows move between slides, and the disk edits."));
     await until(() => ed.eval<boolean>(`ergaPage.collab.current().includes("the disk edits")`), DISK_MS, "the shell has the edit on disk");
     // The person types on while the page loads.
     await ed.type(" two");
     // (From now on the page loads at once, and the viewer waits as long as it does.)
     await ed.eval(`window.setTimeout = window.__setTimeout`);
-    release();
+    load.release();
     await ed.loaded();
-    await tab.page.context().unrouteAll({ behavior: "wait" });
     await ed.type(" three");
     await ed.idle();
     await ed.shows(`
@@ -383,17 +369,10 @@ journey("files dropped and pasted on a page in a folder", () => {
   const expected = (tab: Tab) => tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/Failed to load resource/.test(e)));
   /** Where the last paragraph is on the page: it moves when the text above it does. */
   const tail = () => ed.frame<number>(`Math.round(${F}.querySelector("p.tail").getBoundingClientRect().top + scrollY)`);
-  /** Holds the bytes of the uploads back (the write that names them goes), until `go`. */
+  /** Holds the bytes of the uploads back, in the tab (the write that names them goes), until `go`. */
   const held = async () => {
-    let go!: () => void;
-    const wait = new Promise<void>((done) => (go = done));
-    const going: Promise<void>[] = [];
-    await ed.page.route(/\/api\/blobs\//, (r) => void going.push(wait.then(() => r.continue())));
-    return async () => {
-      go();
-      await Promise.all(going);
-      await ed.page.unroute(/\/api\/blobs\//);
-    };
+    const bytes = await hold(ed.page, { url: /\/api\/blobs\//, method: "PUT" });
+    return () => bytes.end();
   };
 
   test("a dragged image shows a line between two blocks and moves no text; dropped, it is on the page at once at its final size, and nothing moves when its bytes come; another tab shows a box of its size meanwhile", async ({

@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { agentClosed, expect, goto, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
+import { hold } from "../helpers/hold";
 import { runTool } from "../helpers/tools";
 import { agentOn, answered, answers, button, calls, edit, paneOpen, say, script, turnEnded, turnLine, watchCalls } from "./panel";
 
@@ -311,26 +312,15 @@ journey("a turn of the agent in the editor", () => {
   test("a message sent shows the agent at work at once, before the server has it", async () => {
     const before = (await answers(page)).length;
     // The message to the agent waits on its way to the server.
-    let held = 0,
-      release = () => {};
-    const gate = new Promise<void>((r) => (release = r));
-    const API = /\/api\/agent(\?.*)?$/;
-    await page.route(API, async (r) => {
-      if (r.request().method() == "POST") {
-        held++;
-        await gate;
-      }
-      await r.continue();
-    });
+    const sends = await hold(page, { url: /\/api\/agent(\?.*)?$/, method: "POST" });
     await say(page, script("Hello", [{ text: "Hi." }]));
     await expect.poll(() => page.evaluate(() => document.getElementById("agent-fab")!.classList.contains("busy"))).toBe(true);
-    await expect.poll(() => held).toBeGreaterThan(0);
+    await expect.poll(() => sends.waiting()).toBeGreaterThan(0);
     expect(await page.locator("#agent-log .msg-user.pending").count()).toBe(1);
     // The server gets it: the answer comes.
-    release();
+    await sends.end();
     await turnEnded(page, before);
     expect((await answers(page)).slice(before)).toEqual(["Hi."]);
-    await page.unroute(API);
   });
 
   test("a new render of the page (its stylesheet changed) leaves the focus in the agent's box", async () => {

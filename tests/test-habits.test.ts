@@ -1,4 +1,4 @@
-// Three habits that tests must not pick up again, each checked in the tests' own text:
+// Four habits that tests must not pick up again, each checked in the tests' own text:
 //
 // - a fixed pause (`await sleep(150)`): it is slow when the code is fast and fails when the machine is busy. Wait for a
 //   state: a loop with a condition (`until`, `expect.poll`). A pause of 0 ms (a tick) and a loop's own pause don't count.
@@ -7,6 +7,8 @@
 // - a press at a place (`page.mouse.click(x, y)`, `mouse.down()`) on an element whose place was read before: on a busy
 //   machine the element has moved by then, and the press lands beside it. Press the element: `pressOn` or `clickOn`
 //   (e2e/helpers/press.ts). The ones listed press a place on purpose (text, a point of the page, a press held down).
+// - a route that the test takes away again (`page.unroute(...)`, `unrouteAll()`): as the last one goes, a request that
+//   the tab starts in that moment gets no answer, ever. Hold the request in the tab: `hold` (e2e/helpers/hold.ts).
 //
 // The files that have one today are listed with their count. A listed file may not get more, and no other file may
 // get one. When you take one out, lower its number.
@@ -84,6 +86,9 @@ const MATCHERS: Record<string, number> = {
   "tests/comments.test.ts": 1,
 };
 
+/** The routes that a test file's text takes away again. */
+export const unroutes = (text: string): number => text.match(/\.unroute(All)?\(/g)?.length ?? 0;
+
 const files = () =>
   Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "tests", "e2e"], { cwd: ROOT })
     .stdout.toString()
@@ -123,6 +128,11 @@ test("no test gets a new fixed pause: wait for a state", () => {
 test("no test gets a new press at a place: press the element (e2e/helpers/press.ts)", () => {
   expect(presses("await page.mouse.click(r.x, r.y);\nawait mouse.down();\nawait pressOn(page, sel);")).toBe(2);
   expect(over(presses, PRESSES)).toEqual([]);
+});
+
+test("no test takes a route away again: hold the request in the tab (e2e/helpers/hold.ts)", () => {
+  expect(unroutes('await page.unroute(API);\nawait tab.page.context().unrouteAll({ behavior: "wait" });\nawait calls.end();')).toBe(2);
+  expect(over(unroutes, {})).toEqual([]);
 });
 
 test("no test gets a new toMatchObject with expect.any: use toEqual on a list", () => {

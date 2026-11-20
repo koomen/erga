@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, goto, journey, servers, test, until, type Tab } from "../helpers/fixtures";
+import { hold } from "../helpers/hold";
 import { markCard, markOf, marksSeen, marksShown, markThere, watchMark } from "../helpers/save-mark";
 import { idOf, runTool } from "../helpers/tools";
 import { GRACE_MS } from "../../libs/text/ui/unsaved";
@@ -253,15 +254,17 @@ journey("offline, and back; then sign-out", () => {
       .find((w) => w.url() == `${at.origin}/erga-sw.js`)!;
     await worker.evaluate(() => Object.defineProperty(navigator, "onLine", { get: () => false, configurable: true }));
     // The server does not answer the viewer, which asks for a new page.
-    const asks = (u: URL) => u.origin == at.origin && u.pathname == at.pathname;
-    let asked = 0;
-    await page.route(asks, (route) => (route.request().headers()["x-erga-check"] == "page" ? (asked++, route.abort()) : route.fallback()));
+    const asks = await hold(
+      page,
+      { url: new RegExp(`^${at.origin}${at.pathname}(\\?|$)`), header: ["x-erga-check", "page"] },
+      { each: "fail", loads: true }
+    );
     await goto(page, `${ed.address}?edit`);
     const note = () => page.evaluate(() => document.querySelector(".erga-refused")?.textContent ?? null);
     await soon(note, 10_000).toBe("This page is an old copy, and Erga could not get a new one from the server.Try again");
-    expect(asked, "it asked one time").toBe(1);
+    expect(await asks.seen(), "it asked one time").toBe(1);
     // The server answers again.
-    await page.unroute(asks);
+    await asks.end();
     await page.click(".erga-refused button");
     await ed.loaded();
     expect(await ed.textOf("h1")).toBe("Field guide, second edition");

@@ -7,6 +7,7 @@
 // expects. Only two versions wait for a person's edits to pause (SHORT.idle), and one for the pause in an agent's
 // turn: restores make the others, with no wait.
 import { expect, journey, servers, SHORT, test, until, type Page, type Tab } from "../helpers/fixtures";
+import { hold, type Hold } from "../helpers/hold";
 import { runTool } from "../helpers/tools";
 import {
   draftDoc,
@@ -61,14 +62,16 @@ journey("versions in the editor's settings", () => {
   /** The Erga domain's name on this server. */
   const erga = s ? new URL(s.root).host : "";
   const histError = () => st.text("#ds-hist-error");
-  /** From now on, requests that match fail as if the network were down: the browser logs each, on purpose. */
+  /** From now on, the tab's requests that match fail as if the network were down. */
+  let cut: Hold | null = null;
   const down = async (tab: Tab, pattern: RegExp) => {
-    await tab.page.unrouteAll();
-    await tab.page.route(pattern, (r) => r.abort("internetdisconnected"));
+    await cut?.end();
+    cut = await hold(tab.page, { url: pattern }, { each: "fail" });
   };
   /** The network is back; the errors that the browser logged for it are not the page's. */
   const up = async (tab: Tab) => {
-    await tab.page.unrouteAll();
+    await cut?.end();
+    cut = null;
     const other = tab.errors.filter((e) => !/ERR_INTERNET_DISCONNECTED|Failed to fetch|Failed to load resource/.test(e));
     tab.errors.splice(0, tab.errors.length, ...other);
     expect(other).toEqual([]);
