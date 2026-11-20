@@ -3,7 +3,7 @@
 // its button, the round one, Esc in the panel and ⌘J open and close it. On a phone, that is kept nowhere. It grows
 // out of its circle and shrinks back into it (client/style.css, .agent).
 
-import { pageDoc, restorePanel, savePanel, type Drawn } from "../common/agent-panel";
+import { pageDoc, panelVisit, restorePanel, savePanel, type Drawn } from "../common/agent-panel";
 
 declare global {
   interface Window {
@@ -57,6 +57,7 @@ export default function agentToggle(): void {
   // Its first state, with no motion (a page that opens with it open shows it open).
   body.classList.add("no-motion");
   const kept = restorePanel(doc);
+  if (doc) panelVisit(doc);
   set(!narrow.matches && kept.open);
   // Shown from now (server/pages/agent.ts sends it hidden), and drawn before the browser paints again: never empty,
   // where the tab's last page left a conversation. (Shown first: a hidden log keeps no scroll place.)

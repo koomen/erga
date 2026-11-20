@@ -1,8 +1,8 @@
 // The person's agent panel as the browser keeps it, in one place: open or closed, and the panel as this tab's last
 // page drew it (this tab's, so the next page of the same thread shows the same conversation from its first paint).
 // Open or closed is kept as the threads are (agents/person/sessions.ts): one value for each document (OPEN and its
-// id, as the zoom's), and one for every page outside a document (erga:settings:v1), which a document takes until it
-// has its own. In this browser's localStorage, for all its tabs: the page reads it before its first paint
+// id, as the zoom's), and one for every page outside a document (erga:settings:v1). A document with none of its own
+// takes the last document's (LAST: the one the person was on last, or opened or closed it on). In this browser's localStorage, for all its tabs: the page reads it before its first paint
 // (client/inline/agent-toggle.ts; on a document's page, client/inline/viewer-layout-early.ts), with no request.
 // client/agent/person-agent.ts keeps the drawn panel as a page goes; sign-out forgets it. The server keeps the
 // conversation itself.
@@ -27,7 +27,8 @@ export interface Panel {
 }
 
 const SETTINGS = "erga:settings:v1",
-  OPEN = "erga:agent:v1:",
+  LAST = "erga:agent:v1",
+  OPEN = LAST + ":",
   DRAWN = "erga:agent-panel";
 
 const json = (s: Storage, k: string): unknown => {
@@ -44,14 +45,25 @@ export const pageDoc = (): string | null => document.querySelector<HTMLMetaEleme
 
 /**
  * Whether the panel is open on `doc`'s pages (null: the pages outside a document, which share one value): as the
- * person left it there; a document they never opened or closed it on, as on the pages outside; open unless closed.
+ * person left it there; a document they never opened or closed it on, as the last document they were on; open
+ * unless closed.
  */
 export function panelOpen(doc: string | null): boolean {
   try {
-    const own = doc ? localStorage.getItem(OPEN + doc) : null;
-    return own ? own == "open" : settings().agent !== false;
+    if (!doc) return settings().agent !== false;
+    return (localStorage.getItem(OPEN + doc) ?? localStorage.getItem(LAST)) != "closed";
   } catch {
     return true;
+  }
+}
+
+/** The person is on `doc`'s page: the next document with no value of its own takes this one's. */
+export function panelVisit(doc: string): void {
+  try {
+    const own = localStorage.getItem(OPEN + doc);
+    if (own) localStorage.setItem(LAST, own);
+  } catch {
+    /* no storage */
   }
 }
 
@@ -67,7 +79,7 @@ export function restorePanel(doc: string | null): Panel {
 /** Keeps what's given: `open`, for `doc`'s pages (panelOpen); `drawn: null` forgets the tab's drawing. */
 export function savePanel(p: Partial<Panel>, doc: string | null = null): void {
   try {
-    if (p.open != null && doc) localStorage.setItem(OPEN + doc, p.open ? "open" : "closed");
+    if (p.open != null && doc) for (const k of [OPEN + doc, LAST]) localStorage.setItem(k, p.open ? "open" : "closed");
     else if (p.open != null) localStorage.setItem(SETTINGS, JSON.stringify({ ...settings(), agent: p.open }));
     if (p.drawn === null) sessionStorage.removeItem(DRAWN);
     else if (p.drawn) sessionStorage.setItem(DRAWN, JSON.stringify(p.drawn));

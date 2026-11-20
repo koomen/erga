@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 import { sendStep, type SendEvent, type SendState } from "../client/agent/sends";
 import { canSend, type SendFacts } from "../client/agent/send-gate";
-import { panelOpen, panelStep, savePanel, type Drawn } from "../client/common/agent-panel";
+import { panelOpen, panelStep, panelVisit, savePanel, type Drawn } from "../client/common/agent-panel";
 
 const run = (events: SendEvent[], from: SendState = "pending") =>
   events.reduce<{ state: SendState; effects: string[] }>(
@@ -57,30 +57,32 @@ test("a page that goes before it loaded the conversation leaves the tab's copy a
   expect(panelStep(loaded.state, { t: "leave", drawn })).toEqual({ state: "loaded", save: drawn });
 });
 
-test("open or closed is kept for each document, and one time for every page outside a document, which a new document takes", () => {
+test("open or closed is kept for each document, and one time for the pages outside a document; a new document takes the last document's", () => {
   const kept = new Map<string, string>(),
     g = globalThis as { localStorage?: unknown },
     was = g.localStorage;
   g.localStorage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) };
   try {
-    const shown = () => [panelOpen("a"), panelOpen("b"), panelOpen(null)];
-    expect(shown(), "open unless closed").toEqual([true, true, true]);
-    savePanel({ open: false }, "b");
-    expect(shown(), "closed on b only").toEqual([true, false, true]);
+    const shown = () => [panelOpen("a"), panelOpen("b"), panelOpen("new"), panelOpen(null)];
+    expect(shown(), "with no last document, open").toEqual([true, true, true, true]);
     savePanel({ open: false });
-    expect(shown(), "closed outside a document: a, never opened or closed, follows").toEqual([false, false, false]);
+    expect(shown(), "closed outside a document: no document follows").toEqual([true, true, true, false]);
     savePanel({ open: true }, "a");
-    expect(shown(), "opened on a only").toEqual([true, false, false]);
+    savePanel({ open: false }, "b");
+    expect(shown(), "closed on b, the last document: a new one is closed").toEqual([true, false, false, false]);
     savePanel({ open: true });
-    expect(shown(), "opened outside a document: b stays closed").toEqual([true, false, true]);
-    savePanel({ open: false });
-    expect(shown(), "and a stays open").toEqual([true, false, false]);
+    expect(shown(), "opened outside a document: b and a new one stay closed").toEqual([true, false, false, true]);
+    panelVisit("a");
+    expect(shown(), "on a again, open: a new one is open").toEqual([true, false, true, true]);
+    panelVisit("new");
+    expect(shown(), "a document with no value of its own changes nothing").toEqual([true, false, true, true]);
     g.localStorage = {
       getItem: () => {
         throw new Error("denied");
       },
     };
-    expect(shown(), "with no storage, open").toEqual([true, true, true]);
+    expect(shown(), "with no storage, open").toEqual([true, true, true, true]);
+    expect(() => panelVisit("a")).not.toThrow();
   } finally {
     g.localStorage = was;
   }

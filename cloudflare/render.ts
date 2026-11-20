@@ -616,8 +616,8 @@ async function shown(
   return { ...base, shots, fonts, ...(notes.length ? { note: notes.join("\n") } : {}) };
 }
 
-/** In the viewer's window, before its scripts: the person's agent panel closed (erga:settings:v1, as its close button keeps it). */
-const AGENT_CLOSED = `if (window.top == window) try { const k = "erga:settings:v1", s = JSON.parse(localStorage.getItem(k) || "{}") || {}; if (s.agent !== false) localStorage.setItem(k, JSON.stringify({ ...s, agent: false })); } catch {}`;
+/** In the viewer's window, before its scripts: the person's agent panel closed (as on the last document: client/common/agent-panel.ts, LAST). */
+const AGENT_CLOSED = `if (window.top == window) try { localStorage.setItem("erga:agent:v1", "closed"); } catch {}`;
 
 /** The page's frame in the viewer's window. */
 const FRAME_RECT = `(() => { const r = document.getElementById("frame").getBoundingClientRect(); return { x: r.x, y: r.y, height: r.height }; })()`;

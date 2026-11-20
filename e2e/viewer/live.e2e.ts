@@ -309,7 +309,7 @@ journey("a document's page loads one time, for a reader and in the editor", () =
   };
   const keep = (kept: Record<string, unknown>) => () =>
     page.evaluate((kept) => {
-      for (const [k, v] of Object.entries(kept)) localStorage.setItem(k, JSON.stringify(v));
+      for (const [k, v] of Object.entries(kept)) localStorage.setItem(k, typeof v == "string" ? v : JSON.stringify(v));
     }, kept);
 
   // Three copies ran the page: the viewer's own, the frame's host page's, and the editor's.
@@ -341,10 +341,10 @@ journey("a document's page loads one time, for a reader and in the editor", () =
 
   const CASES: { what: string; set: () => Promise<unknown>; want: Spot; agent: boolean }[] = [
     // The agent open at the left, 380px wide, 16px from the window's edge and from the document.
-    { what: "the agent open", set: keep({ "erga:settings:v1": { agent: true } }), want: { l: 16 + 380 + 16, r: WIDTH }, agent: true },
+    { what: "the agent open", set: keep({ "erga:agent:v1": "open" }), want: { l: 16 + 380 + 16, r: WIDTH }, agent: true },
     {
       what: "the agent open at the right",
-      set: keep({ "erga:settings:v1": { agent: true }, "erga:layout:v1": { order: ["doc", "agent"], agentWidth: 520 } }),
+      set: keep({ "erga:agent:v1": "open", "erga:layout:v1": { order: ["doc", "agent"], agentWidth: 520 } }),
       want: { l: 0, r: WIDTH - 16 - 520 - 16 },
       agent: true,
     },
@@ -403,8 +403,6 @@ journey("a document's page loads one time, for a reader and in the editor", () =
     // (A page of text alone: the music page draws its widget after its first frame.)
     const light = (await s.fixture("top/light")).address;
     await page.evaluate((doc) => localStorage.setItem(`erga:zoom:v1:${doc}`, "1.5"), await idOf(light));
-    // (The agent closed there: the close button, above, closed it on the music page only.)
-    await keep({ "erga:settings:v1": { agent: false } })();
     const want = { l: -WIDTH / 4, r: (WIDTH * 5) / 4 };
     const r = await open("load", want, up, light);
     // (Zoomed in the editor, the page keeps its width and is magnified, in the middle.)

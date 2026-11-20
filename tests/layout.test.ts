@@ -181,16 +181,18 @@ test("the editor's early layout puts on what mountLayout will (the document does
     { order: ["doc", "picker", "agent"], agentWidth: 450 },
     { order: ["x"], agentWidth: "wide" },
   ];
-  // (The agent: as kept for the pages outside a document, and for this document, "doc"; its own counts first.)
+  // (The agent: as kept for the last document, and for this document, "doc"; its own counts first. Never as on the
+  // pages outside a document: closed there.)
   for (const kept of layouts)
-    for (const [agent, own] of [[true], [false], [undefined], [false, "open"], [true, "closed"]] as const)
+    for (const [last, own] of [["open"], ["closed"], [undefined], ["closed", "open"], ["open", "closed"]] as const)
       for (const width of [1300, 1000, 800, 700, 390])
         for (const safe of [0, 47]) {
           const vars: Record<string, string> = {},
             classes = new Set<string>();
           const stored: Record<string, string> = {
             [KEY]: typeof kept == "string" ? "{" : JSON.stringify(kept),
-            "erga:settings:v1": JSON.stringify(agent == null ? {} : { agent }),
+            "erga:settings:v1": JSON.stringify({ agent: false }),
+            ...(last ? { "erga:agent:v1": last } : {}),
             ...(own ? { "erga:agent:v1:doc": own } : {}),
           };
     const storage = { getItem: (k: string) => stored[k] ?? null };
@@ -204,9 +206,9 @@ test("the editor's early layout puts on what mountLayout will (the document does
     const computed = () => ({ paddingLeft: `${safe}px`, paddingRight: `${safe}px` });
     new Function("document", "localStorage", "getComputedStyle", "innerWidth", LAYOUT_EARLY)(document, storage, computed, width);
     // (On a phone the agent starts closed: main.ts, openAgentOnEntry.)
-    const open = (own ? own == "open" : agent !== false) && width >= 760,
+    const open = (own ?? last) != "closed" && width >= 760,
       want = layoutVars(load(storage), { width, safeL: safe, safeR: safe }, { agent: open });
-    const what = `${JSON.stringify(kept)}, agent ${agent}, the document's ${own}, ${width}px, notch ${safe}px`;
+    const what = `${JSON.stringify(kept)}, the last document's ${last}, the document's ${own}, ${width}px, notch ${safe}px`;
     expect(vars, what).toEqual(Object.fromEntries(Object.entries(want).map(([k, n]) => [k, `${Math.round(n)}px`])));
     expect(classes.has("agent-open"), what).toBe(open);
     expect(classes.has("agent-right"), what).toBe(load(storage).order.indexOf("agent") > load(storage).order.indexOf("doc"));

@@ -308,7 +308,9 @@ export const agentClosed = (page: Page) =>
     try {
       if (sessionStorage.getItem("erga-test:agent-seeded")) return;
       sessionStorage.setItem("erga-test:agent-seeded", "1");
+      // (On the pages outside a document, and on a document: as the last one.)
       if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
+      if (!localStorage.getItem("erga:agent:v1")) localStorage.setItem("erga:agent:v1", "closed");
     } catch {
       /* no storage */
     }

@@ -428,7 +428,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     async openAgent() {
       // Someone who keeps it closed finds it closed; anyone else, opening by itself as the editor comes up.
       const kept = await page.evaluate(
-        `(() => { try { const own = localStorage.getItem("erga:agent:v1:" + document.querySelector('meta[name="erga-doc"]').content); return own ? own == "closed" : JSON.parse(localStorage.getItem("erga:settings:v1") || "{}").agent === false; } catch { return false; } })()`
+        `(() => { try { const own = localStorage.getItem("erga:agent:v1:" + document.querySelector('meta[name="erga-doc"]').content); return (own ?? localStorage.getItem("erga:agent:v1")) == "closed"; } catch { return false; } })()`
       );
       if (!kept) await until(() => page.evaluate(`document.body.classList.contains("agent-open")`), 2000).catch(() => {});
       if (!(await ed.agentHasKeys()))

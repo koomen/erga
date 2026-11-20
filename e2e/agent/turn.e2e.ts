@@ -4,7 +4,7 @@
 // from page to page.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { agentClosed, expect, goto, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { runTool } from "../helpers/tools";
 import { agentOn, answered, answers, button, calls, edit, paneOpen, say, script, turnEnded, turnLine, watchCalls } from "./panel";
@@ -397,17 +397,19 @@ journey("a turn of the agent in the editor", () => {
   });
 });
 
-/** Open or closed, as each frame of a page showed the panel from the first one with it: each change, in order. */
-const PANEL_FRAMES = `(() => {
+/**
+ * Open or closed, as a page showed the panel from when it showed it (server/pages/agent.ts sends it hidden): each
+ * change, in order, noted as it happens. (Not at each frame: a busy machine draws a frame late, or none for a while.)
+ */
+const PANEL_STATES = `(() => {
   if (window.top != window) return;
-  const seen = (window.__panelFrames = []);
-  const look = () => {
+  const seen = (window.__panelStates = []);
+  new MutationObserver(() => {
     const a = document.getElementById("agent");
-    const open = document.body?.classList.contains("agent-open");
-    if (a && !a.hidden && seen[seen.length - 1] !== open) seen.push(open);
-    requestAnimationFrame(look);
-  };
-  requestAnimationFrame(look);
+    if (!a || a.hidden) return;
+    const open = document.body.classList.contains("agent-open");
+    if (seen[seen.length - 1] !== open) seen.push(open);
+  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "hidden"] });
 })()`;
 
 /** At each page's first frame that shows the panel open: what its log shows, before the agent's own script loads the conversation. */
@@ -549,9 +551,10 @@ journey("the agent on the documents' list", () => {
       page.evaluate(() =>
         [...document.querySelectorAll("#agent-log .msg-user, #agent-log .msg-assistant")].map((e) => e.textContent ?? "")
       );
-    /** The page is open, and its panel has read its thread. */
+    /** The page is open, and its panel has read its thread (opened with ⌘J, where the last document's was closed). */
     const open = async (address: string) => {
       await page.goto(address);
+      if (!(await page.evaluate(() => document.body.classList.contains("agent-open")))) await page.keyboard.press("ControlOrMeta+j");
       await agentOn(page);
     };
     const [inA, slow] = [script("In A", [{ text: "Answer in A." }]), script("Slow, in A", [{ text: "Late answer in A.", delay: 700 }])];
@@ -590,14 +593,29 @@ journey("the agent on the documents' list", () => {
 
   // Was: one value for every page ("whether the agent is expanded or collapsed should be remembered on a document by
   // document basis and also for the whole of the UI that is not a document e.g. the admin pages").
-  test("the panel is open or closed as the person left it on each document, and as one on the pages outside a document, from the first frame", async () => {
-    const [a, b] = [await s.fixture("empty"), await s.fixture("empty")];
-    /** The page is open: the panel as each frame showed it since its first (one value: it never changed in view). */
+  // Then, of a document with no value: "use the value of the last document you were on; if there is none, open".
+  test("the panel is open or closed as the person left it on each document, and as one on the pages outside a document, from the first frame; a new document takes the last document's", async () => {
+    const [a, b, c, d] = [await s.fixture("empty"), await s.fixture("empty"), await s.fixture("empty"), await s.fixture("empty")];
+    /** The page is open: the panel as it showed since it first did (one value: it never changed in view). */
     const at = async (address: string) => {
-      await page.goto(address);
-      await until(() => page.evaluate(() => (window as any).__panelFrames.length > 0), 5000, "the page shows the panel");
+      await goto(page, address);
+      await until(
+        () => page.evaluate(() => (window as any).__panelStates.length > 0),
+        5000,
+        "the page shows the panel",
+        // What the page is, when it has no panel to show.
+        () =>
+          page.evaluate(() => ({
+            url: location.href,
+            title: document.title,
+            state: document.readyState,
+            agent: document.getElementById("agent")?.hidden ?? "none",
+            states: (window as any).__panelStates ?? "no probe",
+            text: document.body?.innerText.slice(0, 300),
+          }))
+      );
       await settle(page);
-      return page.evaluate(() => (window as any).__panelFrames as boolean[]);
+      return page.evaluate(() => (window as any).__panelStates as boolean[]);
     };
     const toggle = async (key: string, to: boolean) => {
       await page.keyboard.press(key);
@@ -607,24 +625,25 @@ journey("the agent on the documents' list", () => {
         `${key} ${to ? "opens" : "closes"} the panel`
       );
     };
-    await page.addInitScript(PANEL_FRAMES);
+    await page.addInitScript(PANEL_STATES);
 
-    // Closed on the list. A document that the person never opened or closed it on takes that.
+    // Closed on the list: no document takes that. Document A, new, is as the last document (the step before: open).
     await toggle("ControlOrMeta+j", false);
-    // Opened on document A; opened on document B, and closed there with Esc, from its box.
-    expect(await at(`${a.address}?user=${LISA}`), "a new document, as the list").toEqual([false]);
-    await toggle("ControlOrMeta+j", true);
-    expect(await at(`${b.address}?user=${LISA}`)).toEqual([false]);
-    await toggle("ControlOrMeta+j", true);
-    await until(() => page.evaluate(() => document.activeElement?.id == "agent-input"), 5000, "the agent's box has the keys");
-    await toggle("Escape", false);
+    expect(await at(`${a.address}?user=${LISA}`), "a new document, as the last one: open").toEqual([true]);
+    // Closed on document B.
+    expect(await at(`${b.address}?user=${LISA}`)).toEqual([true]);
+    await toggle("ControlOrMeta+j", false);
     // Opened on an admin page (the admin's: this browser keeps it, not the person).
     expect(await at(`${s.root}/admin/changes`), "an admin page, as the list").toEqual([false]);
     await toggle("ControlOrMeta+j", true);
+    // Document C, new: as B, the last document, not as the admin page. Opened there.
+    expect(await at(`${c.address}?user=${LISA}`), "a new document, as the last one: closed").toEqual([false]);
+    await toggle("ControlOrMeta+j", true);
 
-    // Each as it was left: A open, B closed, another admin page and the list open.
-    expect(await at(`${a.address}?user=${LISA}`), "document A").toEqual([true]);
+    // Each as it was left: B closed, and a new document after it; C open; another admin page and the list open.
     expect(await at(`${b.address}?user=${LISA}`), "document B").toEqual([false]);
+    expect(await at(`${d.address}?user=${LISA}`), "a new document after B").toEqual([false]);
+    expect(await at(`${c.address}?user=${LISA}`), "document C").toEqual([true]);
     expect(await at(`${s.root}/admin/ops`), "another admin page").toEqual([true]);
     expect(await at(docs()), "the list").toEqual([true]);
     await agentOn(page);
