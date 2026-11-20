@@ -41,7 +41,6 @@ journey("the panels and the bars over a page", () => {
     await pressOn(page, selector);
   };
   const cardOpen = () => ed.eval<boolean>(`!document.getElementById("sharing").hidden`);
-  const agentTip = () => ed.eval<string>(`document.getElementById("btn-agent-share").dataset.tip`);
   const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
   /** The page's scripts from Erga's origin: the library's address, and its build. */
   const library = () =>
@@ -136,13 +135,12 @@ journey("the panels and the bars over a page", () => {
     await ed.idle();
     await clickOn("#btn-agent-share");
     await clickOn("#btn-agent-share-menu .am-mcp");
-    await soon(agentTip).toBe("Copied ✓");
+    // The button says so on itself, and stays a button.
+    await soon(() => ed.eval<string>(`document.querySelector("#btn-agent-share-menu .am-mcp").textContent`)).toBe("Copied ✓");
     expect(await clipboard()).toBe(agentPrompt(new URL(ed.address).pathname, new URL(ed.address).origin));
-    // Its icon stays; the menu closed, and the Share card stays closed.
-    expect(
-      await ed.eval<boolean>(
-        `!!document.querySelector("#btn-agent-share svg") && document.getElementById("sharing").hidden && document.getElementById("btn-agent-share-menu").hidden`
-      )
+    // Then the menu closes, and the Share card stays closed.
+    await soon(() =>
+      ed.eval<boolean>(`document.getElementById("sharing").hidden && document.getElementById("btn-agent-share-menu").hidden`)
     ).toBe(true);
   });
 
@@ -366,11 +364,6 @@ journey("the panels and the bars over a page", () => {
     await ed.press("ControlOrMeta+Digit0");
     await soon(scale).toBe(1);
     await cdp.detach();
-  });
-
-  test("Share with an agent's tooltip has its name back after its moment", async () => {
-    // (1.6 s after the copy, which the steps since took.)
-    await soon(agentTip).toBe("Share with an agent");
   });
 
   test("the agent pane is glass of the page's colour, with dark text on a white page and light text on a dark one", async () => {

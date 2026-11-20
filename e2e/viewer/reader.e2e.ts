@@ -243,8 +243,10 @@ journey("a reader opens a document with several pages", () => {
     const copied = () => page.evaluate(() => navigator.clipboard.readText());
     await clickOn(page, ".erga-agent-share");
     await clickOn(page, ".erga-agent-menu:not([hidden]) .am-mcp");
-    await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
+    await expect.poll(() => page.locator(".erga-agent-menu .am-mcp").textContent()).toBe("Copied ✓");
     expect(await copied()).toBe(agentPrompt(new URL(doc.address).pathname, origin));
+    // (The menu closes a moment after the copy.)
+    await expect.poll(() => page.locator(".erga-agent-menu:not([hidden])").count()).toBe(0);
     await clickOn(page, ".erga-agent-share");
     // The dev server's person is an admin: Admin comes as a choice.
     await expect
@@ -464,7 +466,7 @@ journey("a reader opens a document with several pages", () => {
     await page.goto(`${s.root}/documents`);
     await clickOn(page, ".erga-agent-share");
     await clickOn(page, ".erga-agent-menu:not([hidden]) .am-mcp");
-    await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
+    await expect.poll(() => page.locator(".erga-agent-menu .am-mcp").textContent()).toBe("Copied ✓");
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(agentPrompt("/documents", s.root));
     // On an admin page, Admin is picked for the token.
     await page.goto(`${s.root}/admin`);
