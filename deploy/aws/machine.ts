@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FRONT } from "../../gate/mounts/web.ts";
 import { CHROME_DEVTOOLS } from "../deployer/aws";
+import { DEPLOYER } from "../deployer/aws-cloud";
 import type { Aws } from "./cli";
 import { CELLD_PORT, paramFolder } from "./template";
 
@@ -330,7 +331,9 @@ export const deployedScript = () => "cat /var/lib/erga/deployed 2>/dev/null || t
  *
  *   load      loads the release `version` from the bucket (deployScript, with no first SQL): a deploy, or the way back
  *   deployed  the releases that the machine ran (deployedScript)
- *   sql       one statement of the instance's record of its deploys (recordScript)
+ *   sql       one statement of the instance's record of its deploys (recordScript), checked here again: it reads no
+ *             table but the three of the deploys, and writes only the jobs and the looks (deploy/deployer/aws-cloud.ts,
+ *             DEPLOYER). The document's own pattern checks only the statement's shape
  *
  * Trap: an agent older than 3.3.2746.0 gives no such variable: the script stops at its second line, and runs nothing.
  */
@@ -344,6 +347,10 @@ ${body(deployScript({ ...o, version: "$SSM_version" }))}
 elif [ "$SSM_action" = deployed ]; then
 ${deployedScript()}
 elif [ "$SSM_action" = sql ]; then
+SQL="\${SSM_sql:-}" python3 -c 'import os, re, sys
+s = os.environ["SQL"]
+ok = re.fullmatch(r"${DEPLOYER.shape}", s) and not re.search(r"${DEPLOYER.other}", re.sub(r"${DEPLOYER.read}", " ", s), re.I)
+sys.exit(0 if ok else 2)' || { echo "not a statement of the record of the deploys" >&2; exit 2; }
 ${body(recordScript({ bucket: o.bucket, region: o.region, sql: "$SSM_sql" }))}
 else
 echo "not an action of this document" >&2; exit 2

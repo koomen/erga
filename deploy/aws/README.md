@@ -119,17 +119,20 @@ function's code. Setup's cloud choice calls it. After that, no person's login is
   auto-deploy on the deploy of the head's release, with the same steps as `bun erga deploy`. It fetches the release
   from GitHub, checks its digest, and packs the celld project itself.
 - **The role** is its only credential: AWS changes its keys, and no person holds them. Its statements, each for this
-  one instance: `s3:PutObject` on `releases/*` of the bucket; `kms:GenerateDataKey` on the stack's key, through S3
+  one instance: `s3:PutObject` on `releases/*.tgz` of the bucket; `kms:GenerateDataKey` on the stack's key, through S3
   only; `ssm:SendCommand` with the instance's document to the instance's machine; `ssm:GetCommandInvocation` (AWS has
-  no narrower form than `*`); `ssm:PutParameter` on `/erga-live/<stack>`; with the gate in front, `ssm:GetParameter`
-  on `/erga-gate/<stack>/installed`; and its own log group. It cannot read the bucket, run a shell, read a secret, or
-  change IAM, a stack, a distribution, the document or its own code.
-- **The instance's document** (`<stack>-deploy`, Systems Manager) is the fixed script (`machine.ts`, `documentScript`)
-  with three actions: `load` a release, list the `deployed` releases, and one `sql` statement of the deploys' record.
-  Systems Manager checks each parameter (a release is 12 hex characters; a statement is a read, or a write of the
-  deploys' own tables, of plain characters only), and
-  the agent gives them to the script as environment variables, never as text of the script. That needs the agent
-  3.3.2746.0 or newer: with an older one the script stops at its start.
+  no narrower form than `*`: it reads a command only by its id, which the sender alone gets); `ssm:PutParameter` on
+  `/erga-live/<stack>`; with the gate in front, `ssm:GetParameter` on `/erga-gate/<stack>/installed`; and its own log
+  group. It cannot read the bucket, run a shell, read a secret, or change IAM, a stack, a distribution, the document
+  or its own code.
+- **The instance's document** (Systems Manager; CloudFormation names it) is the fixed script (`machine.ts`,
+  `documentScript`) with three actions: `load` a release, list the `deployed` releases, and one `sql` statement of the
+  deploys' record. Systems Manager checks each parameter (a release is 12 hex characters; a statement has the shape of
+  a read or a write, of plain characters only), and the agent gives them to the script as environment variables, never
+  as text of the script. That needs the agent 3.3.2746.0 or newer: with an older one the script stops at its start.
+  The script checks a statement again: it reads only the three tables of the deploys (`deploy_spec`, `deploy_jobs`,
+  `deploy_control`), and writes only the jobs and the control row. So the deployer reads no user, token or document,
+  and does not write the spec. A change of the script makes a new document, and the one before goes.
 - **The gate.** Only setup installs the gate's code, and it records the hash of the gate's source
   (`/erga-gate/<stack>/installed`). A release carries the hash of its own gate. With the gate in front, the deployer
   deploys no release whose hash differs: it stops before any change and says to run setup (plan decision D7).

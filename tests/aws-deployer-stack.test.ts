@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DeployerShape, deployerCode, deployerTemplate, documentName, zipOne } from "../deploy/aws/deployer";
+import { type DeployerShape, deployerCode, deployerTemplate, zipOne } from "../deploy/aws/deployer";
 import { TEMPLATE_MAX } from "../deploy/aws/template";
 import { ROOT } from "./helpers/deploys.ts";
 
@@ -65,7 +65,7 @@ describe("the deployer's stack", () => {
       ERGA_STACK: "erga-example",
       ERGA_BUCKET: shape.bucket,
       ERGA_MACHINE: shape.machine,
-      ERGA_DOCUMENT: "erga-example-deploy",
+      ERGA_DOCUMENT: { Ref: "Document" },
       ERGA_GATE: "1",
     });
     // The stub is the code until setup sends the real one, and CloudFormation takes the template from a command.
@@ -116,7 +116,7 @@ require("./index.js").handler().then((line) => console.log("line: " + line), (e)
           ERGA_STACK: shape.stack,
           ERGA_BUCKET: shape.bucket,
           ERGA_MACHINE: shape.machine,
-          ERGA_DOCUMENT: documentName(shape.stack),
+          ERGA_DOCUMENT: "erga-example-deployer-Document-1ABCDEFGHIJKL",
           ERGA_GATE: "1",
         };
         const node = (vars: Record<string, string | undefined>) => {

@@ -6,7 +6,8 @@
 //
 // The machine runs only the instance's document (a Systems Manager document that setup installs): a fixed script
 // with three actions and checked parameters. So these keys run no other command on the machine, and read nothing of
-// the bucket.
+// the bucket. Of the instance's database they read only the three tables of its deploys, and write only the jobs and
+// the looks (DEPLOYER): no user, no token, no document, and not the spec.
 //
 // Trap: a release whose gate is not the installed one is refused before the bucket gets anything (plan decision D7).
 // Only setup, with a person's own login, installs the gate's code: the role can change no function of the gate.
@@ -39,12 +40,42 @@ export type Action = { action: "load"; version: string } | { action: "deployed" 
 
 /** What a release's name must be for the document: 12 hex characters. */
 export const VERSION = /^[0-9a-f]{12}$/;
+/** The three tables of an instance's record of its deploys: its spec, its jobs, and the row that the app and the deployer share. */
+const TABLE = "deploy_(?:spec|jobs|control)";
+
 /**
- * What a statement for the machine may be: a read, or a write of the deploys' own tables (deploy_spec, deploy_jobs,
- * deploy_control), of plain characters only: no quote that ends a text in a script, nothing that a shell reads, no
- * second statement. The document refuses another one too (its allowedPattern is this).
+ * What a statement for the machine may be, as three patterns that JavaScript and Python read the same way (the
+ * document's script checks a statement with them again, on the machine: deploy/aws/machine.ts):
+ *
+ *   shape   the whole statement: a read, or a write of the tables `writes`, of plain characters only (\x27 is the
+ *           quote of SQL's own texts): no quote that ends a text in a script, nothing that a shell reads, no second
+ *           statement, no comment
+ *   read    the one form in which a statement names a table to read: FROM, one of the three tables, and then WHERE,
+ *           ORDER BY, LIMIT, a closing bracket or the statement's end. So no second table comes after it
+ *   other   what must not be in the statement but for those reads: another FROM (in any case, also inside a name or
+ *           a text), a JOIN, and the word IN (SQLite reads a table that IN names)
+ *
+ * So a statement reads no table but the three, and writes no table but `writes`.
  */
-export const STATEMENT = /^(SELECT |INSERT INTO deploy_|UPDATE deploy_)[A-Za-z0-9_ ,()=<>|'*.:]*$/;
+export interface Rules {
+  shape: string;
+  read: string;
+  other: string;
+}
+const rules = (writes: string): Rules => ({
+  shape: `(?:SELECT |INSERT INTO ${writes} |UPDATE ${writes} SET )[A-Za-z0-9_ ,()=<>|\\x27*.:]*`,
+  read: ` FROM ${TABLE}(?= WHERE | ORDER BY | LIMIT |\\)|$)`,
+  other: "from|join|(?<![a-z0-9_])in(?![a-z0-9_])",
+});
+/** With a person's own login, on a machine: the three tables, the spec too (setup and `bun erga` write it). */
+export const PERSON = rules(TABLE);
+/** The deployer in the cloud: it reads the three tables, and writes its jobs and its looks. It never writes the spec. */
+export const DEPLOYER = rules("deploy_(?:jobs|control)");
+
+/** Whether `statement` is one that `rules` allow. */
+export const allowed = (statement: string, r: Rules) =>
+  new RegExp(`^${r.shape}$`).test(statement) && !new RegExp(r.other, "i").test(statement.replace(new RegExp(r.read, "g"), " "));
+
 /** Systems Manager gives back the first 24,000 characters of a command's output. */
 const OUTPUT = 24_000;
 
@@ -52,11 +83,11 @@ const OUTPUT = 24_000;
 const literal = (v: string | number | null) =>
   v == null ? "NULL" : typeof v == "number" ? String(Math.trunc(v)) : `CAST(X'${Hex.encode(new TextEncoder().encode(v))}' AS TEXT)`;
 
-/** One statement with its values in it, as the machine may run it, or null: it is not one of plain characters. */
-export function statementOf(sql: string, params: readonly (string | number | null)[]): string | null {
+/** One statement with its values in it, as the machine may run it, or null: `rules` do not allow it. */
+export function statementOf(sql: string, params: readonly (string | number | null)[], r: Rules = PERSON): string | null {
   const parts = sql.split("?");
   const statement = parts.map((part, i) => (i ? literal(params[i - 1] ?? null) : "") + part).join("");
-  return parts.length == params.length + 1 && STATEMENT.test(statement) ? statement : null;
+  return parts.length == params.length + 1 && allowed(statement, r) ? statement : null;
 }
 
 /** The rows in the machine's answer to a statement: the marked texts in celld's output (instance.ts). */
@@ -67,11 +98,14 @@ export function rowsIn(out: string): Effect.Effect<readonly string[], DeployErro
   return Effect.succeed(out.match(/erga:(?:[0-9A-F]{2})+/g) ?? []);
 }
 
-/** The instance's database through `run`, which runs one statement on the machine: its output, as celld prints it. */
+/**
+ * The instance's database through `run`, which runs one statement on the machine: its output, as celld prints it. A
+ * statement that `rules` do not allow never leaves.
+ */
 export const machineSql =
-  (run: (statement: string) => Effect.Effect<string, DeployError>): Sql =>
+  (run: (statement: string) => Effect.Effect<string, DeployError>, r: Rules = PERSON): Sql =>
   (sql, params) => {
-    const statement = statementOf(sql, params);
+    const statement = statementOf(sql, params, r);
     if (statement == null)
       return Effect.fail(new DeployError({ message: "A statement of the deploys' record is not one that the machine may run." }));
     return run(statement).pipe(
@@ -198,7 +232,7 @@ export function cloudAws(aws: Aws, own: Own): CloudAws {
   };
   return {
     api,
-    sql: machineSql((sql) => run({ action: "sql", sql })),
+    sql: machineSql((sql) => run({ action: "sql", sql }), DEPLOYER),
     mine: (t) =>
       t.kind == "aws" &&
       t.region == aws.region &&

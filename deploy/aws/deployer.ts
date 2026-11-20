@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AwsEntry } from "../cli/config";
 import { gateParam, liveParam } from "../deployer/aws";
-import { STATEMENT } from "../deployer/aws-cloud";
+import { DEPLOYER } from "../deployer/aws-cloud";
 import { awsCli } from "./cli";
 import { documentScript } from "./machine";
 import { applyStack, changeLines, type Planned, planStack, stackState, templatesDir } from "./stack";
@@ -31,8 +31,6 @@ const att = (name: string, a: string) => ({ "Fn::GetAtt": [name, a] });
 
 /** The deployer's stack, and its function. */
 export const deployerName = (stack: string) => `${stack}-deployer`;
-/** The instance's document. */
-export const documentName = (stack: string) => `${stack}-deploy`;
 
 /** What the deployer's stack is made from: the instance's names, and its stack's key (the bucket's encryption). */
 export interface DeployerShape {
@@ -59,7 +57,8 @@ export function documentContent(o: DeployerShape): Json {
     parameters: {
       action: text({ allowedValues: ["load", "deployed", "sql"] }),
       version: text({ default: "", allowedPattern: "^([0-9a-f]{12})?$" }),
-      sql: text({ default: "", allowedPattern: `^(${STATEMENT.source.slice(1, -1)})?$` }),
+      // (The statement's shape, in the plainest form of a pattern. The script checks which tables it reads.)
+      sql: text({ default: "", allowedPattern: `^(${DEPLOYER.shape.replaceAll("(?:", "(").replace("\\x27", "'")})?$` }),
     },
     mainSteps: [
       {
@@ -83,7 +82,7 @@ export function roleStatements(o: DeployerShape): Json[] {
     sub(`arn:\${AWS::Partition}:${service}:\${AWS::Region}:\${AWS::AccountId}:${resource}`);
   return [
     // A release into the bucket, and nothing else of the bucket: no read, no other key.
-    { Effect: "Allow", Action: "s3:PutObject", Resource: sub(`arn:\${AWS::Partition}:s3:::${o.bucket}/releases/*`) },
+    { Effect: "Allow", Action: "s3:PutObject", Resource: sub(`arn:\${AWS::Partition}:s3:::${o.bucket}/releases/*.tgz`) },
     // The bucket's key, to encrypt that upload only: through S3, and never to decrypt.
     {
       Effect: "Allow",
@@ -95,8 +94,10 @@ export function roleStatements(o: DeployerShape): Json[] {
     {
       Effect: "Allow",
       Action: "ssm:SendCommand",
-      Resource: [arn("ssm", `document/${documentName(o.stack)}`), arn("ec2", `instance/${o.machine}`)],
+      Resource: [arn("ssm", "document/${Document}"), arn("ec2", `instance/${o.machine}`)],
     },
+    // The end of a command, by the command's id. AWS takes no narrower resource than "*" for this call: it reads a
+    // command only by an id, which the sender alone gets, and the role can list no command.
     { Effect: "Allow", Action: "ssm:GetCommandInvocation", Resource: "*" },
     // Which release runs: written, never read.
     { Effect: "Allow", Action: "ssm:PutParameter", Resource: arn("ssm", `parameter${liveParam(o.stack)}`) },
@@ -120,12 +121,12 @@ export function deployerTemplate(o: DeployerShape): Json {
       Document: {
         Type: "AWS::SSM::Document",
         Properties: {
-          Name: documentName(o.stack),
+          // No name of its own: CloudFormation names it. So a change of the script makes a new document and removes
+          // the one before, and the role names the new one only. (An update in place would keep each earlier script
+          // as a version of the same document, which the role could still send.)
           DocumentType: "Command",
           DocumentFormat: "JSON",
           TargetType: "/AWS::EC2::Instance",
-          // A change of the script is a new version of the same document: the role names the document.
-          UpdateMethod: "NewVersion",
           Content: documentContent(o),
           Tags: tags,
         },
@@ -161,7 +162,7 @@ export function deployerTemplate(o: DeployerShape): Json {
               ERGA_STACK: o.stack,
               ERGA_BUCKET: o.bucket,
               ERGA_MACHINE: o.machine,
-              ERGA_DOCUMENT: documentName(o.stack),
+              ERGA_DOCUMENT: { Ref: "Document" },
               ERGA_GATE: o.gateKey ? "1" : "0",
             },
           },

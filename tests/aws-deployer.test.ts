@@ -13,23 +13,15 @@ import { join } from "node:path";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import {
-  type DeployerShape,
-  deployerCode,
-  deployerName,
-  deployerTemplate,
-  documentName,
-  roleStatements,
-  zipOne,
-} from "../deploy/aws/deployer";
+import { type DeployerShape, deployerCode, deployerName, deployerTemplate, roleStatements, zipOne } from "../deploy/aws/deployer";
 import { documentScript } from "../deploy/aws/machine";
 import { TEMPLATE_MAX } from "../deploy/aws/template";
 import { gateParam, liveParam } from "../deploy/deployer/aws";
 import { Aws, AwsRefusal, sign } from "../deploy/deployer/aws-api";
-import { cloudAws, gateProblem, statementOf } from "../deploy/deployer/aws-cloud";
+import { allowed, cloudAws, DEPLOYER, gateProblem, machineSql, PERSON, statementOf } from "../deploy/deployer/aws-cloud";
 import type { Fetch } from "../deploy/deployer/cloudflare-api";
 import { deploy } from "../deploy/deployer/deploy";
-import { readControl } from "../deploy/deployer/control";
+import { readControl, takeAsk, writeLook } from "../deploy/deployer/control";
 import { openJob, readJobs, readLog, readSpec, writeSpec } from "../deploy/deployer/instance";
 import { look } from "../deploy/deployer/look";
 import type { Release } from "../deploy/deployer/release-format";
@@ -54,13 +46,21 @@ const MIGRATION = ["0470_deploys.sql", "0480_deploy_control.sql"]
   .map((name) => readFileSync(join(ROOT, "server/migrations", name), "utf8"))
   .join("\n");
 
+/** The instance's document, by the name that CloudFormation gives it. */
+const DOCUMENT = "erga-example-deployer-Document-1ABCDEFGHIJKL";
+
 /** A template's value as CloudFormation makes it in the test's account: Fn::Sub's names, and the log group's ARN. */
 function made(value: unknown): any {
   if (Array.isArray(value)) return value.map(made);
   if (!value || typeof value != "object") return value;
   const v = value as Record<string, unknown>;
   if (typeof v["Fn::Sub"] == "string")
-    return v["Fn::Sub"].replace("${AWS::Partition}", "aws").replaceAll("${AWS::Region}", REGION).replace("${AWS::AccountId}", ACCOUNT);
+    return v["Fn::Sub"]
+      .replace("${AWS::Partition}", "aws")
+      .replaceAll("${AWS::Region}", REGION)
+      .replace("${AWS::AccountId}", ACCOUNT)
+      .replace("${Document}", DOCUMENT);
+  if (v.Ref == "Document") return DOCUMENT;
   if (v["Fn::GetAtt"]) return `arn:aws:logs:${REGION}:${ACCOUNT}:log-group:/aws/lambda/${deployerName(shape.stack)}:*`;
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, made(x)]));
 }
@@ -124,6 +124,8 @@ function fakeAws(o: { gate?: boolean; installed?: string; ran?: string[]; sick?:
       state.deployed = [...state.deployed.filter((v) => v != version), version];
       return ended("Success", `deployed\nruns ${version}\n`);
     }
+    // The script's own check of a statement, before celld gets it.
+    if (!allowed(sql, DEPLOYER)) return ended("Failed", "", "not a statement of the record of the deploys\n");
     try {
       // celld d1 execute --json: one JSON object for each row.
       return ended(
@@ -212,10 +214,20 @@ function fakeAws(o: { gate?: boolean; installed?: string; ran?: string[]; sick?:
     stack: own.stack,
     bucket: own.bucket,
     machine: own.machine,
-    document: documentName(own.stack),
+    document: DOCUMENT,
     gate: !!own.gateKey,
   });
-  return { aws, cloud: { ...ports, fetch }, state, db, statements };
+  /** The instance's database with a person's own login (a machine's `bun erga`): it may write the spec. */
+  const person = machineSql((statement) =>
+    Effect.sync(() =>
+      db
+        .query(statement)
+        .all()
+        .map((r) => JSON.stringify(r))
+        .join("\n")
+    )
+  );
+  return { aws, cloud: { ...ports, fetch }, person, state, db, statements };
 }
 
 const target = (gate = true): Extract<Spec["target"], { kind: "aws" }> => ({
@@ -306,7 +318,7 @@ describe("the role", () => {
   test("its statements, each one whole: a wider one fails here", () => {
     const param = (name: string) => `arn:aws:ssm:${REGION}:${ACCOUNT}:parameter${name}`;
     expect(made(roleStatements(shape))).toEqual([
-      { Effect: "Allow", Action: "s3:PutObject", Resource: `arn:aws:s3:::${shape.bucket}/releases/*` },
+      { Effect: "Allow", Action: "s3:PutObject", Resource: `arn:aws:s3:::${shape.bucket}/releases/*.tgz` },
       {
         Effect: "Allow",
         Action: "kms:GenerateDataKey",
@@ -316,10 +328,7 @@ describe("the role", () => {
       {
         Effect: "Allow",
         Action: "ssm:SendCommand",
-        Resource: [
-          `arn:aws:ssm:${REGION}:${ACCOUNT}:document/erga-example-deploy`,
-          `arn:aws:ec2:${REGION}:${ACCOUNT}:instance/${shape.machine}`,
-        ],
+        Resource: [`arn:aws:ssm:${REGION}:${ACCOUNT}:document/${DOCUMENT}`, `arn:aws:ec2:${REGION}:${ACCOUNT}:instance/${shape.machine}`],
       },
       { Effect: "Allow", Action: "ssm:GetCommandInvocation", Resource: "*" },
       { Effect: "Allow", Action: "ssm:PutParameter", Resource: param("/erga-live/erga-example") },
@@ -348,8 +357,8 @@ describe("the role", () => {
       expect(state.calls).toEqual([
         "GetParameter /erga-gate/erga-example/installed",
         `PutObject ${shape.bucket}/releases/bbbbbbbbbbbb.tgz`,
-        `SendCommand erga-example-deploy ${shape.machine} deployed`,
-        `SendCommand erga-example-deploy ${shape.machine} load`,
+        `SendCommand ${DOCUMENT} ${shape.machine} deployed`,
+        `SendCommand ${DOCUMENT} ${shape.machine} load`,
         "PutParameter /erga-live/erga-example",
       ]);
       expect(statements.map((_, i) => state.used.has(i))).toEqual([true, true, true, true, true, true, false]);
@@ -377,14 +386,14 @@ describe("the role", () => {
   test("it reaches nothing else: no other key of the bucket, no other document, machine or parameter", async () => {
     const { aws, state } = fakeAws({ installed: GATE });
     const no = (effect: Effect.Effect<unknown, { message: string }>) => failure(effect).then((e) => e.message);
-    for (const key of ["fleet/r2/a-document", "programs/celld-v0.6.3.gz", "releases.tgz"])
+    for (const key of ["fleet/r2/a-document", "programs/celld-v0.6.3.gz", "releases.tgz", "releases/notes.txt"])
       expect(await no(aws.putObject(shape.bucket, key, new Uint8Array(1), "put it"))).toContain("AccessDenied");
     expect(await no(aws.putObject("another-bucket", "releases/x.tgz", new Uint8Array(1), "put it"))).toContain("AccessDenied");
     const send = (DocumentName: string, machine: string) =>
       no(aws.ssm("SendCommand", { DocumentName, InstanceIds: [machine], Parameters: { commands: ["id"] } }, anything, "run a command"));
     // No shell: AWS's own document that runs any script is another document.
     expect(await send("AWS-RunShellScript", shape.machine)).toContain("AccessDeniedException");
-    expect(await send(documentName(shape.stack), "i-0fedcba9876543210")).toContain("AccessDeniedException");
+    expect(await send(DOCUMENT, "i-0fedcba9876543210")).toContain("AccessDeniedException");
     for (const [operation, Name] of [
       ["GetParameter", "/erga/erga-example/SESSION_SECRET"],
       ["GetParameter", "/erga-live/erga-example"],
@@ -393,7 +402,7 @@ describe("the role", () => {
       ["PutParameter", "/erga/erga-example/SESSION_SECRET"],
     ])
       expect(await no(aws.ssm(operation, { Name, Value: "x" }, anything, "touch a parameter"))).toContain("AccessDeniedException");
-    expect(state.denied.length).toBe(11);
+    expect(state.denied.length).toBe(12);
     expect([state.objects.size, state.commands.length]).toEqual([0, 0]);
   });
 });
@@ -402,9 +411,9 @@ describe("the instance's document", () => {
   test("Systems Manager refuses a command that is not one of its three actions, with a checked release and statement", async () => {
     const { aws, state } = fakeAws();
     const send = (Parameters: Record<string, string[]>) =>
-      failure(
-        aws.ssm("SendCommand", { DocumentName: documentName(shape.stack), InstanceIds: [shape.machine], Parameters }, anything, "run it")
-      ).then((e) => e.message);
+      failure(aws.ssm("SendCommand", { DocumentName: DOCUMENT, InstanceIds: [shape.machine], Parameters }, anything, "run it")).then(
+        (e) => e.message
+      );
     const refusals: Record<string, string[]>[] = [
       { action: ["shell"] },
       { action: ["load"], version: ["../../programs/celld"] },
@@ -419,6 +428,9 @@ describe("the instance's document", () => {
       { action: ["sql"], sql: ["INSERT INTO users (login) VALUES ('x')"] },
       { action: ["sql"], sql: ["DELETE FROM deploy_jobs"] },
       { action: ["sql"], sql: ["DROP TABLE users"] },
+      // A write of the spec: the deployer reads it, and only a person's login writes it.
+      { action: ["sql"], sql: ["INSERT INTO deploy_spec (id, spec, at) VALUES (1, 'x', 1)"] },
+      { action: ["sql"], sql: ["UPDATE deploy_spec SET spec = 'x'"] },
       { action: ["deployed"], commands: ["id"] },
     ];
     for (const refused of refusals) expect(await send(refused)).toContain("InvalidParameters");
@@ -428,13 +440,95 @@ describe("the instance's document", () => {
     const { parameters, mainSteps } = content.Document.Properties.Content;
     for (const p of Object.values(parameters) as { interpolationType: string }[]) expect(p.interpolationType).toBe("ENV_VAR");
     expect(mainSteps[0].inputs.runCommand.join("\n")).not.toContain("{{");
-    expect(content.Document.Properties.UpdateMethod).toBe("NewVersion");
+    // A new script is a new document, and the one before goes: no earlier script stays as a version that the role may send.
+    expect([content.Document.Properties.Name, content.Document.Properties.UpdateMethod]).toEqual([undefined, undefined]);
+  });
+
+  /** Statements that have the shape of a read or of a write of the deployer's tables, and reach for another table. */
+  const REACH = [
+    "SELECT login FROM users",
+    "select login from users",
+    "SELECT sql FROM sqlite_master",
+    "SELECT 1 FROM deploy_jobs , users",
+    "SELECT 1 FROM deploy_jobs AS j, users",
+    "SELECT 1 FROM deploy_jobs JOIN users",
+    "SELECT 1 FROM deploy_jobs WHERE id IN users",
+    "SELECT 1 FROM deploy_jobs WHERE id = 1 UNION SELECT login FROM users",
+    "SELECT (SELECT login FROM users) FROM deploy_spec WHERE id = 1",
+    "SELECT 1 FROM (users)",
+    "UPDATE deploy_jobs SET log = (SELECT login FROM users)",
+    "INSERT INTO deploy_jobs (command) SELECT login FROM users",
+    "UPDATE deploy_control SET head = login FROM users",
+  ];
+
+  /** Each statement that the deployer sends in its work: the spec, the control row, a look, an ask, a job and its log. */
+  async function deployerStatements() {
+    const { cloud, person, state } = fakeAws();
+    await run(writeSpec(person, specOf()));
+    await run(readSpec(cloud.sql));
+    await run(readControl(cloud.sql));
+    await run(
+      writeLook(cloud.sql, { head: SHA2, error: null, commits: [{ sha: SHA2, title: "A commit's title", at: 1, release: "released" }] })
+    );
+    await run(takeAsk(cloud.sql, { kind: "deploy", sha: SHA2, by: "ada", at: 1 }));
+    const job = await run(openJob(cloud.sql, { kind: "deploy", command: `deploy ${SHA2}`, source: "auto-deploy" }));
+    // A second job, while the first holds the lock: the statement that reads who holds it.
+    await failure(openJob(cloud.sql, { kind: "rollback", command: "rollback", source: "auto-deploy" }));
+    job.commit(SHA2);
+    job.line("a line");
+    await job.end({ at: "done" });
+    const [row] = await run(readJobs(cloud.sql));
+    await run(readLog(cloud.sql, row.id, 0));
+    return [...new Set(state.commands.map((c) => c.sql))];
+  }
+
+  test("a statement reads only the three tables of the deploys, and writes only the jobs and the looks: the machine checks it", async () => {
+    const { aws, state, db } = fakeAws();
+    db.exec("CREATE TABLE users (login TEXT); INSERT INTO users VALUES ('ada')");
+    /** One command with the statement as it is (no check before it leaves): its end on the machine, or the document's refusal. */
+    const onMachine = async (sql: string) => {
+      const Parameters = { action: ["sql"], sql: [sql] };
+      const sent = await run(
+        Effect.result(aws.ssm("SendCommand", { DocumentName: DOCUMENT, InstanceIds: [shape.machine], Parameters }, anything, "run it"))
+      );
+      if (sent._tag == "Failure") return sent.failure.message;
+      const { CommandId } = (sent.success as { Command: { CommandId: string } }).Command;
+      const end = (await run(
+        aws.ssm("GetCommandInvocation", { CommandId, InstanceId: shape.machine }, anything, "read its end")
+      )) as Record<string, string>;
+      return `${end.Status}: ${end.StandardOutputContent}${end.StandardErrorContent}`;
+    };
+    // Each has the shape of a statement. The document's pattern refuses the one in small letters; the script on the
+    // machine refuses each other one, and celld gets nothing: no row of another table comes back.
+    for (const sql of REACH) {
+      expect([sql, allowed(sql, DEPLOYER), allowed(sql, PERSON)]).toEqual([sql, false, false]);
+      expect([sql, await onMachine(sql)]).toEqual([
+        sql,
+        sql == "select login from users"
+          ? "AWS refused to run it (400: InvalidParameters: the parameter sql)."
+          : "Failed: not a statement of the record of the deploys\n",
+      ]);
+    }
+    expect(state.commands.length).toBe(REACH.length - 1);
+    // A read of the deploys' own tables runs, also inside another read.
+    const own =
+      "SELECT 1 AS n FROM deploy_spec WHERE NOT EXISTS (SELECT 1 FROM deploy_jobs WHERE id = 0) OR id = (SELECT id FROM deploy_control)";
+    expect(await onMachine(own)).toBe("Success: ");
+    // With a person's login the spec is written too, and no other table is read either.
+    expect(allowed("UPDATE deploy_spec SET spec = 'x'", PERSON)).toBe(true);
+    expect(allowed("UPDATE deploy_spec SET spec = 'x'", DEPLOYER)).toBe(false);
+    expect(allowed("INSERT INTO deploy_specs (id) VALUES (1)", PERSON)).toBe(false);
   });
 
   test("the instance's database through it: each value is hex in the statement, and the rows come back out of celld's words", async () => {
-    const { cloud, state } = fakeAws();
+    const { cloud, person, state } = fakeAws();
     const spec = specOf();
-    await run(writeSpec(cloud.sql, spec));
+    // The spec: a person's login writes it, and the deployer only reads it.
+    expect((await failure(writeSpec(cloud.sql, spec))).message).toBe(
+      "A statement of the deploys' record is not one that the machine may run."
+    );
+    expect(state.commands).toEqual([]);
+    await run(writeSpec(person, spec));
     expect(await run(readSpec(cloud.sql))).toEqual(spec);
     const job = await run(openJob(cloud.sql, { kind: "deploy", command: `deploy "$(id)" 'x'; rm -rf / \`id\``, source: "auto-deploy" }));
     job.commit("b".repeat(40));
@@ -457,12 +551,15 @@ describe("the instance's document", () => {
       "A statement of the deploys' record is not one that the machine may run."
     );
     expect(state.commands.length).toBe(before);
-    expect((await failure(cloud.sql("SELECT 1 FROM no_table", [])))._tag).toBe("NoTable");
+    // A database from before the tables: NoTable.
+    const old = fakeAws();
+    old.db.exec("DROP TABLE deploy_spec");
+    expect((await failure(readSpec(old.cloud.sql)))._tag).toBe("NoTable");
   });
 
   test(
-    "the script on the machine: its three actions, a checked release, and nothing with an old agent",
-    () => {
+    "the script on the machine: its three actions, a checked release and statement, and nothing with an old agent",
+    async () => {
       const dir = mkdtempSync(join(tmpdir(), "erga-document-"));
       const bin = join(dir, "bin");
       mkdirSync(bin);
@@ -518,6 +615,21 @@ esac`
         const statement = "SELECT 'erga:' || hex(spec) FROM deploy_spec WHERE id = 1";
         expect(command({ SSM_action: "sql", SSM_version: "", SSM_sql: statement }).code).toBe(0);
         expect(said("celld").at(-1)).toBe(`d1 execute erga . --bucket s3://bucket/fleet --json --command ${statement}`);
+        // The script's own check of a statement (Python, on the machine) and this code's check say the same: each
+        // statement that the deployer sends runs, and one that reaches for another table stops before celld.
+        const sent = await deployerStatements();
+        expect(sent.length).toBeGreaterThan(7);
+        for (const sql of sent) {
+          expect(allowed(sql, DEPLOYER)).toBe(true);
+          expect([sql, command({ SSM_action: "sql", SSM_version: "", SSM_sql: sql }).code]).toEqual([sql, 0]);
+          expect(said("celld").at(-1)).toBe(`d1 execute erga . --bucket s3://bucket/fleet --json --command ${sql}`);
+        }
+        const ran = said("celld").length;
+        for (const sql of [...REACH, "UPDATE deploy_spec SET spec = 'x'", "DELETE FROM deploy_jobs", 'SELECT "x"', "SELECT 1; SELECT 2"]) {
+          const refused = command({ SSM_action: "sql", SSM_version: "", SSM_sql: sql });
+          expect([sql, refused.code, refused.err]).toEqual([sql, 2, "not a statement of the record of the deploys\n"]);
+        }
+        expect(said("celld").length).toBe(ran);
         // A release's name that is not 12 hex characters, and an action that is not one: nothing runs.
         const calls = [said("asked").length, said("celld").length];
         for (const env of [
@@ -610,7 +722,7 @@ describe("a look from the cloud", () => {
     small.index.gate = o.gate ?? GATE;
     hub.state.releases.set(SHA2, o.built ? builtBundle(SHA2) : new TextEncoder().encode(JSON.stringify(small)));
     const aws = fakeAws({ installed: o.built ? release.gate : GATE, ran: ["aaaaaaaaaaaa"] });
-    await run(writeSpec(aws.cloud.sql, specOf()));
+    await run(writeSpec(aws.person, specOf()));
     aws.db.exec(`INSERT INTO deploy_control (id, auto) VALUES (1, ${o.auto ? 1 : 0})`);
     aws.state.commands.length = 0;
     const way: Fetch = (input, init) => (new URL(String(input)).host.endsWith(".amazonaws.com") ? aws.cloud : hub).fetch(input, init);
@@ -675,7 +787,7 @@ describe("a look from the cloud", () => {
 
   test("a spec that names another instance than the deployer's own is refused", async () => {
     const { aws, look } = await world({ auto: true });
-    await run(writeSpec(aws.cloud.sql, { ...specOf(), target: { ...target(), bucket: "another-bucket" } }));
+    await run(writeSpec(aws.person, { ...specOf(), target: { ...target(), bucket: "another-bucket" } }));
     expect(await look()).toBe("The instance's spec names another instance than the one that this deployer is for.");
     expect([aws.state.deployed, aws.state.objects.size]).toEqual([["aaaaaaaaaaaa"], 0]);
   });
