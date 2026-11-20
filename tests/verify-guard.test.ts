@@ -413,7 +413,8 @@ console.log(JSON.stringify([
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
+  // (Its own process, which starts the stand-in for each command: 2 s alone, more than 5 s beside other runs.)
+}, 30_000);
 
 test("only this machine reaches a run's deploy on AWS: a web ACL in front of each distribution", () => {
   const t = onlyHereTemplate(`${STACK}-only-here`, { v4: "192.0.2.7", v6: null });

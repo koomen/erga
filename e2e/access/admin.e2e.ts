@@ -236,6 +236,8 @@ journey("an admin on the admin pages", () => {
         () => document.querySelector<HTMLInputElement>('li[data-live="setting:delete_docs_after_hours"] input[name=value]')!.value
       );
     expect(await hours()).not.toBe("7");
+    // A number has no spin buttons.
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector("#set-max_file_mb")!).appearance)).toBe("textfield");
     await agent("set_setting", { key: "delete_docs_after_hours", value: 7 });
     await soon(hours).toBe("7");
     // Agents: the daily token limit. The admin picks "No limit" and saves, and the server has no limit; the agent's

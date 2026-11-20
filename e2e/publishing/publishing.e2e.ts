@@ -363,6 +363,7 @@ journey("custom domains, from a new server on", () => {
     expect(lines).toEqual([`${erga} Free`, expect.stringMatching(new RegExp(`^${SITE} ${other.title} Published v\\d+$`)), `${BLOG} Free`]);
     expect(row).toContain(`href="${other.address}"`);
     expect(row).not.toMatch(/<(input|button|select)/);
+    expect(row).toContain("deploy erga with <code>bun erga deploy &lt;host&gt; --domain &lt;domain&gt;</code>");
 
     // Not published: the panel asks, and after Unpublish the domain answers with nothing at once, and is free.
     await choose(p, -2);

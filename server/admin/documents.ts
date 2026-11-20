@@ -43,7 +43,7 @@ async function sitesRow(platform: Platform, session: Session, origin: string): P
     : "";
   return `  <li class="sites" data-live="${SITES}" data-sort="0">
     <p class="key">Sites</p>
-    <p class="desc">The document published to each domain. To publish a document, use the document settings in the editor.</p>
+    <p class="desc">Admins can publish documents to the following domains. To add a domain to this list, deploy erga with <code>bun erga deploy &lt;host&gt; --domain &lt;domain&gt;</code></p>
     <table class="site-list"><tbody>${lines.join("")}</tbody></table>
     ${set}
   </li>`;
