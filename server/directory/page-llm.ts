@@ -12,14 +12,13 @@ import { countedTokens, type CallState, type Tokens } from "./page-llm-call.ts";
 import { MODELS, type ModelChoice } from "../../shared/models.ts";
 
 /**
- * The limits. A call answers at most `maxTokens` tokens (the page asks for fewer, or gets this many; a model that
- * always thinks spends a part of them on it: the same cap for every model), and sends at most
- * INPUT_CHARS characters (its system prompt and messages, about 6,000 tokens). In each hour, a visitor makes at most
+ * The limits. A call answers at most the admin's cap of tokens (the document_llm_max_tokens setting, the same for
+ * every model; the page asks for fewer, or gets this many; a model that always thinks spends a part of them on it),
+ * and sends at most INPUT_CHARS characters (its system prompt and messages, about 6,000 tokens). In each hour, a visitor makes at most
  * `visitor.requests` calls and uses `visitor.tokens` tokens (input and output), across every document: enough for a
  * demo's dozen turns, not for a bot. The whole server has `server`: with Haiku 5.5 a full hour costs a few dollars.
  */
 export const PAGE_LLM_LIMITS = {
-  maxTokens: 1024,
   inputChars: 24_000,
   messages: 40,
   hour: 3_600_000,

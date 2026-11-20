@@ -23,7 +23,7 @@ export const PAGE_SETTINGS = {
   /** Agents and models: the agents on the server's keys, then the Document LLM API: its switch, and what shows while it's on. */
   agents: ["agent_daily_tokens"],
   llmApi: ["document_llm_api"],
-  llmApiOn: ["document_llm_guests", "document_llm_daily_usd"],
+  llmApiOn: ["document_llm_guests", "document_llm_daily_usd", "document_llm_max_tokens"],
   feedback: ["feedback"],
 } as const;
 /** Settings with a control of their own: the Access page's menu and switch, the Sign-in page's radio, and the Agents and models page's choice and models' boxes. */

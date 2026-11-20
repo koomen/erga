@@ -180,6 +180,10 @@ test("the Agents and models page: the Document LLM API's section; unauthenticate
     `<p class="desc">Where the author lets all viewers use it: on a published site always; in a document opened by its link, only while users can share publicly.</p>`
   );
   expect(guests).toMatch(/id="set-document_llm_guests" aria-label="[^"]*" data-kind="switch" checked><span/);
+  // The most tokens for an answer: a number of tokens, 4096 at first.
+  const most = html.slice(html.indexOf(`data-key="document_llm_max_tokens"`), html.indexOf(`data-live="setting:document_llm_models_off"`));
+  expect(most).toContain(`title="document_llm_max_tokens">Most tokens for an answer</label>`);
+  expect(most).toMatch(/id="set-document_llm_max_tokens"[^>]* value="4096"/);
   // Its models: no list of its own. With no key, none; then exactly the models ticked on the providers' rows, in
   // their order, each with its box (ticked unless it is off for documents).
   const models = async () => {

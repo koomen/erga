@@ -169,6 +169,13 @@ export const SETTINGS = {
       return Math.round(v * 100) / 100;
     },
   }),
+  document_llm_max_tokens: setting<number>({
+    label: "Most tokens for an answer",
+    description: "The same for every model. A document's script can ask for less, never more.",
+    values: "Tokens that one call of the API may answer (a model's thinking counts in them).",
+    default: 4096,
+    parse: integer(1, 32_000),
+  }),
   document_llm_models_off: setting<string[]>({
     label: "Models the Document LLM API doesn't offer",
     description: `The models a document's author can't choose for the Document LLM API, of those a server key runs (agent_models_off: a model off there is off here too). A list of: ${Object.keys(MODELS).join(", ")}.`,

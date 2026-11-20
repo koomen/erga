@@ -3,7 +3,7 @@
 // for each provider: its key (set, replace, remove: the page shows only its last 4 characters) and, once the server
 // has one, the provider's models it runs (the agent_models_off setting holds the ones not ticked); and the daily token
 // limit for each user. Then the Document LLM API, which runs on the same keys: its switch and, while it is on, whether
-// viewers who aren't signed in may call it, its daily spend limit, and the models a document's author may choose (a box
+// viewers who aren't signed in may call it, its daily spend limit, the most tokens for an answer, and the models a document's author may choose (a box
 // for each model that is ticked above; the document_llm_models_off setting holds the ones not ticked); and its use this month (./page-llm.ts). The setting rows
 // are ./settings.ts's, saved by client/inline/admin-settings.ts.
 

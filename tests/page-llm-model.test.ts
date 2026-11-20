@@ -10,6 +10,8 @@ import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
 import { MODELS, MODELS_OFF_AT_FIRST, pageLlmChoices, type ModelChoice, type Provider } from "../shared/models";
 import { pageModel, type AgentConfig } from "../agents/models";
+import { capped } from "../agents/page-llm";
+import { person, ROOT, runTool as overHttp, server } from "./helpers/app";
 
 const choices = (server: Provider[], o: { agentsOff?: string[]; off?: string[]; mode?: "server" | "own" } = {}): string[] =>
   pageLlmChoices({ server, mode: o.mode ?? "server", off: o.agentsOff ?? [] }, o.off ?? []);
@@ -197,4 +199,43 @@ test("each OpenRouter model for a page, by the same rule: the server's key, the 
     expect(requests[0].body).toMatchObject({ model: MODELS[choice].id, max_completion_tokens: 300, stream: true });
     expect(requests[0].body.reasoning).toEqual(reasoning);
   }
+});
+
+test("the admin's cap on an answer's tokens (document_llm_max_tokens): the model gets it; a document's script may ask for less, never more", async () => {
+  expect([capped(undefined, 4096), capped(300, 4096), capped(9000, 4096), capped(0, 4096), capped(300.7, 4096)]).toEqual([
+    4096, 300, 4096, 1, 300,
+  ]);
+  // The whole route, with OpenAI's answer faked: what the request to the provider carries.
+  const s = server();
+  // (Trap: Pi sends no cap with an OpenAI key that doesn't start with "sk-": it takes it for a ChatGPT sign-in.)
+  s.platform.agentSettings = async () => cfg({ server: { openai: Redacted.make("sk-proj-server") } });
+  const { config } = s.platform.directory,
+    root = { login: "tester", admin: true };
+  const ada = await person(s);
+  const doc = await ada.make();
+  const shared = await overHttp(s, "share_document", { document: doc, llm_api: true, llm_api_model: "gpt-6-luna" }, { cookie: ada.cookie });
+  expect(shared.status).toBe(200);
+  const sent = async (max_tokens?: number) => {
+    requests.length = 0;
+    const r = await ada.get("/api/llm", {
+      method: "POST",
+      headers: { Origin: ROOT, "Content-Type": "application/json" },
+      body: JSON.stringify({ document: doc, messages: [{ role: "user", content: "Hi" }], ...(max_tokens ? { max_tokens } : {}) }),
+    });
+    expect([r.status, await r.json()]).toEqual([200, { text: "Hello from Luna." }]);
+    return requests.map((q) => q.body.max_output_tokens);
+  };
+  // At first 4096: the page that asks for nothing gets it.
+  expect(await config.get("document_llm_max_tokens")).toBe(4096);
+  expect(await sent()).toEqual([4096]);
+  expect(await sent(300)).toEqual([300]);
+  expect(await sent(9000)).toEqual([4096]);
+  // The admin sets another cap: it holds at the next call.
+  await config.set(root, "document_llm_max_tokens", 2000);
+  expect(await sent()).toEqual([2000]);
+  expect(await sent(9000)).toEqual([2000]);
+  expect(await sent(1500)).toEqual([1500]);
+  // A whole number of tokens, from 1 to 32,000.
+  for (const bad of [0, 1.5, 32_001, "many"])
+    await expect(config.set(root, "document_llm_max_tokens", bad)).rejects.toThrow(/whole number/);
 });

@@ -41,7 +41,8 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
   let page: Page, admin: Page;
   let doc: Awaited<ReturnType<typeof newDoc>>;
   test.afterAll(async () => {
-    for (const key of ["document_llm_api", "document_llm_daily_usd", "document_llm_guests"]) await resetSetting(s, key);
+    for (const key of ["document_llm_api", "document_llm_daily_usd", "document_llm_guests", "document_llm_max_tokens"])
+      await resetSetting(s, key);
   });
 
   test("off at first; the owner turns it on in Document settings, and the page's script gets the model's text", async ({ tab }) => {
@@ -103,6 +104,16 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     expect(await limit.locator(".key").innerText()).toBe("Document LLM API daily spend limit");
     expect(await limit.locator("input[name=value]").inputValue()).toBe("5");
     expect(await limit.locator(".unit").innerText()).toBe("US$");
+    // The most tokens for an answer: 4096 at first; a new value saves as the focus leaves its field.
+    const most = row(admin, "document_llm_max_tokens");
+    expect((await most.locator(".about").innerText()).split(/\s*\n\s*/)).toEqual([
+      "Most tokens for an answer",
+      "The same for every model. A document's script can ask for less, never more.",
+    ]);
+    expect([await most.locator("input[name=value]").inputValue(), await most.locator(".unit").innerText()]).toEqual(["4096", "tokens"]);
+    await most.locator("input[name=value]").fill("2000");
+    await most.locator("input[name=value]").blur();
+    await expect.poll(() => setting(s, "document_llm_max_tokens")).toBe(2000);
     expect(await usage(admin)).toContain(`Today: ${usd(cost)} of the daily limit of $5.00 (${before.limitUsed})`);
     // The admin sets the next cent above today's cost. With no cost before, that is one cent: what 20,000 of Haiku
     // 5.5's output tokens cost ($0.50 for a million).

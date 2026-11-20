@@ -7,8 +7,8 @@
 //
 // The pages origin never gets the session or a key: only this site's own pages may call this (their Origin), with the
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
-// the whole server's (server/directory/page-llm.ts, PAGE_LLM_LIMITS); max_tokens is capped here. All the calls of a day
-// (UTC) together stop at the admin's spend limit (document_llm_daily_usd: "limit"; 0: "off"). The admin's other
+// the whole server's (server/directory/page-llm.ts, PAGE_LLM_LIMITS); max_tokens is capped here, at the admin's
+// document_llm_max_tokens. All the calls of a day (UTC) together stop at the admin's spend limit (document_llm_daily_usd: "limit"; 0: "off"). The admin's other
 // settings hold here too, whatever the document's setting says: document_llm_api off gives "off"; a model in
 // document_llm_models_off gives "off", with words for the document's author; and document_llm_guests off gives every signed-out
 // visitor "sign_in" (on, a published site's visitors may call it also while public sharing is off: its pages are
@@ -112,9 +112,8 @@ async function guestOf(request: Request): Promise<string> {
   return "ip:" + hex((await sha256(ip)).slice(0, 8));
 }
 
-/** The tokens a call may answer: what the page asks, within 1 and the cap. */
-const capped = (asked: number | undefined) =>
-  Math.max(1, Math.min(PAGE_LLM_LIMITS.maxTokens, Math.floor(asked ?? PAGE_LLM_LIMITS.maxTokens)));
+/** The tokens a call may answer: what the page asks, within 1 and `most`, the admin's cap (document_llm_max_tokens). */
+export const capped = (asked: number | undefined, most: number) => Math.max(1, Math.min(most, Math.floor(asked ?? most)));
 
 /** The characters an ask sends: its system prompt and messages. */
 const charsOf = (a: Ask) => (a.system ?? "").length + a.messages.reduce((n, m) => n + m.content.length, 0);
@@ -227,10 +226,11 @@ const askModel = ({ request, platform, visitor, allowed, live }: Asked): Route =
   if (!underLimit(all, PAGE_LLM_LIMITS.server))
     return fail("limit", "The Document LLM API reached this server's limit for this hour. Try again later.", 429);
   const cfg = yield* call(() => platform.agentSettings());
-  const layer = "missing" in cfg ? null : pageModel(cfg, now.model, capped(ask.max_tokens));
+  const maxTokens = capped(ask.max_tokens, yield* call(() => platform.directory.config.get("document_llm_max_tokens")));
+  const layer = "missing" in cfg ? null : pageModel(cfg, now.model, maxTokens);
   if (!layer) return fail("off", `The server has no API key that runs ${MODELS[now.model].label} now.`);
   // The call reserves the most it can cost, under the day's spend limit (server/directory/page-llm-call.ts).
-  const reserved = reserve(charsOf(ask), capped(ask.max_tokens));
+  const reserved = reserve(charsOf(ask), maxTokens);
   const id = yield* call(() => pageLlm.start({ login, docId: now.doc.id, model: now.model, now: at, reserved, budget }));
   if (!id) return fail("limit", "The Document LLM API reached this server's spend limit for today. Try again after midnight UTC.", 429);
   const prompt = Prompt.make([

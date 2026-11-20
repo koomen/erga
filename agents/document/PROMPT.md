@@ -377,10 +377,11 @@ script has `window.ergaLLM` (in the viewer, and on its published site):
   the Document LLM API controls only when `on` is true.
 - `ergaLLM.ask({ system, messages, max_tokens })` answers a Promise of
   `{ text }`. `messages` is `[{ role: "user" | "assistant", content }]`,
-  with text only, ending with the user's. At most 1024 tokens come back
-  (`max_tokens` asks for fewer; a model that always thinks spends a part of
-  them on it, so leave room), and the system prompt and messages hold at
-  most 24,000 characters.
+  with text only, ending with the user's. `max_tokens` asks for a shorter
+  answer: leave it out unless you need one (a model that always thinks
+  spends a part of the tokens on it). The server's admin sets the most
+  tokens that come back (4096 at first), and the system prompt and
+  messages hold at most 24,000 characters.
 - When it fails, the Error has a `code`: `"sign_in"` (the viewer isn't
   signed in), `"off"` (it isn't on for the document, the server's admin
   turned the API or the document's model off, or the server can't run the
@@ -391,7 +392,7 @@ script has `window.ergaLLM` (in the viewer, and on its published site):
 
 ```js
 try {
-  const { text } = await ergaLLM.ask({ system: "Answer in one line.", messages: [{ role: "user", content: q }], max_tokens: 300 });
+  const { text } = await ergaLLM.ask({ system: "Answer in one line.", messages: [{ role: "user", content: q }] });
   out.textContent = text;
 } catch (e) {
   if (e.code == "sign_in") showSignInButton(() => ergaLLM.signIn());
