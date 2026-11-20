@@ -63,7 +63,8 @@ export function storeBinding(): Env["STATE"] & { cell: Map<string, string> } {
  * The instance as setup's pipeline made it (release SHA1) on the mock Cloudflare, with `d1` as its database: the
  * release's tables and the spec. `io`: the deployer's ways out (Cloudflare's API is the mock, the instance's address
  * is `server`, the rest is the pretend GitHub; a sleep moves the clock on). `calls`: the mock's calls since the
- * instance was made. `asked`: each request of the instance's health, "public" or "direct". `made`: the mock, when
+ * instance was made. `asked`: each request of the instance's health, "public" or "direct". `stale`: how many of the
+ * next asks the version before answers, healthy. `made`: the mock, when
  * the test made the instance on it already (bootstrap).
  */
 export async function instanceOn(d1: D1, made?: ReturnType<typeof mockCloudflare>) {
@@ -80,12 +81,13 @@ export async function instanceOn(d1: D1, made?: ReturnType<typeof mockCloudflare
   const hub = github();
   hub.state.releases.set(SHA2, builtBundle(SHA2));
   const from = mock.state.calls.length;
-  const state = { now: Date.parse("2026-11-20T10:00:00Z"), access: false, asked: [] as string[] };
+  const state = { now: Date.parse("2026-11-20T10:00:00Z"), access: false, asked: [] as string[], stale: 0 };
   /** The server's own report, for the release that the mock serves: ok, unless the test says that the release is unhealthy, or fails as it starts. */
   const server = () => {
     const version = bindingsOf(mock.state, "erga-next").ERGA_VERSION.text as string;
     if (mock.state.silent?.includes(version)) return new Response("error code: 1101", { status: 500 });
-    const bad = !!mock.state.unhealthy?.includes(version);
+    // The version before still answers, healthy, for the first asks after an upload: Cloudflare's machines get a new version in some seconds.
+    const bad = state.stale-- > 0 ? false : !!mock.state.unhealthy?.includes(version);
     const documents = bad ? { ok: false, error: "a document didn't open" } : { ok: true, ms: 2 };
     return Response.json({ ok: !bad, version, checks: { db: { ok: true, ms: 1 }, documents } }, { status: bad ? 503 : 200 });
   };

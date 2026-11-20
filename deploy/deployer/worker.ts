@@ -9,8 +9,8 @@
 //   3. Reads GitHub: the branch's head, its last commits, and whether each has a release.
 //   4. Deploys, when an admin asked or the head is new: the release from GitHub's registry (checked against its
 //      digest), the release's new migrations, the static files, the Worker. Then it asks the instance's own
-//      /api/health for at most HEALTH_MS. No healthy answer of the new release: one call puts the version before back
-//      (Cloudflare's own deployment of that version).
+//      /api/health for at most HEALTH_MS. The new release must answer healthy two times in a row; else one call puts
+//      the version before back (Cloudflare's own deployment of that version).
 //   5. Writes the result into its store, and a COPY of its look and of the job into the instance's rows
 //      (deploy_control, deploy_jobs), where /admin/deploy reads them. The copy is best effort: the deployer never
 //      needs it. The job's row is also the lock that a deploy from a machine takes (instance.ts).
@@ -126,6 +126,8 @@ interface Run {
   calls: number;
   /** The registry's token, asked one time. */
   token?: string;
+  /** The public address does not give the server's own report: the health asks go to the instance's Worker. */
+  direct?: boolean;
   /** "<branch> on <repo> is at <head>": how each line of a look starts. */
   at: string;
 }
@@ -444,39 +446,48 @@ interface Health {
 type Report = { ok?: boolean; version?: string; checks?: Record<string, { ok: boolean; ms?: number; error?: string }> } | null;
 
 /**
- * Asks the instance's own /api/health until the release `want` (null: any) answers that it is healthy, for at most
- * `ms`. The public address first. An answer there that is not the server's (Cloudflare Access's, or Cloudflare's own
- * for an address that a Worker may not call) goes to the instance's Worker itself from then on: the same request.
+ * One ask of the instance's own /api/health: whether the release `want` (null: any) answers that it is healthy. The
+ * public address first. An answer there that is not the server's (Cloudflare Access's, or Cloudflare's own for an
+ * address that a Worker may not call) goes to the instance's Worker itself, for the rest of the run: the same request.
  */
-async function health(c: Run, want: string | null, ms: number): Promise<Health> {
+async function healthNow(c: Run, want: string | null): Promise<Health> {
   const url = `https://${hostOf(c.spec.target)}/api/health`;
-  const until = c.io.now() + ms;
-  let direct = false;
-  let last: Health = { ok: false, why: "it gave no answer" };
-  for (;;) {
-    try {
-      let r = direct ? null : await net(c, url, { redirect: "manual" });
-      let h = r && ((await r.json().catch(() => null)) as Report);
-      if (typeof h?.ok != "boolean") {
-        direct = true;
-        r = await net(c, url, {}, (u, init) => c.env.INSTANCE.fetch(u, init));
-        h = (await r.json().catch(() => null)) as Report;
-      }
-      const checks = Object.entries(h?.checks ?? {});
-      const version = h?.version;
-      if (typeof h?.ok != "boolean") last = { ok: false, why: `it answered ${r!.status}, and not the server's own report` };
-      else if (want && version != want) last = { ok: false, why: `release ${version ?? "?"} answers, not ${want}`, version };
-      else if (!h.ok) {
-        const failed = checks.filter(([, k]) => !k.ok).map(([n, k]) => `${n}: ${k.error ?? "failed"}`);
-        last = { ok: false, why: failed.join("; ") || "its report says not ok", version };
-      } else
-        return { ok: true, why: checks.map(([n, k]) => `${n} ok${k.ms != null ? ` ${k.ms} ms` : ""}`).join(", ") || "no checks", version };
-    } catch (e) {
-      last = { ok: false, why: said(e) };
+  try {
+    let r = c.direct ? null : await net(c, url, { redirect: "manual" });
+    let h = r && ((await r.json().catch(() => null)) as Report);
+    if (typeof h?.ok != "boolean") {
+      c.direct = true;
+      r = await net(c, url, {}, (u, init) => c.env.INSTANCE.fetch(u, init));
+      h = (await r.json().catch(() => null)) as Report;
     }
-    if (c.io.now() + HEALTH_EACH_MS > until) return last;
-    await c.io.sleep(HEALTH_EACH_MS);
+    const checks = Object.entries(h?.checks ?? {});
+    const version = h?.version;
+    if (typeof h?.ok != "boolean") return { ok: false, why: `it answered ${r!.status}, and not the server's own report` };
+    if (want && version != want) return { ok: false, why: `release ${version ?? "?"} answers, not ${want}`, version };
+    if (h.ok)
+      return { ok: true, why: checks.map(([n, k]) => `${n} ok${k.ms != null ? ` ${k.ms} ms` : ""}`).join(", ") || "no checks", version };
+    const failed = checks.filter(([, k]) => !k.ok).map(([n, k]) => `${n}: ${k.error ?? "failed"}`);
+    return { ok: false, why: failed.join("; ") || "its report says not ok", version };
+  } catch (e) {
+    return { ok: false, why: said(e) };
   }
+}
+
+/**
+ * After an upload or a rollback: asks each HEALTH_EACH_MS, for at most HEALTH_MS, until two answers in a row are
+ * healthy. Two, and none at once: Cloudflare gives a new version to its machines in some seconds, and until then the
+ * version before can answer, healthy, under the same release's name (the same commit deployed again with another
+ * setting: seen on real Cloudflare, 2026-11-20).
+ */
+async function settledHealth(c: Run, want: string | null): Promise<Health> {
+  let last: Health = { ok: false, why: "it gave no answer" };
+  for (let waited = HEALTH_EACH_MS, good = 0; waited <= HEALTH_MS; waited += HEALTH_EACH_MS) {
+    await c.io.sleep(HEALTH_EACH_MS);
+    last = await healthNow(c, want);
+    good = last.ok ? good + 1 : 0;
+    if (good == 2) return last;
+  }
+  return last.ok ? { ok: false, why: "it answered healthy one time only, at the end of the wait", version: last.version } : last;
 }
 
 // ------------------------------------------------------------------ a deploy, and a rollback
@@ -515,7 +526,7 @@ async function deploy(c: Run, sha: string, log: (line: string) => void): Promise
   await cf(c, "PUT", `/scripts/${W}`, form);
   log(`Upload the Worker, with its settings: done, ${W}, release ${release.version}`);
   log("Wait for its health...");
-  const h = await health(c, release.version, HEALTH_MS);
+  const h = await settledHealth(c, release.version);
   if (h.ok) return log(`Wait for its health: done, release ${release.version}, healthy (${h.why})`);
   const why = `Release ${release.version} is deployed to ${W}, but it is not healthy after ${HEALTH_MS / 1000} seconds: ${h.why}.`;
   // The migrations only add: the version before runs on the newer tables. A person may put the database back too.
@@ -542,7 +553,7 @@ async function back(c: Run, log: (line: string) => void): Promise<void> {
     `The Worker ${W} runs version ${now}. The rollback goes to the version before it: ${before}${to ? ` (release ${to})` : ""}. The database stays as it is.`
   );
   await rollbackTo(c, before, "rollback");
-  const h = await health(c, to, HEALTH_MS);
+  const h = await settledHealth(c, to);
   if (!h.ok) throw new Error(`The health check fails after the rollback: ${h.why}`);
   log(`Release ${h.version ?? "?"} runs again, healthy (${h.why}).`);
 }
@@ -617,7 +628,7 @@ async function settle(c: Run) {
   let failed: string | null = "The deployer's run stopped before the job's end.";
   if (before === undefined) failed += " Nothing that the instance runs changed.";
   else {
-    const h = await health(c, sha ? short(sha) : null, 0);
+    const h = await healthNow(c, sha ? short(sha) : null);
     if (h.ok) failed = null;
     else if (!before) failed += ` The release is not healthy (${h.why}), and there is no version before it to go back to.`;
     else
@@ -719,7 +730,14 @@ async function run(c: Run): Promise<string> {
       if (!took.length) throw new Error("The ask changed before its job started: nothing is done.");
       if (!sha) return back(c, log);
       // A commit of another branch is refused, whatever the registry has of it (a build of verify stays off staging).
-      if (!state.commits?.some((k) => k.sha == sha) && !(await onBranch(c, sha)))
+      // The registry first, for a commit that the look did not see: it has no limit on its calls, and GitHub's API has
+      // one (60 an hour with no login, for all Workers together). Then the API says whether the branch has the commit.
+      const seen = state.commits?.some((k) => k.sha == sha);
+      if (!seen && (await layerOf(c, sha)) == "none")
+        throw new Error(
+          `GitHub's registry has no release of ${short(sha)} among the releases of ${c.spec.branch} on ${c.spec.repo}: the instance deploys only a commit of that branch, when its release is built.`
+        );
+      if (!seen && !(await onBranch(c, sha)))
         throw new Error(
           `Release ${short(sha)} is not a commit of ${c.spec.branch} on ${c.spec.repo}: the instance deploys only a commit of that branch.`
         );
@@ -735,7 +753,7 @@ async function run(c: Run): Promise<string> {
   if (release == "none") return `${c.at}. GitHub has no release of it yet: the deployer waits.`;
   if (release == "refused") return `${c.at}. What GitHub's registry has for it is not a release: it is not deployed.`;
   // A head that the deployer did not try: the instance may run it already (a deploy from a machine, a new deployer).
-  if (!tried && (await health(c, short(head), 0)).ok) {
+  if (!tried && (await healthNow(c, short(head))).ok) {
     state.tried = { sha: head, n: 0, ok: true, up: true };
     return `${c.at}. The instance has ${short(head)}: nothing to deploy.`;
   }

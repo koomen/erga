@@ -104,8 +104,9 @@ describe("a run of the deployer", () => {
     expect(await logOf(sql, job.id)).toContain(
       `Wait for its health: done, release ${short(SHA2)}, healthy (db ok 1 ms, documents ok 2 ms)`
     );
-    // The health is the instance's own answer at its public address: asked one time, and it was the new release's.
-    expect(state.asked).toEqual(["public", "public"]);
+    // The health is the instance's own answer at its public address: the look asked one time (the release before
+    // answered), and after the upload the new release answered two times in a row.
+    expect(state.asked).toEqual(["public", "public", "public"]);
     expect(await run(readControl(sql))).toMatchObject({
       auto: true,
       head: SHA2,
@@ -162,6 +163,21 @@ describe("a run of the deployer", () => {
     expect(await run(readJobs(sql))).toHaveLength(1);
   }, 30_000);
 
+  test("the same commit again with a bad setting: the version before answers first, healthy, and the deploy still goes back", async () => {
+    const { mock, sql, state, once, runs } = await instance();
+    expect(await once()).toContain("Its deploy is done.");
+    // The same release, deployed again by an ask: now it is unhealthy, but the first ask after the upload is still
+    // answered by the version before (the same release's name, healthy).
+    mock.state.unhealthy = [short(SHA2)];
+    state.stale = 1;
+    await asks(sql, `deploy ${SHA2}`);
+    expect(await once()).toMatch(
+      /The deploy that ada asked for failed: Release 222222222222 is deployed to erga-next, but it is not healthy after 30 seconds: documents: a document didn't open\. It is rolled back to [0-9a-f-]{36}, which ran before\./
+    );
+    expect(runs()).toBe(short(SHA2));
+    mock.state.unhealthy = [];
+  }, 30_000);
+
   test("a release that fails as it starts gives no report: it goes back too. Behind Cloudflare Access, the instance's Worker answers", async () => {
     const broken = await instance();
     broken.mock.state.silent = [short(SHA2)];
@@ -174,8 +190,8 @@ describe("a run of the deployer", () => {
     gated.state.access = true;
     expect(await gated.once()).toContain("Its deploy is done.");
     expect(gated.runs()).toBe(short(SHA2));
-    // The public address gave Access's page: the same request then goes to the Worker itself (the look's, then the deploy's).
-    expect(gated.state.asked).toEqual(["public", "direct", "public", "direct"]);
+    // The public address gave Access's page: the same request then goes to the Worker itself, for the rest of the run.
+    expect(gated.state.asked).toEqual(["public", "direct", "direct", "direct"]);
   }, 30_000);
 
   test("asks: a rollback goes to the version before; a commit must be on the branch; an ask runs one time", async () => {
@@ -202,7 +218,17 @@ describe("a run of the deployer", () => {
     expect(await once()).toContain(
       `The deploy that ada asked for failed: Release ${short(SHA3)} is not a commit of main on github.com/example/erga: the instance deploys only a commit of that branch.`
     );
-    expect(hub.state.calls.slice(from)).toEqual(["refs", `compare ${short(SHA3)}`]);
+    // The registry is asked first (no limit on its calls), then GitHub's API.
+    expect(hub.state.calls.slice(from)).toEqual(["refs", `manifest ${short(SHA3)}`, `compare ${short(SHA3)}`]);
+    expect(runs()).toBe(short(SHA1));
+    // A commit with no release among the branch's releases (a commit of another branch): refused with no call of the API.
+    const none = "4".repeat(40);
+    await asks(sql, `deploy ${none}`);
+    const before = hub.state.calls.length;
+    expect(await once()).toContain(
+      `The deploy that ada asked for failed: GitHub's registry has no release of ${short(none)} among the releases of main on github.com/example/erga: the instance deploys only a commit of that branch, when its release is built.`
+    );
+    expect(hub.state.calls.slice(before)).toEqual(["refs", `manifest ${short(none)}`]);
     expect(runs()).toBe(short(SHA1));
 
     // An older commit of the branch, from before the commits that the look saw.
@@ -212,6 +238,7 @@ describe("a run of the deployer", () => {
     expect(runs()).toBe(short(SHA3));
     expect((await run(readJobs(sql))).map((j) => `${j.kind} ${j.source} ${j.state.at}`)).toEqual([
       "deploy app, by ada done",
+      "deploy app, by ada failed",
       "deploy app, by ada failed",
       "rollback app, by ada done",
       "deploy auto-deploy done",
@@ -264,7 +291,8 @@ describe("a run of the deployer", () => {
     const log = console.log;
     console.log = () => {};
     void deployer({ ...io, sleep: () => new Promise<void>(() => {}) }).scheduled(null, env);
-    for (let i = 0; i < 500 && state.asked.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    for (let i = 0; i < 500 && runs() != short(SHA2); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    for (let i = 0; i < 500 && stored().job?.before === undefined; i++) await new Promise((resolve) => setTimeout(resolve, 10));
     console.log = log;
     expect(runs()).toBe(short(SHA2));
     expect(stored().job).toMatchObject({ sha: SHA2, before: expect.stringMatching(/^[0-9a-f-]{36}$/) });
