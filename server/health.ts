@@ -9,7 +9,7 @@
 //   documents   the Erga domain's document, opened in its own object (a Durable Object answers), when there is one
 //   secrets     a server that stores API keys has the key that opens them (SECRETS_KEY)
 //
-// {ok, version, checks: {<name>: {ok, ms, error?}}}: 200 when every
+// {ok, version, upload, checks: {<name>: {ok, ms, error?}}}: 200 when every
 // check passes, 503 when one fails. It holds no data and needs no sign-in.
 
 import { makeHome } from "./documents/index.ts";
@@ -25,11 +25,16 @@ export interface HealthCheck {
 export interface HealthReport {
   ok: boolean;
   version: string | null;
+  /** Which upload of the server's code answers: the name that the deploy gave it (Cloudflare: ERGA_UPLOAD), or null. */
+  upload: string | null;
   checks: Record<string, HealthCheck>;
 }
 
-/** The health report: every check runs, so the answer says all that's wrong. */
-export async function health(p: Platform): Promise<HealthReport> {
+/**
+ * The health report: every check runs, so the answer says all that's wrong. `upload`: the name of this upload of the
+ * code, where the deploy gave it one: a deployer reads it to know that the answer is its own upload's.
+ */
+export async function health(p: Platform, upload: string | null = null): Promise<HealthReport> {
   const checks: Record<string, HealthCheck> = {
     db: await timed(async () => {
       await p.directory.config.get("public_sharing");
@@ -46,7 +51,7 @@ export async function health(p: Platform): Promise<HealthReport> {
         throw new Error("the server stores API keys, and it has no SECRETS_KEY to open them: the deploy did not give it the key");
     }),
   };
-  return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, checks };
+  return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, upload, checks };
 }
 
 /** One check, timed; a string it answers is a note (the check passed, with nothing to do); a throw fails it. */

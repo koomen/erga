@@ -540,7 +540,7 @@ const worker = (run: CloudflareRun) =>
       carry.ticking = readHealth(await healthRow(await reach(run)).catch(() => null), null, now).healthy != null;
       /** `rename`: Cloudflare gives the key its new name with this upload (secrets-key.ts), or refuses the upload. */
       const upload = (rename: boolean) => {
-        const metadata = workerMetadata(release, run.spec, { dbId, assetsJwt, secrets: run.secrets });
+        const metadata = workerMetadata(release, run.spec, { dbId, assetsJwt, upload: `${release.version}-${now}`, secrets: run.secrets });
         if (rename) metadata.bindings.push({ type: "inherit", name: SECRETS_KEY, old_name: OLD_SECRETS_KEY });
         const form = new FormData();
         form.set("metadata", JSON.stringify(metadata));

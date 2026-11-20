@@ -126,3 +126,13 @@ test("the scheduled run: the report goes into the one health row, which the ops 
   expect((await s.sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM health"))[0].n).toBe(1);
   expect((await row())?.at).toBe(1_800_000_060_000);
 });
+
+test("the report says which upload of the code answers: the name that the deploy gave it, or null", async () => {
+  const p = platform(directory(), async () => true);
+  expect(await health(p, "abcdef123456-1795000000000")).toMatchObject({
+    ok: true,
+    version: "abcdef123456",
+    upload: "abcdef123456-1795000000000",
+  });
+  expect(await health(p)).toMatchObject({ ok: true, upload: null });
+});

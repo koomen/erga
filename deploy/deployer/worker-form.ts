@@ -38,17 +38,20 @@ export const servedAssets = (release: Release) => Object.fromEntries(Object.entr
  * The Worker's upload metadata: the build's bindings (cloudflare.config.ts
  * as `cf build` wrote it), each made the target's own: its database, its
  * text settings and where its pages run. `secrets`: setup's first deploy only (the Worker keeps its secrets after).
+ * `upload`: a name of this upload's own, new at each one (ERGA_UPLOAD).
  */
 export function workerMetadata(
   release: Release,
   spec: CloudflareSpec,
-  o: { dbId: string; assetsJwt: string; secrets?: Record<string, string> }
+  o: { dbId: string; assetsJwt: string; upload: string; secrets?: Record<string, string> }
 ) {
   const w = release.worker;
   const target = spec.target;
   // Which release this is, and where it is deployed: the CLI reads both from the version's bindings (liveRelease).
   const text: Record<string, string> = {
     ERGA_VERSION: release.version,
+    // This upload's own name: the server's health route says it, so the deployer knows which version answers.
+    ERGA_UPLOAD: o.upload,
     ERGA_DEPLOY: JSON.stringify(deployFacts(target, spec.settings)),
     ...spec.settings,
   };

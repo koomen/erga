@@ -24,8 +24,9 @@
 //   INSTANCE               the instance's Worker: /api/health, when the public address does not give the server's
 //                          answer (Cloudflare Access is in front of it)
 //
-// Health is the server's own answer to a request ({ok, version, checks}: server/health.ts). It is never a row that
-// the new release must write. The migrations only add, so the version before runs on the newer tables: an unhealthy
+// Health is the server's own answer to a request ({ok, version, checks, upload}: server/health.ts). It is never a row
+// that the new release must write. `upload` is the name that this deployer gave its upload: the answer must be that
+// upload's, not the version before's. The migrations only add, so the version before runs on the newer tables: an unhealthy
 // release goes back with no change to the database, and the log gives the one command that restores the database too.
 //
 // No Effect here, by Pete's word (2026-11-20): "the deployer as compact and dead simple as possible, so a bad Erga
@@ -87,8 +88,11 @@ export interface State {
   commits?: Commit[];
   /** The last commit that auto-deploy tried: how often, whether its deploy ended well, and whether it got to the Worker's upload. */
   tried?: { sha: string; n: number; ok: boolean; up: boolean };
-  /** The job that a run started and did not end. `row`: its copy on the instance. `before`: the version to go back to, set just before the Worker's upload. */
-  job?: { row: number | null; sha: string | null; before?: string | null };
+  /**
+   * The job that a run started and did not end. `row`: its copy on the instance. `before`: the version to go back to,
+   * and `upload`: the upload's own name (ERGA_UPLOAD), both set just before the Worker's upload.
+   */
+  job?: { row: number | null; sha: string | null; before?: string | null; upload?: string };
 }
 
 export interface Store {
@@ -443,14 +447,20 @@ interface Health {
   /** The release that answered. */
   version?: string;
 }
-type Report = { ok?: boolean; version?: string; checks?: Record<string, { ok: boolean; ms?: number; error?: string }> } | null;
+type Report = {
+  ok?: boolean;
+  version?: string;
+  upload?: string | null;
+  checks?: Record<string, { ok: boolean; ms?: number; error?: string }>;
+} | null;
 
 /**
- * One ask of the instance's own /api/health: whether the release `want` (null: any) answers that it is healthy. The
- * public address first. An answer there that is not the server's (Cloudflare Access's, or Cloudflare's own for an
+ * One ask of the instance's own /api/health: whether the release `want` (null: any) answers that it is healthy.
+ * `upload`: the name of the upload that must answer (ERGA_UPLOAD: the server says which upload it is); a release from
+ * before the server said it is known by its release's name only. The public address first. An answer there that is not the server's (Cloudflare Access's, or Cloudflare's own for an
  * address that a Worker may not call) goes to the instance's Worker itself, for the rest of the run: the same request.
  */
-async function healthNow(c: Run, want: string | null): Promise<Health> {
+async function healthNow(c: Run, want: string | null, upload?: string): Promise<Health> {
   const url = `https://${hostOf(c.spec.target)}/api/health`;
   try {
     let r = c.direct ? null : await net(c, url, { redirect: "manual" });
@@ -464,6 +474,8 @@ async function healthNow(c: Run, want: string | null): Promise<Health> {
     const version = h?.version;
     if (typeof h?.ok != "boolean") return { ok: false, why: `it answered ${r!.status}, and not the server's own report` };
     if (want && version != want) return { ok: false, why: `release ${version ?? "?"} answers, not ${want}`, version };
+    if (upload && h.upload != null && h.upload != upload)
+      return { ok: false, why: "the version before still answers, not this upload", version };
     if (h.ok)
       return { ok: true, why: checks.map(([n, k]) => `${n} ok${k.ms != null ? ` ${k.ms} ms` : ""}`).join(", ") || "no checks", version };
     const failed = checks.filter(([, k]) => !k.ok).map(([n, k]) => `${n}: ${k.error ?? "failed"}`);
@@ -479,11 +491,11 @@ async function healthNow(c: Run, want: string | null): Promise<Health> {
  * version before can answer, healthy, under the same release's name (the same commit deployed again with another
  * setting: seen on real Cloudflare, 2026-11-20).
  */
-async function settledHealth(c: Run, want: string | null): Promise<Health> {
+async function settledHealth(c: Run, want: string | null, upload?: string): Promise<Health> {
   let last: Health = { ok: false, why: "it gave no answer" };
   for (let waited = HEALTH_EACH_MS, good = 0; waited <= HEALTH_MS; waited += HEALTH_EACH_MS) {
     await c.io.sleep(HEALTH_EACH_MS);
-    last = await healthNow(c, want);
+    last = await healthNow(c, want, upload);
     good = last.ok ? good + 1 : 0;
     if (good == 2) return last;
   }
@@ -515,18 +527,19 @@ async function deploy(c: Run, sha: string, log: (line: string) => void): Promise
       `The run made ${c.calls} calls before the Worker's upload, and the health check needs ${RESERVE}. Nothing that the instance runs changed.`
     );
   // From here the instance may run the release: the store knows where to go back to, also for the run after a run that stopped.
-  c.state.job!.before = before;
+  const upload = `${release.version}-${c.io.now()}`;
+  Object.assign(c.state.job!, { before, upload });
   if (c.state.tried?.sha == sha) c.state.tried.up = true;
   await c.store.put(c.state);
   log("Upload the Worker, with its settings...");
   const form = new FormData();
-  form.set("metadata", JSON.stringify(workerMetadata(release, c.spec, { dbId: c.env.DATABASE, assetsJwt })));
+  form.set("metadata", JSON.stringify(workerMetadata(release, c.spec, { dbId: c.env.DATABASE, assetsJwt, upload })));
   for (const [module, bytes] of Object.entries(release.modules))
     form.append(module, new File([new Uint8Array(bytes)], module, { type: "application/javascript+module" }));
   await cf(c, "PUT", `/scripts/${W}`, form);
   log(`Upload the Worker, with its settings: done, ${W}, release ${release.version}`);
   log("Wait for its health...");
-  const h = await settledHealth(c, release.version);
+  const h = await settledHealth(c, release.version, upload);
   if (h.ok) return log(`Wait for its health: done, release ${release.version}, healthy (${h.why})`);
   const why = `Release ${release.version} is deployed to ${W}, but it is not healthy after ${HEALTH_MS / 1000} seconds: ${h.why}.`;
   // The migrations only add: the version before runs on the newer tables. A person may put the database back too.
@@ -546,14 +559,15 @@ async function back(c: Run, log: (line: string) => void): Promise<void> {
   const W = c.env.WORKER;
   const [now, before] = await versionsOf(c);
   if (!now || !before) throw new Error(`${W} has no deployment of another version to go back to.`);
-  // The release of the version before, from the version's own bindings: the health check waits for that one.
+  // The release and the upload of the version before, from the version's own bindings: the health check waits for that one.
   const version = await cf<{ resources?: { bindings?: { name: string; text?: string }[] } }>(c, "GET", `/scripts/${W}/versions/${before}`);
-  const to = version?.resources?.bindings?.find((b) => b.name == "ERGA_VERSION")?.text ?? null;
+  const text = (name: string) => version?.resources?.bindings?.find((b) => b.name == name)?.text;
+  const to = text("ERGA_VERSION") ?? null;
   log(
     `The Worker ${W} runs version ${now}. The rollback goes to the version before it: ${before}${to ? ` (release ${to})` : ""}. The database stays as it is.`
   );
   await rollbackTo(c, before, "rollback");
-  const h = await settledHealth(c, to);
+  const h = await settledHealth(c, to, text("ERGA_UPLOAD"));
   if (!h.ok) throw new Error(`The health check fails after the rollback: ${h.why}`);
   log(`Release ${h.version ?? "?"} runs again, healthy (${h.why}).`);
 }
@@ -624,11 +638,11 @@ async function job(
 
 /** The job of a run that stopped with no end: its release is healthy, or the instance goes back; then the job ends. */
 async function settle(c: Run) {
-  const { sha, before } = c.state.job!;
+  const { sha, before, upload } = c.state.job!;
   let failed: string | null = "The deployer's run stopped before the job's end.";
   if (before === undefined) failed += " Nothing that the instance runs changed.";
   else {
-    const h = await healthNow(c, sha ? short(sha) : null);
+    const h = await healthNow(c, sha ? short(sha) : null, upload);
     if (h.ok) failed = null;
     else if (!before) failed += ` The release is not healthy (${h.why}), and there is no version before it to go back to.`;
     else

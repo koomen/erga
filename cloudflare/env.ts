@@ -68,6 +68,12 @@ export interface Env {
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). Its health report says it (server/health.ts). */
   ERGA_VERSION?: string;
   /**
+   * Which upload of the Worker this is: a name that the deploy gives each upload (deploy/deployer/worker-form.ts). The
+   * health route says it, so the deployer knows that the answer is the new upload's, and not the version before's
+   * (Cloudflare gives a new version to its machines in some seconds, and two uploads can be the same release).
+   */
+  ERGA_UPLOAD?: string;
+  /**
    * The facts a deploy from a machine needs to deploy this server again, as JSON (the pipeline sets it:
    * deploy/deployer/cloudflare.ts `deployFacts`): the Cloudflare account, the Worker, the database, the app's address and
    * the pages'. The server reads its custom domains and its app's host from it; `bun erga register` reads it from

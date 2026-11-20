@@ -82,14 +82,21 @@ export async function instanceOn(d1: D1, made?: ReturnType<typeof mockCloudflare
   hub.state.releases.set(SHA2, builtBundle(SHA2));
   const from = mock.state.calls.length;
   const state = { now: Date.parse("2026-11-20T10:00:00Z"), access: false, asked: [] as string[], stale: 0 };
+  /** The names of the uploads that answered, in order. */
+  const uploads: string[] = [];
   /** The server's own report, for the release that the mock serves: ok, unless the test says that the release is unhealthy, or fails as it starts. */
   const server = () => {
     const version = bindingsOf(mock.state, "erga-next").ERGA_VERSION.text as string;
     if (mock.state.silent?.includes(version)) return new Response("error code: 1101", { status: 500 });
     // The version before still answers, healthy, for the first asks after an upload: Cloudflare's machines get a new version in some seconds.
-    const bad = state.stale-- > 0 ? false : !!mock.state.unhealthy?.includes(version);
+    const stale = state.stale-- > 0;
+    const bad = stale ? false : !!mock.state.unhealthy?.includes(version);
     const documents = bad ? { ok: false, error: "a document didn't open" } : { ok: true, ms: 2 };
-    return Response.json({ ok: !bad, version, checks: { db: { ok: true, ms: 1 }, documents } }, { status: bad ? 503 : 200 });
+    // Which upload answers: the one that the mock serves, or (stale) the one before it, still healthy.
+    const now = (bindingsOf(mock.state, "erga-next").ERGA_UPLOAD?.text as string | undefined) ?? null;
+    if (now && uploads.at(-1) != now) uploads.push(now);
+    const upload = stale ? (uploads.at(-2) ?? null) : now;
+    return Response.json({ ok: !bad, version, upload, checks: { db: { ok: true, ms: 1 }, documents } }, { status: bad ? 503 : 200 });
   };
   const fetch: Fetch = async (url, init) => {
     if (url.startsWith("https://api.cloudflare.com/")) return mock.fetch(url, init);

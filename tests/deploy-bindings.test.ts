@@ -15,7 +15,8 @@ quietConsole();
 beforeAll(prepareRelease, 120_000);
 
 const nextMeta = (rel: Release) =>
-  workerMetadata(rel, { target: specTarget(next()), settings: next().vars }, { dbId: "db", assetsJwt: "jwt" }).bindings as any[];
+  workerMetadata(rel, { target: specTarget(next()), settings: next().vars }, { dbId: "db", assetsJwt: "jwt", upload: "u1" })
+    .bindings as any[];
 
 describe("the app Worker's bindings", () => {
   test("the release carries the metadata of each kind the pipeline doesn't make, and none of the target's own", () => {

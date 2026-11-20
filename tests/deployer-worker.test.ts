@@ -30,7 +30,7 @@ const files = readdirSync(MIGRATIONS)
 const AT = `main on github.com/example/erga is at ${short(SHA2)}`;
 
 /** The Workers runtime, with databases that the tests take one by one. */
-const NAMES = Array.from({ length: 12 }, (_, i) => `DB${i}`);
+const NAMES = Array.from({ length: 24 }, (_, i) => `DB${i}`);
 let runtime: Miniflare;
 let next = 0;
 
@@ -176,6 +176,19 @@ describe("a run of the deployer", () => {
     );
     expect(runs()).toBe(short(SHA2));
     mock.state.unhealthy = [];
+  }, 30_000);
+
+  test("the same commit again, healthy: the deployer waits for its own upload's answer, not the version before's", async () => {
+    const { sql, state, once, runs } = await instance();
+    expect(await once()).toContain("Its deploy is done.");
+    // The version before answers the first three asks, healthy, under the same release's name: only its upload's
+    // name says that it is not the new one. Then the new upload answers two times.
+    state.stale = 3;
+    await asks(sql, `deploy ${SHA2}`);
+    const from = state.now;
+    expect(await once()).toContain("The deploy that ada asked for is done.");
+    expect(state.now - from).toBe(25_000);
+    expect(runs()).toBe(short(SHA2));
   }, 30_000);
 
   test("a release that fails as it starts gives no report: it goes back too. Behind Cloudflare Access, the instance's Worker answers", async () => {

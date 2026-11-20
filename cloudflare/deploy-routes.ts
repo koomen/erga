@@ -19,9 +19,10 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   {
     method: "GET",
     path: "/api/health",
-    // anyone: {ok, version, checks}: the app works (server/health.ts); 503 when it doesn't
-    run: async (_env, _request, platform) => {
-      const h = await health(platform);
+    // anyone: {ok, version, checks, upload}: the app works (server/health.ts); 503 when it doesn't. `upload`: which
+    // upload of the Worker answers (env.ts, ERGA_UPLOAD), or null where the deploy named none.
+    run: async (env, _request, platform) => {
+      const h = await health(platform, env.ERGA_UPLOAD ?? null);
       return json(h, h.ok ? 200 : 503);
     },
     action: "The server's own health report",
