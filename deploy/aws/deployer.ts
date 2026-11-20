@@ -18,10 +18,13 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as Effect from "effect/Effect";
 import type { AwsEntry } from "../cli/config";
 import { gateParam, liveParam } from "../deployer/aws";
 import { DEPLOYER } from "../deployer/aws-cloud";
-import { awsCli } from "./cli";
+import { writeAuto } from "../deployer/control";
+import { type Aws, awsCli } from "./cli";
+import { awsSql } from "./deploy";
 import { documentScript } from "./machine";
 import { applyStack, changeLines, type Planned, planStack, stackState, templatesDir } from "./stack";
 
@@ -106,6 +109,9 @@ export function roleStatements(o: DeployerShape): Json[] {
     { Effect: "Allow", Action: ["logs:CreateLogStream", "logs:PutLogEvents"], Resource: att("Log", "Arn") },
   ];
 }
+
+/** CloudFormation's limit on a function's code in a template: a function with more code than this has the real one. */
+const INLINE_MAX = 4096;
 
 /** The function's code until installDeployer sends the real one. */
 const STUB = `exports.handler = async () => { throw new Error("The deployer's code is not installed yet: bun erga setup installs it."); };`;
@@ -273,7 +279,7 @@ export async function installDeployer(
   const plan = await planStack(where, name, template);
   for (const l of changeLines(plan)) log(`  ${l}`);
   vet(plan);
-  await applyStack(plan, log);
+  await applyStack(plan, log, "about a minute");
   const tmp = mkdtempSync(join(tmpdir(), "erga-deployer-"));
   try {
     const zip = join(tmp, "deployer.zip");
@@ -287,3 +293,63 @@ export async function installDeployer(
   }
   log(`The deployer: done. The function ${name} looks at GitHub each minute. Auto-deploy is the instance's own switch.`);
 }
+
+/**
+ * Cloud deploys for an instance on AWS (setup's answer --deploys cloud): the deployer is installed, and auto-deploy is
+ * on (the instance's own switch: an admin turns it off on the server's ops page).
+ */
+export async function installWithAuto(dir: string, entry: AwsEntry, log: (line: string) => void): Promise<void> {
+  await installDeployer(dir, entry, log);
+  const sql = awsSql(awsCli({ profile: entry.profile, region: entry.aws.region }), entry.aws);
+  await Effect.runPromise(writeAuto(sql, true)).catch((e) => {
+    throw new Error(
+      `The deployer is installed, but auto-deploy is not on: ${e._tag == "NoTable" ? "the instance's database has no table for it yet (deploy the instance again, then set up again)" : e.message}`
+    );
+  });
+}
+
+/**
+ * Whether the account has the instance's deployer, whole: its function, with the real code. (After an install that
+ * stopped before the code went, the function has the template's stub: the next setup installs it again.)
+ */
+export async function hasDeployer(aws: Aws, stack: string): Promise<boolean> {
+  const f = await aws<{ CodeSize: number }>("lambda", "get-function-configuration", "--function-name", deployerName(stack)).catch(
+    (e: Error) => {
+      if (/ResourceNotFound|Function not found/.test(e.message)) return null;
+      throw e;
+    }
+  );
+  return !!f && f.CodeSize > INLINE_MAX;
+}
+
+/**
+ * Removes the instance's deployer (setup's answer --deploys local): its stack, and with it the function, its role,
+ * its schedule and the instance's document. No credential for a deploy stays in the cloud. The result: whether a
+ * stack was there. A stack of that name that setup did not make (it has no tag of Erga's) is not deleted.
+ */
+export async function removeDeployer(aws: Aws, stack: string, log: (line: string) => void): Promise<boolean> {
+  const name = deployerName(stack);
+  const found = await aws<{ Stacks: { Tags?: { Key: string; Value: string }[] }[] }>(
+    "cloudformation",
+    "describe-stacks",
+    "--stack-name",
+    name
+  ).catch((e: Error) => {
+    if (/does not exist/.test(e.message)) return null;
+    throw e;
+  });
+  if (!found?.Stacks[0]) return false;
+  // (planStack tags each stack that it makes with its own name.)
+  if (!found.Stacks[0].Tags?.some((t) => t.Key == "erga" && t.Value == name))
+    throw new Error(`Your account has a stack ${name} that Erga did not make (it has no tag erga=${name}). Erga does not delete it.`);
+  await aws("cloudformation", "delete-stack", "--stack-name", name);
+  log(`${name}: AWS deletes it...`);
+  await aws("cloudformation", "wait", "stack-delete-complete", "--stack-name", name);
+  return true;
+}
+
+/** Each resource of the deployer's stack, as "Name (Type)": what an install makes, for setup's plan. */
+export const deployerResources = (): string[] =>
+  Object.entries(
+    deployerTemplate({ stack: "", region: "", bucket: "", machine: "", key: "" }).Resources as Record<string, { Type: string }>
+  ).map(([name, r]) => `${name} (${r.Type})`);

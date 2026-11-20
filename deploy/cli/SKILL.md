@@ -263,9 +263,11 @@ and `main`. There are no pull requests.
   plan; then the command does all the work, and opens the browser only for the
   user's own steps (`bun erga setup --help`). `--repo <repo>` and
   `--branch <branch>` say what the instance tracks (the defaults: `github.com/koomen/erga`, `main`): its first deploy
-  takes that branch's head. On Cloudflare, `--deploys cloud|local` says who deploys each new release: a deployer in the
-  user's own account (setup installs it, with a token that the user makes for the instance's Worker only, and turns
-  auto-deploy on), or a machine with `bun erga deploy`. A run again with the other answer changes it.
+  takes that branch's head. `--deploys cloud|local` says who deploys each new release: a deployer in the
+  user's own account (setup installs it and turns auto-deploy on: on Cloudflare a Worker, with a token that the user
+  makes for the instance's Worker only; on AWS a Lambda function with a role of its own, and no token), or a machine
+  with `bun erga deploy`. A run again with the other answer changes it. On AWS, a run again with `cloud` also brings
+  the deployer's stack and code to this checkout's.
 
 ## The rules
 

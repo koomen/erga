@@ -6,7 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DeployerShape, deployerCode, deployerTemplate, zipOne } from "../deploy/aws/deployer";
+import type { Aws } from "../deploy/aws/cli";
+import { type DeployerShape, deployerCode, deployerTemplate, hasDeployer, removeDeployer, zipOne } from "../deploy/aws/deployer";
 import { TEMPLATE_MAX } from "../deploy/aws/template";
 import { ROOT } from "./helpers/deploys.ts";
 
@@ -233,4 +234,57 @@ await installDeployer(${JSON.stringify(join(dir, ".erga"))}, ${JSON.stringify(en
     },
     SLOW
   );
+});
+
+describe("setup's answer --deploys", () => {
+  /** A fake AWS CLI: each call, and its answer (an Error is the CLI's failure). */
+  const cli = (answer: (call: string) => unknown) => {
+    const calls: string[] = [];
+    const aws = (async (...args: string[]) => {
+      calls.push(args.join(" "));
+      const r = answer(args.join(" "));
+      if (r instanceof Error) throw r;
+      return r;
+    }) as Aws;
+    return { aws, calls };
+  };
+
+  test("the deployer is there when its function has the real code: not after an install that stopped at the stub", async () => {
+    const code = (CodeSize: number) => cli(() => ({ FunctionName: "erga-example-deployer", CodeSize })).aws;
+    expect(await hasDeployer(code(412_000), "erga-example")).toBe(true);
+    expect(await hasDeployer(code(240), "erga-example")).toBe(false);
+    const none = cli(
+      () => new Error("aws lambda get-function-configuration failed: An error occurred (ResourceNotFoundException): Function not found")
+    );
+    expect(await hasDeployer(none.aws, "erga-example")).toBe(false);
+    expect(none.calls).toEqual(["lambda get-function-configuration --function-name erga-example-deployer"]);
+    // Another failure is not "no deployer".
+    await expect(hasDeployer(cli(() => new Error("aws lambda failed: ExpiredToken")).aws, "erga-example")).rejects.toThrow("ExpiredToken");
+  });
+
+  test("local deletes the deployer's stack, and only a stack that setup made", async () => {
+    const stack = (tags: { Key: string; Value: string }[]) =>
+      cli((call) =>
+        call.startsWith("cloudformation describe-stacks") ? { Stacks: [{ StackStatus: "CREATE_COMPLETE", Tags: tags }] } : {}
+      );
+    const mine = stack([{ Key: "erga", Value: "erga-example-deployer" }]);
+    const log: string[] = [];
+    expect(await removeDeployer(mine.aws, "erga-example", (line) => log.push(line))).toBe(true);
+    expect(mine.calls).toEqual([
+      "cloudformation describe-stacks --stack-name erga-example-deployer",
+      "cloudformation delete-stack --stack-name erga-example-deployer",
+      "cloudformation wait stack-delete-complete --stack-name erga-example-deployer",
+    ]);
+    expect(log).toEqual(["erga-example-deployer: AWS deletes it..."]);
+    // A stack of that name with no tag of Erga's, or with another instance's: nothing is deleted.
+    for (const tags of [[], [{ Key: "erga", Value: "erga-other-deployer" }]]) {
+      const other = stack(tags);
+      await expect(removeDeployer(other.aws, "erga-example", () => {})).rejects.toThrow("that Erga did not make");
+      expect(other.calls.length).toBe(1);
+    }
+    // No such stack: nothing to remove.
+    const none = cli(() => new Error("aws cloudformation describe-stacks failed: Stack with id erga-example-deployer does not exist"));
+    expect(await removeDeployer(none.aws, "erga-example", () => {})).toBe(false);
+    expect(none.calls.length).toBe(1);
+  });
 });

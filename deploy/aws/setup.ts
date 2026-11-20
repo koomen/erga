@@ -20,6 +20,7 @@ import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";
 import { DIR, githubIdOf, loadSecrets } from "../own/store";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
 import { factsOnAws, healthOnAws, liveOnAws } from "./deploy";
+import { hasDeployer } from "./deployer";
 import { gateCode, putEdgeKey, putGateHash } from "./gate";
 import { provisionScript, putPrograms, onMachine, sqlScript, untilReachable } from "./machine";
 import {
@@ -155,6 +156,7 @@ export async function observeAws(dir: string, a: Answers, seen: Seen): Promise<S
     ? await idpSecretThere(a)
     : !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
   if (!st.outputs.Machine) return seen;
+  seen.deployer = await hasDeployer(aws, name).catch(() => false);
   // The server as AWS shows it: the release on record, the machine's own health check, and the release's settings.
   const machine = { machine: st.outputs.Machine, bucket: st.outputs.Bucket, region: where.region };
   const version = await liveOnAws(aws, name).catch(() => null);

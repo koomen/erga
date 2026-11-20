@@ -50,17 +50,18 @@ git. Give your coding agent this prompt:
         the same sign-in read `x-amzn-oidc-data`. Never guess.
    5. AWS without single sign-on: a second Route 53 domain, not the
       address's, for the documents' pages.
-   6. Cloudflare: who deploys each new release of Erga? 1. A deployer in
-      your own Cloudflare account, by itself (`--deploys cloud`): you make
-      one token for it on Cloudflare, for the one Worker, and paste it on a
-      page that opens. 2. You, from this clone, with `bun erga deploy`
+   6. Who deploys each new release of Erga? 1. A deployer in your own
+      account, by itself (`--deploys cloud`). On Cloudflare you make one
+      token for it, for the one Worker, and paste it on a page that opens.
+      On AWS it has no token: it is a Lambda function with a role of its
+      own. 2. You, from this clone, with `bun erga deploy`
       (`--deploys local`): no credential stays in the cloud.
 3. Run this with the answers. It makes nothing and prints the plan:
 
        bun erga setup <address> --host cloudflare|aws --sign-in invite|organization|sso \
          [--profile <name>] [--organization <org or domain>] \
          [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] \
-         [--deploys cloud|local] [--remote] --dry-run
+         --deploys cloud|local [--remote] --dry-run
 
    Show the user the plan. On their yes, run it again without `--dry-run`,
    in the background: the first build takes 10 to 20 minutes, a redeploy

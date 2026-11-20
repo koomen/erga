@@ -111,8 +111,11 @@ authority, and no Caddy.
 
 ## The deployer in the cloud
 
-`installDeployer` (`deployer.ts`) installs it with the person's own login: one more stack, `<stack>-deployer`, and the
-function's code. Setup's cloud choice calls it. After that, no person's login is in a deploy.
+`bun erga setup ... --deploys cloud` installs it with the person's own login (`deployer.ts`, `installWithAuto`): one
+more stack, `<stack>-deployer`, and the function's code; then it turns auto-deploy on. After that, no person's login
+is in a deploy. A run again with `cloud` brings the stack and the code to this checkout's, and leaves the switch as it
+is. `--deploys local` deletes the stack: no credential for a deploy stays in the cloud. `bun erga setup <host> remove`
+deletes it too.
 
 - **The function** (`deploy/deployer/lambda.ts`, Node, 512 MB). It has no URL. Its schedule starts it each minute, one
   time. A run is one look (`deploy/deployer/look.ts`): the instance's spec, the branch's head at GitHub, and with

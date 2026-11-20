@@ -176,14 +176,17 @@ export const changeLines = (p: Planned): string[] =>
     ? p.changes.map((c) => `${c.action.padEnd(7)} ${c.resource} (${c.type})${c.replacement ? `, replaced: ${c.replacement}` : ""}`)
     : ["no change"];
 
-/** Applies a change set, and waits for the stack to finish: its state after. Throws with AWS's reason on a failure. */
-export async function applyStack(p: Planned, log: (line: string) => void): Promise<StackState> {
+/**
+ * Applies a change set, and waits for the stack to finish: its state after. Throws with AWS's reason on a failure.
+ * `takes`: how long the person waits, for the log.
+ */
+export async function applyStack(p: Planned, log: (line: string) => void, takes = "CloudFront takes 5 to 15 minutes"): Promise<StackState> {
   const aws = awsCli(p.where);
   if (!p.changeSet) return stackState(aws, p.stack);
   // A CREATE change set leaves a stack in REVIEW_IN_PROGRESS until it runs.
   const creating = (await stackState(aws, p.stack)).status == "REVIEW_IN_PROGRESS";
   await aws("cloudformation", "execute-change-set", "--stack-name", p.stack, "--change-set-name", p.changeSet);
-  log(`${p.stack}: AWS makes the changes (CloudFront takes 5 to 15 minutes)...`);
+  log(`${p.stack}: AWS makes the changes (${takes})...`);
   let last = "";
   for (;;) {
     const s = await stackState(aws, p.stack);

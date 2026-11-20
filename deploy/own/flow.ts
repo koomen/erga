@@ -3,9 +3,10 @@
 //
 //   login > (stop) > app > build > (update) > (deployer) > admin > done
 //
-// deployer: the answer --deploys and what the account has differ. cloud with no deployer: the user makes the
-// deployer's token and gives it to the command, which installs the deployer. local with a deployer: the command
-// removes it. This step is open on an instance that is done too: a run again with the other answer changes it.
+// deployer: the answer --deploys and what the account has differ. cloud with no deployer: the command installs it.
+// On Cloudflare the user first makes the deployer's token and gives it to the command; on AWS there is no token (the
+// deployer's role is its credential), so the step is the command's own. local with a deployer: the command removes
+// it. This step is open on an instance that is done too: a run again with the other answer changes it.
 //
 // With --remote (answers.remote) the user is at another computer: their steps (login, app, admin) go through their terminal,
 // never a browser on this machine. A command with no terminal (an agent's shell) stops there: "terminal".
@@ -17,7 +18,7 @@
 // observes again; a run again goes on from where the last one stopped. A dry run stops before the first step that
 // makes something, and prints the plan.
 
-import { ANSWER_VARS, type Answers, emailOf, namesOf, pagesOf, pagesProblem, sso, varsOf, zoneOf } from "./plan";
+import { ANSWER_VARS, type Answers, emailOf, namesOf, pagesOf, pagesProblem, sso, stackOf, varsOf, zoneOf } from "./plan";
 
 /** What the command observed (facts.ts; deploy/aws/setup.ts on AWS). */
 export interface Seen {
@@ -47,7 +48,7 @@ export interface Seen {
   vars: Record<string, string> | null;
   /** The GitHub App's client id that setup holds for the host, or "". */
   github: string;
-  /** Cloudflare: the account has the instance's deployer (the Worker that deploys each new release by itself). */
+  /** The account has the instance's deployer, which deploys each new release by itself: on Cloudflare a Worker, on AWS a Lambda function. */
   deployer: boolean;
   /** The user's terminal (/dev/tty) opens for this command: an agent's shell has none. */
   terminal: boolean;
@@ -112,11 +113,8 @@ export function missing(a: Answers): string[] {
   if (a.signInDays && !(sso(a) && aws))
     need.push("--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
-  if (a.where == "cloudflare" && !a.deploys)
+  if (a.where && !a.deploys)
     need.push("--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.");
-  // The AWS deployer's install joins here (deploy/aws/, the Lambda): until then an instance on AWS deploys from a machine.
-  if (aws && a.deploys == "cloud")
-    need.push("--deploys cloud is not there for AWS in this version: leave it out, and deploy with bun erga deploy.");
   return need;
 }
 
@@ -191,7 +189,12 @@ export function step(a: Answers, s: Seen): { answers: Answers; state: State; loo
   const fill = filled(a, s);
   const answers = { ...a, ...fill };
   const state = stateOf(answers, s);
-  const theirs = state.at == "login" || state.at == "app" || state.at == "admin" || (state.at == "deployer" && state.do == "install");
+  // (The deployer's install is the user's step only where it has a token: on Cloudflare.)
+  const theirs =
+    state.at == "login" ||
+    state.at == "app" ||
+    state.at == "admin" ||
+    (state.at == "deployer" && state.do == "install" && a.where != "aws");
   return {
     answers,
     state: theirs && answers.remote && !s.terminal ? { at: "terminal" } : state,
@@ -217,9 +220,11 @@ export function checksOf(a: Answers, s: Seen): string[] {
 
 /** Who deploys each new release, as the plan says it. */
 export const deploysText = (a: Answers) =>
-  a.deploys == "cloud"
-    ? `• a deployer (the Worker ${namesOf(a.host).worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${namesOf(a.host).worker}, which you make on Cloudflare and paste ${a.remote ? "in your terminal" : "on a page that opens"}`
-    : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
+  a.deploys == "cloud" && a.where == "aws"
+    ? `• a deployer (the Lambda function ${stackOf(a)}-deployer, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`
+    : a.deploys == "cloud"
+      ? `• a deployer (the Worker ${namesOf(a.host).worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${namesOf(a.host).worker}, which you make on Cloudflare and paste ${a.remote ? "in your terminal" : "on a page that opens"}`
+      : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
 /** The plan, as the agent says it before the user's yes. */
 export function planText(a: Answers, s: Seen): string[] {
@@ -243,6 +248,7 @@ export function planText(a: Answers, s: Seen): string[] {
       `• the documents' pages on ${pagesOf(a)}`,
       signIn,
       tracks,
+      deploysText(a),
       "AWS bills it by use.",
     ];
   const n = namesOf(a.host);

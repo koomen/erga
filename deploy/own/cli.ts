@@ -18,9 +18,11 @@
 //                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
 //       --sign-in-days <days>            --sign-in sso on AWS: how long a sign-in lasts, from 1 to 90 (default: 30)
 //       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
-//       --deploys cloud|local  Cloudflare: who deploys each new release. cloud: a deployer in the user's account, by
-//                              itself; the user makes its token (for the instance's Worker only) and pastes it on a
-//                              page that opens. local: the user, with bun erga deploy; no credential in the cloud.
+//       --deploys cloud|local  who deploys each new release. cloud: a deployer in the user's account, by itself. On
+//                              Cloudflare the user makes its token (for the instance's Worker only) and pastes it on a
+//                              page that opens; on AWS it is a Lambda function whose role is its credential: no token.
+//                              local: the user, with bun erga deploy; no credential in the cloud. A run again with
+//                              the other answer installs the deployer, or removes it.
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
 //       --no-tests             the build runs no tests
 //       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
@@ -140,6 +142,13 @@ async function installWithToken(a: Answers): Promise<string | null> {
     if (!refused) return "";
     tellUser(`Erga does not take this token:\n${refused}`);
   }
+}
+
+/** The instance's entry on AWS, from the answers and what its stack has now: the deployer's install names these. */
+async function awsEntryOf(a: Answers, seen: Seen) {
+  const { awsEntry } = await import("../aws/setup");
+  if (!seen.stack?.outputs.Machine) return fail(`The stack of ${a.host} has no machine: setup has not made the instance yet.`);
+  return awsEntry(a, seen.account, seen.stack.outputs, githubIdOf(a.host, DIR) || undefined);
 }
 
 /** The Cloudflare API and the servers, or a FAIL. */
@@ -272,6 +281,16 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
     }
     if (o.dryRun && state.at == "deployer") {
       for (const c of checksOf(a, seen)) pass(c);
+      if (a.where == "aws") {
+        const { deployerName, deployerResources } = await import("../aws/deployer");
+        const stack = deployerName(namesAt(a.host).worker);
+        say(
+          state.do == "install"
+            ? `PLAN  ${a.host} runs. I will install its deployer, as the stack ${stack}, and turn auto-deploy on:\nPLAN  ${deploysText(a)}\nPLAN  The stack's resources (${deployerResources().length}): ${deployerResources().join(", ")}`
+            : `PLAN  ${a.host} runs. I will remove its deployer (the stack ${stack}: the Lambda function, its role, its schedule and the instance's document):\nPLAN  ${deploysText(a)}`
+        );
+        return "dry";
+      }
       say(
         state.do == "install"
           ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a)}`
@@ -342,6 +361,24 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         break;
       case "deployer": {
         if (again) return fail(`${a.host}'s deployer is not ${state.do == "install" ? "there" : "gone"} yet.`, o.again);
+        if (a.where == "aws") {
+          // No token and no step of the user's: the deployer's role is its credential, and this login makes its stack.
+          const { installWithAuto, removeDeployer } = await import("../aws/deployer");
+          const entry = await awsEntryOf(a, seen);
+          const log = (line: string) => say(`  ${line.slice(0, 200)}`);
+          if (state.do == "remove") {
+            await removeDeployer(
+              (await import("../aws/cli")).awsCli({ profile: entry.profile, region: entry.aws.region }),
+              entry.aws.stack,
+              log
+            );
+            pass(`The deployer of ${a.host} is removed, with its role: no credential stays in the cloud.`);
+          } else {
+            await installWithAuto(DIR, entry, log);
+            pass(`The deployer of ${a.host} is installed: it deploys each new release of ${a.branch} by itself (auto-deploy is on).`);
+          }
+          break;
+        }
         if (state.do == "remove") {
           const c = await connect();
           await (await import("../pipeline/deployer")).removeDeployer(c.cf, { account: a.account, worker: namesAt(a.host).worker });
@@ -374,6 +411,15 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
           await aws.writePlan(DIR, a);
           if (o.dryRun) say("PLAN  Its stacks change to this code's template, if it differs (each change shows as it's made).");
           else await aws.applyStacks(DIR, a, (line) => say(`  ${line.slice(0, 200)}`));
+          // Its deployer too: only a person's login changes the deployer's stack and code. The switch stays as it is.
+          if (seen.deployer && a.deploys == "cloud" && !did.has("deployer")) {
+            if (o.dryRun)
+              say("PLAN  Its deployer changes to this code's too: its stack, and the function's code. Auto-deploy stays as it is.");
+            else
+              await (await import("../aws/deployer")).installDeployer(DIR, await awsEntryOf(a, seen), (line) =>
+                say(`  ${line.slice(0, 200)}`)
+              );
+          }
         }
         return o.dryRun ? "dry" : "done";
     }
@@ -412,11 +458,14 @@ async function remove(host: string, yes: boolean) {
       where = { profile: entry.profile, region: entry.aws.region };
     if (!yes)
       fail(
-        `This deletes ${host} on AWS: the stack ${name} (the machine, the addresses, the network, the key), its certificates and its secrets. The bucket stays, with the documents in it.`,
+        `This deletes ${host} on AWS: the stack ${name} (the machine, the addresses, the network, the key), its deployer if it has one, its certificates and its secrets. The bucket stays, with the documents in it.`,
         only
       );
     const aws = awsCli(where);
     const bucket = (await stackState(aws, name)).outputs.Bucket;
+    // The deployer first: its role names the machine and the bucket of the stack that goes.
+    if (await (await import("../aws/deployer")).removeDeployer(aws, name, (line) => say(`  ${line}`)))
+      pass(`stack ${name}-deployer deleted`);
     // Trap: with the gate in front, CloudFront keeps copies of the Lambda@Edge function for a time after its
     // distributions are gone, and refuses to delete the function until then. The us-east-1 stack is tried again each
     // two minutes, for half an hour; after that the secrets go all the same, and the command says what is left.
