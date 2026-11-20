@@ -212,10 +212,11 @@ const healthCurl = (gate: boolean) =>
  * takes its lease (nodes/ in the fleet's folder) only when it has a deployment, and celld d1 needs that node: the
  * first release goes the other way, the Worker and then the migrations. The secrets go into
  * the settings on the machine only, never into the bucket's release. The machine adds the version to its list of
- * releases (rollback reads it). Trap: the machine reads the release from the bucket on every deploy and keeps no copy:
- * a deploy again of the same version carries other settings (the entry's vars, in its wrangler.json). The script waits, for
+ * releases (rollback reads it). Trap: the machine reads the release from the bucket on every deploy:
+ * a deploy again of the same version carries other settings (the entry's vars, in its wrangler.json). (The copy that
+ * it keeps of a healthy load is only for the way back: backScript.) The script waits, for
  * three minutes at most, until the release answers its own health check, healthy, on the loopback (GET /api/health: its
- * version, the database, a document): a release that does not is an error, and the caller loads the release before.
+ * version, the database, a document): a release that does not is an error, and the caller goes back (backScript).
  * Trap: the answer must be this load's own. The Worker that ran before answers too until celld has the new one, and
  * after a load that celld refused; with the same release it says the same version. So the machine gives each load a
  * name of its own (ERGA_UPLOAD, in the settings on the machine: the server says it in its health report, as
@@ -236,13 +237,50 @@ export function deployScript(o: {
   first?: string;
   gateKey?: string;
 }): string {
+  return loadScript(
+    o,
+    `export version="${o.version}"
+aws s3 cp "s3://${o.bucket}/releases/$version.tgz" "$packed" --quiet`
+  );
+}
+
+/** The packed release of the machine's last healthy load, as the bucket had it then: what backScript loads again. */
+const KEPT = "/var/lib/erga/healthy.tgz";
+
+/**
+ * The way back after a load that did not get healthy: the machine loads again the release of its last healthy load,
+ * with that load's settings, as deployScript loads one. Each healthy load keeps its packed release on the machine
+ * (KEPT: it has the plain settings and no secret). Trap: the bucket can't give it. A deploy of the same release with
+ * other settings puts its object in the place of the one before (releases/<version>.tgz). The release's name is the
+ * last of the machine's own list, never a caller's word. A machine whose last healthy load was before it kept one
+ * takes the bucket's object of that name.
+ */
+export function backScript(o: { bucket: string; region: string; stack: string; gateKey?: string }): string {
+  return loadScript(
+    o,
+    `version=$(tail -1 /var/lib/erga/deployed 2>/dev/null || true)
+[ -n "$version" ] || { echo "the machine ran no release yet: it has none to go back to" >&2; exit 1; }
+export version
+if [ -f ${KEPT} ]; then cp ${KEPT} "$packed"; else aws s3 cp "s3://${o.bucket}/releases/$version.tgz" "$packed" --quiet; fi`
+  );
+}
+
+/**
+ * One load on the machine. `from`: shell lines that export the release's name as `version` and put its packed
+ * project at "$packed".
+ */
+function loadScript(o: { bucket: string; region: string; stack: string; first?: string; gateKey?: string }, from: string): string {
   return `set -euo pipefail
 export AWS_REGION=${o.region}
-export version="${o.version}"
 upload=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
 export upload
-live=$(mktemp -d) && trap 'rm -rf "$live"' EXIT && cd "$live"
-aws s3 cp "s3://${o.bucket}/releases/$version.tgz" - --quiet | tar -xz
+live=$(mktemp -d)
+trap 'rm -rf "$live"' EXIT
+packed="$live/release.tgz"
+mkdir "$live/project"
+cd "$live/project"
+${from}
+tar -xzf "$packed"
 ${
   // (Each on a line of its own: `set -e` does not stop at a command that fails before an `&&`.)
   o.gateKey
@@ -275,7 +313,10 @@ sys.exit(0 if h.get("ok") is True and h.get("version") == os.environ["version"] 
 for i in $(seq 1 90); do healthy && break; sleep 2; done
 healthy || { echo "release $version is not healthy: its load $upload gives no healthy answer. The last answer: $(health | head -c 400)" >&2; exit 1; }
 ${o.first ? `celld d1 execute erga . --bucket ${fleet(o.bucket)} --command "${o.first.replace(/"/g, '\\"')}" 2>&1 | quiet | tail -1` : ""}
-mkdir -p /var/lib/erga && touch /var/lib/erga/deployed && sed -i "/^$version\\$/d" /var/lib/erga/deployed
+mkdir -p /var/lib/erga
+(umask 077; cp "$packed" ${KEPT}.new)
+mv ${KEPT}.new ${KEPT}
+touch /var/lib/erga/deployed && sed -i "/^$version\\$/d" /var/lib/erga/deployed
 echo "$version" >> /var/lib/erga/deployed
 echo "runs $version"
 `;
@@ -336,7 +377,9 @@ export const deployedScript = () => "cat /var/lib/erga/deployed 2>/dev/null || t
  * which the agent gives the script as environment variables (SSM_action, SSM_version, SSM_sql: never as text of the
  * script), and the script checks the release's name again:
  *
- *   load      loads the release `version` from the bucket (deployScript, with no first SQL): a deploy, or the way back
+ *   load      loads the release `version` from the bucket (deployScript, with no first SQL)
+ *   back      loads again the release of the machine's last healthy load, with that load's settings (backScript):
+ *             the way back after a load that did not get healthy. It takes no parameter
  *   deployed  the releases that the machine ran (deployedScript)
  *   sql       one statement of the instance's record of its deploys (recordScript), checked here again: it reads no
  *             table but the three of the deploys, and writes only the jobs and the looks (deploy/deployer/aws-cloud.ts,
@@ -351,6 +394,8 @@ export function documentScript(o: { bucket: string; region: string; stack: strin
 if [ "$SSM_action" = load ]; then
 [[ "\${SSM_version:-}" =~ ^[0-9a-f]{12}$ ]] || { echo "not a release's name" >&2; exit 2; }
 ${body(deployScript({ ...o, version: "$SSM_version" }))}
+elif [ "$SSM_action" = back ]; then
+${body(backScript(o))}
 elif [ "$SSM_action" = deployed ]; then
 ${deployedScript()}
 elif [ "$SSM_action" = sql ]; then

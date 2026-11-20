@@ -1,7 +1,7 @@
 // The deployer in the cloud of an instance on AWS, as setup installs it with a person's own login: one small stack
 // beside the instance's own (<stack>-deployer), and the function's code.
 //
-//   Document   the instance's own Systems Manager document: the fixed script (machine.ts, documentScript) with three
+//   Document   the instance's own Systems Manager document: the fixed script (machine.ts, documentScript) with four
 //              actions and checked parameters. The only thing that the deployer may run on the machine
 //   Role       the function's role, and its only credential: AWS changes its keys. Each statement names one resource
 //              of this instance (roleStatements)
@@ -56,9 +56,9 @@ export function documentContent(o: DeployerShape): Json {
   const text = (more: Json) => ({ type: "String", interpolationType: "ENV_VAR", ...more });
   return {
     schemaVersion: "2.2",
-    description: `Erga ${o.stack}: what the deployer may run on the machine (load a release, list the releases, one statement of the deploys' record)`,
+    description: `Erga ${o.stack}: what the deployer may run on the machine (load a release, go back to the last healthy load, list the releases, one statement of the deploys' record)`,
     parameters: {
-      action: text({ allowedValues: ["load", "deployed", "sql"] }),
+      action: text({ allowedValues: ["load", "back", "deployed", "sql"] }),
       version: text({ default: "", allowedPattern: "^([0-9a-f]{12})?$" }),
       // (The statement's shape, in the plainest form of a pattern. The script checks which tables it reads.)
       sql: text({ default: "", allowedPattern: `^(${DEPLOYER.shape.replaceAll("(?:", "(").replace("\\x27", "'")})?$` }),

@@ -1,7 +1,7 @@
 // `bun erga deploy` and `bun erga rollback` of an instance on AWS (deploy/cli/deploy.ts calls these for an entry with
 // AWS facts). A deploy runs the deployer's steps (deploy/deployer/aws.ts) with the AWS CLI: the release as a celld
 // project (deploy/deployer/celld.ts) into the bucket, then the machine loads it (machine.ts, deployScript: the migrations, the
-// Worker, its answer). A release that doesn't answer is rolled back to the one before it. A rollback loads the release before the one that runs; the bucket keeps every release. Each deploy
+// Worker, its answer). A release that doesn't answer goes back: the machine loads again what its last healthy load ran (machine.ts, backScript). A rollback loads the release before the one that runs; the bucket keeps every release. Each deploy
 // and each rollback writes the release that runs into one plain parameter (liveParam): `bun erga status` reads it
 // there (the AWS CLI), with no request to the instance. Its health is the machine's own check of its server on the
 // loopback (healthOnAws: Systems Manager).
@@ -17,7 +17,7 @@ import type { Sql } from "../deployer/instance";
 import type { Release } from "../deployer/release-format";
 import { OLD_SECRETS_KEY, readsSecretsKey, SECRETS_KEY } from "../deployer/secrets-key";
 import { type Aws, awsCli } from "./cli";
-import { deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease, recordScript } from "./machine";
+import { backScript, deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease, recordScript } from "./machine";
 import { paramPath } from "./template";
 
 const awsOf = (e: AwsEntry) => awsCli({ profile: e.profile, region: e.aws.region });
@@ -88,6 +88,7 @@ export function awsApi(e: AwsEntry, first?: { version: string; sql: string }): A
       tried(() =>
         onMachine(aws, e.aws.machine, deployScript({ ...where, version, ...(version == first?.version ? { first: first.sql } : {}) }))
       ),
+    back: tried(() => onMachine(aws, e.aws.machine, backScript(where))),
     setLive: (version) => tried(() => putLive(aws, e.aws.stack, version)),
   };
 }

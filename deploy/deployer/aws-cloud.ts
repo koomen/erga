@@ -1,11 +1,11 @@
-// The deployer in the cloud on AWS: deploy()'s four calls (aws.ts) and the instance's database (instance.ts), with
+// The deployer in the cloud on AWS: deploy()'s five calls (aws.ts) and the instance's database (instance.ts), with
 // the keys of the deployer's own role (aws-api.ts). The role may do four things, for one instance: put an object
 // under releases/ in the instance's bucket, send the instance's own document to its machine and read that command's
 // end, write the parameter that says which release runs, and read the gate's hash that setup recorded
 // (deploy/aws/deployer.ts has the role).
 //
 // The machine runs only the instance's document (a Systems Manager document that setup installs): a fixed script
-// with three actions and checked parameters. So these keys run no other command on the machine, and read nothing of
+// with four actions and checked parameters. So these keys run no other command on the machine, and read nothing of
 // the bucket. Of the instance's database they read only the three tables of its deploys, and write only the jobs and
 // the looks (DEPLOYER): no user, no token, no document, and not the spec.
 //
@@ -36,7 +36,7 @@ export interface Own {
 }
 
 /** The actions of the instance's document, and each one's parameters (deploy/aws/machine.ts has the script). */
-export type Action = { action: "load"; version: string } | { action: "deployed" } | { action: "sql"; sql: string };
+export type Action = { action: "load"; version: string } | { action: "back" } | { action: "deployed" } | { action: "sql"; sql: string };
 
 /** What a release's name must be for the document: 12 hex characters. */
 export const VERSION = /^[0-9a-f]{12}$/;
@@ -220,6 +220,7 @@ export function cloudAws(aws: Aws, own: Own): CloudAws {
       VERSION.test(version)
         ? run({ action: "load", version })
         : Effect.fail(new DeployError({ message: `"${version}" is not a release's name (12 hex characters).` })),
+    back: run({ action: "back" }),
     setLive: (version) =>
       Effect.asVoid(
         aws.ssm(

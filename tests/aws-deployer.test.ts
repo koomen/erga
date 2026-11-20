@@ -7,7 +7,7 @@
 
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Clock from "effect/Clock";
@@ -26,6 +26,7 @@ import { openJob, readJobs, readLog, readSpec, writeSpec } from "../deploy/deplo
 import { look } from "../deploy/deployer/look";
 import type { Release } from "../deploy/deployer/release-format";
 import type { Spec } from "../deploy/deployer/spec";
+import { fakeMachine } from "./helpers/aws-machine.ts";
 import { prepareRelease, release, ROOT, SHA1, SHA2, testClock } from "./helpers/deploys.ts";
 import { builtBundle, bundleOf, github } from "./helpers/github.ts";
 
@@ -119,6 +120,11 @@ function fakeAws(o: { gate?: boolean; installed?: string; ran?: string[]; sick?:
   const machine = ({ action, version, sql }: Record<string, string>) => {
     const ended = (Status: string, out: string, err = "") => ({ Status, StandardOutputContent: out, StandardErrorContent: err });
     if (action == "deployed") return ended("Success", state.deployed.map((v) => `${v}\n`).join(""));
+    // (The way back: what the machine's last healthy load ran.)
+    if (action == "back")
+      return state.deployed.length
+        ? ended("Success", `deployed\nruns ${state.deployed.at(-1)}\n`)
+        : ended("Failed", "", "the machine ran no release yet: it has none to go back to\n");
     if (action == "load") {
       if (o.sick?.includes(version)) return ended("Failed", "", `release ${version} is not healthy: {"ok":false}\n`);
       state.deployed = [...state.deployed.filter((v) => v != version), version];
@@ -408,7 +414,7 @@ describe("the role", () => {
 });
 
 describe("the instance's document", () => {
-  test("Systems Manager refuses a command that is not one of its three actions, with a checked release and statement", async () => {
+  test("Systems Manager refuses a command that is not one of its four actions, with a checked release and statement", async () => {
     const { aws, state } = fakeAws();
     const send = (Parameters: Record<string, string[]>) =>
       failure(aws.ssm("SendCommand", { DocumentName: DOCUMENT, InstanceIds: [shape.machine], Parameters }, anything, "run it")).then(
@@ -558,87 +564,30 @@ describe("the instance's document", () => {
   });
 
   test(
-    "the script on the machine: its three actions, a checked release and statement, and nothing with an old agent",
+    "the script on the machine: its four actions, a checked release and statement, and nothing with an old agent",
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), "erga-document-"));
-      const bin = join(dir, "bin");
-      mkdirSync(bin);
-      // The machine's commands, faked: the bucket gives release.tgz, celld keeps what it got.
-      const tool = (name: string, body: string) => (
-        writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`), chmodSync(join(bin, name), 0o755)
-      );
-      tool(
-        "aws",
-        `case "$1 $2" in
-  "s3 cp") echo "$3" >> "$FAKE/asked"; cat "$FAKE/release.tgz" ;;
-  "s3 ls") echo node ;;
-  "ssm get-parameters-by-path") echo '{"Parameters":[{"Name":"/erga/erga-example/SESSION_SECRET","Value":"s"}]}' ;;
-esac`
-      );
-      tool("celld", `echo "$@" >> "$FAKE/celld"; [ "$1" = deploy ] && cp wrangler.json "$FAKE/loaded.json"; true`);
-      // The server's health report: the Worker that celld loaded last says its load's name. $FAKE/stale: celld took
-      // no new Worker, and the one before answers, healthy, with the same version.
-      tool(
-        "curl",
-        `python3 -c 'import json, os, sys
-d = os.environ["FAKE"]
-stale = os.path.exists(d + "/stale")
-upload = "before" if stale else json.load(open(d + "/loaded.json"))["vars"].get("ERGA_UPLOAD")
-print(json.dumps({"ok": True, "version": "bbbbbbbbbbbb", "upload": upload, "checks": {}}))'`
-      );
-      // (The machine's wait for a healthy answer, without its time: two looks, and no pause.)
-      tool("seq", "echo 1; echo 2");
-      tool("sleep", "true");
-      // (macOS's sed needs a suffix after -i.)
-      tool(
-        "sed",
-        `if [ "$1" = -i ] && [ "$(uname)" = Darwin ]; then shift; exec ${Bun.which("sed")} -i '' "$@"; fi; exec ${Bun.which("sed")} "$@"`
-      );
-      const project = join(dir, "release");
-      mkdirSync(project);
-      writeFileSync(join(project, "wrangler.json"), JSON.stringify({ vars: { ERGA_VERSION: "bbbbbbbbbbbb" } }));
-      Bun.spawnSync(["tar", "-czf", join(dir, "release.tgz"), "-C", project, "."]);
-      const script = documentScript({ bucket: "bucket", region: REGION, stack: "erga-example" }).replaceAll(
-        "/var/lib/erga",
-        join(dir, "state")
-      );
-      const command = (env: Record<string, string>) => {
-        const { PATH, HOME } = process.env;
-        const r = Bun.spawnSync(["bash", "-c", script], { env: { HOME, PATH: `${bin}:${PATH}`, FAKE: dir, ...env } });
-        return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
-      };
-      const said = (name: string) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8").trim().split("\n") : []);
+      // The real script, in bash, with the machine's commands faked (tests/helpers/aws-machine.ts).
+      const machine = fakeMachine(documentScript({ bucket: "bucket", region: REGION, stack: "erga-example" }));
+      const { command, said, script } = machine;
       try {
         expect(Bun.spawnSync(["bash", "-n"], { stdin: Buffer.from(script) }).exitCode).toBe(0);
         // No release yet: the list is empty, and the database is not there.
         expect(command({ SSM_action: "deployed", SSM_version: "", SSM_sql: "" })).toEqual({ code: 0, out: "", err: "" });
         const none = command({ SSM_action: "sql", SSM_version: "", SSM_sql: "SELECT 1" });
         expect([none.code, none.out.trim()]).toEqual([1, "no such table: the machine runs no release yet"]);
+        const nothing = command({ SSM_action: "back", SSM_version: "", SSM_sql: "" });
+        expect([nothing.code, nothing.err]).toEqual([1, "the machine ran no release yet: it has none to go back to\n"]);
         // load: the release from the bucket, with the machine's secrets, and the machine's list has it.
         const load = command({ SSM_action: "load", SSM_version: "bbbbbbbbbbbb", SSM_sql: "" });
         expect([load.code, load.err, load.out.trim().split("\n").at(-1)]).toEqual([0, "", "runs bbbbbbbbbbbb"]);
         expect(said("asked")).toEqual(["s3://bucket/releases/bbbbbbbbbbbb.tgz"]);
-        const loaded = () => JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars;
-        const first = loaded().ERGA_UPLOAD;
-        expect(loaded()).toEqual({
+        expect(machine.loaded()).toEqual({
           ERGA_VERSION: "bbbbbbbbbbbb",
           SESSION_SECRET: "s",
           ERGA_UPLOAD: expect.stringMatching(/^[0-9a-f]{32}$/),
         });
         expect(command({ SSM_action: "deployed", SSM_version: "", SSM_sql: "" }).out).toBe("bbbbbbbbbbbb\n");
-        // The same release again: a load with a new name. While the Worker of the load before answers (healthy, with
-        // the same version), the load is not healthy: the script fails, and the machine's list stays.
-        writeFileSync(join(dir, "stale"), "");
-        const stale = command({ SSM_action: "load", SSM_version: "bbbbbbbbbbbb", SSM_sql: "" });
-        const second = loaded().ERGA_UPLOAD;
-        expect(second).not.toBe(first);
-        expect([stale.code, stale.err]).toEqual([
-          1,
-          `release bbbbbbbbbbbb is not healthy: its load ${second} gives no healthy answer. The last answer: {"ok": true, "version": "bbbbbbbbbbbb", "upload": "before", "checks": {}}\n`,
-        ]);
-        rmSync(join(dir, "stale"));
-        expect(command({ SSM_action: "load", SSM_version: "bbbbbbbbbbbb", SSM_sql: "" }).code).toBe(0);
-        expect(command({ SSM_action: "deployed", SSM_version: "", SSM_sql: "" }).out).toBe("bbbbbbbbbbbb\n");
+        // (The load's own health check, and the way back: tests/aws-machine-load.test.ts.)
         // sql: the statement reaches celld whole, as one word, in the release that runs.
         const statement = "SELECT 'erga:' || hex(spec) FROM deploy_spec WHERE id = 1";
         expect(command({ SSM_action: "sql", SSM_version: "", SSM_sql: statement }).code).toBe(0);
@@ -672,7 +621,7 @@ print(json.dumps({"ok": True, "version": "bbbbbbbbbbbb", "upload": upload, "chec
         expect(old.err).toContain("It must be 3.3.2746.0 or newer.");
         expect([said("asked").length, said("celld").length]).toEqual(calls);
       } finally {
-        rmSync(dir, { recursive: true, force: true });
+        machine.remove();
       }
     },
     SLOW
@@ -680,13 +629,13 @@ print(json.dumps({"ok": True, "version": "bbbbbbbbbbbb", "upload": upload, "chec
 });
 
 describe("a deploy from the cloud", () => {
-  test("a release that does not get healthy: the machine loads the release before again, and the parameter stays", async () => {
+  test("a release that does not get healthy: the machine loads again what its last healthy load ran, and the parameter stays", async () => {
     const { cloud, state } = fakeAws({ installed: GATE, ran: ["aaaaaaaaaaaa"], sick: ["bbbbbbbbbbbb"] });
     const { failed } = await deployed(cloud, specOf(), rel());
     expect(failed?.message).toBe(
       'on the machine (Failed): release bbbbbbbbbbbb is not healthy: {"ok":false} It is rolled back to aaaaaaaaaaaa, which ran before.'
     );
-    expect(state.commands.map((c) => `${c.action} ${c.version}`.trim())).toEqual(["deployed", "load bbbbbbbbbbbb", "load aaaaaaaaaaaa"]);
+    expect(state.commands.map((c) => `${c.action} ${c.version}`.trim())).toEqual(["deployed", "load bbbbbbbbbbbb", "back"]);
     expect(state.params.has("/erga-live/erga-example")).toBe(false);
     expect(state.denied).toEqual([]);
   });
@@ -788,7 +737,7 @@ describe("a look from the cloud", () => {
       expect(new TextDecoder().decode(await run(readLog(aws.cloud.sql, job.id, 0)))).toContain(
         "Record its health: done, release 222222222222, healthy on the machine's own check"
       );
-      // All of it with the role's statements, and with the document's three actions.
+      // All of it with the role's statements, and with the document's four actions.
       expect(aws.state.denied).toEqual([]);
       expect([...new Set(aws.state.commands.map((c) => c.action))].sort()).toEqual(["deployed", "load", "sql"]);
       // The next look: the instance has the head, and nothing is deployed again.

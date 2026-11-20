@@ -491,7 +491,7 @@ test("a deploy again of the same release runs this deploy's settings, not those 
   tool(
     "aws",
     `case "$1 $2" in
-  "s3 cp") cat "$FAKE/release.tgz" ;;
+  "s3 cp") cat "$FAKE/release.tgz" > "$4" ;;
   "s3 ls") echo node ;;
   "ssm get-parameters-by-path") echo '{"Parameters":[{"Name":"/erga/erga/SESSION_SECRET","Value":"s"}]}' ;;
   "secretsmanager get-secret-value") [ "$4" = "$FAKE_SECRET" ] && echo the-gate-key || { echo "AccessDenied" >&2; exit 254; } ;;

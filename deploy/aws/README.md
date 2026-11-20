@@ -104,7 +104,8 @@ authority, and no Caddy.
   (`releases/<version>.tgz`), then on the machine: the migrations, `celld deploy`, and a wait (3 minutes at most) until
   the new release answers its own health check on the loopback, healthy. The machine gives each load a name, and
   takes only an answer with that name: the release that ran before can't answer for the new one. A release that
-  doesn't goes back to the one before it. Nothing asks the server from outside: `bun erga status` reads its health through Systems Manager, as the
+  doesn't goes back: the machine loads again the release of its last healthy load, with that load's settings (it
+  keeps that release's packed project: a deploy of the same release with other settings replaces the bucket's). Nothing asks the server from outside: `bun erga status` reads its health through Systems Manager, as the
   machine sees it on the loopback. The server makes its default homepage itself, in its scheduled run (a Cron Trigger
   in the project's wrangler.json, each minute; celld's Cron Triggers are not tested on a real machine yet).
 - `bun erga rollback <name>`: the release before the one that runs, from the bucket. The database stays as it is.
@@ -130,8 +131,9 @@ deletes it too.
   group. It cannot read the bucket, run a shell, read a secret, or change IAM, a stack, a distribution, the document
   or its own code.
 - **The instance's document** (Systems Manager; CloudFormation names it) is the fixed script (`machine.ts`,
-  `documentScript`) with three actions: `load` a release, list the `deployed` releases, and one `sql` statement of the
-  deploys' record. Systems Manager checks each parameter (a release is 12 hex characters; a statement has the shape of
+  `documentScript`) with four actions: `load` a release, go `back` to the release of the machine's last healthy load (with that load's
+  settings: the way back after a load that did not get healthy), list the `deployed` releases, and one `sql` statement
+  of the deploys' record. Systems Manager checks each parameter (a release is 12 hex characters; a statement has the shape of
   a read or a write, of plain characters only), and the agent gives them to the script as environment variables, never
   as text of the script. That needs the agent 3.3.2746.0 or newer: with an older one the script stops at its start.
   The script checks a statement again: it reads only the three tables of the deploys (`deploy_spec`, `deploy_jobs`,

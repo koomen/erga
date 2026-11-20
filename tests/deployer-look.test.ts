@@ -342,13 +342,14 @@ describe("a rollback on AWS", () => {
     app: "erga.example.com",
     pages: { kind: "domain", domain: "pages.example.com" },
   } as const;
-  /** AWS's four calls, with the releases that the machine ran. */
+  /** AWS's calls, with the releases that the machine ran. */
   function machine(ran: string[]) {
     const calls: string[] = [];
     const aws: AwsApi = {
       putRelease: () => Effect.sync(() => (calls.push("putRelease"), 1)),
       deployed: Effect.sync(() => ran),
       load: (version) => Effect.sync(() => (calls.push(`load ${version}`), "loaded\nhealth ok\n")),
+      back: Effect.sync(() => (calls.push("back"), "")),
       setLive: (version) => Effect.sync(() => void calls.push(`setLive ${version}`)),
     };
     return { aws, calls };

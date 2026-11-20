@@ -12,7 +12,7 @@
 // an environment or a credential: what a deploy may touch is what its caller gives it.
 
 import * as Effect from "effect/Effect";
-import { AWS_STEPS, type AwsApi, type AwsRun } from "./aws";
+import { AWS_STEPS, type AwsApi, type AwsRun, awsBack, awsRestore } from "./aws";
 import { bindingsProblem } from "./bindings";
 import { CLOUDFLARE_STEPS, type CloudflareRun, rollbackTo } from "./cloudflare";
 import { type Cloudflare, DeployError, Unhealthy, tried } from "./cloudflare-api";
@@ -76,8 +76,8 @@ function driverOf(spec: Read, release: Release, ports: Ports): Driver | string {
   const run: AwsRun = { aws, target, settings: spec.settings, release };
   return {
     steps: AWS_STEPS.map((s) => ({ id: s.id, title: s.title, run: s.run(run) })),
-    restore: () => run.before ?? null,
-    rollback: aws.load,
+    restore: () => awsRestore(run),
+    rollback: (to) => awsBack(run, to),
   };
 }
 

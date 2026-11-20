@@ -190,8 +190,11 @@ describe("on AWS", () => {
     settings: {},
   };
   const rel = { version: "bbbbbbbbbbbb" } as Release;
-  /** AWS's four calls, as a machine that ran `ran` answers them; `sick`: the releases that do not get healthy. */
-  function fake(ran: string[], sick: string[] = []) {
+  /**
+   * AWS's calls, as a machine that ran `ran` answers them; `sick`: the releases that do not get healthy. `noBack`: the
+   * way back does not get healthy either. `noLive`: the parameter's write fails.
+   */
+  function fake(ran: string[], sick: string[] = [], o: { noBack?: boolean; noLive?: boolean } = {}) {
     const calls: string[] = [];
     const put: { vars?: Record<string, string> } = {};
     const aws: AwsApi = {
@@ -204,7 +207,17 @@ describe("on AWS", () => {
             ? Effect.fail(new DeployError({ message: `on the machine (Failed): release ${v} is not healthy` }))
             : Effect.succeed(`deployed\nruns ${v}`);
         }),
-      setLive: (v) => Effect.sync(() => void calls.push(`live ${v}`)),
+      back: Effect.suspend(() => {
+        calls.push("back");
+        return o.noBack
+          ? Effect.fail(new DeployError({ message: `on the machine (Failed): release ${ran.at(-1)} is not healthy` }))
+          : Effect.succeed(`runs ${ran.at(-1)}`);
+      }),
+      setLive: (v) =>
+        Effect.suspend(() => {
+          calls.push(`live ${v}`);
+          return o.noLive ? Effect.fail(new DeployError({ message: "AWS refused to write which release runs." })) : Effect.void;
+        }),
     };
     return { aws, calls, put };
   }
@@ -234,28 +247,44 @@ describe("on AWS", () => {
     ]);
   });
 
-  test("a release that does not get healthy: the machine loads the release before again, and the parameter stays", async () => {
+  test("a release that does not get healthy: the machine loads again what its last healthy load ran, and the parameter stays", async () => {
     const { aws, calls } = fake(["9999999999999", "aaaaaaaaaaaa"], ["bbbbbbbbbbbb"]);
     const { log, failed } = await run(spec, rel, { aws });
-    expect(calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb", "load aaaaaaaaaaaa"]);
+    expect(calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb", "back"]);
     expect(failed?.message).toBe(
       "on the machine (Failed): release bbbbbbbbbbbb is not healthy It is rolled back to aaaaaaaaaaaa, which ran before."
     );
     expect(log.at(-1)).toBe("on the machine (Failed): release bbbbbbbbbbbb is not healthy It goes back to aaaaaaaaaaaa, which ran before.");
   });
 
-  test("with no release before it (the first one, or the same one again), a failure loads nothing else", async () => {
-    for (const ran of [[], ["bbbbbbbbbbbb"]]) {
-      const { aws, calls } = fake(ran, ["bbbbbbbbbbbb"]);
-      const { failed } = await run(spec, rel, { aws });
-      expect(calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb"]);
-      expect(failed?.message).toBe("on the machine (Failed): release bbbbbbbbbbbb is not healthy");
-    }
+  test("the same release again, with settings that stop it: the way back is the same release, as it ran before", async () => {
+    // (The bucket has only this deploy's object of that name: the machine goes back to what it kept, never to the bucket's.)
+    const again = fake(["aaaaaaaaaaaa", "bbbbbbbbbbbb"], ["bbbbbbbbbbbb"]);
+    expect((await run(spec, rel, { aws: again.aws })).failed?.message).toBe(
+      "on the machine (Failed): release bbbbbbbbbbbb is not healthy It is rolled back to bbbbbbbbbbbb, which ran before."
+    );
+    expect(again.calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb", "back"]);
+    // The first release of a machine: a failure loads nothing else.
+    const first = fake([], ["bbbbbbbbbbbb"]);
+    expect((await run(spec, rel, { aws: first.aws })).failed?.message).toBe("on the machine (Failed): release bbbbbbbbbbbb is not healthy");
+    expect(first.calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb"]);
     // The way back fails too: the deploy says both.
-    const { aws } = fake(["aaaaaaaaaaaa"], ["bbbbbbbbbbbb", "aaaaaaaaaaaa"]);
+    const { aws } = fake(["aaaaaaaaaaaa"], ["bbbbbbbbbbbb"], { noBack: true });
     expect((await run(spec, rel, { aws })).failed?.message).toBe(
       "on the machine (Failed): release bbbbbbbbbbbb is not healthy The rollback to aaaaaaaaaaaa failed too: on the machine (Failed): release aaaaaaaaaaaa is not healthy"
     );
+  });
+
+  test("a healthy load whose record fails: the release before comes from the bucket; the same release stays", async () => {
+    // The machine keeps this deploy's release now: its way back would load this one again.
+    const other = fake(["aaaaaaaaaaaa"], [], { noLive: true });
+    expect((await run(spec, rel, { aws: other.aws })).failed?.message).toBe(
+      "AWS refused to write which release runs. It is rolled back to aaaaaaaaaaaa, which ran before."
+    );
+    expect(other.calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb", "live bbbbbbbbbbbb", "load aaaaaaaaaaaa"]);
+    const same = fake(["bbbbbbbbbbbb"], [], { noLive: true });
+    expect((await run(spec, rel, { aws: same.aws })).failed?.message).toBe("AWS refused to write which release runs.");
+    expect(same.calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb", "live bbbbbbbbbbbb"]);
   });
 
   test("a release whose commit is not on the spec's branch is refused before any step; no answer is not a refusal", async () => {
