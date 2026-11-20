@@ -44,13 +44,14 @@ export async function deployerModule(): Promise<string> {
 
 /**
  * Installs the instance's deployer, or replaces the one that an earlier install made: its code, its bindings, its
- * token, its schedule. `token`: the deployer's own token (for the instance's Worker only), which the person made. The
- * result: the deployer's name. The instance must be there: its Worker, bound to its database.
+ * token, its schedule. `token`: the deployer's own token (for the instance's Worker only), which the person made; null:
+ * the deployer that is there keeps the token that it holds, and gets this code (its store stays too). The result: the
+ * deployer's name. The instance must be there: its Worker, bound to its database.
  */
 export async function installDeployer(
   cf: Cloudflare,
   target: Pick<CloudflareTarget, "account" | "worker">,
-  token: string
+  token: string | null
 ): Promise<string> {
   const acc = `/accounts/${target.account}`;
   const name = deployerName(target.worker);
@@ -69,6 +70,8 @@ export async function installDeployer(
     throw new DeployError({
       message: `Your account has a Worker ${name} that Erga did not make. Erga does not replace it: rename it or delete it, then set up again.`,
     });
+  if (token == null && !there)
+    throw new DeployError({ message: `${target.worker} has no deployer to update: install it first, with a token (--deploys cloud).` });
 
   const form = new FormData();
   form.set(
@@ -81,10 +84,12 @@ export async function installDeployer(
         { type: "plain_text", name: "DATABASE", text: database },
         { type: "plain_text", name: "ACCOUNT", text: target.account },
         { type: "plain_text", name: "WORKER", text: target.worker },
-        { type: "secret_text", name: "CLOUDFLARE_API_TOKEN", text: token },
+        // With no new token, the Worker keeps the secret that it holds (keep_bindings, below).
+        ...(token == null ? [] : [{ type: "secret_text", name: "CLOUDFLARE_API_TOKEN", text: token }]),
         { type: "durable_object_namespace", name: "STATE", class_name: STORE },
         { type: "service", name: "INSTANCE", service: target.worker },
       ],
+      ...(token == null ? { keep_bindings: ["secret_text"] } : {}),
       // The deployer's own store, as a declarative export (as the instance's Durable Objects: cloudflare.ts).
       exports: { [STORE]: { type: "durable-object", storage: "sqlite" } },
       // Each run says one line: Cloudflare keeps the lines, for a person who looks at the deployer.

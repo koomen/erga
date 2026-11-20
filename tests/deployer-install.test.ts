@@ -60,6 +60,23 @@ describe("the install", () => {
     // A second install (a new token) replaces the first one's.
     await installDeployer(cf, TARGET, "another-token-0123456789");
     expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "another-token-0123456789" });
+    // An update with no token: the deployer gets this code again, and keeps the token that it holds.
+    const uploads = () => mock.state.calls.filter((c) => c == `PUT ${acc}/workers/scripts/erga-next-deployer`).length;
+    const before = uploads();
+    await installDeployer(cf, TARGET, null);
+    expect(uploads()).toBe(before + 1);
+    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "another-token-0123456789" });
+    expect(JSON.stringify(mock.state.scripts["erga-next-deployer"].metadata)).not.toContain("another-token");
+    // The Worker has the same bindings as before, its secret among them.
+    expect(Object.keys(bindingsOf(mock.state, "erga-next-deployer")).sort()).toEqual([
+      "ACCOUNT",
+      "CLOUDFLARE_API_TOKEN",
+      "DATABASE",
+      "DB",
+      "INSTANCE",
+      "STATE",
+      "WORKER",
+    ]);
   });
 
   test("never replaces a Worker that Erga did not make, and needs the instance's Worker and database", async () => {
@@ -78,6 +95,12 @@ describe("the install", () => {
     expect(mock.state.calls.slice(from).filter((c) => !c.startsWith("GET "))).toEqual([]);
     expect(mock.state.scripts["erga-next-deployer"].modules).toEqual(["index.js"]);
 
+    // With no token there must be a deployer to update.
+    const none = mockCloudflare({ fleet: true });
+    await bootstrap(none);
+    await expect(installDeployer(new Cloudflare("mock-setup-token", none.fetch), TARGET, null)).rejects.toThrow(
+      "erga-next has no deployer to update: install it first, with a token"
+    );
     await expect(installDeployer(cf, { account: FLEET_ACCOUNT, worker: "no-such-worker" }, "t")).rejects.toThrow(
       "The Worker no-such-worker is not there, or it has no database. Deploy the instance first"
     );

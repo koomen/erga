@@ -420,6 +420,21 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
               );
           }
         }
+        // On Cloudflare too: only a person's login changes the deployer's code. It keeps the token that it holds, its
+        // store and its switch: the user makes no new token for a newer deployer.
+        if (a.where != "aws" && seen.deployer && a.deploys == "cloud" && !did.has("deployer")) {
+          if (o.dryRun)
+            say("PLAN  Its deployer's code changes to this code's. It keeps the token that it holds; auto-deploy stays as it is.");
+          else {
+            const c = await connect();
+            await (await import("../pipeline/deployer")).installDeployer(
+              c.cf,
+              { account: a.account, worker: namesAt(a.host).worker },
+              null
+            );
+            pass(`The deployer of ${a.host} has this code now. It holds the same token; auto-deploy is as it was.`);
+          }
+        }
         return o.dryRun ? "dry" : "done";
     }
   }
