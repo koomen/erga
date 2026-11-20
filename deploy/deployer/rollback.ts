@@ -17,7 +17,7 @@ import type { CloudflareTarget, Spec } from "./spec";
 const HEALTH_MS = 180_000;
 
 /** What a rollback acts through: the API of the target's cloud, the job's log, and who says yes. */
-export interface RollbackPorts extends Pick<Ports, "cloudflare" | "database" | "aws" | "log" | "waitMs"> {
+export interface RollbackPorts extends Pick<Ports, "cloudflare" | "aws" | "log" | "waitMs"> {
   /**
    * Whether the rollback goes on, asked after the log says where it goes: a person at a terminal answers, and the
    * deployer in the cloud says yes (an admin asked for it in the app).
@@ -46,7 +46,7 @@ export function previousVersion(
 
 const wrong = (message: string) => new DeployError({ message });
 
-const onCloudflare = (cf: Cloudflare, t: CloudflareTarget, { log, ok, waitMs, database }: RollbackPorts) =>
+const onCloudflare = (cf: Cloudflare, t: CloudflareTarget, { log, ok, waitMs }: RollbackPorts) =>
   Effect.gen(function* () {
     const list = yield* cf.request(
       "GET",
@@ -71,7 +71,7 @@ const onCloudflare = (cf: Cloudflare, t: CloudflareTarget, { log, ok, waitMs, da
     yield* tried(() => rollbackTo(cf, t, p.before, "rollback"));
     log(`The Worker runs release ${to.version ?? "?"} again. Its health row comes within a minute...`);
     if (!to.version || !to.database) return yield* wrong("No health row after the rollback: the version names no release.");
-    const h = yield* settledHealth(database ?? d1Api(cf, `/accounts/${t.account}`, to.database), to.version, waitMs ?? HEALTH_MS);
+    const h = yield* settledHealth(d1Api(cf, `/accounts/${t.account}`, to.database), to.version, waitMs ?? HEALTH_MS);
     if (h.healthy !== true)
       return yield* wrong(
         h.healthy === false ? `The health check fails after the rollback: ${h.why}` : `No health row after the rollback: ${h.why}`

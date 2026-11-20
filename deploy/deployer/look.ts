@@ -1,6 +1,6 @@
 // The deployer's look, each minute: what GitHub has of the branch that the instance's spec names, written on the
 // instance for its ops page (control.ts), and with auto-deploy on, the deploy of the branch's head. The deployer on
-// Cloudflare (worker.ts) and the one on AWS run this same function: each gives its own ports.
+// AWS runs this function (lambda.ts). The deployer on Cloudflare has its own small code, with the same rules: worker.ts.
 //
 // One look:
 //   1. The instance's spec, and what the last look wrote.
@@ -40,7 +40,7 @@ export interface LookPorts {
   /** The way to GitHub and to its registry. */
   fetch: Fetch;
   /** The API of the deployer's cloud, as deploy() takes it. */
-  cloud: Pick<Ports, "cloudflare" | "database" | "aws">;
+  cloud: Pick<Ports, "cloudflare" | "aws">;
   /** Whether the spec's target is the instance that this deployer is installed for: it deploys to no other. */
   mine: (target: Spec["target"]) => boolean;
 }

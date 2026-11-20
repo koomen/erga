@@ -1,6 +1,7 @@
 // The deployer's core: deploy(spec, release, ports) puts one release on one instance, with the code steps only
-// (Cloudflare: cloudflare.ts; AWS: aws.ts). A machine runs it with a person's own login (`bun erga deploy`); the
-// deployer in the cloud account runs the same code with its narrow credential. The instance's shape (its account,
+// (Cloudflare: cloudflare.ts; AWS: aws.ts). A machine runs it with a person's own login (`bun erga deploy`); on AWS,
+// the deployer in the cloud account runs the same code with its narrow credential. (The deployer on Cloudflare has its
+// own small code: worker.ts.) The instance's shape (its account,
 // database, addresses, secrets) is there before: setup makes it (deploy/pipeline/, deploy/aws/setup.ts).
 //
 // It is the thin owner of the job's state machine (job.ts): it does each effect through the ports, and gives the answer
@@ -13,7 +14,7 @@
 import * as Effect from "effect/Effect";
 import { AWS_STEPS, type AwsApi, type AwsRun } from "./aws";
 import { bindingsProblem } from "./bindings";
-import { CLOUDFLARE_STEPS, type CloudflareRun, type Database, rollbackTo } from "./cloudflare";
+import { CLOUDFLARE_STEPS, type CloudflareRun, rollbackTo } from "./cloudflare";
 import { type Cloudflare, DeployError, Unhealthy, tried } from "./cloudflare-api";
 import { type Event, type Job, type Step, step } from "./job";
 import type { Release } from "./release-format";
@@ -25,11 +26,6 @@ type Read = Pick<Spec, "repo" | "branch" | "target" | "settings">;
 /** What a deploy acts through: the API of the target's cloud, who knows the branch's commits, and the job's log. */
 export interface Ports {
   cloudflare?: Cloudflare;
-  /**
-   * On Cloudflare, the deployer's own way to the instance's database: its Worker's binding (d1-binding.ts), because its
-   * token holds no permission for D1. With none (a machine): D1's API, with `cloudflare`.
-   */
-  database?: Database;
   aws?: AwsApi;
   /**
    * Whether the release (its version: the commit) is a commit of the spec's branch. The deployer in the cloud asks
@@ -59,7 +55,6 @@ function driverOf(spec: Read, release: Release, ports: Ports): Driver | string {
       release,
       carry: {},
       waitMs: ports.waitMs,
-      database: ports.database,
     };
     return (
       bindingsProblem(release) ?? {

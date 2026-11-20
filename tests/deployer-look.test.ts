@@ -1,5 +1,5 @@
-// The deployer's look, each minute (deploy/deployer/look.ts), and the Worker that runs it on Cloudflare
-// (deploy/deployer/worker.ts). Against a pretend GitHub (its list of refs, its feed of commits, its registry), a real
+// The deployer's look, each minute (deploy/deployer/look.ts): AWS's deployer runs it. (The deployer on Cloudflare has
+// its own code and tests: tests/deployer-worker.test.ts.) Against a pretend GitHub (its list of refs, its feed of commits, its registry), a real
 // SQLite with the migrations' own tables, the mock Cloudflare (dev/mock-cloudflare.ts) and a clock of the test's own.
 // Nothing real is touched: no network, no credential, no wait.
 
@@ -451,7 +451,7 @@ describe("the branch, as github.com says it", () => {
   });
 });
 
-describe("the deployer on Cloudflare", () => {
+describe("a look for an instance on Cloudflare, with the core's own steps", () => {
   const ENV = { CLOUDFLARE_API_TOKEN: "mock-deployer-token", ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next" };
   /** The instance as setup's pipeline made it (release SHA1), its spec on it, and GitHub with the release of SHA2. */
   async function instance() {
@@ -554,21 +554,5 @@ describe("the deployer on Cloudflare", () => {
       "rollback app, by ada done",
       "deploy auto-deploy done",
     ]);
-  });
-
-  test("the Worker is one file with Effect and this folder only: no Node, no other code of Erga's", async () => {
-    const built = await Bun.build({
-      entrypoints: [join(ROOT, "deploy/deployer/worker.ts")],
-      target: "browser",
-      format: "esm",
-      minify: true,
-    });
-    expect(built.logs.map(String)).toEqual([]);
-    expect(built.success).toBe(true);
-    const code = await built.outputs[0].text();
-    expect(code).not.toMatch(/from\s*"node:|require\(/);
-    expect(code).toContain("scheduled");
-    // Cloudflare takes a Worker of 3 MB at most (after gzip) on its free plan.
-    expect(Bun.gzipSync(new TextEncoder().encode(code)).byteLength).toBeLessThan(1_000_000);
   });
 });

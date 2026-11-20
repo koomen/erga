@@ -1,11 +1,12 @@
 // The deployer on Cloudflare, as setup installs it: deploy/deployer/worker.ts, bundled on this machine, in the person's
 // own account as the Worker <the instance's Worker>-deployer. A person installs it, with their own login: it is a part
 // of the instance's shape. The deployer's own token is for the instance's Worker only, so the deployer can't change
-// itself.
+// itself: its code is the one of the checkout that ran setup, until setup runs again.
 //
-// What the Worker gets (deploy/deployer/worker.ts says what each is for): the instance's database as the binding DB,
-// the account and the instance's Worker as plain text, and the token as a secret. A schedule each minute. No address:
-// no route, no domain, and its workers.dev address is off.
+// What the Worker gets (deploy/deployer/worker.ts says what each is for): the instance's database as the binding DB
+// and its id as plain text, the account and the instance's Worker as plain text, the token as a secret, its own
+// Durable Object (its store), and the instance's Worker as a service. A schedule each minute. No address: no route, no
+// domain, and its workers.dev address is off.
 //
 // Trap: a Worker of that name that this code did not make is never replaced: the account may hold other things.
 
@@ -22,13 +23,20 @@ export const DEPLOYER_TAG = "erga-deployer";
 /** The Workers runtime's date for the deployer's code. */
 const COMPATIBILITY_DATE = "2026-09-01";
 const MODULE = "worker.js";
+/** The class of the deployer's store (deploy/deployer/worker.ts). */
+const STORE = "DeployerState";
 
 /** The name of an instance's deployer. */
 export const deployerName = (worker: string) => `${worker}-deployer`;
 
-/** deploy/deployer/worker.ts as one module, with Effect in it: what the Worker runs. */
+/** deploy/deployer/worker-main.ts as one module: what the Worker runs. */
 export async function deployerModule(): Promise<string> {
-  const built = await Bun.build({ entrypoints: [join(ROOT, "deploy/deployer/worker.ts")], target: "browser", format: "esm", minify: true });
+  const built = await Bun.build({
+    entrypoints: [join(ROOT, "deploy/deployer/worker-main.ts")],
+    target: "browser",
+    format: "esm",
+    minify: true,
+  });
   if (!built.success || built.outputs.length != 1)
     throw new DeployError({ message: `The deployer's code did not build: ${built.logs.map(String).join("; ") || "no module"}` });
   return built.outputs[0].text();
@@ -70,11 +78,16 @@ export async function installDeployer(
       compatibility_date: COMPATIBILITY_DATE,
       bindings: [
         { type: "d1", name: "DB", database_id: database, id: database },
+        { type: "plain_text", name: "DATABASE", text: database },
         { type: "plain_text", name: "ACCOUNT", text: target.account },
         { type: "plain_text", name: "WORKER", text: target.worker },
         { type: "secret_text", name: "CLOUDFLARE_API_TOKEN", text: token },
+        { type: "durable_object_namespace", name: "STATE", class_name: STORE },
+        { type: "service", name: "INSTANCE", service: target.worker },
       ],
-      // Each look says one line: Cloudflare keeps the lines, for a person who looks at the deployer.
+      // The deployer's own store, as a declarative export (as the instance's Durable Objects: cloudflare.ts).
+      exports: { [STORE]: { type: "durable-object", storage: "sqlite" } },
+      // Each run says one line: Cloudflare keeps the lines, for a person who looks at the deployer.
       observability: { enabled: true, logs: { enabled: true, invocation_logs: true } },
       tags: [DEPLOYER_TAG],
     })

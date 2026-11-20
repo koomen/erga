@@ -29,8 +29,13 @@ describe("the install", () => {
     expect(await installDeployer(cf, TARGET, "the-deployer-token-0123456789")).toBe("erga-next-deployer");
     const script = mock.state.scripts["erga-next-deployer"];
     const bindings = bindingsOf(mock.state, "erga-next-deployer");
-    expect(Object.keys(bindings).sort()).toEqual(["ACCOUNT", "CLOUDFLARE_API_TOKEN", "DB", "WORKER"]);
+    expect(Object.keys(bindings).sort()).toEqual(["ACCOUNT", "CLOUDFLARE_API_TOKEN", "DATABASE", "DB", "INSTANCE", "STATE", "WORKER"]);
     expect(bindings.DB).toMatchObject({ type: "d1", database_id: databaseOf(mock.state, "erga-next").uuid });
+    expect(bindings.DATABASE.text).toBe(databaseOf(mock.state, "erga-next").uuid);
+    // Its own store, a Durable Object of its own class; and the instance's Worker, for the health check.
+    expect(bindings.STATE).toMatchObject({ type: "durable_object_namespace", class_name: "DeployerState" });
+    expect(script.metadata.exports).toEqual({ DeployerState: { type: "durable-object", storage: "sqlite" } });
+    expect(bindings.INSTANCE).toMatchObject({ type: "service", service: "erga-next" });
     expect(bindings.ACCOUNT.text).toBe(FLEET_ACCOUNT);
     expect(bindings.WORKER.text).toBe("erga-next");
     // The token is a secret of the Worker: Cloudflare gives it back to nobody.
@@ -89,12 +94,22 @@ describe("the installed Worker, in the Workers runtime", () => {
   test("its schedule deploys the head's release: the module that the install uploads runs, and reaches only what a Worker can", async () => {
     // All that the Worker reaches outside itself comes here: Cloudflare's API (the mock) and GitHub (the pretend one).
     let out: Awaited<ReturnType<typeof instanceOn>>["fetch"] = async () => new Response("the test is not ready", { status: 503 });
+    const made = mockCloudflare({ fleet: true });
+    await bootstrap(made);
     runtime = new Miniflare(
       convertV4MiniflareOptions({
         modules: [{ type: "ESModule", path: "worker.js", contents: await deployerModule() }],
         compatibilityDate: "2026-09-01",
         d1Databases: ["DB"],
-        bindings: { ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next", CLOUDFLARE_API_TOKEN: "mock-only-erga-next" },
+        durableObjects: { STATE: "DeployerState" },
+        // The instance's Worker: not asked here, because the public address gives the server's own report.
+        serviceBindings: { INSTANCE: async () => new RuntimeResponse("not asked", { status: 500 }) },
+        bindings: {
+          ACCOUNT: FLEET_ACCOUNT,
+          WORKER: "erga-next",
+          DATABASE: databaseOf(made.state, "erga-next").uuid,
+          CLOUDFLARE_API_TOKEN: "mock-only-erga-next",
+        },
         outboundService: async (request: Request) => {
           const body = request.method == "GET" || request.method == "HEAD" ? undefined : await request.arrayBuffer();
           const answer = await out(request.url, { method: request.method, headers: [...request.headers], body });
@@ -102,7 +117,7 @@ describe("the installed Worker, in the Workers runtime", () => {
         },
       })
     );
-    const { mock, sql, fetch, calls } = await instanceOn((await runtime.getD1Database("DB")) as unknown as D1);
+    const { mock, sql, fetch, calls } = await instanceOn((await runtime.getD1Database("DB")) as unknown as D1, made);
     out = fetch;
     await run(sql("INSERT INTO deploy_control (id, auto) VALUES (1, 1)", []));
     const worker = (await runtime.getWorker()) as unknown as { scheduled(event: { cron: string }): Promise<{ outcome: string }> };
