@@ -235,28 +235,50 @@ export function pageModel(cfg: AgentConfig, choice: ModelChoice, maxTokens: numb
   return anthropic(m.id, config, apiKey);
 }
 
+type Sent = {
+  type?: string;
+  id?: string;
+  text?: string;
+  modelOutput?: readonly Sent[];
+  options?: { anthropic?: { info?: unknown }; pi?: { provider?: string; model?: string; sig?: string } };
+};
+
 /**
- * The messages as the model of `choice` takes them. Anthropic takes a tool call's id only in letters, digits, _ and
- * -; another provider's (OpenAI's "call_…|fc_…") is rewritten the same way in the call and its result. Pi does the
- * same for the providers it calls.
+ * The messages as the model of `choice` takes them, whichever model made them (the person switched models): each
+ * API refuses a request for one part that it doesn't take.
+ *
+ * - A text with no words goes (Claude's before a tool call, a tool's empty result): Anthropic refuses the request
+ *   for it. Gemini's stays for the Gemini model that made it: it carries a thought signature that the model wants back.
+ * - Thinking after a turn's last words or call goes: Anthropic and OpenAI refuse it there. For Claude, another
+ *   provider's thinking goes too (Pi does the same for the providers it calls). A turn with nothing left goes.
+ * - Anthropic takes a tool call's id only in letters, digits, _ and -, 64 at most; another provider's (OpenAI's
+ *   "call_…|fc_…") is rewritten the same way in the call and its result. Pi does the same for the providers it calls.
  */
 export function messagesFor<M extends { role: string; content: unknown }>(
   choice: ModelChoice | null,
   messages: readonly M[]
 ): readonly M[] {
-  if (!choice || MODELS[choice].provider != "anthropic") return messages;
-  const clean = (id: string) => id.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return messages.map((m) =>
-    Array.isArray(m.content) &&
-    m.content.some((p: { type?: string; id?: string }) => (p.type == "tool-call" || p.type == "tool-result") && p.id && clean(p.id) != p.id)
-      ? {
-          ...m,
-          content: m.content.map((p: { type?: string; id?: string }) =>
-            (p.type == "tool-call" || p.type == "tool-result") && p.id ? { ...p, id: clean(p.id) } : p
-          ),
-        }
-      : m
-  );
+  if (!choice) return messages;
+  const to = MODELS[choice];
+  const claude = to.provider == "anthropic";
+  const takes = (p: Sent, role: string): boolean => {
+    if (p.type == "reasoning") return !claude || p.options?.anthropic?.info != null;
+    if (p.type != "text" || p.text?.trim()) return true;
+    const pi = p.options?.pi;
+    return role == "assistant" && to.provider == "google" && !!pi?.sig && pi.provider == to.provider && pi.model == to.id;
+  };
+  const id = (p: Sent): Sent =>
+    claude && p.id && (p.type == "tool-call" || p.type == "tool-result")
+      ? { ...p, id: p.id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) }
+      : p;
+  return messages.flatMap((m) => {
+    if (!Array.isArray(m.content)) return [m];
+    const content = (m.content as Sent[])
+      .filter((p) => takes(p, m.role))
+      .map((p) => id(p.modelOutput ? { ...p, modelOutput: p.modelOutput.filter((o) => takes(o, m.role)) } : p));
+    if (m.role == "assistant") while (content.at(-1)?.type == "reasoning") content.pop();
+    return content.length ? [{ ...m, content }] : [];
+  });
 }
 
 type AnthropicConfig = NonNullable<Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]>;
@@ -358,7 +380,7 @@ export function modelError(e: unknown, asked = 1): string {
       : passing(e)
         ? `${asked > 1 ? `The agent asked ${asked} times. ` : ""}${GO_ON}`
         : tag == "InvalidRequestError"
-          ? `The model refused the request. ${NEW}`
+          ? `Erga sent a request that the model's API does not accept. ${NEW}`
           : GO_ON;
   return `${words || "The request failed"}${/[.!?]$/.test(words) ? "" : "."} ${on}`;
 }

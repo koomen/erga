@@ -287,7 +287,7 @@ test("a request that the API refuses ends the turn with the API's words and how 
   expect(said.length).toBe(1);
   expect(said[0]).toContain("messages.0.content: something the API does not take");
   expect(said[0]).toEndWith(
-    'The model refused the request. Say "go on" to try again. If the same error comes back, start a new conversation (the + above).'
+    'Erga sent a request that the model\'s API does not accept. Say "go on" to try again. If the same error comes back, start a new conversation (the + above).'
   );
   expect(loop.log.busy).toBe(false);
   // The person goes on: the agent takes the message, and answers.
