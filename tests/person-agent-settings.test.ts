@@ -9,8 +9,11 @@ import { objectSql } from "./helpers/memory-sql";
 
 afterEach(() => setSystemTime());
 
+/** The hosted agents that the server has (the setting agents). */
+const HOSTED = [{ name: "Helper", url: "https://agent.example.com/agui" }];
 function agents(read: () => Promise<{ missing: string }>) {
-  return new PersonAgents({ sql: objectSql(), platform: { agentSettings: read } as unknown as Platform });
+  const directory = { config: { get: async () => HOSTED } };
+  return new PersonAgents({ sql: objectSql(), platform: { agentSettings: read, directory } as unknown as Platform });
 }
 
 test("the panel's state reads the settings once in 5 s; a turn reads them at once", async () => {
@@ -18,7 +21,13 @@ test("the panel's state reads the settings once in 5 s; a turn reads them at onc
     now = "no key yet";
   const a = agents(async () => (reads++, { missing: now }));
   setSystemTime(new Date("2026-11-04T12:00:00Z"));
-  expect(await a.agentState("ada", null, "http://x")).toEqual({ enabled: false, reason: "no key yet" });
+  expect(await a.agentState("ada", null, "http://x")).toEqual({
+    enabled: false,
+    reason: "no key yet",
+    agents: HOSTED,
+    sessions: [],
+    agent: null,
+  });
   await Promise.all([a.agentState("ada", null, "http://x"), a.agentState("ada", null, "http://x")]);
   expect(reads).toBe(1);
 
@@ -55,4 +64,18 @@ test("a failed read of the settings isn't kept", async () => {
   expect(await a.agentState("ada", null, "http://x")).toMatchObject({ reason: expect.stringContaining("couldn't be read (D1 stalled)") });
   expect(await a.agentState("ada", null, "http://x")).toMatchObject({ reason: "no key yet" });
   expect(reads).toBe(2);
+});
+
+test("a person picks who their panel shows: a hosted agent of the server's, or Erga's own; each person has their own choice", async () => {
+  const a = agents(async () => ({ missing: "no key" }));
+  expect(await a.setAgent("ada", "Other")).toEqual({ ok: false, reason: "this server has no agent by that name" });
+  expect(await a.setAgent("ada", "Helper")).toEqual({ ok: true });
+  expect(await a.agentState("ada", null, "http://x")).toMatchObject({ agent: "Helper", agents: HOSTED });
+  expect(await a.agentState("bob", null, "http://x")).toMatchObject({ agent: null });
+  // Her other tabs hear it.
+  const heard: string[] = [];
+  a.join(new Request("http://x/api/agent/events", { headers: { "x-erga-login": "ada" } }), (text) => heard.push(text));
+  expect(await a.setAgent("ada", null)).toEqual({ ok: true });
+  expect(heard.map((t) => JSON.parse(t))).toEqual([{ type: "who", agent: null, agents: HOSTED, sessions: [] }]);
+  expect(await a.agentState("ada", null, "http://x")).toMatchObject({ agent: null });
 });

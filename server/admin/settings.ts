@@ -21,7 +21,7 @@ export const PAGE_SETTINGS = {
   /** Documents: new documents, and the files' limits. */
   documents: ["delete_docs_after_hours", "max_file_mb", "max_project_gb"],
   /** Agents and models: the agents on the server's keys, then the Document LLM API: its switch, and what shows while it's on. */
-  agents: ["agent_daily_tokens"],
+  agents: ["agent_daily_tokens", "agents"],
   llmApi: ["document_llm_api"],
   llmApiOn: ["document_llm_guests", "document_llm_daily_usd", "document_llm_max_tokens"],
   feedback: ["feedback"],

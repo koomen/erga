@@ -110,3 +110,19 @@ test("each setting has one place: a page's list, or a control of its own; each p
   for (const gone of ["/admin/settings", "/admin/users"]) expect((await fetch(`http://localhost:${server.port}${gone}`)).status).toBe(404);
 });
 
+test("the hosted agents (the setting agents) are a list of names with https addresses", () => {
+  const parse = SETTINGS.agents.parse;
+  expect(parse('[{"name": " Helper ", "url": "https://agent.example.com/agui"}]')).toEqual([
+    { name: "Helper", url: "https://agent.example.com/agui" },
+  ]);
+  expect(parse([{ name: "Local", url: "http://127.0.0.1:8123/agui" }])).toEqual([{ name: "Local", url: "http://127.0.0.1:8123/agui" }]);
+  expect(() => parse([{ name: "Plain", url: "http://agent.example.com/agui" }])).toThrow("Plain needs a url that starts with https://");
+  expect(() => parse([{ url: "https://agent.example.com" }])).toThrow("each agent needs a name");
+  expect(() =>
+    parse([
+      { name: "A", url: "https://a.example.com" },
+      { name: "a", url: "https://b.example.com" },
+    ])
+  ).toThrow("a name of its own");
+  expect(() => parse("QM")).toThrow("must be a list");
+});

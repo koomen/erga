@@ -59,6 +59,7 @@
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/routes.ts";
+import { isPluginPath, pluginRoutes } from "../agents/plugin.ts";
 import { DOMAIN_LLM_PATH, domainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi, unauthorized } from "./api.ts";
 import { documentRoutes, ergaAddress, isKeyedOp, isPagesSite, workerHere } from "./documents/index.ts";
@@ -289,6 +290,8 @@ const route = (url: URL, outside: Outside): Route =>
     if (path.startsWith(LIVE_FILES)) return yield* serveLiveFile;
     // Each person's agent, its conversation and panel: before the server's API, which has the rest of /api/.
     if (isAgentPath(path)) return yield* agentApi;
+    // Erga's plugin for Claude Code, which a person installs there to attach a session (agents/plugin.ts).
+    if (isPluginPath(path)) return yield* pluginRoutes;
     // The Document LLM API, called as its visitor (window.ergaLLM): before the server's API too.
     if (isPageLlmPath(path)) return yield* pageLlmApi;
     // Live pages: an open page's socket, and the rows it asks for when they change.

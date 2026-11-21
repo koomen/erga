@@ -66,7 +66,9 @@ export function chat(opts: ChatOptions): Chat {
   const later = new Set<number>();
 
   /** A message of yours: its text, and what was attached, as chips (thumbnails for images). */
-  function userMessage(el: HTMLElement, text: string, files?: FileRef[]) {
+  function userMessage(el: HTMLElement, text: string, files?: FileRef[], away = false) {
+    // A message that the person typed where the agent runs (an attached session's terminal) says so.
+    if (away) el.append(Object.assign(document.createElement("small"), { className: "from", textContent: "in the terminal" }));
     if (text) el.append(text);
     if (!files?.length) return;
     const list = document.createElement("span");
@@ -77,16 +79,20 @@ export function chat(opts: ChatOptions): Chat {
   function renderItem(item: LogItem, i: number): HTMLElement {
     const el = document.createElement("div");
     el.className = "msg-" + item.kind;
-    if (item.kind == "user") userMessage(el, item.text, item.files);
+    if (item.kind == "user") userMessage(el, item.text, item.files, item.away);
     else if (item.kind == "thinking" || item.kind == "error") el.textContent = item.text;
     else if (item.kind == "assistant") el.innerHTML = inline(item.text);
     else if (!callShown(log, i)) el.hidden = true;
     else {
-      const [doing, done] = verbs[item.name] ?? [item.name, item.name];
+      // A call of another agent's (a hosted agent, an attached session: shared/agui.ts) has that agent's name before
+      // it, and the tool's own name: the verbs are for Erga's tools.
+      const [doing, done] = (item.by ? null : verbs[item.name]) ?? [esc(item.name), esc(item.name)];
+      const asks = item.by ? esc(item.by) : "Your agent";
       const what = item.path ? ` <code>${esc(item.path)}</code>` : "";
       // A call from an agent you shared the page with (the share button) says so.
-      const via =
-        item.via == "external"
+      const via = item.by
+        ? `<span class="via">${esc(item.by)}:</span> `
+        : item.via == "external"
           ? `<span class="via" title="${esc(opts.externalTip ?? "An outside agent, working as your agent")}">External agent:</span> `
           : "";
       if (item.status == "asking") {
@@ -102,7 +108,7 @@ export function chat(opts: ChatOptions): Chat {
                 : `<details><summary><span class="cut">${esc(a.cut)}… </span><span class="all">Show all ${a.text.length.toLocaleString("en-US")} characters</span><span class="less">Show less</span></summary><div>${esc(a.text)}</div></details>`
             }</div>`
         );
-        el.innerHTML = `<span>${says ? `Your agent asks to:<span class="detail">${esc(says)}</span>` : "Your agent asks to run:"}<div class="call"><div class="head">${esc(head)}</div>${lines.join("")}</div></span><span class="ask-acts"><button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button></span>`;
+        el.innerHTML = `<span>${says ? `${asks} asks to:<span class="detail">${esc(says)}</span>` : `${asks} asks to run:`}<div class="call"><div class="head">${esc(head)}</div>${lines.join("")}</div>${item.note ? `<small class="also">${esc(item.note)}</small>` : ""}</span><span class="ask-acts"><button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button></span>`;
       } else {
         el.classList.add(item.status);
         el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${esc(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${esc(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;

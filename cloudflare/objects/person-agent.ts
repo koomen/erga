@@ -44,17 +44,36 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
   agentControl(login: string, doc: string | null, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
     return this.agents.agentControl(login, doc, op, model);
   }
+  setAgent(login: string, agent: string | null) {
+    return this.agents.setAgent(login, agent);
+  }
   conversation(login: string, doc: string | null) {
     return this.agents.conversation(login, doc);
   }
   clearConversation(login: string, doc: string | null) {
     return this.agents.clearConversation(login, doc);
   }
-  /** The panel's events: a WebSocket (Upgrade: websocket), else server-sent events. */
+  /**
+   * The panel's events: a WebSocket (Upgrade: websocket), else server-sent events. And an attached session's link
+   * (/api/agent/link, a WebSocket: agents/link.ts): each of its frames is heard here.
+   */
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() != "websocket") return this.agents.fetch(request);
     const { 0: client, 1: server } = new WebSocketPair();
     server.accept();
+    if (new URL(request.url).pathname == "/api/agent/link") {
+      const link = this.agents.attach(
+        request,
+        (text) => server.send(text),
+        () => server.close(1008, "the link is closed")
+      );
+      server.addEventListener("message", (e) => {
+        if (typeof e.data == "string") link.hear(e.data);
+      });
+      server.addEventListener("close", link.leave);
+      server.addEventListener("error", link.leave);
+      return new Response(null, { status: 101, webSocket: client });
+    }
     const leave = this.agents.join(request, (text) => server.send(text));
     server.addEventListener("close", leave);
     server.addEventListener("error", leave);

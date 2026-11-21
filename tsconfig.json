@@ -30,6 +30,7 @@
     "e2e.config.ts",
     "vite.config.ts",
     "client/build.ts",
+    "helper/build.ts",
     "assets/logo"
   ],
   // They test Worker files with the Workers' types: tsconfig.workers.json checks them.

@@ -35,3 +35,6 @@ deploy/builder/deps/
 
 # The instances this clone deploys, bun erga setup's answers and secrets, the jobs (deploy/cli/config.ts, deploy/own/store.ts)
 .erga/
+
+# The helper's build, when cargo runs with no CARGO_TARGET_DIR (helper/build.ts and the tests set one, in the person's cache)
+helper/target/

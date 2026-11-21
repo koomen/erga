@@ -20,7 +20,7 @@ const PANEL = `<div class="agent-glass">
 <button type="button" class="agent-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="false" aria-controls="agent">${MARK}</button>
 <div class="agent-card" inert>
 <div class="agent-head">
-<span class="title">Agent</span><span class="model" id="agent-model"></span>
+<button type="button" class="who" id="agent-who" aria-haspopup="menu" aria-expanded="false" aria-controls="agent-menu">Agent<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></button><span class="model" id="agent-model"></span>
 <button type="button" class="icon-btn" id="agent-undo" aria-label="Undo the agent's last change" data-tip="Undo the agent's last change" aria-disabled="true" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4.5 9.5 9 5"/><path d="M4.5 9.5H14a5.5 5.5 0 0 1 0 11h-3"/></svg></button>
 <button type="button" class="icon-btn" id="agent-redo" aria-label="Redo the agent's last undone change" data-tip="Redo the agent's last undone change" aria-disabled="true" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14 19.5 9.5 15 5"/><path d="M19.5 9.5H10a5.5 5.5 0 0 0 0 11h3"/></svg></button>
 <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>

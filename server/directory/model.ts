@@ -121,6 +121,7 @@ export const RESERVED = new Set([
   "about",
   "share",
   "members",
+  "agents",
 ]);
 
 /** A new document's row. Its slug starts from `slug` (else its title), with -2, -3... if that's taken; `slugSet` fixes it there. */

@@ -3,6 +3,8 @@
 // pages of that document show it), and one for the rest of Erga (the list, the settings, the admin pages). Threads
 // run apart: a turn goes on in its thread when the person opens another page, and its answer lands there. The panel
 // is client/agent/person-agent.ts, on every page.
+// The object also keeps the person's attached sessions: agents that run somewhere else and opened a link here
+// (agents/link.ts). The panel can show one in place of Erga's own agent: then its messages go down that link.
 // This is the logic (PersonAgents); the Durable Object (cloudflare/objects/person-agent.ts) gives it its
 // SQLite and forwards the calls. The routes that reach it (/api/agent...) are routes.ts's.
 
@@ -13,7 +15,8 @@ import { agentTools, opsOf, toolsFor } from "../tools.ts";
 import { callDocument, type Caller } from "../../server/operations/index.ts";
 import type { Directory, Route as DocRoute } from "../../server/directory/index.ts";
 import { isModelChoice, type AgentSettings } from "../models.ts";
-import { emptyLog, type Log } from "../../shared/agent-log.ts";
+import { emptyLog, type Log, reduce } from "../../shared/agent-log.ts";
+import { linkStart, linkStep, type Link, type LinkEvent } from "../link.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { VIA } from "../../shared/attribution.ts";
 import { authOps } from "../../server/identity/index.ts";
@@ -85,6 +88,19 @@ const listener = (request: Request): Listener => {
   return { login, scope: scopeOf(login, docOf(new URL(request.url))) };
 };
 
+/** An attached session: its link's state, whose it is, the grant its helper came with, and its socket (`on`: open). */
+interface Attached {
+  link: Link;
+  login: string;
+  grant: string;
+  on: boolean;
+  send(text: string): void;
+  close(): void;
+}
+/** The most sessions one person has attached; and how the panel's choice names one. */
+const MOST_LINKS = 8;
+const LINK = "link:";
+
 /** A thread's session, with where the server is, as the person's page said last. */
 interface Thread {
   agent: AgentSession;
@@ -97,6 +113,8 @@ export class PersonAgents {
   private sockets = new Map<(text: string) => void, Listener>();
   /** Each thread's session, by its scope. */
   private agents = new Map<string, Thread>();
+  /** Each attached session, by the id its helper gave (agents/link.ts): one that left stays, off, until the object goes. */
+  private links = new Map<string, Attached>();
   private beat: Fiber.Fiber<void> | null = null;
   /** Each thread's conversation, kept step by step (agents/checkpoint.ts), by its scope (scopeOf). */
   private chats: ChatTables;
@@ -109,6 +127,7 @@ export class PersonAgents {
 
   constructor(private deps: PersonAgentsDeps) {
     this.chats = new ChatTables(deps.sql);
+    deps.sql.exec("CREATE TABLE IF NOT EXISTS panel (login TEXT PRIMARY KEY, agent TEXT NOT NULL)");
     this.settings = Effect.runSync(
       Cache.makeWith((login: string) => Effect.tryPromise({ try: () => deps.platform.agentSettings(login), catch: (e) => e }), {
         capacity: 64,
@@ -203,11 +222,138 @@ export class PersonAgents {
     return s;
   }
 
+  /**
+   * Who the person's panel shows: the hosted agents that this server has (the setting agents), the person's attached
+   * sessions (`sessions`), and the one that the person picked (`agent`: a hosted agent's name, or "link:" and a
+   * session's id; null: Erga's own agent). The page talks to a hosted agent itself (client/agent/agui-http.ts); a
+   * session's messages go through here, down its link. The object keeps the choice, for the person's every tab.
+   */
+  private async who(login: string) {
+    const agents = await this.platform.directory.config.get("agents");
+    const sessions = [...this.links.values()].filter((a) => a.login == login && a.link.hello).map((a) => ({ ...a.link.hello!, on: a.on }));
+    const picked = this.deps.sql.exec<{ agent: string }>("SELECT agent FROM panel WHERE login = ?", login)[0]?.agent ?? "";
+    const known = picked.startsWith(LINK) ? sessions.some((s) => LINK + s.id == picked) : agents.some((a) => a.name == picked);
+    return { agents, sessions, agent: known ? picked : null };
+  }
+
+  /** The attached session that the person's panel shows, if it shows one. (It reads no setting: every request asks.) */
+  private linked(login: string): Attached | null {
+    if (!this.links.size) return null;
+    const picked = this.deps.sql.exec<{ agent: string }>("SELECT agent FROM panel WHERE login = ?", login)[0]?.agent ?? "";
+    const at = picked.startsWith(LINK) ? this.links.get(picked.slice(LINK.length)) : null;
+    return at?.login == login ? at : null;
+  }
+
+  /** The person picks who their panel shows (null: Erga's own agent): their other tabs follow. */
+  async setAgent(login: string, agent: string | null): Promise<{ ok: boolean; reason?: string }> {
+    const { agents, sessions } = await this.who(login);
+    const known =
+      agent == null || (agent.startsWith(LINK) ? sessions.some((s) => LINK + s.id == agent) : agents.some((a) => a.name == agent));
+    if (!known) return { ok: false, reason: "this server has no agent by that name" };
+    if (agent == null) this.deps.sql.exec("DELETE FROM panel WHERE login = ?", login);
+    else this.deps.sql.exec("INSERT OR REPLACE INTO panel (login, agent) VALUES (?, ?)", login, agent);
+    await this.whoChanged(login);
+    return { ok: true };
+  }
+
+  /** The person's tabs hear who their panel can show now, and whom it shows. */
+  private async whoChanged(login: string) {
+    this.event({ type: "who", ...(await this.who(login)) }, login);
+  }
+
+  // -- attached sessions (agents/link.ts)
+
+  /**
+   * A session's link: its helper's socket, for the person and the grant that the route checked (routes.ts). `send`
+   * and `close` are the socket's; the answer hears each frame, and the socket's end.
+   */
+  attach(request: Request, send: (text: string) => void, close: () => void): { hear(text: string): void; leave(): void } {
+    const at: Attached = {
+      link: linkStart(),
+      login: request.headers.get("x-erga-login") ?? "",
+      grant: request.headers.get("x-erga-grant") ?? "",
+      on: true,
+      send,
+      close,
+    };
+    this.keepBeating();
+    return {
+      hear: (text) => this.linkEvent(at, { e: "frame", text }),
+      leave: () => {
+        if (!at.on) return;
+        at.on = false;
+        // A run that was open has no end now: the panel is not busy for ever.
+        if (at.link.log.busy && at.link.hello) {
+          reduce(at.link.log, { t: "busy", busy: false });
+          this.event({ type: "link", id: at.link.hello.id, ev: { t: "busy", busy: false } }, at.login);
+        }
+        void this.whoChanged(at.login);
+      },
+    };
+  }
+
+  /** One event of a link: its state moves, and what the step answers is done. */
+  private linkEvent(at: Attached, ev: LinkEvent) {
+    const r = linkStep(at.link, ev);
+    at.link = r.link;
+    for (const f of r.effects) {
+      if (f.t == "down") at.send(JSON.stringify(f.frame));
+      else if (f.t == "log") this.event({ type: "link", id: at.link.hello!.id, ev: f.ev }, at.login);
+      else if (f.t == "close") {
+        at.send(JSON.stringify({ error: f.why }));
+        at.close();
+      } else {
+        // The hello: the session has its id now. The same session again (its helper's link broke) goes on with what
+        // the panel showed; one more than the most takes the place of the oldest that left.
+        const id = at.link.hello!.id;
+        const old = this.links.get(id);
+        if (old && old != at) {
+          if (old.login != at.login) return void at.close();
+          old.on = false;
+          old.close();
+          at.link = { ...at.link, log: old.link.log };
+        }
+        const gone = [...this.links].find(([, a]) => !a.on);
+        if (!old && this.links.size >= MOST_LINKS) {
+          if (!gone) return void at.close();
+          this.links.delete(gone[0]);
+        }
+        this.links.set(id, at);
+        // A panel that showed a session that left shows the one that attached now: the person went on in a new session.
+        const picked = this.deps.sql.exec<{ agent: string }>("SELECT agent FROM panel WHERE login = ?", at.login)[0]?.agent ?? "";
+        const was = picked.startsWith(LINK) ? this.links.get(picked.slice(LINK.length)) : null;
+        if (was && !was.on) this.deps.sql.exec("INSERT OR REPLACE INTO panel (login, agent) VALUES (?, ?)", at.login, LINK + id);
+        void this.whoChanged(at.login);
+      }
+    }
+  }
+
+  /** A link whose grant works no more (its person revoked it) closes: asked at each beat, and before each message. */
+  private async grantLive(at: Attached): Promise<boolean> {
+    const live = await this.platform.grants.live(at.grant).catch(() => true);
+    if (!live && at.on) {
+      at.send(JSON.stringify({ error: "the grant was revoked" }));
+      at.close();
+    }
+    return live;
+  }
+
   /** The panel's state: with the settings read up to SETTINGS_KEPT before, unless `fresh` (a key just changed). */
   async agentState(login: string, doc: string | null, origin: string, name?: string, fresh = false) {
-    const s = await this.session(login, doc, origin, name, !fresh);
-    if (typeof s == "string") return { enabled: false as const, reason: s };
-    return { enabled: true as const, ...modelState(s.agent), log: s.agent.log() };
+    // An attached session in the panel: its own model, and the conversation since the attach. Erga's agent need not start.
+    const at = this.linked(login);
+    if (at)
+      return {
+        enabled: true as const,
+        model: at.link.hello!.model,
+        choice: null,
+        models: [],
+        log: at.link.log,
+        ...(await this.who(login)),
+      };
+    const [s, who] = await Promise.all([this.session(login, doc, origin, name, !fresh), this.who(login)]);
+    if (typeof s == "string") return { enabled: false as const, reason: s, ...who };
+    return { enabled: true as const, ...modelState(s.agent), log: s.agent.log(), ...who };
   }
 
   /** A message, from a page (`doc`: the id of the document it has open, if any: the message goes to that document's thread). */
@@ -221,6 +367,22 @@ export class PersonAgents {
     name?: string,
     id?: string
   ): Promise<{ ok: boolean; reason?: string }> {
+    const at = this.linked(login);
+    if (at) {
+      const who = at.link.hello!.agent;
+      if (!at.on || !(await this.grantLive(at))) return { ok: false, reason: `${who} is not attached` };
+      if (Array.isArray(attached) && attached.length) return { ok: false, reason: `${who} takes text only here: remove the files` };
+      if (!text.trim()) return { ok: false, reason: "say something" };
+      if (!id || !at.link.log.items.some((i) => i.kind == "user" && i.id == id))
+        this.linkEvent(at, {
+          e: "prompt",
+          text: text.slice(0, 20000),
+          context: context ? context.slice(0, 4000) : null,
+          id,
+          run: crypto.randomUUID(),
+        });
+      return { ok: true };
+    }
     const s = await this.session(login, doc ?? null, origin, name);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
     // Sent again (Try again, after an answer that came too late): the transcript has it already.
@@ -244,6 +406,8 @@ export class PersonAgents {
 
   /** A thread's conversation: the live one, or the one stored (the agent need not be on to read it). */
   async conversation(login: string, doc: string | null): Promise<Log> {
+    const at = this.linked(login);
+    if (at) return at.link.log;
     const scope = scopeOf(login, doc);
     const live = this.agents.get(scope)?.agent.log();
     if (live) return live;
@@ -272,6 +436,21 @@ export class PersonAgents {
   }
 
   async agentControl(login: string, doc: string | null, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
+    const at = this.linked(login);
+    if (at) {
+      const who = at.link.hello!.agent;
+      // The session has its own conversation and model: they change where it runs.
+      if (op == "reset" || op == "model")
+        return { ok: false, reason: `${who} keeps its own conversation and model: change them where it runs` };
+      if (!at.on || !(await this.grantLive(at))) return { ok: false, reason: `${who} is not attached` };
+      if (op == "abort") this.linkEvent(at, { e: "stop" });
+      else {
+        if (!at.link.fold.asks.some((a) => a.item == model && a.approve == null))
+          return { ok: false, reason: "that call no longer waits for your answer" };
+        this.linkEvent(at, { e: "answer", item: model ?? "", approve: op == "approve", run: crypto.randomUUID() });
+      }
+      return { ok: true };
+    }
     const scope = scopeOf(login, doc);
     const s = this.agents.get(scope);
     if (!s) {
@@ -315,7 +494,9 @@ export class PersonAgents {
       Effect.sync(() => {
         for (const c of this.clients.keys()) this.send(c, ": beat\n\n");
         for (const to of this.sockets.keys()) this.sendTo(to, '{"type":"beat"}');
-        return this.clients.size > 0 || this.sockets.size > 0;
+        const links = [...this.links.values()].filter((a) => a.on);
+        for (const at of links) void this.grantLive(at);
+        return this.clients.size > 0 || this.sockets.size > 0 || links.length > 0;
       }).pipe(
         Effect.delay("20 seconds"),
         Effect.repeat({ while: (open) => open }),
@@ -360,7 +541,7 @@ export class PersonAgents {
 /** What the routes ask of a person's agent (their Durable Object answers, by RPC, forwarding to a PersonAgents). */
 export type PersonAgentObject = Pick<
   PersonAgents,
-  "agentState" | "agentPrompt" | "agentControl" | "conversation" | "clearConversation" | "fetch"
+  "agentState" | "agentPrompt" | "agentControl" | "setAgent" | "conversation" | "clearConversation" | "fetch"
 >;
 
 declare module "../../server/platform.ts" {

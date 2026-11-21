@@ -32,6 +32,7 @@ const Prompt = Schema.Struct({
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
 const AnswerBody = Schema.Struct({ id: Schema.optionalKey(Schema.String) });
+const WhoBody = Schema.Struct({ agent: Schema.optionalKey(Schema.NullOr(Schema.String)) });
 const KeyBody = Schema.Struct({ name: Schema.optionalKey(Schema.String), value: Schema.optionalKey(Schema.String) });
 
 /** The body as JSON, as `schema` has it; else `fallback` (a body that isn't JSON counts as none, as before). */
@@ -41,11 +42,29 @@ const body = <S extends Schema.Top>(request: Request, schema: S, fallback: S["Ty
     Effect.orElseSucceed(() => fallback)
   );
 
+/**
+ * GET /api/agent/link: an attached session's link (agents/link.ts), a WebSocket that the session's helper opens with
+ * its agent token. The gate checked the token; here the grant must be good (the session's: admit.ts), and wider than
+ * one document. The socket goes to the object of the grant's person, which hears it from then on.
+ */
+const link: Route = Effect.gen(function* () {
+  const { request, platform } = yield* ctx;
+  const session = yield* call(() => platform.sessionOf(request));
+  if (!session?.agent) return json({ error: "The link is an attached agent's: open it with an agent token." }, 401);
+  if (session.agent.scope == "document") return json({ error: "A token for one document can't attach a session." }, 403);
+  if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return json({ error: "The link is a WebSocket." }, 426);
+  const headers = new Headers(request.headers);
+  headers.set("x-erga-login", session.login.toLowerCase());
+  headers.set("x-erga-grant", session.agent.id);
+  return fromWeb(yield* call(() => platform.personAgent(session.login.toLowerCase()).fetch(new Request(request.url, { headers }))));
+});
+
 /** /api/agent...: the person's own agent panel, on this site's pages. Only this site's own origin may talk to it, or listen. */
 export const agentApi: Route = Effect.gen(function* () {
   const { request, url } = yield* ctx;
   const from = request.headers.get("origin");
   if (from && from != url.origin) return json({ error: "Forbidden" }, 403);
+  if (url.pathname == "/api/agent/link") return yield* link;
   return yield* agentRoutes(url.origin);
 });
 
@@ -132,6 +151,19 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
   { method: "POST", path: "/api/agent/approve", run: control("approve"), action: "Approve a call your agent asks for", ...PANEL_ROW },
   { method: "POST", path: "/api/agent/deny", run: control("deny"), action: "Deny a call your agent asks for", ...PANEL_ROW },
   {
+    method: "POST",
+    path: "/api/agent/agent",
+    // { agent }: who the panel shows: a hosted agent's name (the setting agents), or null for Erga's own agent.
+    run: (a) =>
+      Effect.gen(function* () {
+        const b = yield* body(a.request, WhoBody, {});
+        const r = yield* call(() => a.h.setAgent(a.me.login, b.agent ?? null));
+        return json(r, r.ok ? 200 : 409);
+      }),
+    action: "Pick the agent that your panel shows",
+    ...PANEL_ROW,
+  },
+  {
     method: "GET",
     path: "/api/agent/events",
     // A WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that person's pages on this thread only: { type: "agent", ev }
@@ -146,6 +178,15 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     action: "Your agent's live updates",
     domain: "none",
     exempt: STREAM,
+  },
+  {
+    method: "WS",
+    path: "/api/agent/link",
+    // Answered before the panel's check (agentApi): its caller is an agent, with a token.
+    run: () => link,
+    action: "An attached session's link to its person's panel",
+    domain: "none",
+    exempt: "an attached agent's own connection: the person starts it where the agent runs",
   },
   {
     method: "GET",

@@ -66,6 +66,7 @@ The rules:
 | Y3 | `e2e/sync/bad-input.e2e.ts` | Bad bytes, a storm of sockets or a huge paste stops the server or reaches other files. | 4 |
 | G1 | `e2e/agent/turn.e2e.ts` | The agent's turn is not shown, cannot be undone, or acts without the person's Approve. A document's panel shows another page's thread, or opens or closes because of another page. | 16 |
 | G2 | `e2e/agent/tools.e2e.ts` | An agent tool edits the wrong file, shows a wrong picture, or works on a document it may not open. | 21 |
+| G3 | `e2e/agent/connected.e2e.ts` | A hosted agent (AG-UI) or an attached session does not show in the panel, gets no sign-in, acts without the person's Approve, or goes on after Stop; a prompt from the terminal does not show; Erga's own agent hears another agent's conversation. | 2 |
 | V1 | `e2e/viewer/reader.e2e.ts` | A reader gets a blank or wrong page, links leave the viewer, or the bars hide the text. | 9 |
 | V2 | `e2e/viewer/live.e2e.ts` | A reader sees an old page; the page's scripts run twice; a page that loads again shows its start, or loses its view. | 11 |
 | T1 | `e2e/templates/templates.e2e.ts` | A template makes a broken document; a deck does not step or leaves full screen in a bad state; an image dropped on a deck or a canvas lands away from the pointer, or covers the text. | 11 |

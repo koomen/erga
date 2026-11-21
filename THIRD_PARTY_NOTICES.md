@@ -65,3 +65,15 @@ Notes:
 
 To list the licenses again, read the `license` field of each
 `node_modules/**/package.json`.
+
+## The helper's crates
+
+The helper (`helper/`, the program `erga` that Erga's plugin runs beside an agent's session) is built from these
+crates (`helper/Cargo.toml`; `helper/Cargo.lock` has the whole tree), and its file ships with their code:
+
+| Crate | License |
+| --- | --- |
+| `serde_json`, `ureq`, `tungstenite`, `sha2`, `base64`, `getrandom` | MIT or Apache 2.0 |
+| `rustls` | Apache 2.0, ISC or MIT |
+| `ring` (with `rustls`) | Apache 2.0 and ISC |
+| `webpki-roots` (Mozilla's root certificates) | CDLA Permissive 2.0 |

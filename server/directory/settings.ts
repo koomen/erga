@@ -92,6 +92,35 @@ export const boolean = (v: unknown): boolean => {
 
 const setting = <T>(s: Setting<T>) => s;
 
+/** An agent with an address, which the agent panel can talk to: its name there, and its AG-UI endpoint. */
+export interface HostedAgent {
+  name: string;
+  url: string;
+}
+/** A list of hosted agents (or its JSON): each a name of its own, and an https address (http on this machine only). */
+function hostedAgents(v: unknown): HostedAgent[] {
+  let list = v;
+  if (typeof v == "string")
+    try {
+      list = JSON.parse(v || "[]");
+    } catch {
+      throw new ConfigError({ message: 'must be a list, as [{"name": "…", "url": "https://…"}]' });
+    }
+  if (!Array.isArray(list) || list.length > 20)
+    throw new ConfigError({ message: "must be a list of at most 20 agents, each with a name and a url" });
+  const out = list.map((a: { name?: unknown; url?: unknown } | null): HostedAgent => {
+    const name = typeof a?.name == "string" ? a.name.trim() : "";
+    if (!name || name.length > 40) throw new ConfigError({ message: "each agent needs a name of 1 to 40 characters" });
+    const url = typeof a?.url == "string" && URL.canParse(a.url) ? new URL(a.url) : null;
+    if (!url || !(url.protocol == "https:" || (url.protocol == "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))))
+      throw new ConfigError({ message: `${name} needs a url that starts with https://` });
+    return { name, url: url.href };
+  });
+  if (new Set(out.map((a) => a.name.toLowerCase())).size != out.length)
+    throw new ConfigError({ message: "each agent needs a name of its own" });
+  return out;
+}
+
 /** How a new account gets its username (the setting usernames; server/identity/usernames.ts says when each applies). */
 export const USERNAME_RULES = ["github", "email", "choose"] as const;
 export type UsernameRule = (typeof USERNAME_RULES)[number];
@@ -235,6 +264,15 @@ export const SETTINGS = {
         throw new ConfigError({ message: "must be a whole number from 1 to 100000000000 (tokens), or null for no limit" });
       return v;
     },
+  }),
+  agents: setting<HostedAgent[]>({
+    label: "Hosted agents",
+    description: "Agents with an address that speak AG-UI. Each person can pick one in their agent panel; their browser calls it.",
+    values:
+      'A list, as [{"name": "Helper", "url": "https://agent.example.com/agui"}]. The agent must permit this site\'s pages to call it.',
+    placeholder: '[{"name": "Helper", "url": "https://agent.example.com/agui"}]',
+    default: [],
+    parse: hostedAgents,
   }),
   agent_models_off: setting<string[]>({
     label: "Models a server key doesn't run",

@@ -37,6 +37,7 @@ const ROUTE_FILES = [
   "server/identity/tokens-page.ts",
   "server/news/routes.ts",
   "agents/person/routes.ts",
+  "agents/plugin.ts",
   "agents/page-llm.ts",
   "cloudflare/deploy-routes.ts",
   "cloudflare/dev.ts",

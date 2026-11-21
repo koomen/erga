@@ -8,6 +8,7 @@
 //   POST /api/agent              { text, context }: a message; context is the page note (the page open, what is selected)
 //   (each of them with ?doc=<the document's id> on a page of a document: that document's thread)
 //   POST /api/agent/abort|reset|model|approve|deny
+//   POST /api/agent/agent        { agent }: who the panel shows: a hosted agent's name, or null for Erga's own agent
 //   /api/agent/events            { type: "agent", ev } for this person's agent (a WebSocket)
 //   GET|DELETE /api/agent/conversation   the conversation, kept on the server (read on mount); a new one
 //
@@ -15,6 +16,9 @@
 // every other page. Each request names the document (?doc=), so a page hears and changes only its thread; a turn that
 // runs in another thread goes on there, and this panel shows nothing of it. A thread follows the person from browser
 // to browser and sign-in to sign-in: the server keeps it. Built by client/build.ts to agent.js.
+//
+// The panel can show a hosted agent in place of Erga's own (the head's menu: who.ts). Then this page talks to that
+// agent itself (agui-http.ts): its messages, its Stop and its answers go there, not to /api/agent.
 
 import { chat } from "./agent-chat";
 import { classify, fileRefs, type Attachment } from "../../shared/attach";
@@ -30,6 +34,9 @@ import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
 import { pageDoc, panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
 import { mountTurn, type TurnFacts } from "./turn-summary";
+import { hostedPanel, type HostedPanel } from "./agui-http";
+import { mountWho, sessionOf, type Who } from "./who";
+import { esc } from "../../shared/html";
 
 interface AgentState {
   enabled: boolean;
@@ -38,6 +45,11 @@ interface AgentState {
   choice?: string | null;
   models?: { id: string; label: string; key?: "own" | "server" }[];
   log?: Log;
+  /** The hosted agents of this server, and the one that the person picked (null: Erga's own agent). */
+  agents?: Who["agents"];
+  /** The person's attached sessions (agents/link.ts): the panel can show one, and the server passes its messages on. */
+  sessions?: Who["sessions"];
+  agent?: string | null;
 }
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -89,6 +101,7 @@ const talk = chat({
   imageAlt: "The screenshot the agent looked at",
   externalTip: "An agent you shared this page with, working as your agent",
   answer: async (id, approve) => {
+    if (hosted) return hosted.answer(id, approve);
     const r = await call(`/api/agent/${approve ? "approve" : "deny"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -102,6 +115,11 @@ const talk = chat({
   },
 });
 const log = talk.log;
+/** The hosted agent that the panel shows; null: Erga's own agent. */
+let hosted: HostedPanel | null = null;
+let who: Who = { agents: [], sessions: [], agent: null };
+/** The name of the agent that the panel shows, in the panel's words to the person: "the agent" for Erga's own. */
+const called = () => sessionOf(who)?.agent ?? (hosted ? who.agent : null) ?? "the agent";
 let off: string | null = "Connecting to the agent…";
 let hintTimer = 0;
 /** The alert for a turn that failed while the panel was closed: it goes when the panel opens. */
@@ -176,6 +194,7 @@ function busyChanged() {
 function showHint(text: string, sticky = false) {
   clearTimeout(hintTimer);
   delete hint.dataset.off;
+  delete hint.dataset.connect;
   hint.textContent = text;
   hint.hidden = false;
   hint.classList.toggle("sticky", sticky);
@@ -199,13 +218,17 @@ function renderBusy() {
   send.textContent = stop ? "Stop" : "Send";
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-disabled", String(!!why));
-  send.title = why ?? (stop ? "Stop the agent" : busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
+  send.title =
+    why ?? (stop ? "Stop the agent" : busy && !hosted ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
   $("agent-fab").classList.toggle("busy", busy);
+  // (A hosted agent takes no message into a run: a message sent while it works starts its next run.)
   input.placeholder = off
-    ? "The agent is off"
-    : busy
-      ? "Add to what the agent is doing…"
-      : "Ask the agent…";
+    ? sessionOf(who)
+      ? `${called()} is not attached`
+      : "The agent is off"
+    : busy && !hosted
+      ? `Add to what ${called()} is doing…`
+      : `Ask ${called()}…`;
   // (Drawn again only when it changed: the key field below it keeps what's typed.)
   if (off) {
     if (hint.dataset.off != off || hint.hidden) {
@@ -213,7 +236,129 @@ function renderBusy() {
       hint.dataset.off = off;
     }
     noKeyLinks();
-  } else if (hint.classList.contains("sticky")) hideHint();
+    attachHint();
+  } else if (hint.classList.contains("sticky") && !hint.dataset.signIn && !hint.dataset.connect) hideHint();
+}
+
+/** A box in the hint with lines to type in Claude Code, and Copy. */
+function commandBox(lead: string, lines: string, after = ""): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "agent-connect";
+  box.innerHTML = `<p></p><pre></pre><button type="button">Copy</button>${after ? "<p></p>" : ""}`;
+  const [first, last] = box.querySelectorAll("p");
+  first.textContent = lead;
+  if (last) last.innerHTML = after;
+  box.querySelector("pre")!.textContent = lines;
+  const copy = box.querySelector("button")!;
+  copy.addEventListener(
+    "click",
+    () =>
+      void navigator.clipboard.writeText(lines).then(
+        () => showCopied(copy),
+        () => {}
+      )
+  );
+  return box;
+}
+
+/** The session that the panel shows left: the panel says what to type there (the plugin's command). */
+function attachHint() {
+  const session = sessionOf(who);
+  if (!session || session.on || hint.querySelector(".agent-connect")) return;
+  hint.append(commandBox(`In a ${session.agent} session, type:`, "/erga:attach"));
+}
+
+/** "Connect an agent…": how a Claude Code session attaches to this panel, with the two lines that install Erga's plugin there. */
+function connectHint() {
+  if (hint.dataset.connect) {
+    delete hint.dataset.connect;
+    return hideHint();
+  }
+  showHint("", true);
+  hint.dataset.connect = "1";
+  const install = `/plugin marketplace add ${location.origin}/agents/marketplace.json\n/plugin install erga@erga`;
+  hint.append(
+    commandBox(
+      "To attach a Claude Code session, install Erga's plugin there (one time):",
+      install,
+      "Then, in a session: <code>/erga:attach</code>"
+    )
+  );
+}
+
+// ---------------------------------------------------------------- who answers
+
+const whoMenu = mountWho({
+  button: $("agent-who"),
+  card: $("agent").querySelector<HTMLElement>(".agent-card")!,
+  connect: connectHint,
+  pick: async (agent) => {
+    const r = await call("/api/agent/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent }),
+    }).catch(() => null);
+    if (!r?.ok) return showHint("Couldn't switch agents.");
+    void load();
+  },
+});
+
+/** The card of a hosted agent that wants the person's sign-in there: "Sign in" opens the agent, and the message goes when they come back. */
+function signInCard(show: boolean) {
+  if (!show) {
+    if (hint.dataset.signIn) hideHint();
+    delete hint.dataset.signIn;
+    return;
+  }
+  const at = who.agents.find((a) => a.name == who.agent);
+  if (!at) return;
+  showHint("", true);
+  hint.dataset.signIn = "1";
+  hint.innerHTML = `<span class="agent-sign-in"><b>Sign in to ${esc(at.name)}</b> (${esc(new URL(at.url).host)}) to talk to it here. This browser talks to ${esc(at.name)} as you. Erga's server is not in between.<span class="ask-acts"><button type="button" data-sign="no">Not now</button><button type="button" class="run" data-sign="yes">Sign in</button></span></span>`;
+}
+hint.addEventListener("click", (e) => {
+  const b = (e.target as Element).closest<HTMLButtonElement>("button[data-sign]");
+  const at = who.agents.find((a) => a.name == who.agent);
+  if (!b || !at || !hosted) return;
+  if (b.dataset.sign == "no") return hosted.notNow();
+  if (b.dataset.sign == "again") return hosted.signedIn();
+  // The agent's own site, in a new tab: the message goes again when the person is back on this one.
+  window.open(new URL(at.url).origin, "_blank", "noopener");
+  b.dataset.sign = "again";
+  b.textContent = "Try again";
+  window.addEventListener("focus", () => hosted?.signedIn(), { once: true });
+});
+
+let ergaLine = "Built in";
+/** The panel shows `next`'s agent from now. Answers whether the agent changed (its conversation must be drawn). */
+function setWho(next: Who): boolean {
+  const at = next.agents.find((a) => a.name == next.agent) ?? null;
+  const was = who.agents.find((a) => a.name == who.agent) ?? null;
+  who = { agents: next.agents, sessions: next.sessions, agent: at?.name ?? (sessionOf(next) ? next.agent : null) };
+  // A session attached: the lines that say how are done.
+  if (hint.dataset.connect && next.sessions.some((s) => s.on)) {
+    delete hint.dataset.connect;
+    hideHint();
+  }
+  // An attached session keeps its own conversation: the panel starts none.
+  $("agent-reset").hidden = !!sessionOf(who);
+  if (at?.url == was?.url && !!hosted == !!at) return false;
+  hosted?.stop();
+  signInCard(false);
+  hosted = at
+    ? hostedPanel({
+        agent: at,
+        doc: DOC,
+        log: () => log,
+        signIn: signInCard,
+        apply(ev) {
+          talk.apply(ev);
+          renderBusy();
+          if (ev.t == "tool" && ev.status != "running") window.dispatchEvent(new Event("erga:agent-tool"));
+        },
+      })
+    : null;
+  return true;
 }
 
 /**
@@ -272,6 +417,10 @@ function context(): string | null {
 /** Sends a message, with the tab's own id for it (sends.ts): Try again sends it again with the same id. */
 function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   const id = crypto.randomUUID();
+  if (hosted) {
+    talk.follow(true);
+    return hosted.send(text, ctx, id);
+  }
   const post = () => void postMessage(id, { text, context: ctx, files, id }, files.length > 0);
   talk.pending(id, text, fileRefs(files), post);
   begin();
@@ -302,7 +451,7 @@ async function postMessage(id: string, body: object, withFiles: boolean) {
 function sendNow() {
   const text = input.value.trim();
   const files = att.files;
-  const why = blocker();
+  const why = blocker() ?? ((hosted || sessionOf(who)) && files.length ? `${called()} takes text only. Remove the files to send.` : null);
   if (why || (!text && !files.length)) {
     // Off: the panel says why again (with its links, when a key is missing).
     if (off) {
@@ -344,17 +493,19 @@ input.addEventListener("input", () => { if (!hint.classList.contains("sticky")) 
 input.addEventListener("keydown", (e) => { if (e.key == "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendNow(); } });
 $("agent-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (send.classList.contains("stop")) call("/api/agent/abort", { method: "POST" });
-  else sendNow();
+  if (!send.classList.contains("stop")) sendNow();
+  else if (hosted) hosted.stop();
+  else call("/api/agent/abort", { method: "POST" });
 });
 $("agent-reset").addEventListener("click", () => {
+  input.focus();
+  if (hosted) return hosted.reset();
   call("/api/agent/conversation", { method: "DELETE" }).then(
     (r) => {
       if (!r.ok) showHint("Couldn't start a new conversation.");
     },
     () => showHint("Couldn't start a new conversation.")
   );
-  input.focus();
 });
 window.addEventListener("erga:agent-shown", () => {
   talk.follow(true);
@@ -430,12 +581,34 @@ async function load(tries = 0, fresh = false): Promise<void> {
   down = 0;
   const l = (await kept)?.log ?? a.log;
   if (heard != was && tries < 5) return load(tries + 1, fresh);
-  off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
+  // Who answers: a hosted agent's conversation is this browser's (agui-http.ts), and it needs no key of Erga's.
+  const changed = setWho({ agents: a.agents ?? [], sessions: a.sessions ?? [], agent: a.agent ?? null });
+  const session = sessionOf(who);
+  // (Erga's own agent's line in the menu: its model as this page read it last, while another agent shows.)
+  if (!session) ergaLine = `Built in · ${a.enabled ? (a.model ?? "") : "off"}`;
+  whoMenu.render(who, ergaLine);
+  off =
+    hosted || a.enabled
+      ? session && !session.on
+        ? `${session.agent} is not attached.`
+        : null
+      : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
   // The editor's buttons that ask the agent (an alert's fix: client/shell/alerts.ts) follow its state.
   window.dispatchEvent(new Event("erga:agent-state"));
-  renderModel(a);
-  if (l) { log.items = l.items; log.busy = l.busy; log.undoable = l.undoable; }
-  talk.render();
+  if (hosted) $("agent-model").textContent = "";
+  else renderModel(a);
+  if (hosted) {
+    if (changed) {
+      log.items = [...hosted.kept];
+      log.busy = false;
+      log.undoable = 0;
+    }
+  } else if (l) {
+    log.items = l.items;
+    log.busy = l.busy;
+    log.undoable = l.undoable;
+  }
+  if (!hosted || changed) talk.render();
   phase = panelStep(phase, { t: "loaded" }).state;
   renderBusy();
 }
@@ -453,11 +626,22 @@ const events = liveSocket({
     try { m = JSON.parse(String(e.data)); } catch { return; }
     // The model switched, from another tab of the person's. (Heard, as the agent's events are: load() asks again, so
     // an answer from before the switch never puts the old model back.)
-    if (m.type == "model") {
+    const link = m as { type?: string; id?: string };
+    // An attached session's events: the panel that shows it follows.
+    if (link.type == "link" && m.ev && who.agent == `link:${link.id}`) {
+      heard++;
+      talk.apply(m.ev);
+      renderBusy();
+      if (m.ev.t == "tool" && m.ev.status != "running") window.dispatchEvent(new Event("erga:agent-tool"));
+    }
+    if (m.type == "model" && !hosted && !sessionOf(who)) {
       heard++;
       renderModel({ ...m, enabled: true });
     }
-    if (m.type == "agent" && m.ev) {
+    // Another tab of the person's picked who answers: this one follows.
+    if (m.type == "who") void load();
+    // (While a hosted agent shows, Erga's own agent may still work in its thread: this panel shows nothing of it.)
+    if (m.type == "agent" && m.ev && !hosted && !sessionOf(who)) {
       heard++;
       talk.apply(m.ev);
       renderBusy();

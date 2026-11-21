@@ -18,8 +18,11 @@ export interface ToolCall {
 }
 
 export type LogItem =
-  /** `files`: what was attached, as the log shows it; `id`: the sending tab's own id for it (client/agent/sends.ts). */
-  | { kind: "user"; text: string; files?: FileRef[]; id?: string }
+  /**
+   * `files`: what was attached, as the log shows it; `id`: the sending tab's own id for it (client/agent/sends.ts);
+   * `away`: the person typed it where the agent runs (the terminal of an attached session), not in the panel.
+   */
+  | { kind: "user"; text: string; files?: FileRef[]; id?: string; away?: true }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
   | {
@@ -32,11 +35,15 @@ export type LogItem =
       call?: ToolCall;
       image?: string;
       via?: "external";
+      /** The agent that made the call, when it is not Erga's own (shared/agui.ts): its name. */
+      by?: string;
+      /** A line under a card that waits: where else the call waits for an answer (agents/link.ts). */
+      note?: string;
     }
   | { kind: "error"; text: string };
 
 export type LogEvent =
-  | { t: "user"; text: string; files?: FileRef[]; id?: string }
+  | { t: "user"; text: string; files?: FileRef[]; id?: string; away?: true }
   | { t: "text"; delta: string }
   | { t: "thinking"; delta: string }
   | {
@@ -49,6 +56,8 @@ export type LogEvent =
       call?: ToolCall;
       image?: string;
       via?: "external";
+      by?: string;
+      note?: string;
     }
   | { t: "error"; text: string }
   | { t: "busy"; busy: boolean }
@@ -133,7 +142,13 @@ export function reduce(log: Log, ev: LogEvent): number {
   const last = items[items.length - 1];
   switch (ev.t) {
     case "user":
-      items.push({ kind: "user", text: ev.text, ...(ev.files?.length ? { files: ev.files } : {}), ...(ev.id ? { id: ev.id } : {}) });
+      items.push({
+        kind: "user",
+        text: ev.text,
+        ...(ev.files?.length ? { files: ev.files } : {}),
+        ...(ev.id ? { id: ev.id } : {}),
+        ...(ev.away ? { away: true } : {}),
+      });
       return items.length - 1;
     case "text":
       if (last?.kind == "assistant") { last.text += ev.delta; return items.length - 1; }
@@ -155,6 +170,8 @@ export function reduce(log: Log, ev: LogEvent): number {
         call: ev.call,
         image: ev.image,
         via: ev.via,
+        by: ev.by,
+        note: ev.note,
       };
       if (i >= 0) {
         items[i] = item;

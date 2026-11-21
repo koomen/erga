@@ -194,6 +194,11 @@ export class Grants {
     return fromRow(row);
   }
 
+  /** Whether the grant `id` works now: for a connection that stays open after its request (an attached session's link). */
+  async live(id: string, now = Date.now()): Promise<boolean> {
+    return (await this.sql.all(`SELECT 1 FROM agent_grants WHERE id = ?1 AND ${LIVE}`, id, now)).length > 0;
+  }
+
   /**
    * Someone's grants that still work, newest first: `limit` of them after the first `offset`, and how many there are in
    * all. One that ended or was revoked works no more, and isn't listed.
