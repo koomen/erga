@@ -137,8 +137,15 @@ export async function wordAndEnd(ed: Editor, selector: string, word: string) {
  */
 export const SETTLED_ZOOM = `(() => { const z = window.__ergaReader?.zoomed; if (!z) return 1; return z.keep == "all" || (z.zoom == z.lay.h && (z.keep == "width" || Math.abs(innerWidth - z.shows.right) <= 1)) ? z.zoom : 0; })()`;
 
-/** The document's zoom, once the page is laid out for it (SETTLED_ZOOM). */
-export const zoom = (ed: Editor) => ed.frame<number>(SETTLED_ZOOM);
+/**
+ * The document's zoom, once the page is laid out for it (SETTLED_ZOOM) and its window has its frame's height: the
+ * viewer gives the frame its size a screen frame after its scale (client/inline/viewer-zoom.ts, the trap), and a page
+ * moves its text as its window gets another height.
+ */
+export async function zoom(ed: Editor) {
+  const [level, height] = await ed.frame<[number, number]>(`[${SETTLED_ZOOM}, innerHeight]`);
+  return Math.abs(height - (await ed.eval<number>(`document.getElementById("frame").offsetHeight`))) <= 1 ? level : 0;
+}
 
 /**
  * A new document from a template (as "New" makes it), open in the editor in the test's tab at a window size, as
