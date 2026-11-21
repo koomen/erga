@@ -396,7 +396,9 @@ export default function reader(C: ReaderConfig): void {
   // view is there (its content may still be coming), or as far as it goes once it has loaded, or after a moment. Then
   // it tells the viewer (erga-placed), which shows it in place of the old page (client/common/frame-swap.ts).
   const VIEW = "erga:view:" + page,
-    moved = new Set<Element>();
+    moved = new Set<Element>(),
+    /** How long a page with no text or picture to paint waits before it says that it shows its view. */
+    PAINT_MS = 1000;
   // (The load's key, which goes back to the viewer with erga-placed: it shows the page of its last load only.)
   const keep = (/[?&]erga-keep=([^&]*)/.exec(location.search) || [])[1];
   let keeping = keep !== undefined,
@@ -416,9 +418,33 @@ export default function reader(C: ReaderConfig): void {
     placing?.remove();
     // (For the editor, which may be up already: what is out of sight takes no focus. libs/text/ui/frame.ts.)
     dispatchEvent(new Event("ergaplaced"));
-    // (Two frames on: the page has painted its view.)
-    requestAnimationFrame(() => requestAnimationFrame(() => tell({ type: "erga-placed", keep })));
+    painted(() => tell({ type: "erga-placed", keep }));
     soon();
+  }
+  /**
+   * Runs `then` when the page's view is on the screen: the browser says when the page's first text or picture is
+   * there (first-contentful-paint: out of sight, the page painted none). A page that painted some before, or a
+   * browser that does not say: two frames on. A page with none to paint: PAINT_MS on.
+   *
+   * Trap: two frames on is not "on the screen". The browser runs the second frame before it has drawn the first: the
+   * viewer took the old page away up to 60 ms before this one showed, and the tab painted an empty page between.
+   */
+  function painted(then: () => void) {
+    const FIRST = "first-contentful-paint";
+    if (!window.PerformanceObserver?.supportedEntryTypes?.includes("paint") || performance.getEntriesByName(FIRST).length) {
+      requestAnimationFrame(() => requestAnimationFrame(then));
+      return;
+    }
+    const go = () => {
+      clearTimeout(late);
+      seen.disconnect();
+      then();
+    };
+    const seen = new PerformanceObserver((list) => {
+      if (list.getEntriesByName(FIRST).length) go();
+    });
+    const late = setTimeout(go, PAINT_MS);
+    seen.observe({ type: "paint", buffered: true });
   }
   function place() {
     if (!keeping || !parsed || !roomGiven) return;
