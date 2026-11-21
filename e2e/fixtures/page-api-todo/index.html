@@ -24,7 +24,7 @@
   <ul class="todo">
     <li><p>Milk</p></li>
     <li><p>Eggs</p></li>
-    <li><p>Bread</p></li>
+    <li><p>Bread</p><p class="shot"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='20'%3E%3Crect width='40' height='20' fill='%23c96'/%3E%3C/svg%3E" width="40" height="20" alt="A loaf"></p></li>
     <li><p>Butter</p></li>
   </ul>
 </main>
@@ -81,6 +81,17 @@
       const before = to < others.length ? (to < from ? to + 1 : to + 2) : 0;
       editor.call("move_item", { n: from + 1, before });
     });
+    // Enter in an item's text starts a new item after it. The script takes the key for itself, on the window: no
+    // listener after it gets the key.
+    addEventListener("keydown", (e) => {
+      if (e.key != "Enter" || e.shiftKey || e.isComposing || !editor.editing) return;
+      const node = getSelection().anchorNode;
+      const li = (node?.nodeType == 1 ? node : node?.parentElement)?.closest("ul.todo > li");
+      if (!li) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      editor.call("add_item", { after: items(li.parentElement).indexOf(li) + 1 });
+    }, true);
     addEventListener("erga-editing", draw);
     draw();
     new MutationObserver(draw).observe(document.body, { childList: true, subtree: true });

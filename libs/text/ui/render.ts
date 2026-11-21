@@ -5,15 +5,11 @@ import * as M from "../../../shared/manuscript";
 import { ChangeSet, Transaction, MapMode, type TransactionSpec } from "@codemirror/state";
 import { sourceDigest, TEXT_ATTR } from "../../../shared/page-html";
 import { watchMoves } from "./moves";
-import { ms } from "./timescale";
 import { balanceWhitespace, same } from "../api/source";
 import { noHistory, pageOwnBox } from "./core";
 import { EditorMarks } from "./marks";
 import { differ, Ownership } from "./check";
 import { Mirror } from "./mirror";
-
-/** How long after the person's click or key the page may make one of its own edits: as long as a browser's user activation lasts. */
-const GESTURE_MS = 5000;
 
 /** The editor's own styles in the page: its carets and layers, never the page's own look. */
 const PAGE_STYLE = `
@@ -302,9 +298,6 @@ export abstract class EditorRender extends EditorMarks {
     return rects.length ? rects[at.offset < len ? 0 : rects.length - 1].top : null;
   }
 
-  /** When the person last clicked or pressed a key on the page (performance.now()). */
-  protected lastGesture = -Infinity;
-
   /** Takes the page's own edits (`ergaEditor.call`, client/inline/page-editing-api.ts): those it asked for before the editor was there, then each as it comes. */
   protected takePageEdits(): void {
     type EditWindow = Window & {
@@ -319,9 +312,7 @@ export abstract class EditorRender extends EditorMarks {
 
   /**
    * One of the page's own edits, from its own controls: its API (in the document's sandbox) gives the change, which the
-   * editor makes to the source as the person's own (one undo step), or refuses whole. Only right after the person
-   * clicks or types on the page: a page can't rewrite itself on its own (on load, on a timer), which with several
-   * people editing would never stop.
+   * editor makes to the source as the person's own (one undo step), or refuses whole. The page may ask at any time.
    */
   protected async pageEdit(win: Window, edit: unknown, input: unknown): Promise<{ ok: boolean; error?: string }> {
     const refuse = (error: string) => {
@@ -331,8 +322,6 @@ export abstract class EditorRender extends EditorMarks {
       );
       return { ok: false, error };
     };
-    if (performance.now() - this.lastGesture > ms(GESTURE_MS))
-      return refuse("ergaEditor.call works only when the person has just clicked or pressed a key on the page.");
     if (typeof edit != "string" || !edit) return refuse("ergaEditor.call takes the edit's name, then its input.");
     if (!this.config.pageEdit) return refuse("this editor can't make the page's own edits.");
     const src = this.src;

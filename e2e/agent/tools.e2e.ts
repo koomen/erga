@@ -469,33 +469,26 @@ journey("a page's own edits: its buttons, and call_edit", () => {
   });
 });
 
-test("a long drag drops too: the drop is the person's own gesture", async ({ tab }) => {
-  // A page's own edit must come soon after a click or a key (5 s; here 100 ms, at this page's timescale).
-  const HELD = 0.02 * 5000;
-  const ed = await openEditor(tab, s, "page-api-todo", { timescale: 0.02 });
-  const order = () => ed.frame<string[]>(`[...${F}.querySelectorAll("ul.todo > li p")].map((p) => p.textContent)`);
+test("the page's own edits by a drag, and by a key that the page's script takes for itself", async ({ tab }) => {
+  const ed = await openEditor(tab, s, "page-api-todo");
+  const order = () => ed.frame<string[]>(`[...${F}.querySelectorAll("ul.todo > li > p:first-of-type")].map((p) => p.textContent)`);
   expect(await order()).toEqual(["Milk", "Eggs", "Bread", "Butter"]);
-  await ed.frame(`${F}.addEventListener("pointerdown", () => (window.__down = performance.now()), true)`);
-  // Butter's grip, dragged above Milk, and held there longer than that.
+  // Butter's grip, dragged above Milk.
   const from = await ed.rectOf("ul.todo > li:nth-child(4) .grip");
   const to = await ed.rectOf("ul.todo > li:nth-child(1)");
   const mouse = ed.page.mouse;
   await mouse.move(from.x, from.y);
   await mouse.down();
   for (let i = 1; i <= 8; i++) await mouse.move(from.x, from.y + ((to.y - 6 - from.y) * i) / 8);
-  await until(() => ed.frame<boolean>(`performance.now() - window.__down > ${HELD * 2}`), 5000, "the person holds the item");
   await mouse.up();
   await expect.poll(order).toEqual(["Butter", "Milk", "Eggs", "Bread"]);
   await expect.poll(() => ed.source()).toMatch(/<li><p>Butter<\/p><\/li>\s*<li><p>Milk<\/p><\/li>/);
-});
-
-test("a page can't make its own edits when nobody clicked: as it loads, say", async ({ tab }) => {
-  const ed = await openEditor(tab, s, "page-api-load");
-  await expect.poll(() => ed.frame<{ ok: boolean; error: string } | undefined>(`window.result`)).toBeTruthy();
-  const r = await ed.frame<{ ok: boolean; error: string }>(`window.result`);
-  expect(r.ok).toBe(false);
-  expect(r.error).toMatch(/just clicked or pressed a key/);
-  expect(await ed.source()).toContain(`<p id="note">Nobody clicked.</p>`);
+  // Enter at the end of an item's text, with an image after it: the page's script takes the key for itself (no
+  // listener after it gets it), and adds an item.
+  await ed.clickEnd("ul.todo > li:nth-child(4) > p:first-of-type");
+  expect((await ed.selection()).from).toBe((await ed.source()).indexOf("</p><p class"));
+  await ed.press("Enter");
+  await expect.poll(order).toEqual(["Butter", "Milk", "Eggs", "Bread", "New item"]);
 });
 
 test("path renders another page than the open one, with edits too; the person's tab stays on the deck", async ({ tab }) => {

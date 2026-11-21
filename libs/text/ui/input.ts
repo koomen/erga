@@ -131,23 +131,6 @@ export abstract class EditorInput extends EditorClipboard {
     });
     on("mousedown", (e) => this.mousedown(e));
     on("click", (e) => this.tick(e));
-    // What lets the page make its own edits (pageEdit): the person's own clicks and keys, not a script's.
-    // (The pointer going up too: a drop, at the end of a long drag.)
-    for (const type of ["pointerdown", "pointerup"] as const)
-      on(
-        type,
-        (e) => {
-          if (e.isTrusted) this.lastGesture = performance.now();
-        },
-        { capture: true }
-      );
-    on(
-      "keydown",
-      (e) => {
-        if (e.isTrusted) this.lastGesture = performance.now();
-      },
-      { capture: true }
-    );
     // A caret the browser put outside the text goes into it before the next paint (see snapCaret).
     on("mouseup", () => this.win.requestAnimationFrame(() => this.snapCaret(true)));
     on("keydown", () => this.win.requestAnimationFrame(() => this.snapCaret(false)));

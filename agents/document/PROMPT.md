@@ -292,11 +292,9 @@ In the editor, and only there, the page's `<html>` has the attribute
 `data-erga-editing`, and `window.ergaEditor.editing` is `true`. Outside it,
 the page shows as it always does, controls left out.
 `ergaEditor.call(edit, input)` answers a Promise of `{ ok: true }` or
-`{ ok: false, error }`. It works only right after the user clicks or
-presses a key on the page: a page can't change itself as it loads, or on a
-timer. When Erga refuses, it says why to the user and offers to ask the
-agent to fix the page. Erga selects the new text, so people type over its
-placeholder.
+`{ ok: false, error }`. A page may call it at any time. When Erga refuses
+an edit, it says why to the user and offers to ask the agent to fix the
+page. Erga selects the new text, so people type over its placeholder.
 
 **The rule: an edit shows in the frame of the click or drop, as a typed
 letter does.** The page's script calls `ergaEditor.call` at once in that

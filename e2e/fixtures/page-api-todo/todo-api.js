@@ -1,4 +1,4 @@
-// The page's own edits: check off and move the todo list's items. Items are numbered from 1.
+// The page's own edits: check off, move and add the todo list's items. Items are numbered from 1.
 const item = (n) => `ul.todo > li:nth-child(${n})`;
 const num = { type: "integer", minimum: 1 };
 
@@ -16,8 +16,14 @@ export default {
       description: "Moves item n before item `before`, or to the end when before is 0",
       input: { type: "object", properties: { n: num, before: { type: "integer", minimum: 0 } }, required: ["n", "before"] },
     },
+    {
+      name: "add_item",
+      description: "Adds a new item after item `after`",
+      input: { type: "object", properties: { after: num }, required: ["after"] },
+    },
   ],
   apply(html, edit, input) {
+    if (edit == "add_item") return [{ op: "insert", after: item(input.after), html: "<li><p>New item</p></li>" }];
     if (edit == "check_item") return [{ op: "attr", el: item(input.n), name: "class", value: input.done ? "done" : null }];
     if (edit == "move_item") {
       if (input.before == input.n) return { refused: "the item is already there" };
