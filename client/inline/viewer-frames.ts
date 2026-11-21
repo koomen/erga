@@ -12,7 +12,8 @@
 // record was made from the older one (viz, HitTestAggregator: it reads the record only as a new one comes, not as a
 // waiting picture shows). The page then gets no pointer at all: each move, press and wheel on it comes to the viewer,
 // on the frame's element, which no other pointer does (but a drag that began on the viewer: a button is down). So
-// the viewer moves the frame by nothing that shows (`found`), and Chromium makes the record again.
+// the viewer moves the frame by nothing that shows (`found`), and Chromium makes the record again. The frame is at
+// its own place again one screen frame later: a hair that stayed made the frame fill no window exactly (full screen).
 
 import { initial, step, WAIT_MS, type SwapEvent } from "../common/frame-swap";
 
@@ -136,8 +137,8 @@ export default function viewerFrames(pages: string): void {
       act({ type: "up", n: swap.n });
     } else if (e.data?.type == "erga-placed" && e.data.keep === key) act({ type: "placed", n: swap.n });
   });
-  // The pointer is on the page, and the viewer heard it (the trap above): the frame's place changes by a hair, which
-  // draws the same pixels, at most one time for each screen frame.
+  // The pointer is on the page, and the viewer heard it (the trap above): the frame's place changes by a hair for one
+  // screen frame, which draws the same pixels, and then back. Each of the two makes the record again.
   let found = 0;
   for (const type of ["pointermove", "pointerdown", "wheel"])
     addEventListener(
@@ -146,8 +147,11 @@ export default function viewerFrames(pages: string): void {
         const f = frame();
         if (!f || e.target != f || found || (type == "pointermove" && (e as PointerEvent).buttons)) return;
         found = requestAnimationFrame(() => {
-          found = 0;
-          f.style.translate = f.style.translate ? "" : "0 0.0001px";
+          f.style.translate = "0 0.0001px";
+          found = requestAnimationFrame(() => {
+            found = 0;
+            f.style.translate = "";
+          });
         });
       },
       { capture: true, passive: true }
