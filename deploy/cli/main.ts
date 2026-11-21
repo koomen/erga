@@ -11,7 +11,7 @@
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from GitHub's newest staging, in a work folder of its
 //                                       own (worktrees/<branch> in the main clone), with its packages installed
-//   bun erga clean [--yes]              lists the work folders and local branches whose task is merged and on
+//   bun erga clean [--yes]              lists the work folders and local branches whose project is merged and on
 //                                       production, and removes them after a yes
 //   bun erga push                       before each push: formats the changed lines, builds the inline code's file, runs
 //                                       the tests, and pushes this branch only when they end with "all passing"

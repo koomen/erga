@@ -6,7 +6,7 @@ cannot tell you. Pete (`koomen`) owns Erga.
 ## How to work
 
 Run `bun erga skill` before you start, and do what it says. In short: one
-feature branch for each task, in a work folder of its own
+feature branch for each project, in a work folder of its own
 (`bun erga start <branch>`); `bun erga push` formats, tests and pushes it;
 only `bun erga` moves `staging` and `main`, when Pete asks. There are no
 pull requests.
@@ -14,12 +14,13 @@ pull requests.
 Pete works with [herdr-core](https://github.com/herdrdev/herdr-core):
 
 1. Pete talks to one manager agent. The manager does not write code.
-2. For each task, the manager makes a work folder (`bun erga start <task>`)
-   and starts a new agent in it, in its own terminal: `hc run --bg --name
-   <task> --cwd worktrees/<task> claude "<brief>"`. Never a subagent of the
-   manager's own session: Pete must see each agent and talk to it. A task
-   is small: its change is one commit on staging.
-3. The task's agent pushes its branch and makes its proof
+2. For each project, the manager makes a work folder
+   (`bun erga start <project>`) and starts a new agent in it, in its own
+   terminal: `hc run --bg --name <project> --cwd worktrees/<project> claude
+   "<brief>"`. Never a subagent of the manager's own session: Pete must see
+   each agent and talk to it. A project is one whole feature, never split:
+   one branch, one folder, one agent, and one commit on staging.
+3. The project's agent pushes its branch and makes its proof
    (`bun erga proof`). The ops page tests the branch's merge: the agent
    watches (`bun erga status`) and repairs each failure. It does not merge.
 4. When Pete says to merge, the manager starts one agent for the merges. It
@@ -27,10 +28,10 @@ Pete works with [herdr-core](https://github.com/herdrdev/herdr-core):
    -m "..."`), in the order with the fewest conflicts, and fixes each
    conflict.
 5. Each merge is one squashed commit. Every commit message is one line of
-   ten words at most, with no body: what the whole task does.
-6. When a task's commit is on production (`bun erga promote`), the
-   manager retires the task's agent, and `bun erga clean` removes its
-   folder. Until then the agent stays: it knows its task.
+   ten words at most, with no body: what the whole project does.
+6. When a project's commit is on production (`bun erga promote`), the
+   manager retires the project's agent, and `bun erga clean` removes its
+   folder. Until then the agent stays: it knows its project.
 
 ## Testing as the user
 

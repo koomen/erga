@@ -82,7 +82,7 @@ test("a proof: the sentence, before and after at both widths, the tests' result,
   expect(sh(w.root, "git", "worktree", "list").split("\n").length).toBe(1);
 });
 
-test("a commit that is not pushed has no test result; no picture at all is an error; a task with nothing to show names its tests", () => {
+test("a commit that is not pushed has no test result; no picture at all is an error; a project with nothing to show names its tests", () => {
   const w = world(false);
   expect(makeProof({ dir: w.dir, root: w.root, sentence: "x", looks: ["--path /"], log: () => {}, look }).tests).toContain(
     "not pushed yet"
