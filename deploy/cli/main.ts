@@ -73,6 +73,7 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { flagsOf } from "./flags";
 import { latestTag, mergeArgs, nextVersion, releaseNotes, releaseRefusal, statusText } from "./flow";
 import { gateRefusal } from "./gate";
 import { commitsOf, fetchOrigin, headOf, readState, repoOf, tagsOf } from "./observe";
@@ -419,6 +420,10 @@ async function track(arg: string | undefined, o: { repo?: string; branch?: strin
 export async function main(argv: string[]) {
   // No command, or only the ops page's options: the ops page.
   const [cmd, ...rest] = argv[0] == undefined || /^--(auto-deploy|port|no-open)$/.test(argv[0]) ? ["", ...argv] : argv;
+  // Before anything runs: --help prints the manual only, and a flag that the command does not take stops it.
+  const asked = flagsOf(cmd, rest);
+  if (asked.help) return help();
+  if (asked.unknown.length) fail(`bun erga${cmd ? ` ${cmd}` : ""} takes no ${asked.unknown.join(", ")}. Nothing ran.`, "bun erga --help");
   const flag = (f: string) => rest.includes(f);
   const opt = (f: string) => {
     const i = rest.indexOf(f);
