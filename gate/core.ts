@@ -356,7 +356,7 @@ export async function pass(q: Req, c: Config, p: Port): Promise<Answer> {
   // Another host (a custom domain's published site): its own, with nobody; behind SSO, nothing.
   if (q.host != c.shell) return c.open ? forward(NOBODY) : respond(404, "Not found");
   const who = await callerOf(q, c, p, now);
-  if (who == "bad") return unauthorized(c);
+  if (who == "bad") return unauthorized(c, /^Bearer\s/i.test(q.headers.authorization ?? ""));
   if (c.oauth && q.path == "/oauth/authorize") {
     if (who.kind != "person") return isPage(q) ? toSignIn(q, c) : unauthorized(c);
     return asked(q, c) ? forward(who) : respond(400, "This authorization request isn't valid.");
@@ -376,9 +376,9 @@ export const memberFor = async (q: Req, c: Config, p: Port, who: Caller, now = M
     ? [await member(c, p, who.e, now)]
     : [];
 
-const unauthorized = (c: Config) =>
+const unauthorized = (c: Config, invalid = false) =>
   respond(401, "Sign in first.", {
-    "www-authenticate": `Bearer resource_metadata="${scheme(c)}${c.shell}/.well-known/oauth-protected-resource"`,
+    "www-authenticate": `Bearer resource_metadata="${scheme(c)}${c.shell}/.well-known/oauth-protected-resource"${invalid ? ', error="invalid_token"' : ""}`,
   });
 
 /** Off to sign in, and back to this address. Under Access there is no sign-in of the gate's: Access signs in, before it. */
@@ -581,6 +581,14 @@ async function accept(q: Req, c: Config, p: Port, now: number): Promise<Answer> 
 // ---------------------------------------------------------------- agents: MCP's authorization server
 
 const LOOPBACK = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/[\x21-\x7e]*)?$/;
+/** Hosted MCP apps' own OAuth callbacks, allowed beside this computer's loopback addresses and Config.redirects. */
+const APP_REDIRECTS = [
+  "https://antigravity.google/oauth-callback",
+  "https://claude.ai/api/mcp/auth_callback",
+  "https://claude.com/api/mcp/auth_callback",
+  "https://chatgpt.com/connector_platform_oauth_redirect",
+];
+const allowedRedirect = (u: string, c: Config) => LOOPBACK.test(u) || APP_REDIRECTS.includes(u) || !!c.redirects?.includes(u);
 
 /** An authorization request's values, if they are whole: a client, a redirect it may have, a PKCE challenge (S256). */
 function asked(q: Req, c: Config) {
@@ -592,7 +600,7 @@ function asked(q: Req, c: Config) {
     !!redirect_uri &&
     redirect_uri.length <= 500 &&
     !redirect_uri.includes("#") &&
-    (LOOPBACK.test(redirect_uri) || !!c.redirects?.includes(redirect_uri)) &&
+    allowedRedirect(redirect_uri, c) &&
     code_challenge_method == "S256" &&
     !!code_challenge &&
     code_challenge.length == 43 &&
@@ -616,7 +624,7 @@ export async function agents(q: Req, c: Config, p: Port): Promise<Answer | null>
  * POST /oauth/register (its body in x-erga-form): an agent's app registers itself (OAuth Dynamic Client Registration,
  * RFC 7591), as MCP's clients expect when a server names no client of theirs (Claude Code asks no --client-id then).
  * Nothing is kept: the answer is a client ID made here, and the redirects the app asked for, if each is one that
- * `asked` takes anyway (this computer's, or the deploy's list). A client ID proves nothing, as before: authorize
+ * `asked` takes anyway (this computer's, a known app's, or the deploy's list). A client ID proves nothing, as before: authorize
  * checks the redirect again, the code binds it with the client and the PKCE challenge. The client ID carries the app's
  * own name (client_name, readable: "Claude-Code.x1y2z3"), the label of its approval page and its grant in Settings.
  */
@@ -639,8 +647,11 @@ async function register(q: Req, c: Config, p: Port, now: number): Promise<Answer
   const uris = m && Array.isArray(m.redirect_uris) ? m.redirect_uris : null;
   if (!uris || !uris.length || uris.length > 10) return bad("redirect_uris: one to ten addresses");
   for (const u of uris)
-    if (typeof u != "string" || u.length > 500 || u.includes("#") || !(LOOPBACK.test(u) || !!c.redirects?.includes(u)))
-      return json(400, { error: "invalid_redirect_uri", error_description: "Only this computer's addresses (http://localhost)." });
+    if (typeof u != "string" || u.length > 500 || u.includes("#") || !allowedRedirect(u, c))
+      return json(400, {
+        error: "invalid_redirect_uri",
+        error_description: "Only this computer's addresses (http://localhost) or allowed app callbacks.",
+      });
   if (m!.token_endpoint_auth_method != null && m!.token_endpoint_auth_method != "none")
     return bad("token_endpoint_auth_method: none only (a public client)");
   const name = typeof m!.client_name == "string" ? m!.client_name : "";

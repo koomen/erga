@@ -371,8 +371,84 @@ test("MCP's sign-in: the 401 names the gate's metadata; the person approves on E
     // Whatever it asks: a public address too.
     expect((await s.fetch("/llms.txt", { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
   }
-  // A token that the gate did not sign never reaches the app.
-  expect((await mcp(s, `${got.access_token}x`, { jsonrpc: "2.0", id: 1, method: "ping" })).status).toBe(401);
+  // A token that the gate did not sign never reaches the app, and its 401 marks the token invalid.
+  const bad = await mcp(s, `${got.access_token}x`, { jsonrpc: "2.0", id: 1, method: "ping" });
+  expect([bad.status, bad.auth]).toEqual([401, expect.stringContaining('error="invalid_token"')]);
+});
+
+test("MCP's sign-in with a hosted app callback (Antigravity): register, approve, expire, and refresh to reconnect", async () => {
+  const s = app();
+  const { cookie } = await signIn(s, freshLogin("ag"));
+  const redirect = "https://antigravity.google/oauth-callback";
+  const reg = await s.fetch("/oauth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Google Antigravity",
+      redirect_uris: [redirect],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  expect(reg.status).toBe(201);
+  const { client_id } = (await reg.json()) as { client_id: string };
+  expect(client_id).toMatch(/^Google-Antigravity\.[a-z0-9]{6}$/);
+
+  const verifier = b64(crypto.getRandomValues(new Uint8Array(40)).buffer);
+  const challenge = b64(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+  const ask = `/oauth/authorize?${new URLSearchParams({
+    response_type: "code",
+    client_id,
+    redirect_uri: redirect,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state: "st-ag",
+    resource: `${ROOT}/mcp`,
+  })}`;
+  const page = await s.fetch(ask, { headers: { ...PAGE, Cookie: cookie } });
+  expect(page.status).toBe(200);
+  const html = await page.text();
+  expect(html).toContain("<b>Google Antigravity</b> wants to act for you");
+  expect(html).toContain("https://antigravity.google");
+
+  const approved = await s.fetch(ask, {
+    ...formOf({ answer: "approve" }),
+    headers: { ...formOf({}).headers, Cookie: cookie, Origin: ROOT },
+  });
+  expect(approved.status).toBe(302);
+  const back = new URL(approved.headers.get("location")!);
+  expect([back.origin + back.pathname, back.searchParams.get("state")]).toEqual([redirect, "st-ag"]);
+
+  const trade = (fields: Record<string, string>) => s.fetch("/oauth/token", formOf(fields));
+  const got = (await (
+    await trade({
+      grant_type: "authorization_code",
+      code: back.searchParams.get("code")!,
+      code_verifier: verifier,
+      redirect_uri: redirect,
+      client_id,
+    })
+  ).json()) as { access_token: string; refresh_token: string };
+  const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } };
+  expect((await mcp(s, got.access_token, init)).status).toBe(200);
+
+  // After the 1-hour access token expires, /mcp refuses it with error="invalid_token"; the refresh grant reconnects.
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 3601_000;
+    const expired = await mcp(s, got.access_token, init);
+    expect([expired.status, expired.auth]).toEqual([
+      401,
+      `Bearer resource_metadata="${ROOT}/.well-known/oauth-protected-resource", error="invalid_token"`,
+    ]);
+    const refreshed = await trade({ grant_type: "refresh_token", refresh_token: got.refresh_token, client_id });
+    expect(refreshed.status).toBe(200);
+    const { access_token } = (await refreshed.json()) as { access_token: string };
+    expect((await mcp(s, access_token, init)).status).toBe(200);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("MCP's sign-in: Deny sends the person back with access_denied and makes no grant; an admin chooses admin power on purpose", async () => {

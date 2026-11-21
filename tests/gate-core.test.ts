@@ -61,7 +61,9 @@ describe("the shell, SSO", () => {
     ]) {
       const a = responded(await gate(r, sso, port));
       expect(a.status).toBe(401);
-      expect(a.headers["www-authenticate"]).toContain("https://erga.example.com/.well-known/oauth-protected-resource");
+      expect(a.headers["www-authenticate"]).toBe(
+        'Bearer resource_metadata="https://erga.example.com/.well-known/oauth-protected-resource"'
+      );
     }
   });
 
@@ -175,8 +177,13 @@ describe("agent tokens", () => {
       await seal(port, KEY, "a", { p: "sso", sub: "sub-ada", g: "grant1" }, now),
       refresh,
       await shellCookie(sso),
-    ])
-      expect(responded(await gate(req("https://erga.example.com/mcp", { method: "POST", bearer: bad }), sso, port)).status).toBe(401);
+    ]) {
+      const refused = responded(await gate(req("https://erga.example.com/mcp", { method: "POST", bearer: bad }), sso, port));
+      expect(refused.status).toBe(401);
+      expect(refused.headers["www-authenticate"]).toBe(
+        'Bearer resource_metadata="https://erga.example.com/.well-known/oauth-protected-resource", error="invalid_token"'
+      );
+    }
   });
 
   test("a token opens nothing on a content host", async () => {

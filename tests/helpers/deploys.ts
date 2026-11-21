@@ -11,16 +11,17 @@ import { join } from "path";
 import { runPipeline, type Target } from "../../deploy/pipeline/pipeline";
 import { Cloudflare } from "../../deploy/deployer/cloudflare-api";
 import { loadRelease, type Release } from "../../deploy/deployer/release-format";
+import { gateHash } from "../../deploy/release";
 import { FLEET_ACCOUNT, mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
 
 export const ROOT = new URL("../..", import.meta.url).pathname;
 export let release: Release;
 
-/** The release the tests deploy: built here if missing, or from before the release carried its gate's hash (deploy/release.ts). */
+/** The release the tests deploy: built here if missing, or when gate/ changed since it was built (deploy/release.ts). */
 export async function prepareRelease() {
   const dir = join(ROOT, ".build/release");
   const index = existsSync(join(dir, "release.json")) ? JSON.parse(readFileSync(join(dir, "release.json"), "utf8")) : null;
-  if (!index?.gate) {
+  if (index?.gate != gateHash()) {
     if (!existsSync(join(ROOT, ".build/manifest.json"))) expect(Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }

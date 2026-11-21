@@ -46,7 +46,7 @@ describe("MCP's authorization server", () => {
       );
   });
 
-  test("register: open, keeps nothing, takes this computer's redirects only, and names the client by the app", async () => {
+  test("register: open, keeps nothing, takes allowed redirects only, and names the client by the app", async () => {
     const at = "https://erga.example.com/oauth/register";
     const asks = (form: unknown, id = "req-1") =>
       gate(req(at, { method: "POST", form: typeof form == "string" ? form : JSON.stringify(form), id }), sso, port);
@@ -94,6 +94,23 @@ describe("MCP's authorization server", () => {
         )
       ).status
     ).toBe(201);
+    // Known hosted MCP apps' own callbacks count without deploy config; other paths or fragments on those hosts do not.
+    for (const uri of [
+      "https://antigravity.google/oauth-callback",
+      "https://claude.ai/api/mcp/auth_callback",
+      "https://claude.com/api/mcp/auth_callback",
+      "https://chatgpt.com/connector_platform_oauth_redirect",
+    ]) {
+      const got = responded(await asks({ client_name: "Google Antigravity", redirect_uris: [uri] }));
+      expect(got.status).toBe(201);
+      expect(JSON.parse(got.body).redirect_uris).toEqual([uri]);
+    }
+    for (const bad of [
+      "https://antigravity.google/oauth-callback/extra",
+      "https://antigravity.google/oauth-callback#frag",
+      "http://antigravity.google/oauth-callback",
+    ])
+      expect(responded(await asks({ redirect_uris: [bad] })).status).toBe(400);
   });
 
   test("authorize needs the shell cookie: without one a page goes to sign in; with one it goes on to Erga's approval", async () => {
@@ -141,6 +158,13 @@ describe("MCP's authorization server", () => {
       "person"
     );
     expect(responded(await gate(req(change("redirect_uri", "https://app.example.org/cb/x"), { cookie: s }), listed, port)).status).toBe(
+      400
+    );
+    // Known hosted MCP apps' callbacks are accepted by authorize too, and only those exact addresses.
+    expect(
+      forwarded(await gate(req(change("redirect_uri", "https://antigravity.google/oauth-callback"), { cookie: s }), sso, port)).kind
+    ).toBe("person");
+    expect(responded(await gate(req(change("redirect_uri", "https://antigravity.google/other"), { cookie: s }), sso, port)).status).toBe(
       400
     );
   });
