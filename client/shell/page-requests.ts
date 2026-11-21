@@ -14,6 +14,12 @@ liveWatch({ events: false, net: false, types: [] });
   if (kind == "console" && typeof c?.text == "string") shellConsole.add(c.level, c.text, "editor", c.at);
 });
 
+/**
+ * A problem that the alerts' card shows the person, in the card's words (client/common/alerts.ts, `said`): an error of
+ * the "problem card" in the editor's console, so the agent's page_log reads what the person reads.
+ */
+export const problemShown = (text: string) => shellConsole.add("error", text, "problem card");
+
 export function mountPageRequests(shell: Shell) {
   const tools = new PageTools(
     () => shell.frame,

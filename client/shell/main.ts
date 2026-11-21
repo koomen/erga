@@ -36,7 +36,7 @@ import { mountUploads } from "./uploads";
 import { ms } from "../../libs/text/ui/timescale";
 import { mountPageRequests } from "./page-requests";
 import { awaitHello } from "./opening";
-import { editorContext } from "./agent-context";
+import { messageContext } from "./agent-context";
 import { keepOffline, rememberOrigin } from "../common/offline";
 
 declare global {
@@ -639,7 +639,7 @@ const TITLE_NOT_SAVED = {
   window.ergaPage = {
     page,
     collab,
-    agentContext: () => editorContext(shell),
+    agentContext: () => messageContext(shell),
     setEditing,
     get pagePath() {
       return shell.pagePath;

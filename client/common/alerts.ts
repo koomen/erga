@@ -11,6 +11,8 @@
 //     stops nothing that runs: progress stays, as the line. A click on the line opens the card.
 //   - A button acts on its own alert. "Fix with agent" (FIX) asks the agent and takes the alert off.
 //   - A confirmation ("Saved") is not an alert: the toast's (client/shell/toast.ts), in a place of its own.
+//   - The agent reads each problem in the card's own words (`said`): in the editor's console, as the card shows it
+//     (the effect "log": page_log gives it), and in the page note of the person's message (client/shell/agent-context.ts).
 //
 // The page's editor raises its alerts by postMessage (AlertMessage up, AlertAct down: libs/text/ui/alerts.ts). The page's
 // own script can forge one, so `readMessage` takes only what it knows, cut to size, and the card shows it as text.
@@ -122,6 +124,8 @@ export type Effect =
   | { t: "tell"; key: string; row?: string; action: string }
   /** Ask the agent to fix these. */
   | { t: "fix"; alerts: Alert[] }
+  /** A problem that the card shows from now, in its words (`said`): into the editor's console, where the agent reads it. */
+  | { t: "log"; text: string }
   | { t: "timer"; key: string; what: "quiet" | "done"; ms: number; n: number };
 
 export const QUIET_MS = 1000,
@@ -137,6 +141,20 @@ const failed = (a: Alert) => a.rows.filter((r) => r.state == "error").length;
 export const shows = (a: Alert) => a.kind == "error" || !a.quiet || a.done || failed(a) > 0;
 /** How many problems show: the errors, and the rows that failed. */
 export const problems = (s: State) => s.alerts.reduce((n, a) => n + (a.kind == "error" ? Math.max(1, failed(a)) : failed(a)), 0);
+/** Who says an alert, as the card names them. */
+export const SOURCE: Record<Source, string> = { page: "Page", editor: "Editor", upload: "Upload", agent: "Agent" };
+/** An alert's line under its title: who says it, who caused it, the facts. */
+export const under = (a: Raise) => [SOURCE[a.source], a.by && `by ${a.by.name}`, a.detail].filter(Boolean).join(" · ");
+/** Why a row failed. */
+export const why = (r: Row) => r.detail ?? "It failed.";
+/**
+ * An alert's problems in the card's own words, as the person reads them: an error's title and the line under it, then
+ * each row that failed (its name, who says it and why). The card and the agent have the same words.
+ */
+export const said = (a: Alert): string[] => [
+  ...(a.kind == "error" ? [`${a.title}\n${under(a)}`] : []),
+  ...a.rows.filter((r) => r.state == "error").map((r) => `${r.title}\n${SOURCE[a.source]} · ${why(r)}`),
+];
 /** The alerts with a request the agent can do. */
 export const fixable = (s: State) => s.alerts.filter((a) => a.fix);
 /** What shows: nothing, the one line (progress alone), or the card. */
@@ -176,6 +194,13 @@ export function step(s: State, e: Event): [State, Effect[]] {
     effects,
   ];
   const draw: Effect = { t: "draw" };
+  /** For the log: each problem `a` says that `was` (it before) didn't; `again`: its error too, which was raised once more. */
+  const news = (a: Alert, was?: Alert | null, again = false): Effect[] => {
+    const before = was ? said(again ? { ...was, kind: "progress" } : was) : [];
+    return said(a)
+      .filter((text) => !before.includes(text))
+      .map((text) => ({ t: "log", text }));
+  };
   switch (e.t) {
     case "raise": {
       const r = e.alert,
@@ -195,14 +220,14 @@ export function step(s: State, e: Event): [State, Effect[]] {
       if (was)
         return [
           { ...s, seen, open: s.open || (view(s) == "card" && shows(was)), alerts: s.alerts.map((a) => (a == was ? made : a)) },
-          [draw],
+          [draw, ...news(made, was, true)],
         ];
       const next = { ...s, seen, alerts: [made, ...s.alerts], timers: made.n };
       return [
         next,
         made.kind == "progress"
-          ? [{ t: "timer", key: r.key, what: "quiet", ms: QUIET_MS, n: made.n }, ...(shows(made) ? [draw] : [])]
-          : [draw],
+          ? [{ t: "timer", key: r.key, what: "quiet", ms: QUIET_MS, n: made.n }, ...(shows(made) ? [draw] : []), ...news(made)]
+          : [draw, ...news(made)],
       ];
     }
     case "row": {
@@ -213,16 +238,21 @@ export function step(s: State, e: Event): [State, Effect[]] {
       const shown = shows(next.alerts[at]);
       // Only its numbers changed: the row alone is painted, so they can change many times a second.
       const numbers = !!was && same({ ...was, p: 0, detail: "" }, { ...e.row, p: 0, detail: "" });
-      return [next, !shown ? [] : numbers ? [{ t: "paint", key: e.key, row: e.row.id }] : [draw]];
+      return [next, !shown ? [] : numbers ? [{ t: "paint", key: e.key, row: e.row.id }] : [draw, ...news(next.alerts[at], old)]];
     }
     case "end": {
       if (!old) return [s, []];
       // The rows that failed stay, as a problem to close or to try again.
-      if (failed(old))
-        return [
-          put({ ...old, kind: "error", quiet: false, title: e.title ?? old.title, rows: old.rows.filter((r) => r.state == "error") }),
-          [draw],
-        ];
+      if (failed(old)) {
+        const left: Alert = {
+          ...old,
+          kind: "error",
+          quiet: false,
+          title: e.title ?? old.title,
+          rows: old.rows.filter((r) => r.state == "error"),
+        };
+        return [put(left), [draw, ...news(left, old)]];
+      }
       if (old.kind == "progress" && shows(old) && e.title) {
         const n = s.timers + 1,
           said = {

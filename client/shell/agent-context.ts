@@ -1,7 +1,24 @@
 // What the editor tells your agent with each message (client/agent/person-agent.ts asks, window.ergaPage.agentContext):
-// the page open, how it's seen, and the selection or the caret, so "this" and "here" mean something to it.
+// the page open, how it's seen, the selection or the caret, and the problems the alerts' card shows, so "this", "here"
+// and "the error" mean something to it.
 
+import { pageReport } from "../../shared/page-report";
+import { plural } from "../../shared/time";
 import type { Shell } from "./shell";
+
+/** The most problems a message's note names: page_log's console has each. */
+const MOST = 8;
+
+/**
+ * What goes with a message that the person types: where they are, and each problem the alerts' card shows them now,
+ * in the card's words (client/common/alerts.ts), as data (shared/page-report.ts).
+ */
+export function messageContext(shell: Shell): string {
+  const said = shell.alerts.said();
+  if (!said.length) return editorContext(shell);
+  const more = said.length > MOST ? ` (the first ${MOST} are here; page_log's console has each)` : "";
+  return `${editorContext(shell)}\nThe editor shows the user ${plural(said.length, "problem")} now${more}, each in a page-report as they read it:\n${said.slice(0, MOST).map(pageReport).join("\n")}`;
+}
 
 /** Where the user is in the document, so "this" and "here" mean something to the agent. */
 export function editorContext(shell: Shell): string {

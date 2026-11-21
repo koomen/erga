@@ -201,7 +201,8 @@ function liveOperations(): DocumentOperation[] {
       description: "The user's open page: its console, requests, events, frames.",
       parameters: Schema.Struct({
         kind: Schema.Literals(["console", "network", "events", "frames"]).annotate({
-          description: "events: pointer and key events; frames: each frame's sandbox.",
+          description:
+            "console: also each problem the editor shows the user; events: pointer and key events; frames: each frame's sandbox.",
         }),
         level: Schema.optionalKey(Schema.Array(Schema.Literals(CONSOLE_LEVELS))),
         pattern: Schema.optionalKey(

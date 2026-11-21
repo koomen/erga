@@ -8,6 +8,7 @@ import { FIX_ALL_REPORTED, FIX_REPORTED, pageReport } from "../../shared/page-re
 import * as A from "../common/alerts";
 import { afterPress } from "../common/pressed";
 import { editorContext } from "./agent-context";
+import { problemShown } from "./page-requests";
 import { $, type Shell } from "./shell";
 
 /** What hears an alert's buttons (and A.DISMISS, as the person closes it). */
@@ -20,7 +21,6 @@ declare global {
   }
 }
 
-const SOURCE: Record<A.Source, string> = { page: "Page", editor: "Editor", upload: "Upload", agent: "Agent" };
 const CHECK = `<svg viewBox="0 0 14 14"><path d="m2.5 7.5 3 3 6-7"/></svg>`;
 const CHEVRON = `<svg class="chev" viewBox="0 0 12 12"><path d="m3 7.5 3-3 3 3"/></svg>`;
 /** The alert that says why the agent can't be asked. */
@@ -53,6 +53,7 @@ export function mountAlerts(shell: Shell) {
       else if (f.t == "paint") paint(f.key, f.row);
       else if (f.t == "timer") window.setTimeout(() => send({ t: "timeout", key: f.key, what: f.what, n: f.n }), ms(f.ms));
       else if (f.t == "fix") askAgent(f.alerts);
+      else if (f.t == "log") problemShown(f.text);
       else if (!shell.page.act(f.key, f.action, f.row)) hears.get(f.key)?.(f.action, f.row);
     }
     for (const key of hears.keys()) if (!state.alerts.some((a) => a.key == key)) hears.delete(key);
@@ -60,12 +61,13 @@ export function mountAlerts(shell: Shell) {
 
   /** Why the agent can't be asked now, or null. */
   const agentOff = () => (window.ergaAgentPanel ? window.ergaAgentPanel.off : "Connecting to the agent…");
-  // The page editor's report goes to your agent as data, in the page note (shared/page-report.ts).
+  // The page editor's report goes to your agent as data, in the page note (shared/page-report.ts): the problem as the
+  // card said it, then the request.
   function askAgent(alerts: A.Alert[]) {
     const agent = window.ergaAgentPanel!;
     agent.ask(
       alerts.length == 1 ? FIX_REPORTED : FIX_ALL_REPORTED,
-      `${editorContext(shell)}\n${alerts.map((a) => pageReport(a.fix!)).join("\n")}`
+      `${editorContext(shell)}\n${alerts.map((a) => pageReport([...A.said(a), a.fix!].join("\n"))).join("\n")}`
     );
   }
   /** A fix button: the agent is asked, or an alert says why it can't be. */
@@ -102,7 +104,7 @@ export function mountAlerts(shell: Shell) {
     );
     const acts = actions(r.actions ?? [], "alert-row-action");
     if (failed) {
-      const why = el("span", "why", r.detail ?? "It failed.");
+      const why = el("span", "why", A.why(r));
       why.append(...acts);
       li.append(el("span", ""), why);
     } else {
@@ -134,7 +136,7 @@ export function mountAlerts(shell: Shell) {
     const text = el("div", "alert-text"),
       title = el("p", "alert-title", a.title);
     if (a.count > 1) title.append(el("span", "alert-count", `×${a.count}`));
-    text.append(title, el("p", "alert-detail", [SOURCE[a.source], a.by && `by ${a.by.name}`, a.detail].filter(Boolean).join(" · ")));
+    text.append(title, el("p", "alert-detail", A.under(a)));
     li.append(mark(a), text);
     const list = a.fix ? [{ id: A.FIX, label: a.fixLabel ?? "Fix with agent", primary: true }, ...a.actions] : a.actions;
     if (list.length) {
@@ -255,6 +257,8 @@ export function mountAlerts(shell: Shell) {
       send({ t: "close" });
       return true;
     },
+    /** Each problem the card shows now, in its words (for the agent: agent-context.ts). */
+    said: () => state.alerts.flatMap(A.said),
     /** The page in the frame loaded again: what its editor raised is gone with it. */
     loaded: () => send({ t: "load" }),
     /** Another page: what was said of the last page was of it alone. */

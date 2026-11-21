@@ -12,6 +12,7 @@ import {
   QUIET_MS,
   readMessage,
   running,
+  said,
   step,
   view,
   type Effect,
@@ -54,7 +55,40 @@ test("three errors from different sources: one card, the newest first; the same 
   expect(keys(state)).toEqual(["c", "b", "a"]);
   expect(state.alerts[2].count).toBe(3);
   expect(headline(state)).toBe("3 problems");
-  expect(effects.every((f) => f.length == 1 && f[0].t == "draw")).toBe(true);
+  // Each raise draws the card, and says the problem in the card's words for the agent's page_log: again each time.
+  const A = "a\nPage",
+    log = (text: string): Effect[] => [DRAW, { t: "log", text }];
+  expect(effects).toEqual([log(A), log("b\nUpload"), log("c\nAgent"), log(A), log(A)]);
+});
+
+// Was a bug: the card said "The page asked for an edit that can't be made", and the agent's page_log had no word of it.
+test("the agent reads each problem in the card's own words: what the page's editor raised, a row that failed, never what the person wasn't shown", () => {
+  const title = "The page asked for an edit that can't be made",
+    detail = "ergaEditor.call works only when the person has just clicked or pressed a key on the page.";
+  const raised = readMessage(
+    { op: "raise", alert: { key: "notice:x", kind: "error", source: "editor", title, detail, fix: "Fix it." } },
+    "page/"
+  )!;
+  const card = `${title}\nEditor · ${detail}`;
+  const one = run(initial, raised);
+  expect(one.effects).toEqual([[DRAW, { t: "log", text: card }]]);
+  expect(one.state.alerts.flatMap(said)).toEqual([card]);
+  // A problem of the page that this view has shown already (once) isn't shown again, and isn't said again.
+  const once = run(initial, error("p", { once: true }), { t: "close" }, error("p", { once: true }));
+  expect(once.effects[2]).toEqual([]);
+  // A row that fails says so one time, with its name; the batch's end, with its new title, says the error it now is.
+  const row = (state: "running" | "error") => ({ id: "0", title: "a.png", state, ...(state == "error" ? { detail: "Too large." } : {}) });
+  const failed = run(
+    initial,
+    upload("u", { rows: [row("running")] }),
+    { t: "row", key: "u", row: row("error") },
+    { t: "end", key: "u", title: "Couldn't add a.png" }
+  );
+  expect(failed.effects.slice(1)).toEqual([
+    [DRAW, { t: "log", text: "a.png\nUpload · Too large." }],
+    [DRAW, { t: "log", text: "Couldn't add a.png\nUpload" }],
+  ]);
+  expect(failed.state.alerts.flatMap(said)).toEqual(["Couldn't add a.png\nUpload", "a.png\nUpload · Too large."]);
 });
 
 test("progress never opens the card: nothing in its first second, then the line; what ends sooner shows nothing", () => {
@@ -173,7 +207,7 @@ test("a batch: a row's numbers paint that row alone; a row that fails opens the 
   const quiet = run(initial, upload("q", { rows: [row("0", "running")] }));
   const failed = run(quiet.state, { t: "row", key: "q", row: row("0", "error") });
   expect([view(failed.state), problems(failed.state)]).toEqual(["card", 1]);
-  expect(failed.effects).toEqual([[DRAW]]);
+  expect(failed.effects).toEqual([[DRAW, { t: "log", text: "0.png\nUpload · 1 MB" }]]);
   // The end: what failed stays, as a problem. Close takes it off.
   const ended = run(failed.state, { t: "row", key: "q", row: row("1", "done") }, { t: "end", key: "q", title: "Couldn't add 0.png" }).state;
   expect(ended.alerts[0]).toMatchObject({ kind: "error", title: "Couldn't add 0.png", rows: [{ id: "0" }] });

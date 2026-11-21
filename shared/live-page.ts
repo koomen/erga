@@ -2,8 +2,9 @@
 // about the page as it runs there (not view_page's throwaway render), and do
 // in it. The tab keeps three logs, each a ring with a cap:
 //
-//   the console    errors, warnings and logs from the editor's windows and the page's frames; identical
-//                  messages collapse into one entry with a count and the first and last time
+//   the console    errors, warnings and logs from the editor's windows and the page's frames, and each problem
+//                  the editor's card shows the person (client/common/alerts.ts); identical messages collapse
+//                  into one entry with a count and the first and last time
 //   the network    each request of the page's frames: Resource Timing, what the page's fetch and XHR
 //                  sent and got (method, Range, Content-Range), and what Erga's server added (Server-Timing)
 //   the events     each pointer and key event on the page, and who consumed it (preventDefault,
@@ -51,7 +52,10 @@ export const shownInTab = (r: LiveRequest) => r.kind == "inspect" || actsOnPage(
 export interface ConsoleEntry {
   level: ConsoleLevel;
   text: string;
-  /** Where: "editor" (the editor's own window), "page" (the page's frame), "page frame <src>" (a frame inside it). */
+  /**
+   * Where: "editor" (the editor's own window), "problem card" (a problem the editor shows the person, in its words),
+   * "page" (the page's frame), "page frame <src>" (a frame inside it).
+   */
   source: string;
   count: number;
   /** When it was first and last logged (ms since the epoch). */

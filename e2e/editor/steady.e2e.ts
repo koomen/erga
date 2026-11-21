@@ -13,7 +13,7 @@ import { dragAt, dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
 import { hold, holdLoads } from "../helpers/hold";
 import { clickOn, pointerOnPage, pressOn } from "../helpers/press";
 import { newToken } from "../helpers/new-token";
-import { runTool } from "../helpers/tools";
+import { runTool, textOf } from "../helpers/tools";
 import { WAIT_MS } from "../../client/common/frame-swap";
 import { FIX_REPORTED } from "../../shared/page-report";
 import {
@@ -769,6 +769,14 @@ journey("a broken page says what is wrong, all of it in one card", () => {
     expect(shown.alerts.find((a) => /script/.test(a.title))!.detail).toMatch(
       /^Page · .*drawTheChart is not defined \(index\.html, line \d+\)$/
     );
+    // Was a bug: the agent, asked about the error, read the page's console, found no word of the card's, and asked the
+    // person what it said. It reads each problem as the card says it: in page_log's console, and with a typed message.
+    const said = shown.alerts.map((a) => `${a.title}\n${a.detail}`);
+    const log = await runTool(s.root, "page_log", { document: new URL(tab.page.url()).pathname, kind: "console", pattern: "problem card" });
+    for (const problem of said) expect(textOf(log.result)).toContain(`error (problem card): ${problem}\n`);
+    const note = await ed.eval<string>(`window.ergaPage.agentContext()`);
+    expect(note).toContain("The editor shows the user 2 problems now");
+    for (const problem of said) expect(note).toContain(`<page-report>\n${problem}\n</page-report>`);
   });
 
   test("Ctrl+S while the problems show: “Saved” shows over the card, in its own place, and the problems stay; typed text goes into the page", async () => {
@@ -802,7 +810,9 @@ journey("a broken page says what is wrong, all of it in one card", () => {
     // The prompt is the shell's own words; the problem goes with it as a report, which the agent reads as data.
     const body = JSON.parse((await sent).postData() ?? "{}") as { text: string; context: string };
     expect(body.text).toBe(FIX_REPORTED);
-    expect(/<page-report>\n([\s\S]*)\n<\/page-report>/.exec(body.context)?.[1]).toMatch(/missing\.css/);
+    expect(/<page-report>\n([\s\S]*)\n<\/page-report>/.exec(body.context)?.[1]).toMatch(
+      /^The stylesheet “missing\.css” didn't load\nPage · The page may not look or work as it should\.\nThe page refers to the stylesheet “missing\.css”/
+    );
     expect(await titles()).toEqual(["The page's script hit an error"]);
     // Beside the agent's panel, not under it (the panel slides in).
     await expect
