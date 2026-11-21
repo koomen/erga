@@ -1,44 +1,17 @@
-// The gate's mounts (gate/mounts/): the same core behind a Worker's requests (web.ts, worker.ts: an OIDC issuer, or
-// Cloudflare Access) and behind CloudFront's events (the four functions as gate/build.ts builds them, and the
-// Lambda). Each runs a whole sign-in and hand-off, through a pretend browser that keeps cookies as a browser does.
+// The gate inside a Worker (gate/mounts/web.ts): the same core behind a Worker's requests, with the organization's
+// sign-in (gate/sso.ts: an OIDC issuer, or Cloudflare Access in front), and where anyone may come in. Each runs a
+// whole sign-in and hand-off, through a pretend browser that keeps cookies as a browser does. (The gate in front, on
+// CloudFront: tests/gate-cloudfront.test.ts.)
 
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { buildFunction, buildLambda, FUNCTION_MAX, type Part, PARTS } from "../gate/build.ts";
-import { ASK, CALLER, type Caller, type Config, open, seal, TOKEN } from "../gate/core.ts";
-import { refused } from "../gate/lower.ts";
-import { accessOf } from "../gate/mounts/access.ts";
-import { oidcExchange } from "../gate/mounts/oidc.ts";
-import { FRONT, handle, type Mount, parseCookies, readCaller } from "../gate/mounts/web.ts";
-import { type Env, mountOf } from "../gate/mounts/worker.ts";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { accessOf } from "../gate/access.ts";
+import { ACCESS_OPEN, ASK, CALLER, type Caller, type Config, FRONT, open, seal, TOKEN } from "../gate/core.ts";
+import { fromFront, handle, type Mount, parseCookies, readCaller } from "../gate/mounts/web.ts";
+import { oidcExchange } from "../gate/oidc.ts";
 import { webPort as port } from "../gate/port.ts";
-import { browser, hopOf } from "./helpers/gate.ts";
-
-const KEY = "an-edge-key-of-thirty-two-characters!";
-const SHELL = "erga.example.com";
-const CONTENT = "pages.example.net";
-const PAGE = `https://abc12345-ada.${CONTENT}/t/pass/`;
-const ISSUER = "https://idp.example.com";
-const IDP = { name: "sso", issuer: ISSUER, authorize: `${ISSUER}/authorize`, token: `${ISSUER}/token`, client: "client-1" };
-
-const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
-/** An ID token as an issuer's token endpoint gives it (its signature is never read). */
-const idToken = (claims: Record<string, unknown>) =>
-  `${b64({ alg: "RS256" })}.${b64({ iss: ISSUER, aud: "client-1", exp: Date.now() / 1000 + 300, ...claims })}.sig`;
-
-/** A pretend issuer's token endpoint: it trades the code "good" with the client's secret and a verifier. */
-const issuer = (seen: URLSearchParams[] = []): typeof fetch =>
-  (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input instanceof Request ? input.url : input);
-    if (url != IDP.token) return new Response("nope", { status: 404 });
-    const form = new URLSearchParams(String(init?.body));
-    seen.push(form);
-    if (form.get("code") != "good" || form.get("client_secret") != "idp-secret" || !form.get("code_verifier"))
-      return new Response("{}", { status: 400 });
-    return Response.json({ id_token: idToken({ sub: "sub-ada", email: "ada@example.com", email_verified: true, name: "Ada" }) });
-  }) as typeof fetch;
+import { ssoOf } from "../gate/sso.ts";
+import { browser, hopOf, insideMount } from "./helpers/gate.ts";
+import { b64, CONTENT, IDP, idToken, ISSUER, issuer, KEY, PAGE, SHELL } from "./helpers/gate-mounts.ts";
 
 /** A pretend Erga: it says who the gate named, and what reached it. */
 function erga() {
@@ -59,23 +32,17 @@ function erga() {
   return { fetch, seen };
 }
 
-const FRONT_KEY = "the-key-that-erga-has-too-".repeat(2);
-const env = (o: Partial<Env> & Pick<Env, "ERGA">): Env => ({
-  EDGE_KEY: KEY,
-  GATE_KEY: FRONT_KEY,
-  SHELL,
-  CONTENT,
-  IDP: JSON.stringify(IDP),
-  IDP_SECRET: "idp-secret",
-  ...o,
-});
+const OIDC = { oidc: { issuer: ISSUER, authorize: IDP.authorize, token: IDP.token, client: IDP.client } };
+/** The gate inside a Worker, with the organization's sign-in: an issuer (the default), or Access. */
+const inside = (upstream: { fetch: (request: Request) => Promise<Response> }, ask: typeof fetch, sso: object = OIDC) =>
+  insideMount({ key: KEY, shell: SHELL, content: CONTENT, sso, secret: "idp-secret", ask, upstream: upstream.fetch });
 const whoOf = async (answer: Response) => (await answer.json()) as { who: Caller; cookie: string | null; authorization: string | null };
 
-describe("the gate's Worker in front of Erga: an OIDC issuer", () => {
+describe("the gate inside a Worker, with the organization's sign-in: an OIDC issuer", () => {
   const setUp = () => {
     const upstream = erga();
     const traded: URLSearchParams[] = [];
-    const mount = mountOf(env({ ERGA: upstream }), issuer(traded));
+    const mount = inside(upstream, issuer(traded));
     return { upstream, traded, mount, b: browser((r) => handle(r, mount)) };
   };
 
@@ -130,10 +97,9 @@ describe("the gate's Worker in front of Erga: an OIDC issuer", () => {
     expect(said.who).toMatchObject({ sub: "sub-ada" });
     expect(said.cookie).toBe("erga_join=abc; theme=dark");
     expect(upstream.seen.at(-1)!.headers.get(ASK)).toBeNull();
-    // Each request that goes on carries the key that Erga has too, whatever came in under its name.
-    expect(upstream.seen.at(-1)!.headers.get(FRONT)).toBe(FRONT_KEY);
+    // The key of a gate in front is no header of a request from outside: it never goes on.
     await handle(new Request(`https://${SHELL}/x`, { headers: { cookie: `__Host-erga=${shell}`, [FRONT]: "a guess" } }), mount);
-    expect(upstream.seen.at(-1)!.headers.get(FRONT)).toBe(FRONT_KEY);
+    expect(upstream.seen.at(-1)!.headers.get(FRONT)).toBeNull();
     // With no proof at all, the forged header gets nowhere.
     expect((await handle(new Request(`https://${SHELL}/x`, { headers: { [CALLER]: forged } }), mount)).status).toBe(401);
   });
@@ -324,15 +290,31 @@ describe("the gate's Worker in front of Erga: an OIDC issuer", () => {
     expect(b.trail.length).toBe(1);
   });
 
-  test("the deploy's values are checked", () => {
-    const ERGA = erga();
-    expect(() => mountOf(env({ ERGA, EDGE_KEY: "short" }))).toThrow();
-    expect(() => mountOf(env({ ERGA, GATE_KEY: "short" }))).toThrow();
-    expect(() => mountOf(env({ ERGA, GATE_KEY: KEY }))).toThrow();
-    expect(() => mountOf(env({ ERGA, IDP_SECRET: undefined }))).toThrow();
-    expect(() => mountOf(env({ ERGA, IDP: undefined }))).toThrow();
-    // An issuer can't have Access's name: sign-out would go on to Access's own (core.ts, signOutAt).
-    expect(() => mountOf(env({ ERGA, IDP: JSON.stringify({ ...IDP, name: "access" }) }))).toThrow("Cloudflare Access");
+  test("the deploy's values are checked: values that name no sign-in throw", () => {
+    const good = JSON.stringify(OIDC);
+    expect(ssoOf(good, "idp-secret").idp).toEqual({ sso: { authorize: IDP.authorize, client: "client-1", scope: "openid email profile" } });
+    // An issuer needs its client's secret, and each of its addresses over https.
+    expect(() => ssoOf(good, "")).toThrow("SSO_CLIENT_SECRET");
+    for (const part of ["issuer", "authorize", "token", "client"])
+      expect(() => ssoOf(JSON.stringify({ oidc: { ...OIDC.oidc, [part]: "" } }), "s")).toThrow('"oidc"');
+    expect(() => ssoOf(JSON.stringify({ oidc: { ...OIDC.oidc, token: "http://idp.example.com/token" } }), "s")).toThrow('"oidc"');
+    // Access needs the team and the application's tag; one sign-in, never both, never none.
+    const access = { team: "team1", aud: "a".repeat(64) };
+    expect(ssoOf(JSON.stringify({ access }), "").idp).toBe("access");
+    for (const bad of [{ team: "team1" }, { aud: access.aud }, { team: "Team 1", aud: access.aud }, { team: "team1", aud: "tag" }])
+      expect(() => ssoOf(JSON.stringify({ access: bad }), "")).toThrow('"access"');
+    for (const bad of ["", "{}", "null", "junk", JSON.stringify({ access, ...OIDC })]) expect(() => ssoOf(bad, "s")).toThrow("SSO must be");
+  });
+
+  test("a gate in front: only a request with its key passes, and the key ends there", () => {
+    const key = "the-key-that-erga-has-too-".repeat(2);
+    const ask = (sent?: string) =>
+      fromFront(new Request(`https://${SHELL}/x`, { headers: sent == null ? {} : { [FRONT]: sent, other: "kept" } }), key);
+    for (const sent of [undefined, "", key.slice(0, -1), `${key}x`, key.toUpperCase()]) expect(ask(sent)).toBeNull();
+    const through = ask(key)!;
+    expect([through.headers.get(FRONT), through.headers.get("other"), through.url]).toEqual([null, "kept", `https://${SHELL}/x`]);
+    // A key too short to be a secret is no key.
+    expect(fromFront(new Request(`https://${SHELL}/x`, { headers: { [FRONT]: "short" } }), "short")).toBeNull();
   });
 });
 
@@ -377,7 +359,7 @@ describe("the code exchange with an OIDC issuer", () => {
 });
 
 describe("behind Cloudflare Access", () => {
-  const ACCESS = { team: "team1", aud: "aud-1" };
+  const ACCESS = { team: "team1", aud: "a1".repeat(32) };
   let keys: CryptoKeyPair, other: CryptoKeyPair, jwks: { keys: JsonWebKey[] };
   let asked = 0;
   const certs = (async (input: RequestInfo | URL) => {
@@ -402,7 +384,7 @@ describe("behind Cloudflare Access", () => {
     const head = b64({ alg: o.alg ?? "RS256", kid: o.kid ?? "k1" });
     const body = b64({
       iss: "https://team1.cloudflareaccess.com",
-      aud: ["aud-1"],
+      aud: [ACCESS.aud],
       exp: Math.floor(Date.now() / 1000) + 600,
       sub: "sub-ada",
       email: "ada@example.com",
@@ -442,12 +424,14 @@ describe("behind Cloudflare Access", () => {
 
   test("the gate behind Access: the person on each request, the hand-off as everywhere, and no sign-in of its own", async () => {
     const upstream = erga();
-    const mount = mountOf(env({ ERGA: upstream, IDP: undefined, IDP_SECRET: undefined, ACCESS: JSON.stringify(ACCESS) }), certs);
+    const mount = inside(upstream, certs, { access: ACCESS });
     const jwt = await proof({ name: "Ada" });
-    // Access adds its proof to what it lets through; the frame's vouch passes Access with none (a bypass path).
+    // Access adds its proof to what it lets through; the paths that it lets through with no sign-in carry none (the
+    // gate's own list: the frame's vouch is one).
+    const bypassed = (path: string) => ACCESS_OPEN.some((open) => path == open || path.startsWith(`${open}/`));
     const b = browser((r) =>
       handle(
-        new URL(r.url).host == SHELL && !new URL(r.url).pathname.startsWith("/_edge/")
+        new URL(r.url).host == SHELL && !bypassed(new URL(r.url).pathname)
           ? new Request(r, { headers: { ...Object.fromEntries(r.headers), "cf-access-jwt-assertion": jwt } })
           : r,
         mount
@@ -469,6 +453,30 @@ describe("behind Cloudflare Access", () => {
     const before = upstream.seen.length;
     expect((await handle(withProof(null), mount)).status).toBe(401);
     expect((await handle(withProof(await proof({}, { key: other.privateKey })), mount)).status).toBe(401);
+    // Each path that Access lets through: the gate's own answer, by its own values, and nothing of Erga.
+    const open = async (path: string, init: RequestInit = {}) => (await handle(new Request(`https://${SHELL}${path}`, init), mount)).status;
+    expect(ACCESS_OPEN).toEqual([
+      "/_edge/vouch",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
+      "/oauth/token",
+      "/oauth/register",
+      "/mcp",
+    ]);
+    const form = {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "grant_type=authorization_code&code=x",
+    };
+    expect([
+      await open("/_edge/vouch"),
+      await open("/.well-known/oauth-protected-resource"),
+      await open("/.well-known/oauth-authorization-server"),
+      await open("/oauth/token", form),
+      await open("/oauth/register", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+      await open("/mcp", { method: "POST" }),
+      await open("/mcp", { method: "POST", headers: { authorization: "Bearer a.forged.token" } }),
+    ]).toEqual([401, 200, 200, 400, 400, 401, 401]);
     expect(upstream.seen.length).toBe(before);
   });
 });
@@ -499,431 +507,5 @@ describe("in Erga's own Worker (anyone may come in)", () => {
       await handle(new Request(`https://${SHELL}/ada/notes`, { headers: { cookie: `__Host-erga=${shell}` } }), mount)
     );
     expect(said.who).toMatchObject({ kind: "person", p: "github", sub: "1" });
-  });
-});
-
-describe("on CloudFront: the four functions as built, and the Lambda", () => {
-  const settings: Omit<Config, "key"> = {
-    shell: SHELL,
-    content: CONTENT,
-    https: true,
-    open: false,
-    idp: { sso: { authorize: IDP.authorize, client: IDP.client, scope: "openid email profile" } },
-    oauth: true,
-    redirects: [],
-  };
-  type Handler = (event: unknown) => Promise<Record<string, any>>;
-  const fn = {} as Record<Part, Handler>;
-  let lambda: (
-    event: unknown,
-    context?: unknown,
-    o?: unknown
-  ) => Promise<{ status: string; headers: Record<string, { value: string }[]>; body?: string }>;
-  const denied = new Set<string>();
-  const dir = mkdtempSync(join(realpathSync(tmpdir()), "erga-gate-"));
-  /** A function as built for a deploy's settings, loaded. */
-  const load = async (part: Part, config: Omit<Config, "key">, name: string = part): Promise<Handler> => {
-    const file = join(dir, `${name}.mjs`);
-    writeFileSync(file, await buildFunction(part, config, true));
-    return (await import(file)).handler;
-  };
-
-  beforeAll(async () => {
-    // The runtime's two modules: `crypto` is Node's here; `cloudfront` gives the KeyValueStore.
-    mock.module("cloudfront", () => ({
-      default: { kvs: () => ({ get: async (k: string) => (k == "key" ? KEY : null), exists: async (k: string) => denied.has(k) }) },
-    }));
-    for (const part of PARTS) fn[part] = await load(part, settings);
-    const file = join(dir, "lambda.mjs");
-    writeFileSync(file, await buildLambda({ shell: SHELL, region: "us-east-1", idp: { sso: { ...IDP, secret: "/erga/idp-secret" } } }));
-    lambda = (await import(file)).handler;
-  });
-
-  test("each function is under CloudFront's 10 KB, in syntax that its runtime takes, with a handler by that name and no export", async () => {
-    for (const part of PARTS) {
-      const code = await buildFunction(part, settings);
-      expect(new TextEncoder().encode(code).length).toBeLessThan(FUNCTION_MAX);
-      // (tests/gate-lower.test.ts: what the runtime refuses, and that the lowering keeps what the code does.)
-      expect(refused(code)).toEqual([]);
-      expect(code).toMatch(/function handler\(e\)\{return [\w$]+\(e\)\}$/);
-      expect(code).not.toMatch(/\bexport\b/);
-    }
-  });
-
-  let n = 0;
-  /** A request's event, as CloudFront gives it to a function. */
-  const event = (
-    url: string,
-    o: { method?: string; cookies?: Record<string, string>; headers?: Record<string, string>; dest?: string } = {}
-  ) => {
-    const u = new URL(url);
-    const headers: Record<string, { value: string }> = { host: { value: u.host }, "sec-fetch-dest": { value: o.dest ?? "document" } };
-    for (const [k, v] of Object.entries(o.headers ?? {})) headers[k] = { value: v };
-    const querystring: Record<string, { value: string }> = {};
-    for (const [k, v] of new URLSearchParams(u.search)) querystring[k] = { value: encodeURIComponent(v) };
-    const cookies: Record<string, { value: string }> = {};
-    for (const [k, v] of Object.entries(o.cookies ?? {})) cookies[k] = { value: v };
-    return { context: { requestId: `cf-${n++}` }, request: { method: o.method ?? "GET", uri: u.pathname, querystring, headers, cookies } };
-  };
-  /** A viewer request's function, as the distribution's behaviors choose it: by the path. */
-  const viewer = (e: ReturnType<typeof event>) => {
-    const path = e.request.uri;
-    const agents = path.startsWith("/.well-known/oauth-") || path == "/oauth/token";
-    return fn[path.startsWith("/_edge/") ? "edge" : agents ? "agents" : "request"](e);
-  };
-  const callerIn = (request: Record<string, any>): Caller => JSON.parse(Buffer.from(request.headers[CALLER].value, "base64url").toString());
-
-  /** A whole sign-in: the request function, the Lambda, the response function. The cookies it set. */
-  async function signIn() {
-    const start = await viewer(event(`https://${SHELL}/_edge/sign-in?next=/documents`));
-    expect(start.statusCode).toBe(302);
-    const state = new URL(start.headers.location.value).searchParams.get("state")!;
-    const cookies = { "__Host-signin": start.cookies["__Host-signin"].value };
-    const cb = event(`https://${SHELL}/_edge/callback?code=good&state=${state}`, {
-      cookies,
-      headers: { "x-erga-exchange": "forged", "x-erga-identity": "forged" },
-    });
-    const onward = await viewer(cb);
-    // On to the Lambda, with what to trade: written by the function, whatever came in.
-    expect(onward.headers["x-erga-identity"]).toBeUndefined();
-    const fromLambda = await lambda(
-      {
-        Records: [
-          {
-            cf: {
-              request: {
-                method: "GET",
-                uri: onward.uri,
-                headers: { "x-erga-exchange": [{ value: onward.headers["x-erga-exchange"].value }] },
-              },
-            },
-          },
-        ],
-      },
-      null,
-      {
-        fetch: issuer(),
-        secret: async (name: string) => (name == "/erga/idp-secret" ? "idp-secret" : "wrong"),
-      }
-    );
-    expect(fromLambda.status).toBe("200");
-    const response = {
-      statusCode: 200,
-      headers: { "x-erga-identity": { value: fromLambda.headers["x-erga-identity"][0].value } },
-      cookies: {},
-    };
-    const done = await fn.response({ ...event(`https://${SHELL}/_edge/callback?code=good&state=${state}`, { cookies }), response });
-    return { done, state, cookies };
-  }
-
-  test("sign-in: the function starts it, the Lambda trades the code, the function signs", async () => {
-    const { done } = await signIn();
-    expect(done.statusCode).toBe(302);
-    expect(done.headers.location.value).toBe("/documents");
-    expect(done.headers["x-erga-identity"]).toBeUndefined();
-    expect(done.cookies["__Host-erga"].attributes).toBe(`Path=/; Max-Age=${30 * 86400}; HttpOnly; Secure; SameSite=Lax`);
-    expect(await open(port, KEY, "s", done.cookies["__Host-erga"].value, Date.now() / 1000)).toMatchObject({
-      p: "sso",
-      sub: "sub-ada",
-      email: "ada@example.com",
-    });
-    expect(done.cookies["__Host-member"].attributes).toContain("SameSite=None");
-    expect(done.cookies["__Host-signin"].attributes).toContain("Max-Age=0");
-  });
-
-  test("an identity header signs nothing without the sign-in's state in the browser", async () => {
-    const identity = Buffer.from(JSON.stringify({ p: "sso", sub: "sub-root", email: "root@example.com", name: "Root" })).toString(
-      "base64url"
-    );
-    const response = () => ({ statusCode: 200, headers: { "x-erga-identity": { value: identity } }, cookies: {} });
-    const no = await fn.response({ ...event(`https://${SHELL}/_edge/callback?code=x&state=y`), response: response() });
-    expect(no.statusCode).toBe(400);
-    expect(no.cookies).toEqual({});
-    expect(no.headers["x-erga-identity"]).toBeUndefined();
-    const elsewhere = await fn.response({ ...event(`https://${SHELL}/documents`), response: response() });
-    expect(elsewhere.cookies).toEqual({});
-  });
-
-  test("the Lambda holds no key and names nobody for a code the issuer refuses, or for another path", async () => {
-    const x = Buffer.from(
-      JSON.stringify({
-        do: "exchange",
-        idp: "sso",
-        code: "bad",
-        verifier: "v".repeat(43),
-        redirect: `https://${SHELL}/_edge/callback`,
-        next: "/",
-      })
-    ).toString("base64url");
-    const o = { fetch: issuer(), secret: async () => "idp-secret" };
-    const refused = await lambda(
-      { Records: [{ cf: { request: { method: "GET", uri: "/_edge/callback", headers: { "x-erga-exchange": [{ value: x }] } } } }] },
-      null,
-      o
-    );
-    expect(refused.headers["x-erga-identity"]).toBeUndefined();
-    const other = await lambda(
-      { Records: [{ cf: { request: { method: "GET", uri: "/documents", headers: { "x-erga-exchange": [{ value: x }] } } } }] },
-      null,
-      o
-    );
-    expect(other.headers["x-erga-identity"]).toBeUndefined();
-    expect(await buildLambda({ shell: SHELL, region: "us-east-1", idp: {} })).not.toContain(KEY);
-  });
-
-  test("a signed-in request goes on with the caller's header and without the gate's cookies; no proof gets a 401", async () => {
-    const { done } = await signIn();
-    const cookies = {
-      "__Host-erga": done.cookies["__Host-erga"].value,
-      "__Host-member": done.cookies["__Host-member"].value,
-      theme: "dark",
-    };
-    const forged = Buffer.from(JSON.stringify({ kind: "person", sub: "sub-root" })).toString("base64url");
-    const onward = await viewer(event(`https://${SHELL}/documents`, { cookies, headers: { [CALLER]: forged } }));
-    expect(callerIn(onward)).toMatchObject({ kind: "person", sub: "sub-ada" });
-    expect(Object.keys(onward.cookies)).toEqual(["theme"]);
-    const none = await viewer(event(`https://${SHELL}/api/tools/x`, { method: "POST", dest: "empty", headers: { [CALLER]: forged } }));
-    expect(none.statusCode).toBe(401);
-    denied.add("deny:sub-ada");
-    expect((await viewer(event(`https://${SHELL}/documents`, { cookies }))).statusCode).toBe(401);
-    denied.clear();
-  });
-
-  test("a request that goes on says the host the viewer asked for, whatever forwarded header came in", async () => {
-    const { done } = await signIn();
-    const cookies = { "__Host-erga": done.cookies["__Host-erga"].value };
-    // Erga's server behind CloudFront (celld) takes this header for its own host: the function writes it.
-    const plain = await viewer(event(`https://${SHELL}/documents`, { cookies }));
-    expect(plain.headers["x-forwarded-host"]).toEqual({ value: SHELL });
-    const forged = await viewer(event(`https://${SHELL}/documents`, { cookies, headers: { "x-forwarded-host": "evil.example" } }));
-    expect(forged.headers["x-forwarded-host"]).toEqual({ value: SHELL });
-    // A document's host, as a member: its own host.
-    const member = await seal(port, KEY, "m", {}, Date.now() / 1000 + 60);
-    const page = await viewer(event(PAGE, { cookies: { member }, headers: { "x-forwarded-host": SHELL } }));
-    expect(page.headers["x-forwarded-host"]).toEqual({ value: new URL(PAGE).host });
-  });
-
-  test("no function writes a header that CloudFront refuses from a function (a 502 for the request)", async () => {
-    // AWS's list of the headers that an edge function may not add or change ("Restrictions on edge functions").
-    const refused =
-      /^(connection|expect|keep-alive|proxy-authenticate|proxy-authorization|proxy-connection|trailer|upgrade|x-accel-.*|x-amz-cf-.*|x-amzn-.*|x-cache|x-edge-.*|x-forwarded-proto|x-real-ip|content-length|host|transfer-encoding|via)$/;
-    const { done } = await signIn();
-    const cookies = { "__Host-erga": done.cookies["__Host-erga"].value };
-    const sent = event(`https://${SHELL}/documents`, { cookies });
-    const before = JSON.stringify(sent.request.headers);
-    const had = JSON.parse(before) as Record<string, unknown>;
-    const on = await viewer(sent);
-    const wrote = Object.keys(on.headers).filter((h) => JSON.stringify(on.headers[h]) != JSON.stringify(had[h]));
-    expect(wrote.sort()).toEqual([CALLER, "x-erga-wire", "x-forwarded-host"]);
-    expect(wrote.filter((h) => refused.test(h))).toEqual([]);
-    // And each answer of the gate's own: its headers.
-    for (const url of [
-      `https://${SHELL}/documents`,
-      `https://${SHELL}/_edge/sign-in`,
-      `https://${SHELL}/.well-known/oauth-authorization-server`,
-    ])
-      expect(Object.keys((await viewer(event(url))).headers).filter((h) => refused.test(h))).toEqual([]);
-  });
-
-  test("each function answers its own addresses only: any other is a 404, also with a proof", async () => {
-    const { done } = await signIn();
-    const cookies = { "__Host-erga": done.cookies["__Host-erga"].value, "__Host-member": done.cookies["__Host-member"].value };
-    const at = (path: string) => event(`https://${SHELL}${path}`, { cookies });
-    expect((await fn.request(at("/_edge/sign-in"))).statusCode).toBe(404);
-    expect((await fn.request(event(`https://accept.${CONTENT}/t/pass/`, { cookies }))).statusCode).toBe(404);
-    expect((await fn.edge(at("/documents"))).statusCode).toBe(404);
-    expect((await fn.edge(at("/oauth/token"))).statusCode).toBe(404);
-    expect((await fn.agents(at("/documents"))).statusCode).toBe(404);
-    expect((await fn.agents(at("/_edge/sign-in"))).statusCode).toBe(404);
-  });
-
-  test("the hand-off: the request function starts it, and the edge function runs its two steps", async () => {
-    const { done } = await signIn();
-    const first = await viewer(event(PAGE, { dest: "iframe" }));
-    expect(first.statusCode).toBe(200);
-    expect(first.cookies.nonce.attributes).toBe(`Path=/; Max-Age=120; HttpOnly; Domain=${CONTENT}; Secure; SameSite=None; Partitioned`);
-    const vouch = await viewer(
-      event(hopOf(first.body.data), { dest: "iframe", cookies: { "__Host-member": done.cookies["__Host-member"].value } })
-    );
-    expect(hopOf(vouch.body.data).startsWith(`https://accept.${CONTENT}/_edge/accept?ticket=`)).toBe(true);
-    const accept = await viewer(event(hopOf(vouch.body.data), { dest: "iframe", cookies: { nonce: first.cookies.nonce.value } }));
-    expect(hopOf(accept.body.data)).toBe(PAGE);
-    const page = await viewer(event(PAGE, { dest: "iframe", cookies: { member: accept.cookies.member.value } }));
-    expect(callerIn(page)).toEqual({ kind: "member" });
-    expect(page.cookies).toEqual({});
-  });
-
-  test("an agent: the code from the response function, the token from the agents' function through the Lambda", async () => {
-    const { done } = await signIn();
-    const verifier = "v".repeat(43);
-    const query = new URLSearchParams({
-      response_type: "code",
-      client_id: "claude-code",
-      redirect_uri: "http://localhost:8123/callback",
-      state: "st",
-      code_challenge: await port.sha256(verifier),
-      code_challenge_method: "S256",
-    });
-    const cookies = { "__Host-erga": done.cookies["__Host-erga"].value };
-    const post = event(`https://${SHELL}/oauth/authorize?${query}`, { method: "POST", cookies, dest: "empty" });
-    const onward = await viewer(structuredClone(post));
-    expect(callerIn(onward).kind).toBe("person");
-    // Erga approved. The response function sees the request as the request function left it (no gate cookies: a real
-    // distribution shows it so), and takes the caller from its sealed header.
-    expect(onward.cookies["__Host-erga"]).toBeUndefined();
-    const signed = await fn.response({
-      context: post.context,
-      request: onward,
-      response: { statusCode: 200, headers: { [ASK]: { value: "code grant1" } }, cookies: {} },
-    });
-    expect(signed.statusCode).toBe(302);
-    expect(signed.headers[ASK]).toBeUndefined();
-    const code = new URL(signed.headers.location.value).searchParams.get("code")!;
-    expect(code).toMatch(/^c\./);
-    // The token endpoint: no body at the function, so on to the Lambda, which sends the body here again in a header.
-    const tokenPost = event(`https://${SHELL}/oauth/token`, { method: "POST", dest: "empty" });
-    expect(await fn.agents(tokenPost)).toBe(tokenPost.request);
-    const form = new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: "claude-code",
-      redirect_uri: "http://localhost:8123/callback",
-      code_verifier: verifier,
-      code,
-    }).toString();
-    const again = (async (url: string, init: RequestInit) => {
-      const answer = await fn.agents(event(url, { method: "POST", dest: "empty", headers: Object.fromEntries(new Headers(init.headers)) }));
-      // (The function's answer comes back through the distribution, with CloudFront's own headers beside it.)
-      const headers = Object.fromEntries(Object.entries(answer.headers as Record<string, { value: string }>).map(([k, v]) => [k, v.value]));
-      return new Response(answer.body.data, { status: answer.statusCode, headers: { ...headers, "x-cache": "Miss from cloudfront" } });
-    }) as unknown as typeof fetch;
-    const answer = await lambda(
-      {
-        Records: [
-          {
-            cf: {
-              request: {
-                method: "POST",
-                uri: "/oauth/token",
-                headers: {},
-                body: { data: Buffer.from(form).toString("base64"), encoding: "base64" },
-              },
-            },
-          },
-        ],
-      },
-      null,
-      { fetch: again }
-    );
-    expect(answer.status).toBe("200");
-    // The function's answer goes back as it is: a page of any origin may read it (CORS), and no cache keeps it.
-    expect(answer.headers).toEqual({
-      "cache-control": [{ value: "no-store" }],
-      "content-type": [{ value: "application/json" }],
-      "referrer-policy": [{ value: "no-referrer" }],
-      "x-content-type-options": [{ value: "nosniff" }],
-      "access-control-allow-origin": [{ value: "*" }],
-    });
-    const tokens = JSON.parse(answer.body!);
-    const mcp = await viewer(
-      event(`https://${SHELL}/mcp`, { method: "POST", dest: "empty", headers: { authorization: `Bearer ${tokens.access_token}` } })
-    );
-    expect(callerIn(mcp)).toEqual({ kind: "agent", p: "sso", sub: "sub-ada", g: "grant1", x: expect.stringMatching(/^[\w-]{16}$/) });
-    expect(mcp.headers.authorization).toBeUndefined();
-    // The metadata is the agents' function's; any other address there is nothing.
-    expect((await fn.agents(event(`https://${SHELL}/.well-known/oauth-authorization-server`))).statusCode).toBe(200);
-    expect((await fn.agents(event(`https://${SHELL}/documents`))).statusCode).toBe(404);
-  });
-
-  test("the response function signs for the caller of the request's own proof, never for a caller's header from the viewer", async () => {
-    const end = Math.floor(Date.now() / 1000) + 3600;
-    const victim = { kind: "person", p: "sso", sub: "sub-root", email: "root@example.com", name: "Root", i: 1, e: end };
-    const forged = {
-      [CALLER]: Buffer.from(JSON.stringify(victim)).toString("base64url"),
-      // A sealed caller with another key, and one with no seal: neither counts.
-      "x-erga-wire": await seal(port, "another key, of 32 characters or more", "w", { c: victim }, end),
-    };
-    const asks = (request: unknown, ask: string) =>
-      fn.response({
-        context: { requestId: "cf-forged" },
-        request,
-        response: { statusCode: 200, headers: { [ASK]: { value: ask } }, cookies: {} },
-      });
-    // With no proof: no token, and no code.
-    const nobody = event(`https://${SHELL}/tokens/new`, { method: "POST", dest: "empty", headers: forged });
-    expect((await asks(nobody.request, `token grant9 ${end}`)).headers[TOKEN]).toBeUndefined();
-    const query = new URLSearchParams({
-      response_type: "code",
-      client_id: "claude-code",
-      redirect_uri: "http://localhost:8123/callback",
-      code_challenge: await port.sha256("v".repeat(43)),
-      code_challenge_method: "S256",
-    });
-    const authorize = event(`https://${SHELL}/oauth/authorize?${query}`, { method: "POST", dest: "empty", headers: forged });
-    const refused = await asks(authorize.request, "code grant9");
-    expect([refused.statusCode, refused.headers.location]).toEqual([200, undefined]);
-    // With their own sign-in: a token for themselves, whatever the header says.
-    const { done } = await signIn();
-    const cookies = { "__Host-erga": done.cookies["__Host-erga"].value };
-    const ada = event(`https://${SHELL}/tokens/new`, { method: "POST", dest: "empty", cookies, headers: forged });
-    const token = (await asks(ada.request, `token grant9 ${end}`)).headers[TOKEN].value;
-    expect(await open(port, KEY, "a", token, Date.now() / 1000)).toMatchObject({ sub: "sub-ada", g: "grant9" });
-  });
-
-  test("the token endpoint's POST with no body ends at the function: the Lambda's header is never empty", async () => {
-    let asked = 0;
-    // A header with no value may be lost on the way: this pretends that it is. Then the function hears no body yet.
-    const again = (async (url: string, init: RequestInit) => {
-      asked++;
-      const headers = Object.fromEntries([...new Headers(init.headers)].filter(([, value]) => value.trim()));
-      const e = event(url, { method: "POST", dest: "empty", headers });
-      const answer = await fn.agents(e);
-      if (answer == e.request) throw new Error("The function sent the request on to the Lambda again: a loop.");
-      return new Response(answer.body.data, { status: answer.statusCode });
-    }) as unknown as typeof fetch;
-    for (const body of [undefined, { data: "", encoding: "text" }, { data: Buffer.from(" ").toString("base64"), encoding: "base64" }]) {
-      const request = { method: "POST", uri: "/oauth/token", headers: {}, ...(body ? { body } : {}) };
-      const answer = await lambda({ Records: [{ cf: { request } }] }, null, { fetch: again });
-      expect([answer.status, JSON.parse(answer.body!)]).toEqual(["400", { error: "unsupported_grant_type" }]);
-    }
-    expect(asked).toBe(3);
-  });
-
-  test("a person's page with no member cookie gets one again: the response function sets the cookie that the core asks for", async () => {
-    const { done } = await signIn();
-    const shell = { "__Host-erga": done.cookies["__Host-erga"].value };
-    const answered = (e: ReturnType<typeof event>, ask?: string, f = fn.response) =>
-      f({ ...e, response: { statusCode: 200, headers: ask ? { [ASK]: { value: ask } } : {}, cookies: {} } });
-    // The browser lost its member cookie only (or never had one): its next page of the shell brings it back.
-    const page = await answered(event(`https://${SHELL}/documents`, { cookies: shell }));
-    expect(Object.keys(page.cookies)).toEqual(["__Host-member"]);
-    expect(page.cookies["__Host-member"].attributes).toMatch(/^Path=\/; Max-Age=\d+; HttpOnly; Secure; SameSite=None$/);
-    expect(await open(port, KEY, "m", page.cookies["__Host-member"].value, Date.now() / 1000)).not.toBeNull();
-    // Content under the shell's host: the one member cookie, for the shell's domain. Without it no document opens there.
-    const near = await load("response", { ...settings, content: `pages.${SHELL}` }, "response-near");
-    const one = await answered(event(`https://${SHELL}/documents`, { cookies: shell }), undefined, near);
-    expect(one.cookies.member.attributes).toMatch(new RegExp(`^Path=/; Max-Age=\\d+; HttpOnly; Domain=${SHELL}; Secure; SameSite=Lax$`));
-    // None: with the cookie; for a script's request; for nobody, whatever header names a caller; on a document's host.
-    const forged = {
-      [CALLER]: Buffer.from(JSON.stringify({ kind: "person", sub: "sub-ada", e: Date.now() / 1000 + 60 })).toString("base64url"),
-    };
-    for (const e of [
-      event(`https://${SHELL}/documents`, { cookies: { ...shell, "__Host-member": page.cookies["__Host-member"].value } }),
-      event(`https://${SHELL}/api/news`, { cookies: shell, dest: "empty" }),
-      event(`https://${SHELL}/documents`, { headers: forged }),
-      event(PAGE, { cookies: shell, dest: "iframe", headers: forged }),
-    ])
-      expect((await answered(e)).cookies).toEqual({});
-    // An answer that signs out only ends the cookies.
-    const out = await answered(event(`https://${SHELL}/documents`, { cookies: shell }), "out");
-    expect(out.cookies["__Host-member"].attributes).toContain("Max-Age=0");
-  });
-
-  test("a document's answer asks the gate nothing", async () => {
-    const out = await fn.response({
-      ...event(PAGE, { dest: "iframe" }),
-      response: { statusCode: 200, headers: { [ASK]: { value: "out" } }, cookies: {} },
-    });
-    expect(out.cookies).toEqual({});
-    expect(out.headers[ASK]).toBeUndefined();
   });
 });

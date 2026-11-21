@@ -10,9 +10,9 @@ import { d1Api, healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG }
 import { keptLogin } from "../local-credential";
 import { DEPLOYER_TAG, deployerName } from "../pipeline/deployer";
 import { nothingSeen, type Seen } from "./flow";
-import { type Answers, varsOf, zoneOf } from "./plan";
+import { type Answers, type Endpoints, sso, varsOf, viaAccess, zoneOf } from "./plan";
 import { adminOn } from "./first";
-import { DIR, githubIdOf, loadSecrets, namesAt } from "./store";
+import { DIR, githubIdOf, loadSecrets, namesAt, SSO_SECRET } from "./store";
 
 export interface Connection {
   /** The API with the login as it is at each call: a login that ends during a wait for the user is read again. */
@@ -41,13 +41,16 @@ type SignIn = NonNullable<Seen["live"]>["signIn"];
 
 /**
  * Whether the settings that a release runs with are the sign-in that the answers name: the GitHub App's client id, or
- * with single sign-on the proxy (`signer`: AWS's proxy, from the stack). A person's own sign-in, in the admin's step,
- * proves the rest: setup asks the server nothing.
+ * with single sign-on on Cloudflare the gate's setting (`oidc`: the issuer's endpoints). On AWS the gate's values are
+ * in its own code, in the stacks: a run of setup brings them to the answers. A person's own sign-in, in the admin's
+ * step, proves the rest: setup asks the server nothing.
  */
-export function signInOf(a: Answers, githubId: string | undefined, vars: Record<string, string>, signer?: string): SignIn {
-  const want: Record<string, string> = varsOf(a, githubId, signer);
-  if ((want.PROXY_SIGN_IN ?? "") != (vars.PROXY_SIGN_IN ?? ""))
-    return { bad: "the deployed sign-in at the proxy (PROXY_SIGN_IN) is not the one that the answers name: deploy again" };
+export function signInOf(a: Answers, githubId: string | undefined, vars: Record<string, string>, oidc?: Endpoints | null): SignIn {
+  const want: Record<string, string> = varsOf(a, githubId, oidc);
+  if ((want.SSO ?? "") != (vars.SSO ?? ""))
+    return { bad: "the deployed single sign-on (SSO) is not the one that the answers name: deploy again" };
+  // The setting from before the gate: a server with it and no gate does not come up (server/identity/mode.ts).
+  if (vars.PROXY_SIGN_IN) return { bad: "it still has the old setting PROXY_SIGN_IN, which Erga reads no more: deploy again" };
   if ((want.GITHUB_CLIENT_ID ?? "") != (vars.GITHUB_CLIENT_ID ?? ""))
     return {
       bad: `it signs in with the app ${vars.GITHUB_CLIENT_ID || "(none)"}, not yours (${want.GITHUB_CLIENT_ID || "none"}): deploy again`,
@@ -64,13 +67,18 @@ export async function liveOf(
   account: string,
   worker: string,
   a: Answers,
-  githubId: string | undefined
+  githubId: string | undefined,
+  oidc?: Endpoints | null
 ): Promise<Seen["live"]> {
   const live = await liveDeployment(cf, account, worker).catch(() => null);
   if (!live) return { version: null, healthy: false, signIn: null };
   const r = await liveRelease(cf, account, worker, live.versionId);
   const row = r.database ? await healthRow(d1Api(cf, `/accounts/${account}`, r.database)).catch(() => null) : null;
-  return { version: r.version, healthy: readHealth(row, r.version, Date.now()).healthy === true, signIn: signInOf(a, githubId, r.vars) };
+  return {
+    version: r.version,
+    healthy: readHealth(row, r.version, Date.now()).healthy === true,
+    signIn: signInOf(a, githubId, r.vars, oidc),
+  };
 }
 
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
@@ -82,6 +90,14 @@ export async function observe(a: Answers, dir = DIR, connect = cloudflare): Prom
   const c = await connect();
   if ("why" in c) return { ...seen, login: { ok: false, why: c.why } };
   const { cf } = c;
+  // Single sign-on with an issuer: its endpoints, which the gate's setting names (the issuer publishes them).
+  const issuer = sso(a) && !viaAccess(a) && !!a.issuer;
+  if (issuer)
+    seen.oidc = await (await import("../aws/setup")).discoverOidc(a.issuer, c.net).then(
+      ({ authorize, token }) => ({ authorize, token }),
+      (e: Error) => ({ why: e.message })
+    );
+  const oidc = seen.oidc && "authorize" in seen.oidc ? seen.oidc : null;
   const accounts = await cf.call<{ id: string; name: string }[]>("GET", "/accounts", "list your accounts").catch((e: Error) => e);
   if (accounts instanceof Error || !accounts)
     return { ...seen, login: { ok: false, why: accounts?.message ?? "Cloudflare listed no account." } };
@@ -156,10 +172,11 @@ export async function observe(a: Answers, dir = DIR, connect = cloudflare): Prom
       )
       .catch(() => null);
     seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
-    seen.live = await liveOf(cf, account.id, worker, a, githubIdOf(a.host, dir) || undefined);
+    seen.live = await liveOf(cf, account.id, worker, a, githubIdOf(a.host, dir) || undefined, oidc);
     seen.admin = !!(await adminOn(cf, acc, worker).catch(() => null));
     seen.deployer = !!scripts.find((x) => x.id == deployerName(worker))?.tags?.includes(DEPLOYER_TAG);
   }
-  seen.app = !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
+  const has = (name: string) => !!loadSecrets(dir)[a.host]?.[name] || seen.held.includes(name);
+  seen.app = issuer ? has(SSO_SECRET) : !!githubIdOf(a.host, dir) && has("GITHUB_CLIENT_SECRET");
   return seen;
 }

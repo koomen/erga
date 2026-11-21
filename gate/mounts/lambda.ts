@@ -17,7 +17,7 @@
 // The client secret is in Systems Manager (the parameter GATE_LAMBDA.secret names), read once for each instance.
 
 import type { Answer, Identity } from "../core.ts";
-import { type Oidc, oidcExchange } from "./oidc.ts";
+import { type Oidc, oidcExchange } from "../oidc.ts";
 
 /** The deploy's settings, put here by the build: the issuers by name, and where each one's client secret is. */
 declare const GATE_LAMBDA: { shell: string; idp: Record<string, Omit<Oidc, "secret"> & { secret: string }>; region: string };

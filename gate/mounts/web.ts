@@ -1,6 +1,5 @@
-// The gate on web Requests (a Worker's): what both of Cloudflare's mounts share. Erga's own Worker calls `handle` as
-// its first step (OAuth mode, or any deploy with no gate in front); the gate's own Worker (worker.ts) calls it in
-// front of a private Erga, over a service binding. The same steps either way:
+// The gate on web Requests (a Worker's): the mount of the gate inside Erga's own Worker (server/identity/mount.ts), on
+// Cloudflare in every mode, and on AWS where anyone may come in. `handle` is the Worker's first step:
 //
 //   1. the request as the core reads it (`reqOf`);
 //   2. the core's answer; the two things it can't do itself: /oauth/token's body into the header, and the sign-in's
@@ -8,10 +7,12 @@
 //   3. on to Erga (`upstream`), without the gate's cookies and tokens, with the caller in a header written here;
 //   4. what Erga's answer asks of the gate (core.ts, `after`), and the cookies the core adds.
 //
+// It decides nothing: each decision is the core's, or (the two that need the network) access.ts's and oidc.ts's.
+//
 // Trap: the caller's header is written on every request that goes on, whatever came in under its name. Erga trusts it
-// only because nothing reaches Erga but through here. A gate in front proves that with a key that the deploy gives the
-// gate and Erga (`FRONT`: worker.ts sends it; on CloudFront it is the origin's fixed header): Erga answers no request
-// without it.
+// only because nothing reaches Erga but through here. Where the gate is in front instead (CloudFront), it proves that
+// with a key that the deploy gives the gate and Erga (core.ts, FRONT: the origin's fixed header): Erga answers no
+// request without it (`fromFront`).
 
 import {
   after,
@@ -21,6 +22,8 @@ import {
   CALLER,
   type Config,
   FORM,
+  FRONT,
+  front,
   gate,
   GATE_COOKIES,
   type Identity,
@@ -31,8 +34,17 @@ import {
   TOKEN,
 } from "../core.ts";
 
-/** The header a gate in front proves itself to Erga with: the key the deploy gave both (Erga's GATE_KEY). Never from outside. */
-export const FRONT = "x-erga-front";
+/**
+ * A request that came through the gate in front (core.ts, `front`: it carries Erga's GATE_KEY), as the app hears it:
+ * without the key, which ends here (the app copies a request's headers on, to a document's host). Null: any other
+ * request, which gets nothing.
+ */
+export function fromFront(request: Request, key: string): Request | null {
+  if (!front(request.headers.get(FRONT), key)) return null;
+  const headers = new Headers(request.headers);
+  headers.delete(FRONT);
+  return new Request(request, { headers });
+}
 
 /** What the sign-in's code exchange gave: who signed in, or a page that says why not. */
 export type Exchanged = { identity: Identity; next?: string; cookies?: string[] } | Response;
@@ -43,7 +55,7 @@ export interface Mount {
   port: Port;
   /** The callback's network call: the code, traded at the issuer for who signed in. */
   exchange(x: Extract<Answer, { do: "exchange" }>, request: Request): Promise<Exchanged>;
-  /** Behind Cloudflare Access: the person of the request's proof, checked (access.ts). */
+  /** Behind Cloudflare Access: the person of the request's proof, as access.ts checked it. */
   access?(request: Request): Promise<(Identity & { e: number }) | null>;
   /** Erga. */
   upstream(request: Request): Promise<Response>;

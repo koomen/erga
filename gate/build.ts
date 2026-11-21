@@ -6,7 +6,7 @@
 import { join } from "node:path";
 import type { Config } from "./core.ts";
 import { lower, refused } from "./lower.ts";
-import type { Oidc } from "./mounts/oidc.ts";
+import type { Oidc } from "./oidc.ts";
 
 /** CloudFront's limit on a function's code. */
 export const FUNCTION_MAX = 10 * 1024;

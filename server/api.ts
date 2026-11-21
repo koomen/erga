@@ -25,6 +25,7 @@ import { keyedOp } from "./documents/index.ts";
 import type { ToolContent } from "../document/api/operations";
 import { authOps, type Grant } from "./identity/index.ts";
 import { Base64 } from "effect/encoding";
+import { RESOURCE } from "../gate/core.ts";
 
 /** Who calls a tool here: the person signed in (their session, or an agent's token), the platform, and the server's origin. */
 type ToolContext = Caller & { readonly session: Session; readonly platform: Platform; readonly origin: string };
@@ -82,7 +83,7 @@ const NO_TOKEN = (origin: string) =>
  */
 export const unauthorized = (origin: string, sent = false) =>
   json({ ok: false, error: NO_TOKEN(origin) }, 401, {
-    "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"${sent ? ', error="invalid_token"' : ""}`,
+    "WWW-Authenticate": `Bearer resource_metadata="${origin}${RESOURCE}"${sent ? ', error="invalid_token"' : ""}`,
   });
 
 /** The body as JSON, as `schema` has it; or None, when it isn't JSON or isn't that. */

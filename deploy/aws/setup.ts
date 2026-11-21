@@ -393,6 +393,8 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
     noTests: o.noTests,
     suite: o.suite,
     print: o.print,
+    // (The entry is setup's, from the answers: it becomes the instance's spec. deploy/own/first.ts does the same.)
+    writeSpec: true,
     first: firstSql(a),
   });
 }

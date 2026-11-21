@@ -1,15 +1,18 @@
-// Cloudflare Access in front of the gate: Access signs each person in, and adds its proof to each request it lets
-// through (Cf-Access-Jwt-Assertion, a JWT the team signs). The gate then needs no sign-in of its own: no callback, no
-// state, no client secret and no shell cookie. This file is that proof's check, the one thing here the core can't do
-// (RS256, and the team's keys from the network): a mount gives its result to the core as Req.access.
+// Cloudflare Access in front of the shell's host (SSO on Cloudflare): Access signs each person in, and adds its proof
+// to each request it lets through (Cf-Access-Jwt-Assertion, a JWT the team signs). The gate, inside Erga's Worker,
+// then needs no sign-in of its own: no callback, no state, no client secret and no shell cookie. This file is that
+// proof's check, the one decision the core can't make itself (RS256, and the team's keys from the network): a mount
+// gives its result to the core as Req.access.
 //
 // A proof counts only when the team's key signed it, it is for this Access application (`aud`), and it has not ended.
 // Trap: every application of a team has the team's signature. Without the check of `aud`, anyone with an Access
 // application of the same team signs in here as anyone.
-// The paths that Access lets through with no sign-in (an agent's, with its token; the vouch, in the frame) carry no
-// proof: the gate checks its own values there, as everywhere.
+// Trap: Erga's Worker keeps a public address behind Access. So the header alone proves nothing: whoever reaches the
+// Worker another way (an address that Access is not in front of) writes any header. Only the signature counts.
+// The paths that Access lets through with no sign-in (core.ts, ACCESS_OPEN) carry no proof: the gate checks its own
+// values there, as everywhere.
 
-import type { Identity } from "../core.ts";
+import type { Identity } from "./core.ts";
 
 export interface Access {
   /** The Zero Trust team's name: its keys are at https://<team>.cloudflareaccess.com. */

@@ -91,12 +91,6 @@ export interface Target {
    */
   pages: { kind: "shared" } | { kind: "zone"; zoneId?: string; zoneName: string; domain?: string };
   /**
-   * A gate's own Worker has this server's hosts (gate/mounts/worker.ts), and reaches it by a service binding. So the
-   * server gets no address of its own: no custom domain, no route, no DNS record, and its workers.dev address is off.
-   * `app` and `pages` still say the hosts, for its settings (PAGES_DOMAIN).
-   */
-  gate?: boolean;
-  /**
    * The custom domains for publishing (server/sites/domains.ts), each a hostname on one of the account's zones: the same
    * Worker serves the document published to each there, and nothing else.
    */
@@ -231,8 +225,7 @@ export async function runPipeline(
   // A binding this pipeline can't make stops the deploy here, before any step changes the target.
   const unknown = bindingsProblem(release);
   if (unknown) throw new DeployError({ message: unknown });
-  // Behind a gate's Worker, the hosts are the gate's: neither step that gives an address runs.
-  const steps = STEPS.map((s) => s.id).filter((id) => !(target.gate && (id == "address" || id == "pages")));
+  const steps = STEPS.map((s) => s.id);
 
   const run: Record<StepId, () => Promise<string | undefined>> = {
     // The account, its workers.dev subdomain (made if it has none and the target names one), and whether the Worker is Erga's.
@@ -306,14 +299,7 @@ export async function runPipeline(
     // The buckets that the release binds (shape: made here if they aren't there), then the deployer's upload of the Worker.
     async worker() {
       await ensureBuckets(cf, acc, release, target);
-      const detail = await runWith(opts.sleep, WORKER.run(code));
-      // Behind a gate, nothing but the gate reaches it: a request to an address of its own would go around the gate.
-      if (target.gate)
-        await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn off its workers.dev address", {
-          enabled: false,
-          previews_enabled: false,
-        });
-      return `${detail}${target.gate ? "; no address of its own (a gate has its hosts)" : ""}`;
+      return runWith(opts.sleep, WORKER.run(code));
     },
 
     // Its address, and its custom domains.

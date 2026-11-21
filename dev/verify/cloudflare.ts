@@ -1,38 +1,39 @@
 // The verify harness on Cloudflare (dev/verify.ts): a setting's Workers, deployed with wrangler (signed in to the
-// account) and removed again. Every Worker's name starts with erga-verify-:
+// account) and removed again. Every Worker's name starts with erga-verify-. The gate has no Worker of its own: it is
+// the origin's first call, as in Erga's own Worker (gate/mounts/web.ts).
 //
 //   erga-verify-idp-N    the test issuer (idp.ts), on workers.dev: a third site, as an organization's issuer is
-//   erga-verify-stub-N   the origin that stands in for Erga (stub.ts). SSO and Access: no route, no custom domain and
-//                        no workers.dev address; only the gate's service binding reaches it. OAuth: the gate is inside
-//                        it, and it has the hosts
-//   erga-verify-gate-N   SSO and Access: the gate's own Worker (gate/mounts/worker.ts, as it is), from its own deploy
-//                        file (gate/wrangler.jsonc: a deploy fills in the name, the hosts and the issuer), with the
-//                        hosts. Access: Cloudflare Access is in front of the shell's host (access.ts), and the gate
-//                        reads its proof
+//   erga-verify-stub-N   the origin that stands in for Erga (stub.ts), with the gate inside it and the setting's hosts.
+//                        SSO: only a request with a proof goes on, and the test issuer signs people in (gate/sso.ts).
+//                        Access: Cloudflare Access is in front of the shell's host (access.ts), and the gate reads its
+//                        proof. OAuth: anyone may come in
 //   erga-verify-N        SSO, unless `--origin stub`: a real Erga of this checkout in the stub's place (erga.ts), with
-//                        its database and its bucket. Its documents' hosts exist only after the seed made the
-//                        documents: the gate's Worker is deployed a second time, with them
+//                        its database and its bucket, deployed by the repository's pipeline with the setting SSO, as
+//                        `bun erga setup` deploys an instance with single sign-on. Its documents' hosts exist only
+//                        after the seed made the documents: they get their Custom Domains then
 //
 // The hosts are Custom Domains: each one makes its own DNS record and gets its own certificate, which a host two
-// levels under the zone needs. (gate/wrangler.jsonc has a zone's routes, with DNS records that a person makes: an
-// instance's content domain is a zone itself, and here six settings share one.)
+// levels under the zone needs. (An instance's content domain is a zone itself, with one wildcard record and the
+// zone's own certificate; here six settings share one zone.)
 // Every Worker goes to the settings' Cloudflare account with the suite's token (dedicated.ts, tokenNow), has the
 // suite's name, and binds nothing of the account but the suite's own; every host is a run's host, under one of the two
 // test zones (safe.ts, workerProblem).
 //
-// A deploy is a list of parts (update.ts): the issuer, the real Erga, the stub, the gate's Worker. The step `update`
+// A deploy is a list of parts (update.ts): the issuer, then the real Erga or the stub. The step `update`
 // (`bun erga verify update`, on a setting that a run kept) deploys again each part whose built code, settings or
 // secrets changed, on the Workers, the database and the bucket that are there. It makes no host: the Custom Domains
 // and their certificates stay, and so do the people and the documents of the seed.
 
 import { randomBytes } from "node:crypto";
 import { promises as dns } from "node:dns";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { zoneIdOf } from "../../deploy/pipeline/account.ts";
+import { PAGES_RECORD } from "../../deploy/pipeline/pipeline.ts";
 import { deployAccess, removeAccess } from "./access.ts";
 import { assertDedicated, tokenNow } from "./dedicated.ts";
-import { ergaName, ergaPart, healthy, removeErga, seed } from "./erga.ts";
+import { account, ergaName, ergaPart, healthy, removeErga, seed } from "./erga.ts";
 import {
   acceptHost,
   CLIENT,
@@ -46,6 +47,7 @@ import {
   saveRun,
   secret,
   sh,
+  ssoSetting,
   until,
   warmHost,
   zone,
@@ -129,9 +131,6 @@ export async function deployIssuer(s: Setting, run: Pick<Run, "idp">, redirect: 
 /** The hosts as routes: a Custom Domain each. */
 const routes = (hosts: string[]) => hosts.map((h) => ({ pattern: h, custom_domain: true }));
 
-/** The gate's own deploy file (gate/wrangler.jsonc), as a deploy reads it before it fills in its values. */
-const GATE = Bun.JSONC.parse(readFileSync(join(ROOT, "gate/wrangler.jsonc"), "utf8")) as Record<string, unknown> & { main: string };
-
 /**
  * Waits until a host answers over HTTPS (its certificate is there), and it is this run's gate that answers (`text`
  * null: any text). `of`: the host's zone, whose own name server is asked.
@@ -210,71 +209,85 @@ const hostsOf = (run: Run): string[] => [
 ];
 
 /**
- * The stub (unless a real Erga is the origin) and the gate's own Worker (SSO and Access) as parts of a deploy
- * (update.ts), each with its code, its settings (the hosts too) and its secrets, from the run's values.
+ * The stub as a part of a deploy (update.ts), with the gate inside it: its code, its settings (the hosts too) and its
+ * secrets, from the run's values. None where a real Erga is the origin (erga.ts has that part).
  */
 export function workerParts(run: Run): Part[] {
-  const front = run.who != "oauth";
-  const hosts = hostsOf(run);
-  const gateVars = {
-    SHELL: run.shell,
-    CONTENT: run.content,
-    ...(run.access
-      ? { ACCESS: JSON.stringify({ team: run.access.team, aud: run.access.aud }) }
-      : {
-          IDP: JSON.stringify({
-            name: "sso",
-            issuer: run.idp.url,
-            authorize: `${run.idp.url}/authorize`,
-            token: `${run.idp.url}/token`,
-            client: CLIENT,
+  if (run.erga) return [];
+  const sso = ssoSetting(run);
+  const config = {
+    name: worker("stub", run),
+    main: "dev/verify/stub.ts",
+    durable_objects: { bindings: [{ name: "LOG", class_name: "Log" }] },
+    migrations: [{ tag: "v1", new_sqlite_classes: ["Log"] }],
+    vars: {
+      SHELL: run.shell,
+      CONTENT: run.content,
+      ...(sso
+        ? { SSO: sso }
+        : {
+            IDP: JSON.stringify({
+              name: "sso",
+              issuer: run.idp.url,
+              authorize: `${run.idp.url}/authorize`,
+              token: `${run.idp.url}/token`,
+              client: CLIENT,
+            }),
           }),
-        }),
+    },
+    routes: routes(hostsOf(run)),
   };
-  // (GATE_KEY: the gate's own Worker does not start without it; the stub does not read it.)
-  const gateSecrets = { EDGE_KEY: run.key, GATE_KEY: run.gateKey!, ...(run.access ? {} : { IDP_SECRET: run.idp.secret }) };
-  const part = (kind: string, config: Parameters<typeof deployWorker>[0], secrets: Record<string, string>): Part => ({
-    name: kind,
-    hash: async () => hashOf(await bundleHash(config.main), config, secrets),
-    deploy: () => deployWorker(config, secrets),
-  });
+  // The client's secret at the test issuer: the gate's own with SSO, the open mode's else. Behind Access, none.
+  const secrets = {
+    EDGE_KEY: run.key,
+    ...(run.access ? {} : sso ? { SSO_CLIENT_SECRET: run.idp.secret } : { IDP_SECRET: run.idp.secret }),
+  };
   return [
-    ...(run.erga
-      ? []
-      : [
-          part(
-            "stub",
-            {
-              name: worker("stub", run),
-              main: "dev/verify/stub.ts",
-              durable_objects: { bindings: [{ name: "LOG", class_name: "Log" }] },
-              migrations: [{ tag: "v1", new_sqlite_classes: ["Log"] }],
-              vars: { ...(front ? { SHELL: run.shell, CONTENT: run.content } : gateVars), GATE: front ? "front" : "inside" },
-              ...(front ? {} : { routes: routes(hosts) }),
-            },
-            front ? {} : gateSecrets
-          ),
-        ]),
-    ...(front
-      ? [
-          part(
-            "gate",
-            {
-              ...GATE,
-              name: worker("gate", run),
-              main: join("gate", GATE.main),
-              services: [{ binding: "ERGA", service: run.erga ? ergaName(run) : worker("stub", run) }],
-              vars: gateVars,
-              routes: routes(hosts),
-            },
-            gateSecrets
-          ),
-        ]
-      : []),
+    {
+      name: "stub",
+      hash: async () => hashOf(await bundleHash(config.main), config, secrets),
+      deploy: async () => void deployWorker(config, secrets),
+    },
   ];
 }
 
-/** Waits until the shell answers as this run's gate. (Behind Access, an address of the shell with no proof never comes to the gate, but for the open paths: the vouch.) */
+/**
+ * The real Erga's hosts besides the shell (the documents', the accept host and the warm one), each as a Custom Domain
+ * of its Worker: the pipeline gave it the shell's address and the wildcard route of the documents' domain, and a host
+ * two levels under the zone needs a certificate of its own.
+ */
+async function putHosts(run: Run): Promise<void> {
+  const { cf, id, acc } = await account();
+  const there = new Set(
+    (
+      (await cf.call<{ hostname: string }[]>("GET", `${acc}/workers/domains?service=${ergaName(run)}`, "read Erga's Custom Domains")) ?? []
+    ).map((d) => d.hostname)
+  );
+  for (const hostname of hostsOf(run).filter((h) => h != run.shell && !there.has(h)))
+    await cf.call("PUT", `${acc}/workers/domains`, `put Erga on ${hostname} (a Custom Domain)`, {
+      hostname,
+      service: ergaName(run),
+      zone_id: await zoneIdOf(cf, id, zone(hostname)),
+    });
+}
+
+/** Removes the wildcard DNS record that the pipeline made for a real Erga's documents (its route goes with the Worker). */
+async function removePagesRecord(s: Setting): Promise<void> {
+  const { cf, id } = await account();
+  const name = `*.${s.content}`;
+  const at = `/zones/${await zoneIdOf(cf, id, zone(s.content))}/dns_records`;
+  const found =
+    (await cf.call<{ id: string; content: string }[]>(
+      "GET",
+      `${at}?type=${PAGES_RECORD.type}&name=${encodeURIComponent(name)}`,
+      "read the documents' DNS record"
+    )) ?? [];
+  for (const r of found.filter((r) => r.content == PAGES_RECORD.content))
+    await cf.call("DELETE", `${at}/${r.id}`, `delete the DNS record ${name}`);
+  console.log(found.length ? `Removed the DNS record ${name}` : `The DNS record ${name}: none`);
+}
+
+/** Waits until the shell answers as this run's gate. (Behind Access, an address of the shell with no proof never comes to the gate, but for the paths that Access lets through: the vouch.) */
 const shellAnswers = (run: Run) => (run.access ? answers(run.shell, "/_edge/vouch", 401, "Sign in first.") : answers(run.shell));
 
 export async function deployCloudflare(s: Setting, origin: "stub" | "erga"): Promise<Run> {
@@ -282,14 +295,13 @@ export async function deployCloudflare(s: Setting, origin: "stub" | "erga"): Pro
   await assertDedicated({ cloudflare: true, aws: false });
   const real = origin == "erga";
   if (real && s.who != "sso")
-    throw new Error("A real Erga runs only behind the gate's own Worker, with the gate's own sign-in: an SSO setting.");
+    throw new Error("A real Erga runs in the suite only with the gate's own sign-in at the test issuer: an SSO setting.");
   // A Worker that runs keeps its secrets' meaning: a second deploy of the run sends the same ones.
   const had = loadRun(s.n)?.erga;
   const key = () => randomBytes(32).toString("hex");
   const run: Run = {
     ...s,
     key: secret(),
-    gateKey: secret(),
     parts: {},
     idp: { url: "", secret: secret(), password: secret(12) },
     // (The real Erga's documents get their hosts below, after the seed.)
@@ -310,6 +322,8 @@ export async function deployCloudflare(s: Setting, origin: "stub" | "erga"): Pro
   // The address the origin would have on workers.dev: the issuer's, with the origin's name.
   run.originAddress = run.idp.url.replace(worker("idp", s), real ? ergaName(s) : worker("stub", s));
   await redeploy([...(real ? [ergaPart(run)] : []), ...workerParts(run)], run.parts, keep, console.log);
+  // (The real Erga's hosts besides the shell: the accept host and the warm one now; the documents' after the seed.)
+  if (real) await putHosts(run);
 
   const hosts = hostsOf(run);
   console.log(`Waiting for ${hosts.length} hosts' certificates...`);
@@ -318,8 +332,8 @@ export async function deployCloudflare(s: Setting, origin: "stub" | "erga"): Pro
   await steady(`${run.idp.url}/.well-known/openid-configuration`, 200, null);
   if (real) {
     await seed(run);
-    // The gate's Worker again, with the documents' hosts.
-    await redeploy(workerParts(run), run.parts, keep, console.log);
+    // The documents' hosts, which exist now.
+    await putHosts(run);
     const docs = run.erga!.docs.map((d) => d.host);
     console.log(`Waiting for the ${docs.length} documents' hosts' certificates...`);
     for (const h of docs) await answers(h);
@@ -366,8 +380,12 @@ export function removeWorker(name: string) {
 }
 
 export async function removeCloudflare(s: Setting) {
+  // ("gate": the gate's own Worker of a run from before the gate moved inside the origin.)
   for (const kind of ["gate", "stub", "idp"]) removeWorker(worker(kind, s));
   if (s.who == "access") await removeAccess(s);
-  // The real Erga, if a run made one: after the gate's Worker, which binds it.
-  if (s.who == "sso") await removeErga(s).catch((e: Error) => console.log(`${ergaName(s)}: not looked for: ${e.message}`));
+  // The real Erga, if a run made one, and the DNS record of its documents.
+  if (s.who == "sso") {
+    await removeErga(s).catch((e: Error) => console.log(`${ergaName(s)}: not looked for: ${e.message}`));
+    await removePagesRecord(s).catch((e: Error) => console.log(`The DNS record *.${s.content}: not looked for: ${e.message}`));
+  }
 }

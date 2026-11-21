@@ -12,12 +12,13 @@
 //       --account <name|id>    Cloudflare: the account, when two hold the domain
 //       --profile <name>       AWS: the AWS CLI's profile, when there are several (the region is the profile's)
 //       --organization <org|domain>      --sign-in organization: a GitHub organization, or an email domain
-//       --team <name> --aud <tag>        --sign-in sso on Cloudflare: Cloudflare Access
-//       --issuer <URL> --client <ID>     --sign-in sso on AWS: the organization's sign-in (OpenID Connect)
-//       --email-claim <claim>:<prefix>   --sign-in sso on AWS, when the sign-in gives no email claim: where the
-//                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
+//       --team <name> --aud <tag>        --sign-in sso on Cloudflare: Cloudflare Access is in front of the address,
+//                                        and Erga takes only a request with its proof for that application
+//       --issuer <URL> --client <ID>     --sign-in sso on AWS, or on Cloudflare in place of Access: the organization's
+//                                        own sign-in (OpenID Connect). The user types the client's secret
 //       --sign-in-days <days>            --sign-in sso on AWS: how long a sign-in lasts, from 1 to 90 (default: 30)
-//       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
+//       --pages <domain>       a second domain of the account, for the documents' pages: on AWS without single
+//                              sign-on, and on Cloudflare with it
 //       --deploys cloud|local  who deploys each new release. cloud: a deployer in the user's account, by itself. On
 //                              Cloudflare the user makes its token (for the instance's Worker only) and pastes it on a
 //                              page that opens; on AWS it is a Lambda function whose role is its credential: no token.
@@ -48,7 +49,7 @@ import { cloudflare, type Connection, observe } from "./facts";
 import { adminOn, adoptEntry, firstDeploy, secretsFor } from "./first";
 import { accountName, checksOf, deploysText, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
-import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
+import { DIR, githubIdOf, loadSecrets, namesAt, putSecret, saveSecrets, SSO_SECRET } from "./store";
 
 /** How long one run waits for the user: under the ten minutes that an agent's command may take. */
 const WAIT_MS = 8 * 60_000;
@@ -66,7 +67,6 @@ const OPTIONS: Record<string, TextAnswer> = {
   "--aud": "aud",
   "--issuer": "issuer",
   "--client": "client",
-  "--email-claim": "emailClaim",
   "--sign-in-days": "signInDays",
   "--pages": "pages",
   "--egress": "egress",
@@ -103,14 +103,22 @@ const hasTerminal = () => {
   return tty != null;
 };
 
-/** --remote: the user types the client secret in their terminal, and AWS keeps it. "": done; else a failure. */
+/**
+ * Keeps the client secret of the organization's sign-in where the gate reads it: on AWS in Parameter Store; on
+ * Cloudflare in .erga/secrets.json, from where the first deploy gives it to the Worker as a secret.
+ */
+const putClientSecret = async (a: Answers, secret: string) =>
+  a.where == "aws" ? (await import("../aws/setup")).putOidcSecret(a, secret) : putSecret(a.host, SSO_SECRET, secret);
+/** Where the client secret goes, as the user reads it. */
+const secretPlace = (a: Answers) => (a.where == "aws" ? "AWS" : "Cloudflare, with the first deploy");
+
+/** --remote: the user types the client secret in their terminal. "": done; else a failure. */
 async function oidcInTerminal(a: Answers): Promise<string> {
-  const { putOidcSecret } = await import("../aws/setup");
   for (;;) {
     const secret = askSecret(`The client secret of Erga's client ${a.client} at ${a.issuer} (it does not show as you type):`);
     if (secret == null) return "The prompt in the terminal ended.";
     if (!secret) continue;
-    await putOidcSecret(a, secret);
+    await putClientSecret(a, secret);
     return "";
   }
 }
@@ -354,14 +362,20 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
                 await githubApp(a, WAIT_MS))
             : a.remote
               ? (say(
-                  "WAIT  The user types the client secret of the organization's sign-in in their terminal. It goes to AWS, never to you."
+                  `WAIT  The user types the client secret of the organization's sign-in in their terminal. It goes to ${secretPlace(a)}, never to you.`
                 ),
                 await oidcInTerminal(a))
               : (say("WAIT  A page opens. The user types the client secret of the organization's sign-in there, and clicks Save."),
-                await oidcSecret(a, async (v) => (await import("../aws/setup")).putOidcSecret(a, v), WAIT_MS));
+                await oidcSecret(a, (v) => putClientSecret(a, v), WAIT_MS));
         if (ended == null) return "wait";
         if (ended) return fail(ended, o.again);
-        pass(state.kind == "github" ? "GitHub made the app." : "AWS has the client secret.");
+        pass(
+          state.kind == "github"
+            ? "GitHub made the app."
+            : a.where == "aws"
+              ? "AWS has the client secret."
+              : "The client secret is kept for the first deploy."
+        );
         break;
       }
       case "build":
@@ -597,15 +611,6 @@ export async function setupMain(argv: string[]) {
       say(`No setup command ${rest[0]}.`);
       return usage(2);
     }
-    // Single sign-on needs the gate in front of the server (gate/mounts/). On AWS the stacks make it
-    // (deploy/aws/template.ts, deploy/aws/gate.ts), and the verify suite deploys it (bun erga verify 5). No run on a
-    // real account has passed yet, and this flow still writes the old proxy's setting: refused here, before anything
-    // is made, until one has. On Cloudflare, setup does not make the gate's Worker yet.
-    if (answers.signIn == "sso")
-      return fail(
-        "Single sign-on is not available in this version: the gate in front of the server is not verified on a real account yet.",
-        "Choose --sign-in invite or --sign-in organization."
-      );
     const again = ["bun erga setup", host, ...args, ...(remote && !flag("--remote") ? ["--remote"] : [])].join(" ");
     await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), again });
   } catch (e) {

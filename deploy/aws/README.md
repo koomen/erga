@@ -33,7 +33,7 @@ name or domain: each instance takes its names from its name in setup, and the AW
 | The editor's files (ASSETS) | Static assets | celld's static assets: the bucket, cached on the disk |
 | A page's own API (LOADER) | Worker Loader | celld's Dynamic Workers |
 | HTTPS | Cloudflare's edge | CloudFront: an ACM certificate for a domain, or CloudFront's own name |
-| The gate, with the organization's sign-in | A Worker in front (`gate/mounts/worker.ts`) | CloudFront Functions and Lambda@Edge on the same distributions (below) |
+| The gate, with the organization's sign-in | Inside the Worker, as its first call (`gate/sso.ts`): behind Cloudflare Access, or with an OIDC issuer | In front: CloudFront Functions and Lambda@Edge on the same distributions (below) |
 | Each document's pages origin | A Worker route and a wildcard DNS record | With domains: a second CloudFront with a wildcard certificate, `*.<pages domain>`. Without: one shared CloudFront name |
 | view_page's browser (BROWSER) | Browser Rendering | headless Chrome on the same machine (`ERGA_CHROME`), on the loopback only |
 | The Cache API | Cloudflare's cache | celld's KV, namespace EDGE_CACHE (`cloudflare/kv-cache.ts`): celld's own Cache API always misses |

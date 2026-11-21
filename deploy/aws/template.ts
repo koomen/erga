@@ -20,7 +20,7 @@
 // The structure follows the answers (the way out, the domains); the sizes and the machine image are the template's
 // parameters, with defaults, which the user may change in the file.
 
-import { FRONT } from "../../gate/mounts/web.ts";
+import { FRONT, PATTERNS } from "../../gate/core.ts";
 
 /** The answers that shape an instance's stacks. */
 export interface AwsShape {
@@ -317,13 +317,16 @@ function distribution(s: AwsShape, which: "App" | "Pages", gate: boolean): Json 
         ...(gate
           ? {
               DefaultCacheBehavior: gated("request"),
+              // Each part's paths are the gate's own to say (gate/core.ts, PATTERNS): no path is named here.
               CacheBehaviors: [
-                { PathPattern: "/_edge/*", ...gated("edge", { own: true, lambda: app }) },
+                ...PATTERNS.edge.map((PathPattern) => ({ PathPattern, ...gated("edge", { own: true, lambda: app }) })),
                 ...(app
                   ? [
-                      { PathPattern: "/oauth/token", ...gated("agents", { own: true, lambda: true, body: true }) },
-                      { PathPattern: "/oauth/register", ...gated("agents", { own: true, lambda: true, body: true }) },
-                      { PathPattern: "/.well-known/oauth-*", ...gated("agents", { own: true }) },
+                      ...PATTERNS.forms.map((PathPattern) => ({
+                        PathPattern,
+                        ...gated("agents", { own: true, lambda: true, body: true }),
+                      })),
+                      ...PATTERNS.fixed.map((PathPattern) => ({ PathPattern, ...gated("agents", { own: true }) })),
                     ]
                   : []),
               ],

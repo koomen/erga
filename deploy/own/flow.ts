@@ -22,7 +22,8 @@
 // observes again; a run again goes on from where the last one stopped. A dry run stops before the first step that
 // makes something, and prints the plan.
 
-import { ANSWER_VARS, type Answers, emailOf, namesOf, pagesOf, pagesProblem, sso, stackOf, varsOf, zoneOf } from "./plan";
+import { ACCESS_OPEN } from "../../gate/core.ts";
+import { ANSWER_VARS, type Answers, type Endpoints, namesOf, pagesOf, pagesProblem, sso, stackOf, varsOf, viaAccess, zoneOf } from "./plan";
 
 /** What the command observed (facts.ts; deploy/aws/setup.ts on AWS). */
 export interface Seen {
@@ -42,8 +43,10 @@ export interface Seen {
   adopt: string | null;
   /** AWS: the stack's status and outputs, and each resource of the template on disk ("Name (Type)"). */
   stack: { status: string | null; outputs: Record<string, string>; resources: string[] } | null;
-  /** The app step's secret is there: the GitHub App's, or (single sign-on on AWS) the client's in Parameter Store. */
+  /** The app step's secret is there: the GitHub App's, or (single sign-on with an issuer) the client's: on AWS in Parameter Store. */
   app: boolean;
+  /** Single sign-on on Cloudflare with an issuer: its endpoints, as it publishes them; or why they are not known. Null: not asked. */
+  oidc: Endpoints | { why: string } | null;
   /** The server as its platform shows it: the release that serves, its health, and whether its settings are the answers' sign-in. */
   live: { version: string | null; healthy: boolean; signIn: "ok" | { bad: string } | null } | null;
   /** The secrets the server holds already (their names). */
@@ -71,6 +74,7 @@ export const nothingSeen: Seen = {
   adopt: null,
   stack: null,
   app: false,
+  oidc: null,
   live: null,
   held: [],
   admin: false,
@@ -87,7 +91,7 @@ export type State =
   | { at: "stop"; why: string }
   /** The command writes the entry of the Erga that runs at the address, as `bun erga register` does: the instance stays as it is. */
   | { at: "adopt"; worker: string }
-  /** The user's step in the browser: the GitHub App, or (single sign-on on AWS) the client's secret. */
+  /** The user's step in the browser: the GitHub App, or (single sign-on with an issuer) the client's secret. */
   | { at: "app"; kind: "github" | "oidc" }
   | { at: "build" }
   /**
@@ -114,14 +118,24 @@ export function missing(a: Answers): string[] {
   if (!a.signIn) need.push("--sign-in invite, organization or sso: who may sign in.");
   if (a.signIn == "organization" && !a.organization)
     need.push("--organization <GitHub organization or email domain>: whose users may sign in.");
-  if (sso(a) && !aws && !a.team) need.push("--team <name>: the Cloudflare Zero Trust team, the part before .cloudflareaccess.com.");
-  if (sso(a) && !aws && !a.aud) need.push("--aud <tag>: the Access application's Audience tag.");
-  if (sso(a) && aws && !a.issuer) need.push("--issuer <URL>: the issuer URL of the organization's sign-in (OpenID Connect).");
-  if (sso(a) && aws && !a.client) need.push("--client <ID>: Erga's client ID at the organization's sign-in.");
-  if (a.emailClaim && !(sso(a) && aws)) need.push("--email-claim is only for --sign-in sso on AWS: leave it out.");
+  // Single sign-on on Cloudflare: Cloudflare Access in front (the team and the application's tag), or an issuer.
+  const access = viaAccess(a),
+    issuer = sso(a) && (aws || !!(a.issuer || a.client));
+  if (sso(a) && !aws && !access && !issuer)
+    need.push(
+      "--team <name> and --aud <tag>: the Cloudflare Zero Trust team and the Access application's Audience tag (Cloudflare Access signs people in); or --issuer <URL> and --client <ID>: the organization's own sign-in (OpenID Connect)."
+    );
+  if (access && issuer)
+    need.push("--team and --aud (Cloudflare Access), or --issuer and --client (the organization's own sign-in): not both.");
+  if (access && !issuer && !a.team) need.push("--team <name>: the Cloudflare Zero Trust team, the part before .cloudflareaccess.com.");
+  if (access && !issuer && !a.aud) need.push("--aud <tag>: the Access application's Audience tag.");
+  if (issuer && !access && !a.issuer) need.push("--issuer <URL>: the issuer URL of the organization's sign-in (OpenID Connect).");
+  if (issuer && !access && !a.client) need.push("--client <ID>: Erga's client ID at the organization's sign-in.");
   if (a.signInDays && !(sso(a) && aws))
     need.push("--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
+  if (sso(a) && !aws && !pagesOf(a))
+    need.push("--pages <domain>: a second domain of the Cloudflare account, for the documents' pages (with single sign-on they need one).");
   if (a.where && !a.deploys)
     need.push("--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.");
   return need;
@@ -175,7 +189,8 @@ export function stateOf(a: Answers, s: Seen): State {
   if (s.taken) return { at: "stop", why: `${a.host} is in use: ${s.taken}. Free it, ${another}.` };
   const pages = pagesProblem(a, s.zones);
   if (pages) return { at: "stop", why: `${pages} Give another --pages.` };
-  const kind = !sso(a) ? "github" : aws ? "oidc" : null;
+  if (s.oidc && "why" in s.oidc) return { at: "stop", why: `${s.oidc.why} Give another --issuer.` };
+  const kind = !sso(a) ? "github" : viaAccess(a) ? null : "oidc";
   if (kind && !s.app) return { at: "app", kind };
   if (!(s.live?.healthy && s.live.version && s.live.signIn == "ok")) return { at: "build" };
   const changed = changedVars(a, s);
@@ -189,7 +204,7 @@ export function stateOf(a: Answers, s: Seen): State {
  */
 export function changedVars(a: Answers, s: Seen): string[] {
   if (!s.vars) return [];
-  const want: Record<string, string> = varsOf(a, s.github || undefined, s.stack?.outputs.Proxy);
+  const want: Record<string, string> = varsOf(a, s.github || undefined, s.oidc && "authorize" in s.oidc ? s.oidc : null);
   const had = s.vars;
   return ANSWER_VARS.filter((k) => (want[k] ?? "") != (had[k] ?? ""));
 }
@@ -241,12 +256,14 @@ export const deploysText = (a: Answers, worker = namesOf(a.host).worker) =>
 
 /** The plan, as the agent says it before the user's yes. */
 export function planText(a: Answers, s: Seen): string[] {
-  const email = emailOf(a);
-  const signIn = sso(a)
-    ? a.where == "aws"
-      ? `• your organization's sign-in, at the gate in front of Erga (you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"})${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}${a.signInDays ? `; a sign-in lasts ${a.signInDays} days` : ""}`
-      : "• your organization's sign-in, with Cloudflare Access"
-    : "• a GitHub App, for sign-in (you click one button)";
+  const secret = `you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"}`;
+  const signIn = !sso(a)
+    ? "• a GitHub App, for sign-in (you click one button)"
+    : a.where == "aws"
+      ? `• your organization's sign-in, at the gate in front of Erga (${secret})${a.signInDays ? `; a sign-in lasts ${a.signInDays} days` : ""}`
+      : viaAccess(a)
+        ? `• your organization's sign-in, with Cloudflare Access in front of ${a.host} (the team ${a.team}): Erga takes only a request with Access's proof for your application. You need a second Access application for these paths of ${a.host}, with one policy (Bypass, everyone): ${ACCESS_OPEN.join(", ")}. They carry no Access sign-in, and Erga checks its own tokens there`
+        : `• your organization's sign-in, at ${a.issuer} (${secret}): Erga's gate, inside its Worker, lets in only who signs in there. Nothing else is in front of the Worker`;
   const tracks = `• it tracks ${a.branch} of ${a.repo}: a deploy gives it that branch's newest commit`;
   if (a.where == "aws")
     return [
@@ -268,6 +285,7 @@ export function planText(a: Answers, s: Seen): string[] {
   return [
     `I will make Erga at ${a.host}, in the Cloudflare account ${accountName(a, s)}:`,
     `• a Worker (${n.worker}), a D1 database, an R2 bucket and a DNS record`,
+    ...(sso(a) ? [`• the documents' pages on ${pagesOf(a)}: every name of that domain goes to Erga`] : []),
     signIn,
     tracks,
     deploysText(a),

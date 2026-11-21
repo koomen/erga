@@ -7,9 +7,9 @@
 //   the application         erga-verify-<n>, for the shell's host. Only that provider signs in, and at once (no page of
 //                           choices). Its policy, erga-verify-<n>, allows the issuer's two people by their addresses.
 //                           Its cookie is HttpOnly
-//   the open application    erga-verify-<n>-open, for the paths of the shell that carry no Access proof (OPEN). Its
-//                           policy, erga-verify-<n>-open, is a bypass for everyone: the gate checks its own values
-//                           there (gate/mounts/access.ts)
+//   the open application    erga-verify-<n>-open, for the paths of the shell that carry no Access proof (the gate's
+//                           own list: gate/core.ts, ACCESS_OPEN). Its policy, erga-verify-<n>-open, is a bypass for
+//                           everyone: the gate checks its own values there
 //
 // Trap: an identity provider is the whole team's. An application that names no providers of its own would offer it on
 // its sign-in page. So the deploy refuses while the team has such an application.
@@ -18,6 +18,7 @@
 // Trap: Access's proof is also in a cookie of the shell's host (CF_Authorization). The gate drops it from what goes on
 // to Erga, with its own cookies.
 
+import { ACCESS_OPEN } from "../../gate/core.ts";
 import { account } from "./erga.ts";
 import { type Answer, ask, type Jar } from "./http.ts";
 import { CLIENT, local, type Run, type Setting } from "./run.ts";
@@ -27,20 +28,8 @@ const nameOf = (s: Setting) => mine(`erga-verify-${s.n}`);
 /** The issuer's people (idp.ts): the policy allows these addresses. */
 const PEOPLE = ["ada@example.com", "bob@example.com"];
 
-/**
- * The paths of the shell that Access lets through with no sign-in, because what comes there has no Access proof: the
- * vouch (a frame of the documents' site: the browser sends it no Lax cookie), the agents' metadata and token endpoint
- * (an agent's app has no proof before its token), and MCP (an agent's app has the gate's token, never an Access
- * sign-in). The gate checks its own values on each.
- */
-export const OPEN = [
-  "/_edge/vouch",
-  "/.well-known/oauth-protected-resource",
-  "/.well-known/oauth-authorization-server",
-  "/oauth/token",
-  "/oauth/register",
-  "/mcp",
-];
+/** The paths of the shell that Access lets through with no sign-in: the gate's own list. */
+export const OPEN = ACCESS_OPEN;
 
 interface App {
   id: string;

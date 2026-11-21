@@ -51,7 +51,7 @@ const COST = {
   cloudflare:
     "Cloudflare: some Workers, one D1 database and one R2 bucket, for about 15 minutes. Expected cost: $0 (the plan's included use).",
   access:
-    "Cloudflare: three Workers, and in the Zero Trust team two Access applications and one identity provider, for about 15 minutes. Expected cost: $0 (the plan's included use).",
+    "Cloudflare: two Workers, and in the Zero Trust team two Access applications and one identity provider, for about 15 minutes. Expected cost: $0 (the plan's included use).",
   aws: "AWS: two EC2 machines, two CloudFront distributions with a VPC origin, four Functions, one Lambda@Edge function, two certificates, a bucket, a secret and a KMS key, for about 60 minutes. Cloudflare: one Worker (the test issuer). Expected cost: under $0.50.",
   celld:
     "AWS: two EC2 machines, two CloudFront distributions with a VPC origin, two certificates, a bucket and a KMS key, for about 45 minutes. Expected cost: under $0.50.",

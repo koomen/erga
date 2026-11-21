@@ -6,7 +6,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { rendering } from "../cloudflare/render";
 import { ASK, type Caller } from "../gate/core.ts";
-import { FRONT } from "../server/identity/caller";
+import { FRONT } from "../gate/core.ts";
 import { sessionOf } from "../server/identity/index.ts";
 import { calling, MANIFEST, server as app, textOf } from "./helpers/app";
 import { chromium, stopBrowser } from "./helpers/browser";
@@ -82,7 +82,7 @@ async function front(allow: string[] | null = [], content = "localhost") {
   const admin = { login: "tester", admin: true };
   await s.dir.setAnyone(admin, "write");
   await s.dir.config.set(admin, "usernames", "email");
-  (s.platform as { signIn: unknown }).signIn = { mode: "gate", key: KEY, devLogin: null, encryptionKey: "local:secret" };
+  (s.platform as { signIn: unknown }).signIn = { mode: "gate", at: "front", key: KEY, devLogin: null, encryptionKey: "local:secret" };
   s.platform.pagesDomain = () => content;
   // The editor's built files: empty ones (the tests' server has no build), so the viewer's page loads without an error.
   s.platform.assets = async (request) => {

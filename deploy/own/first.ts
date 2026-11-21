@@ -3,7 +3,7 @@
 //
 // 1. The entry in .erga/config.json, from the answers alone. An entry with other names is not this setup's: it stops.
 // 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and SECRETS_KEY, and
-//    the GitHub App's secret. Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
+//    the GitHub App's secret (or, with single sign-on at an issuer, the client's secret there). Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
 //    it, and no later deploy sends one.
 // 3. After the deploy, healthy: the access rule that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
@@ -19,13 +19,13 @@ import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { movedNames, OLD_SECRETS_KEY, SECRETS_KEY } from "../deployer/secrets-key";
 import type { Seen } from "./flow";
 import { type Answers, firstRows, setupEntry } from "./plan";
-import { loadSecrets, saveSecrets } from "./store";
+import { loadSecrets, saveSecrets, SSO_SECRET } from "./store";
 
 export interface First {
   /** .erga/ in the main clone. */
   dir: string;
   answers: Answers;
-  seen: Pick<Seen, "zones" | "subdomain" | "held">;
+  seen: Pick<Seen, "zones" | "subdomain" | "held"> & Partial<Pick<Seen, "oidc">>;
   /** The GitHub App's client id. */
   github?: string;
   /** The Cloudflare API and the servers, and the credential. */
@@ -42,7 +42,8 @@ export interface First {
  */
 export function writeEntry(o: First): Config {
   const config = readConfig(o.dir);
-  const want = setupEntry(o.answers, { ...o.seen, github: o.github });
+  const oidc = o.seen.oidc && "authorize" in o.seen.oidc ? o.seen.oidc : null;
+  const want = setupEntry(o.answers, { zones: o.seen.zones, subdomain: o.seen.subdomain, github: o.github, oidc });
   const had = entryOf(config, want.host) as CloudflareEntry | null;
   if (had && "aws" in had) throw new Error(`${want.host} has an entry already, on AWS.`);
   if (had && (had.account != want.account || had.worker != want.worker || had.database != want.database))
@@ -89,6 +90,7 @@ export function secretsFor(dir: string, a: Answers, held: string[]): Record<stri
     SESSION_SECRET: own.SESSION_SECRET,
     [SECRETS_KEY]: own[SECRETS_KEY],
     GITHUB_CLIENT_SECRET: own.GITHUB_CLIENT_SECRET,
+    [SSO_SECRET]: own[SSO_SECRET],
   };
   return Object.fromEntries(Object.entries(want).filter((e): e is [string, string] => !!e[1] && !has.includes(e[0])));
 }
@@ -110,6 +112,9 @@ export async function firstDeploy(o: First): Promise<string> {
     token: o.token,
     print,
     secrets: secretsFor(o.dir, a, o.seen.held),
+    // Setup wrote the entry from the answers: a run again with other answers (before there is an admin) changes the
+    // instance's spec too.
+    writeSpec: true,
     createSubdomain: !!entry.subdomain && !o.seen.subdomain,
   });
   await writeFirstRows(cf, acc, entry.worker, a, print);

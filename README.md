@@ -35,21 +35,20 @@ git. Give your coding agent this prompt:
       which profile, if `aws configure list-profiles` shows several.
    4. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
       your organization: which GitHub organization or email domain?
-      3. Your organization's single sign-on (not available in this
-      version: setup refuses it, and says so):
-      - Cloudflare: the Zero Trust team name, and the Application Audience
-        (AUD) tag of a self-hosted Access application that the user adds
-        for the address, with a Bypass policy for the
-        paths that need no sign-in.
-      - AWS: the OpenID Connect issuer URL, and Erga's client ID there
-        (its callback: `https://<address>/oauth2/idpresponse`). Which claim
-        gives the email address, after what prefix? Not the `email` claim:
-        `--email-claim <claim>:<prefix>` (`preferred_username:corp|`).
-        If the user doesn't know, find it without a change: the user pool's
-        identity provider attribute mapping, or how their other apps behind
-        the same sign-in read `x-amzn-oidc-data`. Never guess.
-   5. AWS without single sign-on: a second Route 53 domain, not the
-      address's, for the documents' pages.
+      3. Your organization's single sign-on:
+      - Cloudflare, with Cloudflare Access: the Zero Trust team name, and
+        the Application Audience (AUD) tag of a self-hosted Access
+        application that the user adds for the address. The user adds a
+        second Access application too, for the paths of the address that
+        carry no Access sign-in, with one policy: Bypass, everyone. The
+        dry run lists those paths.
+      - Cloudflare with no Access, or AWS: the OpenID Connect issuer URL,
+        and Erga's client ID there (its callback:
+        `https://<address>/_edge/callback`). The issuer must give the
+        `email` claim, with `email_verified`.
+   5. A second domain of the account, not the address's, for the
+      documents' pages: on AWS without single sign-on, and on Cloudflare
+      with it.
    6. Who deploys each new release of Erga? 1. A deployer in your own
       account, by itself (`--deploys cloud`). On Cloudflare you make one
       token for it, for the one Worker, and paste it on a page that opens.

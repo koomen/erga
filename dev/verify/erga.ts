@@ -1,10 +1,11 @@
-// The verify harness's real Erga (dev/verify.ts): a complete Erga of this checkout for one setting, private behind the
-// gate's own Worker, with people and documents in it; its checks with requests; and its removal. Everything it makes
+// The verify harness's real Erga (dev/verify.ts): a complete Erga of this checkout for one setting, with single
+// sign-on (the gate), with people and documents in it; its checks with requests; and its removal. Everything it makes
 // in the account is named erga-verify-<n>:
 //
-//   the Worker     this checkout, deployed by the repository's own pipeline (deploy/pipeline/) with `gate`: it has no
-//                  address of its own, and only the gate's service binding reaches it. GATE_KEY says a gate is in
-//                  front (server/identity/mode.ts): the gate's Worker has the same key
+//   the Worker     this checkout, deployed by the repository's own pipeline (deploy/pipeline/), as setup deploys an
+//                  instance with single sign-on. On Cloudflare the gate is inside it, with the test issuer as the
+//                  organization's sign-in (the setting SSO: gate/sso.ts), and it has the setting's hosts. On AWS the
+//                  gate is in front, and GATE_KEY says so (server/identity/mode.ts)
 //   the database   D1. One row, which setup's own code writes for single sign-on (deploy/own/first.ts, writeFirstRows):
 //                  anyone whom the gate lets in may write
 //   the bucket     R2, erga-verify-<n>-files: the documents' files that are not text
@@ -35,7 +36,7 @@ import { Claim } from "../../server/identity/claim-link.ts";
 import { cloudflare } from "./dedicated.ts";
 import { type Answer, ask, type Jar, routes, signIn } from "./http.ts";
 import { recordChecks } from "./record.ts";
-import { acceptHost, local, otherSite, type Report, type Run, type Setting, saveRun, zone } from "./run.ts";
+import { acceptHost, local, otherSite, type Report, type Run, type Setting, saveRun, ssoSetting, zone } from "./run.ts";
 import { mine } from "./safe.ts";
 import { buildRelease, hashOf, type Part } from "./update.ts";
 
@@ -56,7 +57,7 @@ export async function account() {
   return { cf, id, acc: `/accounts/${id}` };
 }
 
-/** The setting's Erga as the repository's pipeline deploys it: its Worker and database, its hosts (the gate has them), its settings and secrets. */
+/** The setting's Erga as the repository's pipeline deploys it: its Worker and database, its hosts, its settings (the gate's sign-in among them) and secrets. */
 const targetOf = (run: Run): Target => ({
   label: run.shell,
   accountId: local().cloudflare.account,
@@ -64,10 +65,9 @@ const targetOf = (run: Run): Target => ({
   databaseName: ergaName(run),
   app: { kind: "domain", zoneName: zone(run.shell), hostname: run.shell },
   pages: { kind: "zone", zoneName: zone(run.content), domain: run.content },
-  gate: true,
   // A new person's username is their address's (no step to choose one: a run has no person to choose).
-  vars: { SERVER_DEFAULTS: JSON.stringify({ usernames: "email" }), GITHUB_CLIENT_ID: "" },
-  secrets: { SESSION_SECRET: run.erga!.session, SECRETS_KEY: run.erga!.factory, GATE_KEY: run.gateKey! },
+  vars: { SERVER_DEFAULTS: JSON.stringify({ usernames: "email" }), GITHUB_CLIENT_ID: "", SSO: ssoSetting(run)! },
+  secrets: { SESSION_SECRET: run.erga!.session, SECRETS_KEY: run.erga!.factory, SSO_CLIENT_SECRET: run.idp.secret },
 });
 
 /**
@@ -354,7 +354,7 @@ export async function ergaChecks(run: Run, report: Report): Promise<void> {
         () => 0
       );
       report.add(
-        "Invariant 3: Erga's own address does not answer (the issuer's, beside it, does)",
+        "Erga's Worker has no workers.dev address that answers (the issuer's, beside it, does)",
         !/^[23]/.test(direct) && beside == 200,
         `${new URL(run.originAddress).host}: ${direct}; the issuer: ${beside}`
       );
@@ -369,9 +369,10 @@ export async function ergaChecks(run: Run, report: Report): Promise<void> {
       `${cloud.acc}/workers/domains?service=${ergaName(run)}`,
       "read Erga's custom domains"
     );
+    const strange = (domains ?? []).map((d) => d.hostname).filter((h) => h != run.shell && !h.endsWith(`.${run.content}`));
     report.add(
-      "Erga's Worker has no address: workers.dev off, no custom domain",
-      workersDev?.enabled === false && !domains?.length,
+      "Erga's Worker has the run's hosts and no other address: workers.dev is not on",
+      workersDev?.enabled !== true && !!domains?.length && !strange.length,
       `workers.dev ${JSON.stringify(workersDev)}; custom domains: ${domains?.map((d) => d.hostname).join(", ") || "none"}`
     );
   }
@@ -387,12 +388,13 @@ export async function ergaChecks(run: Run, report: Report): Promise<void> {
       i: now,
       e: Math.floor(now / 1000) + 3600,
     }),
-    "x-erga-front": run.gateKey!,
+    // (On Cloudflare no gate is in front, and Erga has no such key: any value.)
+    "x-erga-front": run.gateKey ?? "k".repeat(43),
   };
   const nobody = await ask(`${shell}/api/tools/whoami`, { body: "{}", headers: { ...JSON_TYPE, origin: shell, ...forged } });
   const asBob = await whoami(bob, forged);
   report.add(
-    "A forged x-erga-caller (ada) and x-erga-front (the real key) change nothing: nobody stays nobody, and bob stays bob",
+    "A forged x-erga-caller (ada) and x-erga-front (the real key, where a gate is in front) change nothing: nobody stays nobody, and bob stays bob",
     nobody.status == 401 && !ergas(nobody) && loginOf(asBob) == "bob",
     `with no proof: ${nobody.status} from ${ergas(nobody) ? "Erga" : "the gate"}; with bob's cookies: ${loginOf(asBob)}`
   );
@@ -441,10 +443,10 @@ export async function agentChecks(run: Run, report: Report, ada: Jar): Promise<v
     clientInfo: { name: "verify", version: "1" },
   });
   const metadata = /resource_metadata="([^"]+)"/.exec(none.auth)?.[1] ?? "";
-  // (A gate in front refuses it itself. The gate inside Erga lets a request with no proof go on as nobody: Erga's 401.)
+  // (With single sign-on the gate refuses it itself, in front of Erga or as its first call.)
   report.add(
     "Agents: with no token, /mcp gets a 401 that names the metadata",
-    none.status == 401 && (!run.gateKey || !none.erga) && metadata == `${shell}/.well-known/oauth-protected-resource`,
+    none.status == 401 && !none.erga && metadata == `${shell}/.well-known/oauth-protected-resource`,
     `${none.status} from ${none.erga ? "Erga" : "the gate"}: ${none.auth}`
   );
   const resource = metadata ? await ask(metadata) : null;
@@ -604,7 +606,7 @@ export async function agentChecks(run: Run, report: Report, ada: Jar): Promise<v
 // ---------------------------------------------------------------- removal
 
 /**
- * Removes the setting's Erga: its Worker (after the gate's, which binds it), its database, and its bucket, emptied
+ * Removes the setting's Erga: its Worker (its routes and Custom Domains go with it), its database, and its bucket, emptied
  * first. Each part says what it found.
  */
 export async function removeErga(s: Setting): Promise<void> {

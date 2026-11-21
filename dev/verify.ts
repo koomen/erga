@@ -4,11 +4,12 @@
 // one of two origins; runs the origin's checks; and removes what it made.
 //
 //   erga   a complete Erga of this checkout, with people and documents (dev/verify/erga.ts): requests as its people,
-//          and journeys in real browsers with the real editor (dev/verify/journeys.ts). The default where the gate is
-//          a Worker of its own (SSO on Cloudflare)
-//   stub   a small origin that stands in for Erga (dev/verify/stub.ts): the gate's own suite, with requests
-//          (dev/verify/http.ts) and in real browsers (dev/verify/browsers.ts). It keeps a log of what reached it, which
-//          Erga does not. `--origin stub`, and settings 1 and 4
+//          and journeys in real browsers with the real editor (dev/verify/journeys.ts). The default with SSO on
+//          Cloudflare: the gate inside Erga's Worker, with the test issuer as the organization's sign-in
+//   stub   a small origin that stands in for Erga (dev/verify/stub.ts), with the gate inside it: the gate's own suite,
+//          with requests (dev/verify/http.ts) and in real browsers (dev/verify/browsers.ts). It keeps a log of what
+//          reached it, which Erga does not. `--origin stub`, and settings 1 and 4 (Access is in front of the stub: a
+//          real Erga behind Access is not in the suite)
 //
 //   <setting>   the plan's number or name: 1 cf-oauth, 2 cf-sso, 3 cf-sso-same, 4 cf-access, 5 aws-sso, 6 aws-oauth
 //   step        deploy, check, remove; none: all three, in that order (remove also when a check fails).
@@ -26,7 +27,7 @@
 // `bun erga verify update <setting>` runs update and check. This command stays for one step alone.
 //
 // Every deploy runs the code that a real instance's deploy runs: on Cloudflare the repository's pipeline
-// (deploy/pipeline/) and the gate's own deploy file (gate/wrangler.jsonc); on AWS setup's own steps (deploy/aws/). No
+// (deploy/pipeline/); on AWS setup's own steps (deploy/aws/). No
 // step changes a template, a machine or a setting at run time.
 //
 // A run uses only the suite's own infrastructure, which this machine's settings name (dev/verify/config.ts:
@@ -77,10 +78,10 @@ if (!setting) {
   console.error(`Which setting? ${SETTINGS.map((s) => `${s.n} ${s.name}`).join(", ")}`);
   process.exit(2);
 }
-const front = setting.where == "cloudflare" && setting.who == "sso";
-const origin = flag("--origin") ?? (front ? "erga" : "stub");
-if (setting.where == "cloudflare" && origin != "stub" && !(origin == "erga" && front)) {
-  console.error(`--origin ${origin}: stub, or erga in a setting where the gate is a Worker of its own (SSO on Cloudflare).`);
+const real = setting.where == "cloudflare" && setting.who == "sso";
+const origin = flag("--origin") ?? (real ? "erga" : "stub");
+if (setting.where == "cloudflare" && origin != "stub" && !(origin == "erga" && real)) {
+  console.error(`--origin ${origin}: stub, or erga in a setting with SSO on Cloudflare.`);
   process.exit(2);
 }
 const steps = args.length > 1 ? args.slice(1) : ["deploy", "check", "remove"];
@@ -88,7 +89,7 @@ const results = (rows: Report["rows"]) => writeFileSync(resultsFile(String(setti
 
 /**
  * Setting 5: Erga on AWS behind the gate on CloudFront (aws.ts), then the people and the documents, as behind the
- * gate's Worker on Cloudflare (erga.ts, seed). The run's values for the checks. `update`: on the deploy that a run
+ * gate inside Erga's Worker on Cloudflare (erga.ts, seed). The run's values for the checks. `update`: on the deploy that a run
  * kept, only what changed; its people and its documents stay.
  */
 async function deployGated(s: Setting, update = false): Promise<Run> {
@@ -161,7 +162,7 @@ try {
       if (setting.where == "aws") await deployGated(setting);
       else saveRun(await deployCloudflare(setting, origin as "stub" | "erga"));
       console.log(
-        `Deployed setting ${setting.n} (${setting.name}), in front of ${setting.where == "aws" || origin == "erga" ? "a real Erga" : "the stub"}.`
+        `Deployed setting ${setting.n} (${setting.name}), with ${setting.where == "aws" || origin == "erga" ? "a real Erga" : "the stub"}.`
       );
     } else if (step == "update") {
       const did = setting.where == "aws" ? (await deployGated(setting, true), null) : await updateCloudflare(setting);

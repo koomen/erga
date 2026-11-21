@@ -55,6 +55,9 @@ const SETTINGS = Config.all({
   origins: Config.all({ github: origin("ERGA_GITHUB_ORIGIN"), google: origin("ERGA_GOOGLE_ORIGIN") }),
   /** A gate in front of the server (server/identity/mode.ts): the key it sends with each request; any value: its sign-in is the server's. */
   gate: text("GATE_KEY"),
+  /** The gate inside this Worker, with the organization's sign-in (gate/sso.ts), and its issuer's client secret. */
+  sso: text("SSO"),
+  ssoSecret: text("SSO_CLIENT_SECRET"),
   /** The old sign-in at a proxy, which the gate replaced: with no gate's key, the server refuses to come up (mode.ts). */
   proxy: text("PROXY_SIGN_IN"),
   /** How often a served site looks for a newer publish (ms); not a number: 0, every request. */
@@ -70,6 +73,8 @@ export const signInOfEnv = (env: Env): SignIn => {
   const standIn = (value: string) => (env.DEV_LOGIN && value ? value : null);
   return signInOf({
     gate: s.gate,
+    sso: s.sso,
+    ssoSecret: s.ssoSecret,
     proxy: s.proxy,
     apps: s.apps,
     origins: { github: standIn(s.origins.github), google: standIn(s.origins.google) },
