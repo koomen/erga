@@ -481,10 +481,13 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
   });
 
   test("the owner adds someone in the Share card, sees them with their role and picture, and takes them off", async () => {
+    // Someone with no account on this server (the shared server has an "ada" once another journey signs her in).
+    const ada = unique("ada");
     const people = () =>
       page.evaluate(() =>
         [...document.querySelectorAll("#sharing-list li")].map((li) => ({
-          who: li.querySelector(".who")!.textContent!.trim().split(/\s/)[0],
+          who: li.querySelector(".who")!.firstChild!.textContent,
+          note: li.querySelector(".who small")?.textContent ?? null,
           role: li.querySelector("select")?.value ?? null,
           picture: li.querySelector(".face img")?.getAttribute("src") ?? null,
         }))
@@ -495,23 +498,27 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
       5000,
       "the Share button opens who has the document"
     );
-    await page.evaluate(() => {
+    await page.evaluate((ada) => {
       const f = document.getElementById("sharing-add") as HTMLFormElement;
-      (f.elements.namedItem("who") as HTMLInputElement).value = "ada";
+      (f.elements.namedItem("who") as HTMLInputElement).value = ada;
       (f.elements.namedItem("role") as HTMLSelectElement).value = "viewer";
       f.requestSubmit();
-    });
+    }, ada);
     // Users share publicly here: the card offers anyone with the link (with the switch off, only Copy link stays).
     expect(await page.isVisible("#sharing-anyone")).toBe(true);
     // Each person shows their own picture, as the header's avatar does: the owner hers; ada, with no account, none.
-    await soon(async () => (await people()).slice(1)).toEqual([{ who: "ada", role: "viewer", picture: null }]);
-    expect((await people())[0].picture).toBe(`${PICTURE}=s64-c`);
-    await page.evaluate(() =>
-      (
-        [...document.querySelectorAll("#sharing-list li")]
-          .find((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))!
-          .querySelector(".remove") as HTMLElement
-      ).click()
+    // The row shows at once, before the server answers; its answer adds that she can't sign in yet. (The step read the
+    // row once, at whichever of the two it found: on GitHub's machine the answer came first, one run in 80.)
+    await soon(async () => (await people()).slice(1)).toEqual([{ who: ada, note: "can't sign in yet", role: "viewer", picture: null }]);
+    expect((await people())[0]).toMatchObject({ note: "you", picture: `${PICTURE}=s64-c` });
+    await page.evaluate(
+      (ada) =>
+        (
+          [...document.querySelectorAll("#sharing-list li")]
+            .find((li) => li.querySelector(".who")!.firstChild!.textContent == ada)!
+            .querySelector(".remove") as HTMLElement
+        ).click(),
+      ada
     );
     await soon(async () => (await people()).length).toBe(1);
     // The controls, left to right up to her avatar: new document (+), full screen, then the editor's own (share,
