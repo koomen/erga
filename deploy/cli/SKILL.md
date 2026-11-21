@@ -164,7 +164,8 @@ and `main`. There are no pull requests.
   while the head is not live. The live row shows a Roll back button on hover (`bun erga rollback <host>`). Each
   asks a question first, and runs the same command, with the same locks, and only one job at a time. Only when
   Pete asks. Under the commits, one line says when the page last asked the instance's repository and the instance
-  itself (from Cloudflare's API or AWS's, never from the instance), and why one gave no answer. The page asks each
+  itself (what it runs: from Cloudflare's API or AWS's; its health on Cloudflare: the server's own report at its
+  address, which must answer as the upload that the entry's Worker runs), and why one gave no answer. The page asks each
   repository at most once a minute (`git ls-remote`), and each instance every 15 seconds. It shows no feature
   branch and merges nothing: `bun erga status` lists the branches with their tests' state, and `bun erga merge`
   merges. The page's server works the tests' queue all the same.

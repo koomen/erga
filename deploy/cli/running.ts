@@ -1,11 +1,14 @@
-// What an instance runs now, and its health, read from its platform and never from the instance itself. On Cloudflare:
-// the Worker's deployment and that version's bindings, and the health row that the server writes into its database
-// each minute (Cloudflare's API, with this machine's credential). On AWS: the parameter that each deploy and rollback
-// writes, and the machine's own check of its server on the loopback (the AWS CLI: Systems Manager). `bun erga status`,
-// the ops page, auto-deploy and `bun erga promote` read through one reader (instanceReader); `bun erga register` finds
-// an instance that has no entry yet the same way (findInstance). The authority is the platform's login, which a deploy
-// needs already: no sign-in to the instance, no token, and no request to it. The ops page reads each instance's jobs
-// the same way (jobsReader): its deploys and rollbacks, from the instance's own record of them (deploy/deployer/instance.ts).
+// What an instance runs now, and its health. On Cloudflare: the Worker's deployment and that version's bindings
+// (Cloudflare's API, with this machine's credential), and the server's own report at its public address
+// (https://<host>/api/health, which anyone may read): an instance is healthy only when its address answers, as the
+// upload that the entry's Worker runs. Where something in front answers for the address (a sign-in), the reader takes
+// the health row that the server writes into its database each minute. On AWS: the parameter that each deploy and
+// rollback writes, and the machine's own check of its server on the loopback (the AWS CLI: Systems Manager).
+// `bun erga status`, the ops page, auto-deploy and `bun erga promote` read through one reader (instanceReader);
+// `bun erga register` finds an instance that has no entry yet from its platform (findInstance). The authority is the
+// platform's login, which a deploy needs already: no sign-in to the instance, and no token. The ops page reads each
+// instance's jobs the same way (jobsReader): its deploys and rollbacks, from the instance's own record of them
+// (deploy/deployer/instance.ts).
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -15,7 +18,7 @@ import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { readControl } from "../deployer/control";
 import { holds, type Job, readJobs, readLog, type Sql } from "../deployer/instance";
 import { AwsFacts, CloudflareFacts, DEFAULT_BRANCH, DEFAULT_REPO, type Entry, isAws } from "./config";
-import { netOf } from "./deploy";
+import { mocked, netOf } from "./deploy";
 import type { Answer } from "./flow";
 import { entryFrom, reachOf, specOn, sqlOf } from "./instance";
 import type { JobRecord } from "./ops-view";
@@ -29,6 +32,48 @@ export interface ReaderOptions {
   token?: string;
   /** The AWS CLI for a profile and a region (deploy/aws/cli.ts, awsCli), or a fake in a test. */
   aws?: (where: Where) => Aws;
+  /**
+   * Asks an instance's public address (default: fetch). With `net` (a test's Cloudflare) or under ERGA_DEPLOY_MOCK,
+   * the default is none: the reader takes the health row, as behind a sign-in.
+   */
+  host?: Fetch;
+}
+
+/** How long an instance's address has for its health report. */
+const PUBLIC_MS = 5000;
+
+/** What an instance's public address answers to a read of its health report. */
+export type PublicHealth =
+  /** The server's own report. */
+  | { at: "report"; ok: boolean; version: string | null; upload: string | null; failed: string }
+  /** Something in front answers for the address (a sign-in): the server can't be asked here. */
+  | { at: "gate" }
+  /** No report: what the address answered, or that it gave no answer. */
+  | { at: "down"; why: string };
+
+/** Reads https://<host>/api/health, which the server answers to anyone. */
+export async function publicHealth(host: string, ask: Fetch, ms = PUBLIC_MS): Promise<PublicHealth> {
+  const answer = await ask(`https://${host}/api/health`, { redirect: "manual", signal: AbortSignal.timeout(ms) }).catch((e: Error) => e);
+  if (answer instanceof Error)
+    return {
+      at: "down",
+      why: `https://${host} gave no answer${answer.name == "TimeoutError" ? ` in ${ms / 1000} s` : `: ${answer.message}`}`,
+    };
+  const h = (await answer.json().catch(() => null)) as {
+    ok?: unknown;
+    version?: string | null;
+    upload?: string | null;
+    checks?: Record<string, { ok?: boolean; error?: string }>;
+  } | null;
+  if (typeof h?.ok != "boolean") {
+    const gate = (answer.status >= 300 && answer.status < 400) || answer.status == 401 || answer.status == 403;
+    return gate ? { at: "gate" } : { at: "down", why: `https://${host} answered ${answer.status}, and not the server's own report` };
+  }
+  const failed = Object.entries(h.checks ?? {})
+    .filter(([, c]) => !c.ok)
+    .map(([n, c]) => `${n}: ${c.error ?? "failed"}`)
+    .join("; ");
+  return { at: "report", ok: h.ok, version: h.version ?? null, upload: h.upload ?? null, failed };
 }
 
 /** How long a reader keeps one Cloudflare credential: the cf CLI's login lasts an hour, and reading it starts a process. */
@@ -42,7 +87,8 @@ const CREDENTIAL_MS = 5 * 60_000;
 export function instanceReader(o: ReaderOptions = {}): Ask {
   const client = clientOf(o);
   const cloudflare = client.get;
-  const seen = new Map<string, { deployment: string; version: string | null; database: string | null }>();
+  const host = o.host ?? (o.net || mocked() ? null : globalThis.fetch.bind(globalThis));
+  const seen = new Map<string, { deployment: string; version: string | null; database: string | null; upload: string | null }>();
   const ask = async (e: Entry): Promise<Answer> => {
     if (isAws(e)) {
       const { awsCli } = await import("../aws/cli");
@@ -67,9 +113,23 @@ export function instanceReader(o: ReaderOptions = {}): Ask {
       return { version: null, healthy: null, error: `Cloudflare has no deployment of the Worker ${e.worker}: bun erga deploy ${e.host}` };
     let release = seen.get(e.host);
     if (release?.deployment != live.id) {
-      const { version, database } = await liveRelease(cf, e.account, e.worker, live.versionId);
-      release = { deployment: live.id, version, database };
+      const { version, database, vars } = await liveRelease(cf, e.account, e.worker, live.versionId);
+      release = { deployment: live.id, version, database, upload: vars.ERGA_UPLOAD ?? null };
       seen.set(e.host, release);
+    }
+    const at = host ? await publicHealth(e.host, host) : ({ at: "gate" } as const);
+    if (at.at == "down") return { version: release.version, healthy: false, health: at.why };
+    if (at.at == "report") {
+      // The address must answer as the upload that this entry's Worker runs. Another one: the Worker's version before,
+      // for some seconds after a deploy; or another Worker has the address now, and this entry is of a Worker without it.
+      const named = (version: string | null, upload: string | null) => `release ${version ?? "?"}${upload ? `, upload ${upload}` : ""}`;
+      if (at.version != release.version || (release.upload && at.upload != release.upload))
+        return {
+          version: null,
+          healthy: false,
+          error: `https://${e.host} answers as ${named(at.version, at.upload)}, and the Worker ${e.worker} runs ${named(release.version, release.upload)}: if another Worker has the address now, register the instance again (bun erga register ${e.host})`,
+        };
+      return { version: release.version, healthy: at.ok, ...(at.ok ? {} : { health: at.failed || "its report says not ok" }) };
     }
     const h = release.database
       ? readHealth(await healthRow(d1Api(cf, `/accounts/${e.account}`, release.database)), release.version, Date.now())

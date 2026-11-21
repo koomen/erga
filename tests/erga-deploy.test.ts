@@ -292,7 +292,7 @@ describe("bun erga deploy", () => {
   }, 60_000);
 });
 
-describe("what an instance runs comes from Cloudflare, never from the instance", () => {
+describe("what an instance runs comes from Cloudflare; with no address to ask, its health too", () => {
   test("status with no app server: the commit of the version that serves and its health row, after a deploy and after a rollback", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
