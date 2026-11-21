@@ -421,9 +421,9 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     },
     /**
      * The agent pane open, its box with the keys (it may open by itself first). As a person does it: a press on the
-     * round button, or in the box of an open pane. (Not a click or a focus() by script: about one run in ten on a busy
-     * machine, the browser left the keys in the page's frame, which has its own process, and what the test typed for
-     * the agent went into the page's text.)
+     * round button, or in the box of an open pane. (Was a failure, one run in 20 on GitHub's machine: the keys stayed
+     * in the page's frame, and what the test typed for the agent went into the page's text. The cause was the
+     * viewer's, whatever moved the focus: the trap at the focus listener of client/inline/viewer-frames.ts.)
      */
     async openAgent() {
       // Someone who keeps it closed finds it closed; anyone else, opening by itself as the editor comes up.

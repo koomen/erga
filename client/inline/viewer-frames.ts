@@ -102,6 +102,23 @@ export default function viewerFrames(pages: string): void {
       }
     }
   }
+  // Trap: the page has a process of its own, and as that process starts, the browser gives the tab's focus back to
+  // this window. When the frame took the focus just before (the editor gives it the focus as it starts), the two
+  // cross: the browser sends the keys to the page, and this window is left to believe that it has the focus itself,
+  // with the frame as its active element. From then on the browser hears of no focus that moves in this window: a
+  // press on the agent's box left the keys in the page (one editor in 30 on a slow machine). This window getting the
+  // focus while the frame is its active element is that crossing: the frame takes the focus again, which tells the
+  // browser where it is. (The page may be up already: it says hello before the browser's word comes here.)
+  addEventListener("focus", (e) => {
+    if (e.target != window || document.activeElement != frame()) return;
+    // (A task on: the browser takes no change of the focus while it tells of one.)
+    setTimeout(() => {
+      const f = frame();
+      if (!f || document.activeElement != f) return;
+      f.blur();
+      f.focus();
+    });
+  });
   addEventListener("message", (e) => {
     if (!window.ergaFrames.from(e)) return;
     if (e.data?.type == "erga-hello") {
