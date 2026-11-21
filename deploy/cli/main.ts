@@ -317,19 +317,21 @@ async function register(
     withUpstream,
     writeConfig,
   } = await import("./config");
-  const { findInstance } = await import("./running");
+  const { entryAt } = await import("./running");
   const dir = ergaDir();
   const had = entryOf(readConfig(dir), host);
-  // The platform's own login is the authority: the instance is asked nothing.
-  const { facts, version } = await findInstance(host, {
+  // The platform's own login is the authority: the instance is asked nothing. The instance's spec, when it has one,
+  // says what it tracks and what deploys: the entry takes it.
+  const {
+    entry: found,
+    facts,
+    version,
+    spec,
+  } = await entryAt(host, {
     where: o.where == "aws" ? "aws" : "cloudflare",
     profile: o.profile,
     region: o.region,
   });
-  // The instance's spec, when it has one, says what it tracks and what deploys: the entry takes it.
-  const { entryFrom, reachOf, specOn, sqlOf } = await import("./instance");
-  const found = { host, repo: DEFAULT_REPO, branch: DEFAULT_BRANCH, ...facts };
-  const spec = await specOn(await sqlOf(found, await reachOf(found)));
   const other = spec && ((o.repo && repoName(o.repo) != spec.repo) || (o.branch && o.branch != spec.branch));
   if (spec && other)
     fail(
@@ -338,10 +340,7 @@ async function register(
   // Else the entry keeps what it tracks.
   const repo = spec?.repo ?? (o.repo ? repoName(o.repo) : (had?.repo ?? DEFAULT_REPO));
   const branch = spec?.branch ?? o.branch ?? had?.branch ?? DEFAULT_BRANCH;
-  const made = withUpstream(
-    { ...(spec ? entryFrom(spec, found) : found), repo, branch, ...(had?.upstream ? { upstream: had.upstream } : {}) },
-    o
-  );
+  const made = withUpstream({ ...found, repo, branch, ...(had?.upstream ? { upstream: had.upstream } : {}) }, o);
   const entry = typeof made == "string" ? fail(made) : made;
   writeConfig(dir, withEntry(readConfig(dir), entry));
   pass(

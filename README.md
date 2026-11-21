@@ -91,6 +91,11 @@ branch's newest commit. With `--deploys cloud`, the deployer in your
 account deploys each new release of that branch by itself. Run setup
 again with the other answer to change who deploys.
 
+Setup in a new clone, for an address where an Erga of yours runs
+already, takes that server over as it is: it adds the server to the
+clone's `.erga/config.json`, and makes no second one. An address of a
+Worker that isn't Erga stays refused.
+
 ## Develop
 
 `bun erga skill` tells how to work in this repository: a feature branch for

@@ -74,12 +74,12 @@ export async function liveOf(
 }
 
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
-export async function observe(a: Answers, dir = DIR): Promise<Seen> {
+export async function observe(a: Answers, dir = DIR, connect = cloudflare): Promise<Seen> {
   const entry = entryOf(readConfig(dir), a.host);
   const seen: Seen = { ...nothingSeen, vars: entry ? { ...entry.vars } : null, github: githubIdOf(a.host, dir) };
   if (!a.where) return seen;
   if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, a, seen);
-  const c = await cloudflare();
+  const c = await connect();
   if ("why" in c) return { ...seen, login: { ok: false, why: c.why } };
   const { cf } = c;
   const accounts = await cf.call<{ id: string; name: string }[]>("GET", "/accounts", "list your accounts").catch((e: Error) => e);
@@ -111,14 +111,14 @@ export async function observe(a: Answers, dir = DIR): Promise<Seen> {
         .call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true })
         .catch(() => null)
     )?.subdomain ?? null;
-  const n = namesAt(a.host, dir);
   const scripts =
     (await cf
       .call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")
       .catch(() => [])) ?? [];
-  const found = scripts.find((x) => x.id == n.worker);
-  const ours = !!found && (!!found.tags?.includes(WORKER_TAG) || !!found.named_handlers?.some((h) => h.name == "DocumentObject"));
-  if (found && !ours) seen.taken = `a Worker called ${n.worker} is there, and it isn't Erga`;
+  const erga = (id: string) => {
+    const x = scripts.find((x) => x.id == id);
+    return !!x && (!!x.tags?.includes(WORKER_TAG) || !!x.named_handlers?.some((h) => h.name == "DocumentObject"));
+  };
   const domains =
     (await cf
       .call<{ hostname: string; service: string }[]>(
@@ -128,7 +128,13 @@ export async function observe(a: Answers, dir = DIR): Promise<Seen> {
       )
       .catch(() => [])) ?? [];
   const domain = domains.find((d) => d.hostname == a.host);
-  if (domain && domain.service != n.worker) seen.taken = `it is the address of the Worker ${domain.service}`;
+  // An Erga runs at the address, and this clone has no entry for it (another clone set it up): the instance is that
+  // Worker, with its own name. A Worker that isn't Erga is never the instance: the address is in use.
+  if (!entry && domain && erga(domain.service)) seen.adopt = domain.service;
+  const worker = seen.adopt ?? namesAt(a.host, dir).worker;
+  const ours = erga(worker);
+  if (!ours && scripts.some((x) => x.id == worker)) seen.taken = `a Worker called ${worker} is there, and it isn't Erga`;
+  if (domain && domain.service != worker) seen.taken = `it is the address of the Worker ${domain.service}`;
   const zone = account.zones.find((z) => z.name == zoneOf(a.host, seen.zones));
   if (!domain && zone) {
     const records =
@@ -145,14 +151,14 @@ export async function observe(a: Answers, dir = DIR): Promise<Seen> {
     const settings = await cf
       .call<{ bindings?: { type: string; name: string }[] }>(
         "GET",
-        `${acc}/workers/scripts/${n.worker}/settings`,
+        `${acc}/workers/scripts/${worker}/settings`,
         "read the Worker's settings"
       )
       .catch(() => null);
     seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
-    seen.live = await liveOf(cf, account.id, n.worker, a, githubIdOf(a.host, dir) || undefined);
-    seen.admin = !!(await adminOn(cf, acc, n.worker).catch(() => null));
-    seen.deployer = !!scripts.find((x) => x.id == deployerName(n.worker))?.tags?.includes(DEPLOYER_TAG);
+    seen.live = await liveOf(cf, account.id, worker, a, githubIdOf(a.host, dir) || undefined);
+    seen.admin = !!(await adminOn(cf, acc, worker).catch(() => null));
+    seen.deployer = !!scripts.find((x) => x.id == deployerName(worker))?.tags?.includes(DEPLOYER_TAG);
   }
   seen.app = !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
   return seen;

@@ -11,8 +11,9 @@
 //    sees the admin in the database (adminOn), with the Cloudflare D1 API: it asks the server nothing.
 
 import { randomBytes } from "node:crypto";
-import { type CloudflareEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type CloudflareEntry, type Config, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
+import { entryAt } from "../cli/running";
 import { d1 } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { movedNames, OLD_SECRETS_KEY, SECRETS_KEY } from "../deployer/secrets-key";
@@ -51,6 +52,19 @@ export function writeEntry(o: First): Config {
   const next = withEntry(config, want);
   writeConfig(o.dir, next);
   return next;
+}
+
+/**
+ * The flow's adopt step: the entry of the Erga that runs at the address, which another clone set up, written as
+ * `bun erga register` writes it. It tracks what the instance's own spec says; with no spec, what the answers say.
+ * It only reads Cloudflare: the instance stays as it is.
+ */
+export async function adoptEntry(o: Pick<First, "dir" | "answers" | "net" | "token">): Promise<Entry> {
+  const a = o.answers;
+  const found = await entryAt(a.host, { net: o.net, token: o.token });
+  const entry = found.spec ? found.entry : { ...found.entry, repo: a.repo, branch: a.branch };
+  writeConfig(o.dir, withEntry(readConfig(o.dir), entry));
+  return entry;
 }
 
 const random = () => randomBytes(32).toString("hex");

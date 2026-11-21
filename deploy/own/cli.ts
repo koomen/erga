@@ -31,7 +31,9 @@
 //                                            and secrets; the bucket stays, with the data)
 //
 // Each run ends in one of these lines: DRY RUN (the plan), DONE, WAIT (the user's step is still open: run the same
-// command again) or FAIL (what is wrong, and what to do). A run again goes on from where the last one stopped. On
+// command again) or FAIL (what is wrong, and what to do). A run again goes on from where the last one stopped. In a
+// clone with no entry for an Erga that runs at the address (another clone set it up), the run first takes it over: it
+// writes the entry, as bun erga register does, and goes on from where that instance is. On
 // AWS, a run on an instance that is done updates its stacks to this code's template (a deploy changes only the code).
 //
 // Trap: nothing here prints a secret, or a link that signs someone in: the agent reads this command's output. The
@@ -43,8 +45,8 @@ import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "..
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, deployerToken, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { cloudflare, type Connection, observe } from "./facts";
-import { adminOn, firstDeploy, secretsFor } from "./first";
-import { checksOf, deploysText, missing, planText, type Seen, type State, step } from "./flow";
+import { adminOn, adoptEntry, firstDeploy, secretsFor } from "./first";
+import { accountName, checksOf, deploysText, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
 
@@ -268,10 +270,21 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
   const did = new Set<string>();
   for (;;) {
     const r = await look(a);
-    const { seen, state } = r;
+    const { seen } = r;
+    let state = r.state;
     a = r.answers;
     const again = did.has(state.at);
     did.add(state.at);
+    // The instance's Worker: its entry's, or the Worker that setup takes over.
+    const worker = seen.adopt ?? namesAt(a.host).worker;
+    if (o.dryRun && seen.login?.ok) {
+      if (state.at == "adopt")
+        say(
+          `PLAN  ${a.host} runs already: it is the Erga of the Worker ${state.worker}, in the Cloudflare account ${accountName(a, seen)}. I will take it over as it is: its entry goes into this clone's .erga/config.json, as bun erga register writes it. Its Worker, its database and its documents stay.`
+        );
+      // A dry run writes no entry, and does no step of the user's (it needs no terminal): its plan is the step after those.
+      state = step(a, { ...seen, adopt: null, terminal: true }).state;
+    }
     if (o.dryRun && state.at == "update") {
       for (const c of checksOf(a, seen)) pass(c);
       say(
@@ -283,7 +296,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       for (const c of checksOf(a, seen)) pass(c);
       if (a.where == "aws") {
         const { deployerName, deployerResources } = await import("../aws/deployer");
-        const stack = deployerName(namesAt(a.host).worker);
+        const stack = deployerName(worker);
         say(
           state.do == "install"
             ? `PLAN  ${a.host} runs. I will install its deployer, as the stack ${stack}, and turn auto-deploy on:\nPLAN  ${deploysText(a)}\nPLAN  The stack's resources (${deployerResources().length}): ${deployerResources().join(", ")}`
@@ -293,8 +306,8 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       }
       say(
         state.do == "install"
-          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a, namesAt(a.host).worker)}`
-          : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${namesAt(a.host).worker}-deployer, with the token that it holds):\nPLAN  ${deploysText(a)}`
+          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a, worker)}`
+          : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${worker}-deployer, with the token that it holds):\nPLAN  ${deploysText(a)}`
       );
       return "dry";
     }
@@ -319,6 +332,17 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         if (again) return fail(state.why ?? "The sign-in did not finish.", o.again);
         login(a);
         break;
+      case "adopt": {
+        if (again) return fail(`${a.host} still has no entry in .erga/config.json.`, o.again);
+        const c = await connect();
+        const entry = await adoptEntry({ dir: DIR, answers: a, net: c.net, token: c.token });
+        // The instance tracks what it tracked: bun erga track changes it, never setup's options.
+        a = { ...a, repo: entry.repo, branch: entry.branch };
+        pass(
+          `${a.host} runs already, as the Worker ${state.worker}: this clone has its entry now (.erga/config.json). It tracks ${a.branch} of ${a.repo}.`
+        );
+        break;
+      }
       case "app": {
         if (again) return fail("The app step did not finish.", o.again);
         const ended =
@@ -381,7 +405,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         }
         if (state.do == "remove") {
           const c = await connect();
-          await (await import("../pipeline/deployer")).removeDeployer(c.cf, { account: a.account, worker: namesAt(a.host).worker });
+          await (await import("../pipeline/deployer")).removeDeployer(c.cf, { account: a.account, worker });
           pass(`The deployer of ${a.host} is removed, with its token: no credential stays in the cloud.`);
           break;
         }
@@ -428,11 +452,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
             say("PLAN  Its deployer's code changes to this code's. It keeps the token that it holds; auto-deploy stays as it is.");
           else {
             const c = await connect();
-            await (await import("../pipeline/deployer")).installDeployer(
-              c.cf,
-              { account: a.account, worker: namesAt(a.host).worker },
-              null
-            );
+            await (await import("../pipeline/deployer")).installDeployer(c.cf, { account: a.account, worker }, null);
             pass(`The deployer of ${a.host} has this code now. It holds the same token; auto-deploy is as it was.`);
           }
         }
@@ -452,11 +472,13 @@ async function run(a: Answers, o: Run) {
     return say(
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run."
     );
+  // What it tracks is its entry's: a run on an instance that is there already does not change that (bun erga track does).
+  const { repo, branch } = entryOf(readConfig(DIR), a.host) ?? a;
   say(
-    `DONE  Tell the user: Erga is live at https://${a.host}, and they are the admin. It tracks ${a.branch} of ${a.repo}: ${a.deploys == "cloud" ? "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's ops page)" : `bun erga deploy ${a.host} gives it that branch's newest commit`}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
+    `DONE  Tell the user: Erga is live at https://${a.host}, and they are the admin. It tracks ${branch} of ${repo}: ${a.deploys == "cloud" ? "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's ops page)" : `bun erga deploy ${a.host} gives it that branch's newest commit`}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
   );
   // A repository of the user's own (a fork): Erga's main is the upstream to compare it with. Setup sets none itself.
-  if (repoName(a.repo) != DEFAULT_REPO)
+  if (repoName(repo) != DEFAULT_REPO)
     say(
       `NOTE  It tracks a repository of your own. To see which of Erga's commits it lacks (bun erga status, and the ops page): bun erga track ${a.host} --upstream main --upstream-repo ${DEFAULT_REPO}`
     );

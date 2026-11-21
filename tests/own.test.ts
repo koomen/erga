@@ -217,6 +217,13 @@ test("the command stops where only the user can go on: two accounts, no domain, 
     at: "stop",
     why: `${HOST} is in use: DNS has A 192.0.2.1 for it. Free it, or choose another address.`,
   });
+  // An Erga that another clone set up runs at the address: no stop. The command takes it over first, with no step of
+  // the user's (--remote needs no terminal for it), whatever the instance has.
+  for (const more of [{}, { ...LIVE, app: true, admin: true, deployer: true }])
+    expect(run({ ...a, remote: true }, CF, { ...CF, adopt: "erga-staging", ...more }).state).toEqual({
+      at: "adopt",
+      worker: "erga-staging",
+    });
 });
 
 test("who may sign in decides the settings, the access rule and the app step", () => {

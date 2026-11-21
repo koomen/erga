@@ -14,10 +14,10 @@ import { d1Api, healthRow, liveDeployment, liveRelease, readHealth } from "../de
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { readControl } from "../deployer/control";
 import { holds, type Job, readJobs, readLog, type Sql } from "../deployer/instance";
-import { AwsFacts, CloudflareFacts, type Entry, isAws } from "./config";
+import { AwsFacts, CloudflareFacts, DEFAULT_BRANCH, DEFAULT_REPO, type Entry, isAws } from "./config";
 import { netOf } from "./deploy";
 import type { Answer } from "./flow";
-import { sqlOf } from "./instance";
+import { entryFrom, reachOf, specOn, sqlOf } from "./instance";
 import type { JobRecord } from "./ops-view";
 
 /** Asks one registered instance's platform what the instance runs, and for its health. */
@@ -251,4 +251,16 @@ export async function findInstance(host: string, o: FindOptions = {}): Promise<F
   if (!facts)
     throw new Error(`The Worker ${at.worker} at ${host} holds no deploy facts (ERGA_DEPLOY): no deploy from the pipeline set them.`);
   return { facts: Schema.decodeUnknownSync(CloudflareFacts)(facts), version };
+}
+
+/**
+ * The entry of the instance that runs at `host`, for .erga/config.json: `bun erga register`, and `bun erga setup` for
+ * an instance that another clone set up. Its facts are its platform's. Its spec, when the instance has one (`spec`),
+ * says what it tracks and what deploys: the entry takes it. With none, the entry tracks the default.
+ */
+export async function entryAt(host: string, o: FindOptions = {}) {
+  const found = await findInstance(host, o);
+  const e: Entry = { host, repo: DEFAULT_REPO, branch: DEFAULT_BRANCH, ...found.facts };
+  const spec = await specOn(await sqlOf(e, await reachOf(e, o)));
+  return { ...found, spec, entry: spec ? entryFrom(spec, e) : e };
 }

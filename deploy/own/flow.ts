@@ -1,7 +1,11 @@
 // The setup of a new instance, as one state machine (`bun erga setup <host> --host ... --sign-in ...`). Pure: no
 // network, no files.
 //
-//   login > (stop) > app > build > (update) > (deployer) > admin > done
+//   login > (adopt) > (stop) > app > build > (update) > (deployer) > admin > done
+//
+// adopt: an Erga runs at the address already, and this clone has no entry for it: another clone, or another machine,
+// set it up. The command takes it over: it writes the entry from what Cloudflare holds of the instance, and goes on
+// from where that instance is. It changes nothing of the instance.
 //
 // deployer: the answer --deploys and what the account has differ. cloud with no deployer: the command installs it.
 // On Cloudflare the user first makes the deployer's token and gives it to the command; on AWS there is no token (the
@@ -34,6 +38,8 @@ export interface Seen {
   subdomain: string | null;
   /** Why the address can't be this instance's (a DNS record, another Worker), or null. */
   taken: string | null;
+  /** Cloudflare: the Worker of an Erga that runs at the address, which this clone has no entry for; else null. */
+  adopt: string | null;
   /** AWS: the stack's status and outputs, and each resource of the template on disk ("Name (Type)"). */
   stack: { status: string | null; outputs: Record<string, string>; resources: string[] } | null;
   /** The app step's secret is there: the GitHub App's, or (single sign-on on AWS) the client's in Parameter Store. */
@@ -62,6 +68,7 @@ export const nothingSeen: Seen = {
   region: "",
   subdomain: null,
   taken: null,
+  adopt: null,
   stack: null,
   app: false,
   live: null,
@@ -78,6 +85,8 @@ export type State =
   | { at: "login"; why?: string }
   /** Only the user can go on: the command says why, and ends. */
   | { at: "stop"; why: string }
+  /** The command writes the entry of the Erga that runs at the address, as `bun erga register` does: the instance stays as it is. */
+  | { at: "adopt"; worker: string }
   /** The user's step in the browser: the GitHub App, or (single sign-on on AWS) the client's secret. */
   | { at: "app"; kind: "github" | "oidc" }
   | { at: "build" }
@@ -139,6 +148,7 @@ export function stateOf(a: Answers, s: Seen): State {
   if (aws && !a.profile)
     return { at: "stop", why: `Several AWS profiles: ${s.choices.map((c) => c.id).join(", ")}. Add --profile with one of them.` };
   if (!s.login?.ok) return { at: "login", ...(s.login ? { why: s.login.why } : {}) };
+  if (s.adopt) return { at: "adopt", worker: s.adopt };
   // Who deploys, against the answer: only for an instance that runs (the deployer binds its database).
   const deployer: State | null =
     a.deploys == "cloud" && !s.deployer

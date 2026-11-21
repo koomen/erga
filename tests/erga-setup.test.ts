@@ -2,25 +2,27 @@
 // a healthy deploy of a new instance: its entry in .erga/config.json, the secrets set one time, the access rule in its
 // database, and no admin's row. Then a second instance, by the same flow. Then the admin, whom setup sees in the
 // database through Cloudflare's D1 API. And an instance that runs already, with names that setup would not give: setup
-// stops, and its entry stays.
+// stops, and its entry stays. And an Erga that another clone set up: a clone with no entry for it takes it over.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CloudflareEntry, type Entry, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
 import type { MockState } from "../dev/mock-cloudflare";
 import { writePass } from "./helpers/pass.ts";
 import { Cloudflare } from "../deploy/deployer/cloudflare-api";
-import { adminOn, type First, firstDeploy, writeEntry } from "../deploy/own/first";
+import { adminOn, adoptEntry, type First, firstDeploy, writeEntry } from "../deploy/own/first";
 import { specOn, sqlOf } from "../deploy/cli/instance";
 import { instanceReader, jobsReader } from "../deploy/cli/running";
-import { liveOf } from "../deploy/own/facts";
+import { deployInstance } from "../deploy/cli/deploy";
+import { liveOf, observe } from "../deploy/own/facts";
+import { step } from "../deploy/own/flow";
 import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { bindingsOf, bootstrap, fleet, prepareRelease, ROOT } from "./helpers/deploys.ts";
+import { bindingsOf, bootstrap, fleet, next, prepareRelease, ROOT } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
@@ -206,3 +208,105 @@ test("an instance that runs already, with names of its own: setup stops, and its
     rmSync(join(own, ".."), { recursive: true, force: true });
   }
 }, 120_000);
+
+test("an Erga that runs at the address, set up from another clone: setup takes it over, with its own names; a Worker that isn't Erga stops it", async () => {
+  const mock = mockCloudflare({ fleet: true });
+  await bootstrap(mock);
+  const HERE = "next.example.com";
+  const token = "mock-machine-token";
+  const cf = new Cloudflare(token, mock.fetch);
+  const connect = async () => ({ cf, net: mock.fetch, token });
+  const clone = () => {
+    const d = join(mkdtempSync(join(tmpdir(), "erga-setup-")), ".erga");
+    writePass(d, HEAD);
+    return d;
+  };
+  // The first clone: the instance runs as the Worker erga-next (no address gives that name), tracks staging, and has an admin.
+  const [first, second] = [clone(), clone()];
+  try {
+    const entry: Entry = { host: HERE, repo: "github.com/koomen/erga", branch: "staging", ...targetFacts(next()) };
+    writeConfig(first, { instances: [entry] });
+    await deployInstance({ dir: first, host: HERE, commit: "HEAD", net: mock.fetch, print: () => {} });
+    const db = bindingsOf(mock.state, "erga-next").DB.database_id;
+    await cf.call("POST", `/accounts/${FLEET_ACCOUNT}/d1/database/${db}/query`, "the admin", {
+      sql: "INSERT INTO users (login, name, role, created) VALUES (?1, ?2, ?3, ?4)",
+      params: ["ada", "Ada", "admin", 1],
+    });
+    // A new clone, with no entry and no secret, and the README's command: the default branch.
+    const a = {
+      ...noAnswers(HERE),
+      where: "cloudflare" as const,
+      account: FLEET_ACCOUNT,
+      signIn: "invite" as const,
+      deploys: "local" as const,
+    };
+    const workers = Object.keys(mock.state.scripts).sort();
+    const calls = mock.state.calls.length;
+    const seen = await observe(a, second, connect);
+    // What it sees is that Worker's: its secrets, its admin. The address is not "in use".
+    expect(seen).toMatchObject({
+      adopt: "erga-next",
+      taken: null,
+      admin: true,
+      held: ["GITHUB_CLIENT_SECRET", "SESSION_SECRET", "SECRETS_KEY"],
+    });
+    expect(step(a, seen).state).toEqual({ at: "adopt", worker: "erga-next" });
+    // The step: the entry, as the first clone has it. It tracks what the instance tracks, not the command's default.
+    expect(await adoptEntry({ dir: second, answers: a, net: mock.fetch, token })).toEqual(entry);
+    expect(readConfig(second).instances).toEqual([entry]);
+    expect(namesAt(HERE, second)).toMatchObject({ worker: "erga-next", database: "erga-next" });
+    // Setup only read Cloudflare (a D1 query reads the admin and the spec), and made no Worker with the address's name.
+    expect(mock.state.calls.slice(calls).filter((c) => !c.startsWith("GET ") && !/^POST \S+\/d1\/database\/[^/]+\/query$/.test(c))).toEqual(
+      []
+    );
+    expect(Object.keys(mock.state.scripts).sort()).toEqual(workers);
+    // The next look: the instance is this clone's, and it is done.
+    const after = await observe(a, second, connect);
+    expect([after.adopt, after.taken, step(a, after).state]).toEqual([null, null, { at: "done" }]);
+
+    // A Worker that isn't Erga at the address, in a clone with no entry: setup stops, and reads nothing of that Worker.
+    Object.assign(mock.state.scripts["erga-next"], { tags: [], namespaces: [] });
+    const third = clone();
+    try {
+      const mark = mock.state.calls.length;
+      const other = await observe(a, third, connect);
+      expect(other).toMatchObject({ adopt: null, taken: "it is the address of the Worker erga-next", admin: false, held: [] });
+      expect(step(a, other).state).toEqual({
+        at: "stop",
+        why: `${HERE} is in use: it is the address of the Worker erga-next. Free it, or choose another address.`,
+      });
+      expect(mock.state.calls.slice(mark).filter((c) => c.includes("erga-next"))).toEqual([]);
+      expect(readConfig(third).instances).toEqual([]);
+    } finally {
+      rmSync(join(third, ".."), { recursive: true, force: true });
+    }
+  } finally {
+    for (const d of [first, second]) rmSync(join(d, ".."), { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("the dry run in a new clone, as the user's agent runs it: the plan is the take-over and the instance's next step, and nothing is made", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "erga-setup-"));
+  try {
+    // The command's .erga folder is beside its clone's .git: a new clone. The mock's example.com runs as the Worker erga, with an admin.
+    Bun.spawnSync(["git", "init", "-q", tmp]);
+    const args = ["example.com", "--host", "cloudflare", "--sign-in", "invite", "--deploys", "cloud", "--remote", "--dry-run"];
+    const p = Bun.spawnSync([process.execPath, join(ROOT, "deploy/cli/main.ts"), "setup", ...args], {
+      env: { ...process.env, GIT_DIR: join(tmp, ".git"), SSH_CONNECTION: undefined },
+      stdin: "ignore",
+    });
+    expect([p.exitCode, p.stderr.toString()]).toEqual([0, ""]);
+    // (An agent's shell has no terminal: the plan is the deployer's all the same, with the Worker's own name.)
+    expect(p.stdout.toString().trim().split("\n")).toEqual([
+      "PLAN  example.com runs already: it is the Erga of the Worker erga, in the Cloudflare account Erga. I will take it over as it is: its entry goes into this clone's .erga/config.json, as bun erga register writes it. Its Worker, its database and its documents stay.",
+      "PASS  Signed in to Cloudflare",
+      "PASS  The account Erga holds example.com",
+      "PLAN  example.com runs. I will install its deployer:",
+      "PLAN  • a deployer (the Worker erga-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga, which you make on Cloudflare and paste in your terminal",
+      "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run.",
+    ]);
+    expect(existsSync(join(tmp, ".erga"))).toBe(false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
