@@ -16,6 +16,17 @@
 // The editor (client/shell/main.ts) hears an "erga-zoom-level" event when a key changed the level: its toast says it.
 //
 // Trap: ⌘0 at 100% is the browser's. It puts back a tab that the browser's own menu zoomed, which nothing else can.
+//
+// Trap: the frame's scale and its size never change in the same screen frame (`draw`: the scale, then the size in the
+// next one). The page is in a process of its own, and Chromium gives each size and scale of its frame a name (a
+// surface id), which the viewer's picture waits for. A new size gets its name before the viewer's picture is made.
+// A new scale gets it after: the picture then has an older name than the page was told, and the page draws only the
+// newest. With both in one screen frame, twice in a row (two zoom keys), Chromium held the viewer's picture for 4
+// screen frames, for a name that the page never drew. When it drew in that time (the pointer moved), it made its
+// record of where each frame is from the viewer's picture before, and did not make it again when the held picture
+// showed (viz, HitTestAggregator: only a new record makes it read). From then on the page got no pointer at all: each
+// move, press and wheel on it came to the viewer, on the frame's element (1 run in 20 on Linux with 4 cores). With the
+// size last and alone, the last picture that moves the frame has the page's newest name.
 
 import { isMac } from "../common/app-keys";
 import {
@@ -83,18 +94,23 @@ export default function viewerZoom(): void {
     due = 0;
     const shown = !zoomsItself && !full(),
       level = shown ? zoom.level : 1,
-      lay = shown ? layOf(zoom) : { w: 1, h: 1 },
+      now = (name: string) => Number(root.style.getPropertyValue(name)) || 1,
+      laid = { w: now("--erga-lay-w"), h: now("--erga-lay-h") },
+      next = shown ? layOf(zoom) : { w: 1, h: 1 },
+      // The scale changes, and the size too: the size waits for the next screen frame (the trap).
+      late = level != now("--erga-zoom") && (next.w != laid.w || next.h != laid.h),
+      lay = late ? laid : next,
       plain = level == 1 && lay.w == 1 && lay.h == 1,
-      x = shown ? zoom.x : 0,
+      p = place(),
+      // (Until then, a page that is laid out again for its place is larger or smaller about the middle of its top.)
+      x = !shown ? 0 : late && zoom.phase == "still" && zoom.keep == "none" ? (p.width * (1 - level / lay.w)) / 2 : zoom.x,
       y = shown ? zoom.y : 0,
       pct = `${Math.round(level * 100)}%`,
-      p = place(),
       round = (n: number) => Math.round(n * 100) / 100,
       f = frame(),
       css = (name: string, v: string | null) => (v == null ? root.style.removeProperty(name) : root.style.setProperty(name, v));
     // (A new size at once, not by the frame's transition, which is for the agent's pane.)
-    const was = `${root.style.getPropertyValue("--erga-lay-w") || "1"} ${root.style.getPropertyValue("--erga-lay-h") || "1"}`;
-    if (was != `${lay.w} ${lay.h}`) {
+    if (laid.w != lay.w || laid.h != lay.h) {
       f.style.transition = "none";
       requestAnimationFrame(() => (f.style.transition = ""));
     }
@@ -144,6 +160,7 @@ export default function viewerZoom(): void {
     const said = JSON.stringify(m);
     if (said != told) ergaFrames.send(m);
     told = said;
+    if (late) due = requestAnimationFrame(draw);
   }
 
   function send(e: ZoomEvent) {
