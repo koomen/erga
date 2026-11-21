@@ -43,9 +43,10 @@ export const claimRoute: Route = Effect.gen(function* () {
     );
   const here = `/auth/claim?t=${encodeURIComponent(f.t)}`;
   const session = yield* call(() => platform.sessionOf(request));
-  // The sign-in comes first, with the claim in a cookie: it lets this person make their account.
+  // The sign-in comes first, with the claim in a cookie: it lets this person make their account. The cookie is for
+  // every path: the sign-in ends at the gate's callback (/_edge/callback), which is not under /auth.
   if (!session || session.agent)
-    return withCookie(redirect(`/auth/sign-in?next=${encodeURIComponent(here)}`), request, COOKIE, f.t, CLAIM_SECONDS, "/auth");
+    return withCookie(redirect(`/auth/sign-in?next=${encodeURIComponent(here)}`), request, COOKIE, f.t, CLAIM_SECONDS);
   if (!post)
     return page(
       "Become the admin",
@@ -64,7 +65,6 @@ export const claimRoute: Route = Effect.gen(function* () {
     request,
     COOKIE,
     "",
-    0,
-    "/auth"
+    0
   );
 });

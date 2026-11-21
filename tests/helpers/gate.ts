@@ -110,13 +110,16 @@ export const hopped = (a: Answer): string => {
 };
 
 /**
- * A pretend browser: it keeps cookies by host and Domain, sends each request the cookies that are its host's, and
- * follows redirects. (It keeps no partitions: one frame under one tab.)
+ * A pretend browser: it keeps cookies by host, Domain and Path, sends each request the cookies that are its host's
+ * and its path's, and follows redirects. (It keeps no partitions: one frame under one tab.)
  */
 export function browser(fetcher: (request: Request) => Promise<Response>) {
-  const jar: { name: string; value: string; host: string; domain: boolean; none: boolean }[] = [];
-  const cookiesFor = (host: string) => jar.filter((c) => (c.domain ? host == c.host || host.endsWith(`.${c.host}`) : host == c.host));
-  const keep = (host: string, line: string) => {
+  const jar: { name: string; value: string; host: string; domain: boolean; path: string; none: boolean }[] = [];
+  /** A cookie's Path covers a request's path: the same, or a folder above it (RFC 6265, 5.1.4). */
+  const under = (path: string, at: string) => at == path || (at.startsWith(path) && (path.endsWith("/") || at[path.length] == "/"));
+  const cookiesFor = (host: string, at?: string) =>
+    jar.filter((c) => (c.domain ? host == c.host || host.endsWith(`.${c.host}`) : host == c.host) && (at == null || under(c.path, at)));
+  const keep = (host: string, from: string, line: string) => {
     const [pair, ...attrs] = line.split("; ");
     const at = pair.indexOf("=");
     const name = pair.slice(0, at),
@@ -125,10 +128,12 @@ export function browser(fetcher: (request: Request) => Promise<Response>) {
     // __Host- cookies take no Domain; a Domain must be the host's own or a parent's.
     if (name.startsWith("__Host-") && (domain || !attrs.includes("Secure"))) return;
     if (domain && !(host == domain || host.endsWith(`.${domain}`))) return;
-    const i = jar.findIndex((c) => c.name == name && c.host == (domain ?? host));
+    // No Path: the folder of the request's path.
+    const path = attrs.find((a) => a.startsWith("Path="))?.slice(5) ?? (from.slice(0, from.lastIndexOf("/")) || "/");
+    const i = jar.findIndex((c) => c.name == name && c.host == (domain ?? host) && c.path == path);
     if (i >= 0) jar.splice(i, 1);
     if (!attrs.includes("Max-Age=0"))
-      jar.push({ name, value, host: domain ?? host, domain: !!domain, none: attrs.includes("SameSite=None") });
+      jar.push({ name, value, host: domain ?? host, domain: !!domain, path, none: attrs.includes("SameSite=None") });
   };
   const trail: string[] = [];
   /** `frame`: a frame's page under the shell's tab; a request that came through another site carries only SameSite=None cookies. */
@@ -140,13 +145,13 @@ export function browser(fetcher: (request: Request) => Promise<Response>) {
     let crossed = false;
     for (let hop = 0; hop < 12; hop++) {
       trail.push(`${at.host}${at.pathname}`);
-      const cookies = cookiesFor(at.host).filter((c) => !(o.frame && crossed) || c.none);
+      const cookies = cookiesFor(at.host, at.pathname).filter((c) => !(o.frame && crossed) || c.none);
       const headers = new Headers({ "sec-fetch-dest": o.dest ?? (o.frame ? "iframe" : "document"), ...o.headers });
       if (cookies.length) headers.set("cookie", cookies.map((c) => `${c.name}=${c.value}`).join("; "));
       const answer = await fetcher(
         new Request(at, { method: hop ? "GET" : (o.method ?? "GET"), headers, body: hop ? undefined : o.body, redirect: "manual" })
       );
-      for (const line of answer.headers.getSetCookie()) keep(at.host, line);
+      for (const line of answer.headers.getSetCookie()) keep(at.host, at.pathname, line);
       let to = answer.status >= 300 && answer.status < 400 ? answer.headers.get("location") : null;
       // A hand-off's page goes on by itself (a meta refresh).
       const page = !to && answer.headers.get("content-type")?.startsWith("text/html") ? await answer.clone().text() : "";

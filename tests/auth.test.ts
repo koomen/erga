@@ -397,3 +397,80 @@ test("a GitHub sign-in from start to the gate's cookie, against the pretend GitH
     globalThis.fetch = real;
   }
 });
+
+test("a new server's first admin: setup's link, the GitHub sign-in through the gate's callback, a username, then Become the admin", async () => {
+  const { mockGithub } = await import("../dev/github-mock");
+  const { Directory } = await import("../server/directory/index.ts");
+  const { memory } = await import("./helpers/memory-sql.ts");
+  const { Claim } = await import("../server/identity/claim-link.ts");
+  const { Grants, sessionOf } = await import("../server/identity/index.ts");
+  const { app: erga } = await import("../server/app.ts");
+  const { browser } = await import("./helpers/gate.ts");
+  const Effect = await import("effect/Effect");
+  const GH = "https://gh.test/__github";
+  const ORIGIN = "https://erga.example";
+  const gh = mockGithub({
+    app: { slug: "erga", clientId: GOOD.clientId, clientSecret: GOOD.secret },
+    origin: "https://gh.test",
+    callback: `${ORIGIN}/_edge/callback`,
+    user: "ada",
+  });
+  // A server as setup leaves it: only invited people may join, and it has no admin and no user.
+  const sql = memory();
+  const directory = new Directory(sql, { admins: [], providers: ["github", "google"] });
+  const platform: Platform = {
+    ...app().platform,
+    directory,
+    grants: new Grants(sql, directory),
+    dev: () => false,
+    secret: "s".repeat(40),
+    sessionOf: (request) => sessionOf(platform, request),
+    signIn: {
+      mode: "oauth",
+      apps: { github: GOOD, google: { clientId: "", secret: "" } },
+      origins: { github: GH, google: null },
+      devLogin: null,
+      encryptionKey: "secrets-key",
+    },
+  } as Platform;
+  const route = erga(() => Effect.succeed(null));
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    return request.url.startsWith("https://gh.test/")
+      ? ((await gh.fetch(request)) ?? new Response("", { status: 404 }))
+      : real(input, init);
+  }) as typeof fetch;
+  try {
+    // Her browser, which sends a cookie only to the paths under the cookie's Path.
+    const b = browser(async (request) =>
+      request.url.startsWith("https://gh.test/")
+        ? ((await gh.fetch(request)) ?? new Response("", { status: 404 }))
+        : gated(platform, request, (r) => respond(route, r, platform))
+    );
+    const form = { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" };
+    const t = encodeURIComponent(await Claim.seal(platform.secret, {}));
+    // Setup's link: the sign-in comes first, at GitHub.
+    const atGithub = await b.go(`${ORIGIN}/auth/claim?t=${t}`);
+    expect(b.trail.at(-1)).toBe("gh.test/__github/login/oauth/authorize");
+    const back = /id="authorize" href="([^"]+)"/.exec(await atGithub.text())![1].replace(/&amp;/g, "&");
+    // GitHub comes back to the gate's callback (/_edge/callback): the claim lets her join there, and she chooses a name.
+    b.trail.length = 0;
+    const username = await b.go(back);
+    expect([username.status, b.trail]).toEqual([200, ["erga.example/_edge/callback", "erga.example/auth/username"]]);
+    // Her account, then the link's page again: she becomes the admin.
+    const asked = await b.go(`${ORIGIN}/auth/username`, { method: "POST", headers: form, body: "username=ada" });
+    expect([b.trail.at(-1), await asked.text()]).toEqual([
+      "erga.example/auth/claim",
+      expect.stringContaining("Become the admin of erga.example"),
+    ]);
+    const done = await b.go(`${ORIGIN}/auth/claim`, { method: "POST", headers: form, body: `t=${t}` });
+    expect(await done.text()).toContain("<b>ada</b> is the admin of erga.example");
+    expect(await directory.users.isAdmin("ada")).toBe(true);
+    // The first admin ends the link: another person's browser goes to the first page, and may not join.
+    const late = await gated(platform, new Request(`${ORIGIN}/auth/claim?t=${t}`), (r) => respond(route, r, platform));
+    expect([late.status, late.headers.get("location")]).toEqual([302, "/"]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
