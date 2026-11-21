@@ -40,6 +40,7 @@ Steps, one argument each, in order:
                        Shift+Enter, ControlOrMeta+z (undo), ControlOrMeta+Shift+z (redo), ...
   <key>*<n>            presses it n times: Backspace*3
   click:<selector>     clicks at the end of the element's text (a CSS selector in the page)
+  triple:<selector>    clicks three times in the element's text: the browser selects its block
   tap:<selector>       clicks a control of Erga's window around the page: tap:#btn-settings opens the settings
   bar:<selector>       clicks a control of the editor's own bar on the page (over a selection): bar:#type opens the type menu
   say:<text>           sends the text to the agent in its panel, and waits for the turn's end. The agent is the
@@ -381,7 +382,7 @@ try {
       )
       .catch(() => {});
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|tap|bar|shot|say|ask|wait|shows|open):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|triple|tap|bar|shot|say|ask|wait|shows|open):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
     else if (step == "offline") {
       await page.context().setOffline(true);
@@ -426,6 +427,9 @@ try {
       await ed.clickEnd(rest);
       // (A click where the caret can't go: a widget, a part not editable by hand.)
       await ed.idle().catch(() => ed.settle());
+    } else if (verb == "triple") {
+      const at = await ed.rectOf(rest, 0.3);
+      await ed.click(at.x, at.y, { clickCount: 3 });
     } else if (verb == "bar") {
       await barRests();
       await ed.clickIn("erga-controls", rest);

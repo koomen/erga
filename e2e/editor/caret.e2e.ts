@@ -234,7 +234,30 @@ journey("a selection by mouse across blocks", () => {
       ### Lines
 
       The window to the Worker: HTTPS
+
+      ▣
     `);
+  });
+
+  // Pete's bug: the letter deleted the image. The browser ends a triple-click's selection at the start of the next
+  // block, and in a paragraph that holds an image alone the editor read that point as the image's end.
+  test("a triple-click on the line before an image, then a letter: the letter takes the line's place, and the image stays", async () => {
+    await clickAt(ed, "p:nth-of-type(3)", 4, 3);
+    await ed.press("Shift+X");
+    await ed.shows(`
+      ## Under the hood (draft text for the diagram)
+
+      D1 (database): Documents, people and versions.
+
+      R2 (storage):
+
+      ### Lines
+
+      X|
+
+      ▣
+    `);
+    expect(await ed.source()).toContain(`<p>X</p>\n  <p style="text-align: center"><img `);
   });
 });
 

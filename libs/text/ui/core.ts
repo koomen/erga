@@ -350,7 +350,16 @@ export abstract class EditorCore {
     if (u.runs.length) return u.runs[0].from;
     // An empty block whose placeholder <br> is in an inline element (`<pre><code><br></code></pre>`): there, in it.
     const br = placeholderBr(this.src, u);
-    return br && /</.test(this.src.slice(u.contentFrom, br.from)) ? br.from : u.contentTo;
+    if (br && /</.test(this.src.slice(u.contentFrom, br.from))) return br.from;
+    // A block of a picture or a widget alone: before it, the block's start (where a triple-click on the block above
+    // ends its selection: the picture is no part of it); else its end.
+    const atom = this.atomsOf(u, el)[0];
+    return atom && (pointIn(at, atom, 0) ?? 0) > 0 ? u.contentFrom : u.contentTo;
+  }
+
+  /** A block's pictures and widgets on the page, in order. */
+  private atomsOf(u: M.Unit, el: Element): Element[] {
+    return [...el.querySelectorAll("*")].filter((e) => M.ATOMIC.has(e.localName) && this.unitOf(e) == u);
   }
 
   /**
@@ -385,6 +394,9 @@ export abstract class EditorCore {
     const el = this.elOf(u);
     if (!el?.isConnected) return null;
     const live = this.runNodes(u);
+    // In a block of a picture or a widget alone, past its start: after it (posFromDOM tells its two sides apart).
+    const atom = !u.runs.length && pos > u.contentFrom ? this.atomsOf(u, el).pop() : null;
+    if (atom?.parentNode) return { node: atom.parentNode, offset: [...atom.parentNode.childNodes].indexOf(atom) + 1 };
     // (A run's node that others took out of the block: the block itself, until it is drawn again, verify.)
     if (!u.runs.length || live.some((n) => !n || !el.contains(n))) return { node: el, offset: 0 };
     const nodes = live as Text[];
