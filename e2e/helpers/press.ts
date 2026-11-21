@@ -161,7 +161,9 @@ const MOVES = `(window.__moves ??= (addEventListener("mousemove", () => window._
  * Trap: the page is in a process of its own (e2e/helpers/engine.ts), and the browser knows from the last picture it
  * drew which process is under a point. Just after the frame came, showed again or got another size, a press or the
  * wheel on the page goes to the viewer, on its frame element: the page hears nothing, and loses the focus. A move that
- * the page hears says that the browser has the page there.
+ * the page hears says that the browser has the page there. (After a zoom the browser's record of the frame's place
+ * could stay old for good: the viewer hears the move itself then, and moves its frame by a hair, which makes the
+ * browser read the place again: client/inline/viewer-frames.ts, the trap.)
  */
 export async function pointerOnPage(page: Page, x: number, y: number) {
   const heard = async () => {
@@ -181,7 +183,7 @@ export async function pointerOnPage(page: Page, x: number, y: number) {
     },
     5000,
     `the pointer is on the page at ${x},${y}`,
-    // What the viewer has at the point, and whether it heard the moves itself: this failed only on GitHub's machine.
+    // What the viewer has at the point, and whether it heard the moves itself (it then moves its frame by a hair).
     async () => ({
       tries,
       viewerHeard: (await page.evaluate<number>(MOVES)) - viewer,

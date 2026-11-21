@@ -347,6 +347,13 @@ journey("the caret and a selection on a board that pans", () => {
     await expect.poll(() => zoom(ed)).toBeCloseTo(1.25, 2);
     await clickEnd(".card h2");
     await pans();
+    // Was a failure on GitHub's machine: after the zoom the browser gave the page no pointer, for good
+    // (client/inline/viewer-frames.ts, the trap). The viewer hears the pointer on its frame's element then, and moves
+    // the frame by a hair: the browser finds the page again (the click below).
+    const hair = () => ed.page.evaluate(() => document.getElementById("frame")!.style.translate);
+    const was = await hair();
+    await ed.page.evaluate(() => document.getElementById("frame")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true })));
+    await expect.poll(hair).not.toBe(was);
 
     // The side column scrolls (an element's scroll, not the window's). At 100%: zoomed in, the column at the window's
     // right is out of sight until the page moves sideways.

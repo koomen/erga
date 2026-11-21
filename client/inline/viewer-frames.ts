@@ -5,6 +5,14 @@
 // Trap: #frame is not one element for the tab's life. `reload` loads the page again in a new frame, which is #frame
 // from that moment (every script talks to the new page), under the old one, which shows until the new page has the
 // same view (client/common/frame-swap.ts). Code asks `ergaFrames.frame` each time, and keeps no copy of the element.
+//
+// Trap: the page is in a process of its own, and Chromium finds the process under the pointer from a record of where
+// each frame is. The record can stay old after the frame got another size and scale (the zoom), for as long as the
+// frame stays where it is: the viewer's newer picture waited for a size of the page that the page skipped, and the
+// record was made from the older one (viz, HitTestAggregator: it reads the record only as a new one comes, not as a
+// waiting picture shows). The page then gets no pointer at all: each move, press and wheel on it comes to the viewer,
+// on the frame's element, which no other pointer does (but a drag that began on the viewer: a button is down). So
+// the viewer moves the frame by nothing that shows (`found`), and Chromium makes the record again.
 
 import { initial, step, WAIT_MS, type SwapEvent } from "../common/frame-swap";
 
@@ -111,6 +119,22 @@ export default function viewerFrames(pages: string): void {
       act({ type: "up", n: swap.n });
     } else if (e.data?.type == "erga-placed" && e.data.keep === key) act({ type: "placed", n: swap.n });
   });
+  // The pointer is on the page, and the viewer heard it (the trap above): the frame's place changes by a hair, which
+  // draws the same pixels, at most one time for each screen frame.
+  let found = 0;
+  for (const type of ["pointermove", "pointerdown", "wheel"])
+    addEventListener(
+      type,
+      (e) => {
+        const f = frame();
+        if (!f || e.target != f || found || (type == "pointermove" && (e as PointerEvent).buttons)) return;
+        found = requestAnimationFrame(() => {
+          found = 0;
+          f.style.translate = f.style.translate ? "" : "0 0.0001px";
+        });
+      },
+      { capture: true, passive: true }
+    );
   window.ergaEditAddress = () => /[?&]edit(=|&|$)/.test(location.search);
   window.ergaWithEdit = (path, on) => {
     const q = location.search
