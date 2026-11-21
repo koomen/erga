@@ -1,3 +1,4 @@
 # The unit tests need the built inline code (.build/inline-code.ts), which git ignores.
+# And they ask no server outside this machine (tests/helpers/no-network.ts).
 [test]
-preload = ["./tests/helpers/build-inline.ts"]
+preload = ["./tests/helpers/build-inline.ts", "./tests/helpers/no-network.ts"]

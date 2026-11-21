@@ -221,44 +221,51 @@ function serverOn(own: Platform["own"]): Platform {
 }
 
 test("sign-in uses the page's values over the deploy's, and ?app=pending tests the values that wait", async () => {
-  const { storage } = store();
-  const env = serverOn(storage);
-  const apps = new AuthApps(storage, "secrets-key");
-  /** Where /auth/github goes, behind the gate: Erga's checks, then the gate's sign-in, which goes off to GitHub. */
-  const visit = (on: Platform, at: string) => gated(on, new Request(`https://erga.dev${at}`), (r) => respond(startSignIn, r, on));
-  const goOn = async (on: Platform, q = "") => {
-    const first = await visit(on, `/auth/github${q}`);
-    const next = first.headers.get("location") ?? "";
-    return new URL((next.startsWith("/_edge/sign-in") ? (await visit(on, next)).headers.get("location") : null) ?? "about:blank");
-  };
-  const go = (q = "") => goOn(env, q);
-  expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
-  // Nothing waits: a test sign-in says so.
-  expect((await respond(startSignIn, new Request("https://erga.dev/auth/github?app=pending"), env)).status).toBe(404);
-  await apps.keep("github", "pending", OTHER, { login: "koomen" });
-  expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
-  const test = await go("?app=pending&next=/admin/auth");
-  expect(test.searchParams.get("client_id")).toBe(OTHER.clientId);
-  expect(test.searchParams.get("redirect_uri")).toBe("https://erga.dev/_edge/callback");
-  // The gate's sign-in itself, asked for the values that wait when none do: nothing.
-  expect((await visit(serverOn(store().storage), "/_edge/sign-in?idp=github&x=pending")).status).toBe(404);
-  // A test that worked for someone who isn't an admin changes nothing, and says why; an admin's puts them in use.
-  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "bo", admin: false }, "github")).toBe(false);
-  expect((await apps.read("github")).pending?.test?.error).toContain("only an admin's sign-in");
-  // The end of a test of other values (they changed meanwhile) notes nothing.
-  expect(await testedSignIn(env, GOOD.clientId, { kind: "in", login: "koomen", admin: true }, "github")).toBe(false);
-  expect((await apps.read("github")).pending?.clientId).toBe(OTHER.clientId);
-  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "koomen", admin: true }, "github")).toBe(true);
-  expect((await go()).searchParams.get("client_id")).toBe(OTHER.clientId);
-  // A server whose own storage can't be read signs in with the deploy's values.
-  const broken = serverOn({
-    get: async () => {
-      throw new Error("down");
-    },
-    put: async () => {},
-    delete: async () => {},
-  });
-  expect((await goOn(broken)).searchParams.get("client_id")).toBe(GOOD.clientId);
+  // GitHub is a fake that knows both apps: sign-in asks it whether the page's values work, before it uses them.
+  const real = globalThis.fetch;
+  globalThis.fetch = fakeGithub([GOOD, OTHER]);
+  try {
+    const { storage } = store();
+    const env = serverOn(storage);
+    const apps = new AuthApps(storage, "secrets-key");
+    /** Where /auth/github goes, behind the gate: Erga's checks, then the gate's sign-in, which goes off to GitHub. */
+    const visit = (on: Platform, at: string) => gated(on, new Request(`https://erga.dev${at}`), (r) => respond(startSignIn, r, on));
+    const goOn = async (on: Platform, q = "") => {
+      const first = await visit(on, `/auth/github${q}`);
+      const next = first.headers.get("location") ?? "";
+      return new URL((next.startsWith("/_edge/sign-in") ? (await visit(on, next)).headers.get("location") : null) ?? "about:blank");
+    };
+    const go = (q = "") => goOn(env, q);
+    expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
+    // Nothing waits: a test sign-in says so.
+    expect((await respond(startSignIn, new Request("https://erga.dev/auth/github?app=pending"), env)).status).toBe(404);
+    await apps.keep("github", "pending", OTHER, { login: "koomen" });
+    expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
+    const test = await go("?app=pending&next=/admin/auth");
+    expect(test.searchParams.get("client_id")).toBe(OTHER.clientId);
+    expect(test.searchParams.get("redirect_uri")).toBe("https://erga.dev/_edge/callback");
+    // The gate's sign-in itself, asked for the values that wait when none do: nothing.
+    expect((await visit(serverOn(store().storage), "/_edge/sign-in?idp=github&x=pending")).status).toBe(404);
+    // A test that worked for someone who isn't an admin changes nothing, and says why; an admin's puts them in use.
+    expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "bo", admin: false }, "github")).toBe(false);
+    expect((await apps.read("github")).pending?.test?.error).toContain("only an admin's sign-in");
+    // The end of a test of other values (they changed meanwhile) notes nothing.
+    expect(await testedSignIn(env, GOOD.clientId, { kind: "in", login: "koomen", admin: true }, "github")).toBe(false);
+    expect((await apps.read("github")).pending?.clientId).toBe(OTHER.clientId);
+    expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "koomen", admin: true }, "github")).toBe(true);
+    expect((await go()).searchParams.get("client_id")).toBe(OTHER.clientId);
+    // A server whose own storage can't be read signs in with the deploy's values.
+    const broken = serverOn({
+      get: async () => {
+        throw new Error("down");
+      },
+      put: async () => {},
+      delete: async () => {},
+    });
+    expect((await goOn(broken)).searchParams.get("client_id")).toBe(GOOD.clientId);
+  } finally {
+    globalThis.fetch = real;
+  }
 });
 
 test("a test sign-in's end: an admin's puts the values in use; every other end notes why; a test of other values notes nothing", () => {
