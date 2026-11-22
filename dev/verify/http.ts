@@ -219,6 +219,9 @@ const OPEN = (run: Run) =>
     "shell GET /oauth/token 405",
     "shell POST /oauth/token 400",
     "shell OPTIONS /oauth/token 204",
+    "shell GET /oauth/register 405",
+    "shell POST /oauth/register 400",
+    "shell OPTIONS /oauth/register 204",
     "accept GET /_edge/accept 400",
   ].filter((row) => otherSite(run) || !/accept/.test(row));
 
@@ -713,7 +716,7 @@ export async function httpChecks(run: Run, report: Report): Promise<void> {
     if (hostOf.accept) probes.push({ id: uid(), at: "accept", ...r, proof: "no proof", headers: {} });
   }
   // The same routes with a good proof: the origin sees each one (so the log shows what it must).
-  const own = (r: { path: string }) => /^\/(_edge|oauth\/(token|authorize)|\.well-known\/oauth-)/.test(r.path);
+  const own = (r: { path: string }) => /^\/(_edge|oauth\/(token|register|authorize)|\.well-known\/oauth-)/.test(r.path);
   /** Behind Access: a path that Access lets through with no sign-in. It adds no proof there, so nobody is a person there. */
   const openAt = (path: string) => access && ACCESS_OPEN.some((o) => path == o || path.startsWith(`${o}/`));
   const controls: Probe[] = all

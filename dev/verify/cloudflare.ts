@@ -58,7 +58,7 @@ import { bundleHash, hashOf, type Part, redeploy } from "./update.ts";
 const ROOT = resolve(import.meta.dir, "../..");
 /**
  * wrangler, for one of the suite's Workers only: a deploy of settings that `deployWorker` checked and wrote, or the
- * secrets or the removal of a Worker with the suite's name. It gets the suite's token at this time, and no other.
+ * secrets of a Worker with the suite's name. It gets the suite's token at this time, and no other.
  * Trap: just after a Worker's first upload, the API may refuse for some seconds (run.ts, passes): again.
  */
 function wrangler(args: string[], tries = 4): string {
@@ -69,7 +69,7 @@ function wrangler(args: string[], tries = 4): string {
   try {
     return sh(["bunx", "wrangler", ...args], { cwd: ROOT, env: { CLOUDFLARE_API_TOKEN: tokenNow() } });
   } catch (e) {
-    if (tries <= 1 || args[0] == "delete" || !passes(String(e))) throw e;
+    if (tries <= 1 || !passes(String(e))) throw e;
     Bun.sleepSync(3000);
     return wrangler(args, tries - 1);
   }
@@ -368,20 +368,26 @@ export async function updateCloudflare(s: Setting): Promise<string[]> {
   return did;
 }
 
-/** Removes one of the suite's Workers, and says what it found. */
-export function removeWorker(name: string) {
+/**
+ * Removes one of the suite's Workers, and says what it found. Through the API, as removeErga: `wrangler delete` lists
+ * the account's KV namespaces after it, which the suite's token does not read (an error after each removal).
+ */
+export async function removeWorker(name: string) {
+  const { cf, acc } = await account();
+  const at = `${acc}/workers/scripts/${mine(name)}`;
   try {
-    wrangler(["delete", "--name", mine(name), "--force"]);
+    if (!(await cf.call("GET", `${at}/settings`, "look for the Worker", undefined, { allow404: true })))
+      return console.log(`${name}: none`);
+    await cf.call("DELETE", `${at}?force=true`, `delete the Worker ${name}`);
     console.log(`Removed ${name}`);
   } catch (e) {
-    const said = String(e);
-    console.log(/does not exist|not found|10007/i.test(said) ? `${name}: none` : said);
+    console.log(`${name}: NOT removed: ${(e as Error).message}`);
   }
 }
 
 export async function removeCloudflare(s: Setting) {
   // ("gate": the gate's own Worker of a run from before the gate moved inside the origin.)
-  for (const kind of ["gate", "stub", "idp"]) removeWorker(worker(kind, s));
+  for (const kind of ["gate", "stub", "idp"]) await removeWorker(worker(kind, s));
   if (s.who == "access") await removeAccess(s);
   // The real Erga, if a run made one, and the DNS record of its documents.
   if (s.who == "sso") {

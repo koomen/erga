@@ -116,6 +116,8 @@ test("each kind of syntax that CloudFront refuses is named", () => {
     ["async function f() { g(await h()); }", "an await inside an expression"],
     ["async function f() { return (await h()).a; }", "an await inside an expression"],
     ["async function f() { for (let a = await h(); ; ); }", "an await inside an expression"],
+    // A method that the runtime does not have: an app's registration got a 503 on a real distribution.
+    ['a.normalize("NFKD")', ".normalize()"],
   ];
   for (const [code, kind] of kinds) expect([code, refused(code)]).toEqual([code, [kind]]);
   // What the runtime takes: an await that is a statement, a declaration's value, a return's value or an assignment's.

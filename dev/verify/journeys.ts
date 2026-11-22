@@ -148,7 +148,14 @@ async function one(name: string, run: Run, report: Report, browser: Browser): Pr
   const seen = watch(context, run);
   const tab = await context.newPage();
   const errors: string[] = [];
-  tab.on("pageerror", (e) => errors.push(e.message.split("\n")[0]));
+  // (WebKit writes "... due to access control checks." for a request that the tab's next page ended, and Playwright
+  // gives that line as a script error: seen 2026-11-22, for two requests of the shell's own page to the shell. No
+  // such request can fail that check, so the line is no error. A frame's request to the shell is Invariant 4's.)
+  const ended = (line: string) => line.includes(`/${run.shell}/`) && line.endsWith("due to access control checks.");
+  tab.on("pageerror", (e) => {
+    const line = e.message.split("\n")[0];
+    if (!ended(line)) errors.push(line);
+  });
   const count = (re: RegExp, from = 0) => seen.pages.slice(from).filter((p) => re.test(p)).length;
   const of = (frame: string, from = 0) => seen.pages.slice(from).filter((p) => p.startsWith(`${frame} `));
 

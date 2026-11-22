@@ -391,7 +391,7 @@ export async function removeOnAws(unit: AwsUnit): Promise<void> {
       () => log(`the parameter ${name} is gone`),
       (e: Error) => log(`the parameter ${name}: ${/ParameterNotFound/.test(e.message) ? "none" : e.message}`)
     );
-  if (unit == "5") removeWorker(worker("idp", ISSUER));
+  if (unit == "5") await removeWorker(worker("idp", ISSUER));
 
   // What still has the stack's tag (deploy/aws/stack.ts, planStack). Trap: this API lists a deleted resource for a time.
   const left = (

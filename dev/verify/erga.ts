@@ -155,9 +155,19 @@ export async function tool<T = unknown>(run: Run, jar: Jar, name: string, args: 
   return body.result as T;
 }
 
-/** A document's page as text, as its person's tool reads it. */
-export const pageOf = async (run: Run, jar: Jar, document: string) =>
-  JSON.stringify(await tool(run, jar, "read", { op: "read", document, path: "index.html" }));
+/**
+ * A document's page as text, as its person's tool reads it. A read changes nothing: when the connection closes with
+ * no answer (seen one time, 2026-11-21, on one of two reads at the same time), it asks one more time.
+ */
+export const pageOf = async (run: Run, jar: Jar, document: string) => {
+  const read = () => tool(run, jar, "read", { op: "read", document, path: "index.html" });
+  return JSON.stringify(
+    await read().catch((e: Error) => {
+      if (!/socket connection was closed/i.test(e.message)) throw e;
+      return read();
+    })
+  );
+};
 
 /**
  * The seed: the rule that lets the gate's people in; ada's account and bob's, by their first visit; ada the admin, by
@@ -276,7 +286,8 @@ export async function ergaChecks(run: Run, report: Report): Promise<void> {
   const admin = JSON.stringify(await tool(run, ada, "people", { op: "people" }).catch((e: Error) => e.message));
   report.add(
     "ada is ada to Erga with the gate's cookies alone, and the admin",
-    loginOf(me) == "ada" && ergas(me) && admin.includes('"bob"'),
+    // (bob came in through Anyone's level: the list has only accounts with a role of their own.)
+    loginOf(me) == "ada" && ergas(me) && /"login":"ada"[^}]*"role":"admin"/.test(admin),
     `whoami: ${loginOf(me)}; the users she lists: ${admin.slice(0, 100)}`
   );
   const bob = await person(run, "bob");

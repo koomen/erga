@@ -716,10 +716,11 @@ async function register(q: Req, c: Config, p: Port, now: number): Promise<Answer
     return bad("token_endpoint_auth_method: none only (a public client)");
   const name = typeof m!.client_name == "string" ? m!.client_name : "";
   // (The app's name, before any part in brackets: Claude Code names itself "Claude Code (<the server's name>)".)
+  // Trap: no String.normalize here. CloudFront Functions' runtime has none: the function stopped, and a registration
+  // got a 503 (seen on a real distribution, 2026-11-21). gate/lower.ts refuses it in a build.
   const label =
     name
       .replace(/\s*\(.*$/, "")
-      .normalize("NFKD")
       .replace(/[^A-Za-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 40) || "app";

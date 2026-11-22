@@ -9,7 +9,8 @@
 //      An await that runs only sometimes (the right side of `a && b`, `a || b`, a branch of `a ? b : c`, a later part
 //      of `a, b`) keeps its condition: that expression becomes statements first.
 //
-// `refused` names what is left of the syntax the runtime refuses: the build fails on any (tests/gate-mounts.test.ts).
+// `refused` names what is left of the syntax the runtime refuses, and String.normalize, which it does not have: the
+// build fails on any (tests/gate-lower.test.ts).
 // It takes an await in any other place than step 2's four for refused. That is more than the runtime was seen to
 // refuse (a call's arguments), on purpose: code with its awaits in those four places only ran on a real distribution
 // (2026-11-18: a first experiment of this lowering, and then this build's own output, all four functions, in the verify
@@ -232,6 +233,8 @@ export function refused(code: string): string[] {
     ForOfStatement: () => void found.add("for...of"),
     CatchClause: (p) => void (!p.node.param && found.add("catch {}")),
     AwaitExpression: (p) => void (!settled(p) && found.add("an await inside an expression")),
+    // Not syntax: a method that the runtime does not have. A call of it stops the function (a 503).
+    MemberExpression: (p) => void (!p.node.computed && t.isIdentifier(p.node.property, { name: "normalize" }) && found.add(".normalize()")),
   });
   return [...found];
 }

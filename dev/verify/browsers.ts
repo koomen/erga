@@ -315,7 +315,11 @@ async function one(name: string, run: Run, report: Report): Promise<void> {
       );
     }
     await tab.goto(`${shell}/`);
-    const out = sso ? tab.url().startsWith(run.idp.url) : JSON.parse(await tab.innerText("body")).caller.kind == "none";
+    // (Behind Access the tab goes to the team's sign-in page first, which sends it on to the issuer. WebKit's goto
+    // came back there one time, before the next step: seen 2026-11-21. Each of the two is a sign-in for nobody.)
+    const atSignIn = () =>
+      tab.url().startsWith(run.idp.url) || (!!run.access && new URL(tab.url()).host == `${run.access.team}.cloudflareaccess.com`);
+    const out = sso ? !!(await wait(() => atSignIn() || null)) : JSON.parse(await tab.innerText("body")).caller.kind == "none";
     add(
       run.who == "access"
         ? "After sign-out (the gate's, then Access's own, with no step of the suite's) the shell knows nobody"
