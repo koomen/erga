@@ -57,7 +57,7 @@ export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<
   const url = `${issuer}/.well-known/openid-configuration`;
   const r = await net(url, { signal: AbortSignal.timeout(10_000) }).catch(() => null);
   const d = r?.ok ? ((await r.json().catch(() => null)) as Record<string, unknown> | null) : null;
-  if (!d) throw new Error(`The sign-in's issuer didn't answer at ${url}${r ? ` (${r.status})` : ""}: is oidc its issuer's URL?`);
+  if (!d) throw new Error(`The sign-in's issuer didn't answer at ${url}${r ? ` (${r.status})` : ""}: is ${issuer} the issuer's URL?`);
   const https = (key: string) => {
     const v = d[key];
     if (typeof v != "string" || !v.startsWith("https://")) throw new Error(`${url} names no https ${key}.`);

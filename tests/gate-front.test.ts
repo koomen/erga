@@ -10,7 +10,10 @@ import { toWeb } from "../server/http.ts";
 import { forwarded } from "../server/documents/index.ts";
 import { asking, callerOf } from "../server/identity/caller";
 import { authOps, gated, signInChoices, signInOf } from "../server/identity/index.ts";
+import { setupUrl } from "../server/identity/setup-link.ts";
 import { calling, server as app } from "./helpers/app";
+import { browser } from "./helpers/gate.ts";
+import { asNewServer, rowsOf, TOKEN } from "./helpers/new-server.ts";
 
 const KEY = "front-gate-key-".repeat(3);
 const ORIGIN = "https://erga.example";
@@ -65,6 +68,39 @@ test("a request counts only with the gate's key: without it, nothing, whoever it
   // issuer names nobody on a server behind a gate.
   expect((await ask("/documents", { kind: "none" })).headers.get("location")).toBe("/auth/sign-in?next=%2Fdocuments");
   expect((await ask("/documents", admin)).headers.get("location")).toBe("/auth/sign-in?next=%2Fdocuments");
+});
+
+test("a gate in front, on a new server (AWS): the setup page names the person as the gate did, has no step for a deployer's token, and one button makes them the admin", async () => {
+  const { s } = await front();
+  const { directory } = await asNewServer(s, "erga.example");
+  // On AWS the deployer is a Lambda function with a role of its own: the server binds none, and takes no token.
+  s.platform.deploy.deployer = null;
+  // Ada's browser, behind the gate: each request comes on with the gate's key, and with her as the caller.
+  const b = browser((request) => {
+    const headers = new Headers(request.headers);
+    headers.set(FRONT, KEY);
+    for (const [name, value] of Object.entries(calling(ADA))) headers.set(name, value);
+    return s.fetch(request.url, new Request(request, { headers }));
+  });
+  const form = { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" };
+  const page = await b.go(await setupUrl("erga.example", s.platform.secret));
+  expect([page.status, b.trail]).toEqual([200, ["erga.example/setup", "erga.example/setup"]]);
+  const html = await page.text();
+  expect(rowsOf(html)).toEqual(["admin next open"]);
+  expect(html).toContain("You are signed in with your organization's sign-in, as <b>ada@example.com</b>.");
+  expect(html).not.toContain('class="provider');
+  // A token for a deployer has no place here.
+  const token = await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: form, body: `token=${TOKEN}` });
+  expect(rowsOf(await token.text())).toEqual(["admin next open"]);
+  // The button: her account is new, so she names it, and comes back as the admin. The page is closed then.
+  b.trail.length = 0;
+  await b.go(`${ORIGIN}/setup/admin`, { method: "POST", headers: form, body: "" });
+  expect(b.trail).toEqual(["erga.example/setup/admin", "erga.example/auth/sign-in", "erga.example/auth/sso", "erga.example/auth/username"]);
+  b.trail.length = 0;
+  await b.go(`${ORIGIN}/auth/username`, { method: "POST", headers: form, body: "username=ada" });
+  expect(b.trail.slice(0, 3)).toEqual(["erga.example/auth/username", "erga.example/setup/admin", "erga.example/"]);
+  expect(await directory.users.isAdmin("ada")).toBe(true);
+  expect((await b.go(`${ORIGIN}/setup`)).status).toBe(410);
 });
 
 test("the gate's key ends at the check: the app never hears it, nor does a document's host after the app", async () => {

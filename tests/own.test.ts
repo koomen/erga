@@ -373,6 +373,59 @@ test("AWS: the profile, the region from it, the stack as the plan, and the organ
   expect(run(other, { ...AWS, zones: ["example.com", "example-pages.com"] }).state).toEqual({ at: "build" });
 });
 
+test("single sign-on with --deploys cloud, on both hosts: the client's secret (an issuer), the build, the deployer, then the setup page", () => {
+  const cf = { ...CF, zones: ["example.com", "example-pages.com"] };
+  const whole = { deployer: true, bound: true };
+  const more = ["--pages", "example-pages.com", "--deploys", "cloud"];
+  // Cloudflare Access: no secret of the user's before the build. The deployer is the command's own step; its token is
+  // the setup page's, behind Access.
+  const access = options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--aud", "f".repeat(64), ...more).answers;
+  expect(missing(access)).toEqual([]);
+  expect(run(access, cf, cf).state).toEqual({ at: "build" });
+  expect(run(access, cf, { ...cf, ...LIVE }).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(access, cf, { ...cf, ...LIVE, ...whole }).state).toEqual({ at: "page" });
+  expect(run(access, cf, { ...cf, ...LIVE, ...whole, admin: true }).state).toEqual({ at: "done" });
+  // An issuer on Cloudflare: the client's secret first, on a page of this machine. Then the same steps.
+  const oidc = { authorize: "https://idp.example.com/authorize", token: "https://idp.example.com/token" };
+  const issuer = options(
+    "--host",
+    "cloudflare",
+    "--sign-in",
+    "sso",
+    "--issuer",
+    "https://idp.example.com",
+    "--client",
+    "c1",
+    ...more
+  ).answers;
+  expect(missing(issuer)).toEqual([]);
+  expect(run(issuer, cf, { ...cf, oidc }).state).toEqual({ at: "app", kind: "oidc" });
+  expect(run(issuer, cf, { ...cf, oidc, app: true }).state).toEqual({ at: "build" });
+  expect(run(issuer, cf, { ...cf, oidc, app: true, ...LIVE }).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(issuer, cf, { ...cf, oidc, app: true, ...LIVE, ...whole }).state).toEqual({ at: "page" });
+  // The plan says both: the sign-in, and where the deployer's token goes.
+  const plan = planText(run(issuer, cf, cf).answers, seen(cf)).join("\n");
+  expect(plan).toContain("you sign in with your organization's sign-in, and you become the admin");
+  expect(plan).toContain("which you make on Cloudflare and paste on the server: on its setup page");
+  // AWS: the gate is in front, and the deployer has no token: the page has the admin's step only.
+  const aws = options(
+    "--host",
+    "aws",
+    "--sign-in",
+    "sso",
+    "--issuer",
+    "https://idp.example.com",
+    "--client",
+    "c1",
+    "--deploys",
+    "cloud"
+  ).answers;
+  expect(missing(aws)).toEqual([]);
+  expect(run(aws, AWS, AWS, AWS).state).toEqual({ at: "app", kind: "oidc" });
+  expect(run(aws, AWS, AWS, { ...AWS, app: true, ...LIVE }).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(aws, AWS, AWS, { ...AWS, app: true, ...LIVE, deployer: true }).state).toEqual({ at: "page" });
+});
+
 test("--remote: the user's steps need their terminal; an agent's shell, with none, stops there and never opens a browser", () => {
   const sso = options(
     "--host",

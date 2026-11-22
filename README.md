@@ -44,23 +44,7 @@ do not choose for the user.
      words.
    - Another Worker has the address: offer to take the address off that
      Worker with the CLI, or ask for another address.
-4. **Which domain holds the documents' pages?** A second domain, not the
-   app's domain and not a subdomain of it: a document's scripts must not
-   share the app's site or its cookies. Each document gets a subdomain of
-   its own there (`--pages <domain>`). AWS needs it, and so does single
-   sign-on on Cloudflare. On Cloudflare without single sign-on, a user who
-   is the only author can leave it out: the pages then share one
-   `workers.dev` address.
-5. **Does Erga update by itself when a new release comes out?**
-   - Yes (`--deploys cloud`): a small deployer in the user's own account
-     deploys each new release. On AWS it is a Lambda function with a role of
-     its own. On Cloudflare it is a Worker with a token for the one Worker,
-     which the user makes and pastes on the setup page. An admin turns the
-     updates off and on later, and gives the deployer another token, on the
-     server's Deploy page.
-   - No (`--deploys local`): no deploy credential stays in the cloud. The
-     user runs `bun erga deploy <address>` for each update.
-6. **Do people sign in with GitHub or Google, or with the organization's
+4. **Do people sign in with GitHub or Google, or with the organization's
    single sign-on?**
    - GitHub or Google: no option. The user sets it up on the setup page.
    - Single sign-on (`--sign-in sso`): only people who pass it reach Erga.
@@ -75,6 +59,24 @@ do not choose for the user.
        callback: `https://<address>/_edge/callback`). The issuer must give
        the `email` claim, with `email_verified`. The user types the
        client's secret on a page that opens.
+5. **Which domain holds the documents' pages?** A second domain, not the
+   app's domain and not a subdomain of it: a document's scripts must not
+   share the app's site or its cookies. Each document gets a subdomain of
+   its own there (`--pages <domain>`).
+   - Cloudflare with single sign-on, and AWS without it: ask. They need it.
+   - AWS with single sign-on: do not ask. The pages are at
+     `pages.<address>`, behind the same sign-in.
+   - Cloudflare without single sign-on: a user who is the only author can
+     leave it out. The pages then share one `workers.dev` address.
+6. **Does Erga update by itself when a new release comes out?**
+   - Yes (`--deploys cloud`): a small deployer in the user's own account
+     deploys each new release. On AWS it is a Lambda function with a role of
+     its own. On Cloudflare it is a Worker with a token for the one Worker,
+     which the user makes and pastes on the setup page. An admin turns the
+     updates off and on later, and gives the deployer another token, on the
+     server's Deploy page.
+   - No (`--deploys local`): no deploy credential stays in the cloud. The
+     user runs `bun erga deploy <address>` for each update.
 
 Then run the dry run. It makes nothing, and prints the plan:
 
@@ -97,7 +99,8 @@ Rules:
   with a link that works one time. There the user sets up GitHub or Google
   sign-in, pastes the deployer's token if the page asks for it, and signs
   in: they become the admin. With single sign-on the page has no GitHub or
-  Google step: the user signs in with it first. Tell the user to finish
+  Google step: the link passes the organization's sign-in first, and one
+  button on the page makes the user the admin. Tell the user to finish
   there.
 - **No secret goes through you.** A secret goes only into the page, where
   the user types it: never into the chat, a command or a file. You make no

@@ -466,7 +466,7 @@ async function run(a: Answers, o: Run) {
   say(
     end == "done"
       ? `DONE  Tell the user: Erga is live at https://${a.host}, and it has its admin. ${rest}`
-      : `DONE  Tell the user: Erga runs at https://${a.host}. Its setup page is ${a.remote ? "behind the link on their terminal" : "open in their browser"}: they finish there. They set up GitHub or Google sign-in, then they sign in, and become the admin. The link works one time, for 30 minutes: when the page says that it works no more, run the same command again. Never open the page yourself. ${rest}`
+      : `DONE  Tell the user: Erga runs at https://${a.host}. Its setup page is ${a.remote ? "behind the link on their terminal" : "open in their browser"}: they finish there. ${a.signIn == "sso" ? `The link passes their organization's sign-in first. Then the page names them, and one button makes them the admin${a.deploys == "cloud" && a.where != "aws" ? "; before that, they paste the deployer's token there" : ""}.` : `They set up GitHub or Google sign-in${a.deploys == "cloud" && a.where != "aws" ? ", paste the deployer's token" : ""}, then they sign in, and become the admin.`} The link works one time, for 30 minutes: when the page says that it works no more, run the same command again. Never open the page yourself. ${rest}`
   );
   // A repository of the user's own (a fork): Erga's main is the upstream to compare it with. Setup sets none itself.
   if (repoName(repo) != DEFAULT_REPO)

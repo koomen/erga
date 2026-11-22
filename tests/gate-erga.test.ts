@@ -6,14 +6,16 @@
 // on the documents' site (another site: the hand-off); an agent connects (authorize, approve, token, refresh); a
 // revoke, after which the agent gets a 401; a token to paste; a code that is traded two times; sign-out, which ends
 // her other browser's sign-in too. Then the same server behind Cloudflare Access: Access's proof is the sign-in. Last,
-// a new server with no admin: the setup page (server/identity/setup.ts) behind the gate.
+// a new server with no admin: the setup page (server/identity/setup.ts) behind the gate, with an issuer and behind
+// Access: its link, the deployer's token, and the button that makes the admin.
 
 import { expect, test } from "bun:test";
 import { ACCESS_OPEN } from "../gate/core.ts";
 import { ssoOf } from "../gate/sso.ts";
-import { firstRows, noAnswers } from "../deploy/own/plan";
+import { setupUrl } from "../server/identity/setup-link.ts";
 import { server as app } from "./helpers/app";
 import { browser } from "./helpers/gate.ts";
+import { asNewServer, rowsOf, TOKEN } from "./helpers/new-server.ts";
 
 const SHELL = "erga.example";
 // (The test server's documents are under localhost: <id>-<owner>.localhost, another site than the app's.)
@@ -254,14 +256,17 @@ test("the gate inside, with an issuer: one sign-in, then documents open on both 
   expect([back2.status, phone.trail.at(-1)]).toEqual([200, `${SHELL}/documents`]);
 });
 
-test("the gate inside, behind Cloudflare Access: Access's proof is the sign-in; the paths that Access lets through take the gate's own values", async () => {
+let teams = 0;
+/** A new server behind Cloudflare Access, whose team signs Ada's proof: `behind(jwt)` is Access in front, with that proof. */
+async function behindAccess() {
   const pair = await crypto.subtle.generateKey(
     { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
     true,
     ["sign", "verify"]
   );
   const jwks = { keys: [{ ...(await crypto.subtle.exportKey("jwk", pair.publicKey)), kid: "k1" }] };
-  const access = { team: "team-of-erga", aud: "a1".repeat(32) };
+  // (A team of its own for each server: the gate keeps a team's keys for an hour.)
+  const access = { team: `team-of-erga-${++teams}`, aud: "a1".repeat(32) };
   const certs = (async () => Response.json(jwks)) as unknown as typeof fetch;
   const s = await serverWith(ssoOf(JSON.stringify({ access }), "", certs));
   const proof = async (claims: object) => {
@@ -280,6 +285,11 @@ test("the gate inside, behind Cloudflare Access: Access's proof is the sign-in; 
     if (jwt && url.host == SHELL && !bypassed(url.pathname)) headers.set("cf-access-jwt-assertion", jwt);
     return s.fetch(request.url, new Request(request, { headers }));
   };
+  return { s, behind, proof, ada, access, pair };
+}
+
+test("the gate inside, behind Cloudflare Access: Access's proof is the sign-in; the paths that Access lets through take the gate's own values", async () => {
+  const { s, behind, proof, ada, access } = await behindAccess();
   const b = browser(behind(ada));
   // Her first page: no sign-in of the gate's own, and her account at once, from the address that Access gave.
   const list = await b.go(`${ORIGIN}/documents`);
@@ -334,24 +344,9 @@ test("the gate inside, behind Cloudflare Access: Access's proof is the sign-in; 
   ]);
 });
 
-test("the gate inside, on a new server: the setup page's link passes the organization's sign-in, and the person who signs in becomes the admin", async () => {
-  const { Directory } = await import("../server/directory/index.ts");
-  const { memory } = await import("./helpers/memory-sql.ts");
-  const { Grants, sessionOf } = await import("../server/identity/index.ts");
-  const { setupUrl } = await import("../server/identity/setup-link.ts");
-  const { s, b, outside } = await setUp();
-  // A server as setup leaves it: no admin and no user; everybody whom the organization's sign-in lets through may join.
-  const sql = memory();
-  const directory = new Directory(sql, { admins: [], providers: ["github", "google"] });
-  for (const { table, row } of firstRows({ ...noAnswers(SHELL), signIn: "sso" }))
-    await sql.run(`INSERT INTO ${table} (${Object.keys(row)}) VALUES (${Object.keys(row).map(() => "?")})`, ...Object.values(row));
-  const p = s.platform as unknown as Record<string, unknown>;
-  Object.assign(p, {
-    directory,
-    grants: new Grants(sql, directory),
-    dev: () => false,
-    sessionOf: (r: Request) => sessionOf(s.platform, r),
-  });
+test("the gate inside, on a new server: the setup page's link passes the organization's sign-in; the deployer's token goes to the deployer; one button makes the person the admin", async () => {
+  const { s, b, gate, outside } = await setUp();
+  const { directory, deployer } = await asNewServer(s, SHELL);
   const link = await setupUrl(SHELL, s.platform.secret);
   // The link, with no proof: the organization's sign-in first, and back to the link.
   await b.go(link);
@@ -359,13 +354,55 @@ test("the gate inside, on a new server: the setup page's link passes the organiz
   b.trail.length = 0;
   const page = await b.go(`${ORIGIN}/_edge/callback?code=ada&state=${outside.at(-1)!.searchParams.get("state")}`);
   expect([page.status, b.trail]).toEqual([200, [`${SHELL}/_edge/callback`, `${SHELL}/setup`, `${SHELL}/setup`]]);
-  // The page has no provider's row: the gate signs people in. Its one step is the admin's.
-  const html = await page.text();
-  expect([...html.matchAll(/data-step="(\w+)" data-state="(\w+)"/g)].map((m) => `${m[1]} ${m[2]}`)).toEqual(["admin next"]);
-  const go = /class="provider sso" href="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");
-  expect(go).toBe("/auth/sso?next=%2Fsetup%2Fadmin");
-  await b.go(`${ORIGIN}${go}`);
-  // Her account is new: she names it, and comes back as the admin. The page is closed then.
+  // The page has no provider's row: the gate signs people in. Its steps are the deployer's token and the admin's.
+  let html = await page.text();
+  expect(rowsOf(html)).toEqual(["deployer next open", "admin next"]);
+  // The last step names her as the gate did, with one button: no sign-in is left to do.
+  expect(html).toContain("You are signed in with your organization's sign-in, as <b>ada@example.com</b>.");
+  expect(html).not.toContain('class="provider');
+  // The deployer's token, behind the gate: a request with no proof gets nothing, and reaches no deployer.
+  const post = (token: string) => `token=${token}`;
+  expect((await gate(new Request(`${ORIGIN}/setup/deployer`, { method: "POST", headers: FORM_POST, body: post(TOKEN) }))).status).toBe(401);
+  expect(deployer.asked).toEqual([]);
+  // Hers goes straight to the deployer: its refusal is at the field, and its yes is the row's answer.
+  const refused = await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: FORM_POST, body: post("w".repeat(40)) });
+  html = await refused.text();
+  expect([refused.status, rowsOf(html)]).toEqual([400, ["deployer next open", "admin next"]]);
+  expect(html).toContain('<p class="problem" role="alert">The token can read another Worker (other).</p>');
+  html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: FORM_POST, body: post(TOKEN) })).text();
+  expect(rowsOf(html)).toEqual(["deployer done", "admin next open"]);
+  expect(html).toContain("The deployer is ready, at <code>aaaaaaaaaaaa</code>");
+  expect(deployer.asked).toEqual(["w".repeat(40), TOKEN]);
+  // The button: her account is new, so she names it, and comes back as the admin. The page is closed then.
+  b.trail.length = 0;
+  await b.go(`${ORIGIN}/setup/admin`, { method: "POST", headers: FORM_POST, body: "" });
+  expect(b.trail).toEqual([`${SHELL}/setup/admin`, `${SHELL}/auth/sign-in`, `${SHELL}/auth/sso`, `${SHELL}/auth/username`]);
+  b.trail.length = 0;
+  await b.go(`${ORIGIN}/auth/username`, { method: "POST", headers: FORM_POST, body: "username=ada" });
+  expect(b.trail.slice(0, 3)).toEqual([`${SHELL}/auth/username`, `${SHELL}/setup/admin`, `${SHELL}/`]);
+  expect(await directory.users.isAdmin("ada")).toBe(true);
+  expect((await b.go(`${ORIGIN}/setup`)).status).toBe(410);
+});
+
+test("behind Cloudflare Access, on a new server: Access's proof opens the setup page's link, and the same steps make the admin", async () => {
+  const { s, behind, ada } = await behindAccess();
+  const { directory, deployer } = await asNewServer(s, SHELL);
+  const link = await setupUrl(SHELL, s.platform.secret);
+  // With no proof (Access let nobody through): no page, whatever the link.
+  expect((await behind(null)(new Request(link, { headers: { "sec-fetch-dest": "document" } }))).status).toBe(401);
+  // With Access's proof: the page at once, with no sign-in of the gate's own, and her address as Access gave it.
+  const b = browser(behind(ada));
+  const page = await b.go(link);
+  expect([page.status, b.trail]).toEqual([200, [`${SHELL}/setup`, `${SHELL}/setup`]]);
+  let html = await page.text();
+  expect(rowsOf(html)).toEqual(["deployer next open", "admin next"]);
+  expect(html).toContain("You are signed in with your organization's sign-in, as <b>ada@example.com</b>.");
+  // The token and the button, as with an issuer: her account is new, so she names it, and comes back as the admin.
+  html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: FORM_POST, body: `token=${TOKEN}` })).text();
+  expect([rowsOf(html), deployer.asked]).toEqual([["deployer done", "admin next open"], [TOKEN]]);
+  b.trail.length = 0;
+  await b.go(`${ORIGIN}/setup/admin`, { method: "POST", headers: FORM_POST, body: "" });
+  expect(b.trail).toEqual([`${SHELL}/setup/admin`, `${SHELL}/auth/sign-in`, `${SHELL}/auth/sso`, `${SHELL}/auth/username`]);
   b.trail.length = 0;
   await b.go(`${ORIGIN}/auth/username`, { method: "POST", headers: FORM_POST, body: "username=ada" });
   expect(b.trail.slice(0, 3)).toEqual([`${SHELL}/auth/username`, `${SHELL}/setup/admin`, `${SHELL}/`]);

@@ -10,7 +10,9 @@
 //            deployer checks it with Cloudflare and keeps it; the row shows its answer. The server keeps no token.
 //   Admin    the person signs in with a provider that is set up, and becomes the server's first admin
 //
-// One provider is enough. With a gate in front (mode.ts) the page has no provider's row: the gate signs people in.
+// One provider is enough. With single sign-on (mode.ts: the gate lets only the organization's people in) the page has
+// no provider's row, and the link itself passes the organization's sign-in first. So the person is signed in there
+// when the page shows: the last step names them, and has one button. Their account is made then (/auth/sso).
 //
 //   GET  /setup?t=<link>     the link, one time: this browser gets the page's pass (a cookie), and goes to /setup
 //   GET  /setup              the page
@@ -35,6 +37,7 @@ import { appPage, inlineStyle, page, pageBars } from "../pages/index.ts";
 import type { DeployerSays, Platform } from "../platform";
 import { signed } from "../signed.ts";
 import { AuthError, type ProvidersOn } from "./apps.ts";
+import { callerOf } from "./caller.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { CALLBACK_PATH, PROVIDERS } from "./providers.ts";
 import { appsSet, setUpApp, signInChoices } from "./settings.ts";
@@ -135,7 +138,8 @@ export const setupRoute: Route = Effect.gen(function* () {
     case "POST /setup/admin": {
       const session = yield* call(() => platform.sessionOf(request));
       // The sign-in comes first: the pass lets this person make their account (accounts.ts), and they come back here.
-      if (!session || session.agent) return redirect("/auth/sign-in?next=/setup/admin", 302, NO_STORE);
+      // (With single sign-on the gate signed them in already: this makes their account, with no page of its own.)
+      if (!session || session.agent) return redirect("/auth/sign-in?next=/setup/admin", post ? 303 : 302, NO_STORE);
       if (!(yield* call(() => platform.directory.users.claim(session.login))))
         return page("This server has an admin already", 'Another sign-in was first. <a href="/">Go to Erga</a>.', 409);
       return withCookie(redirect("/", 303, NO_STORE), request, COOKIE, "", 0);
@@ -163,7 +167,10 @@ const setupPage = (platform: Platform, request: Request, url: URL, problem?: Pro
     // "Skip for now" is the address's alone (?skip): the server keeps nothing of it.
     const skipped = url.searchParams.has("skip");
     const login = session && !session.agent ? session.login : null;
-    const rows = rowsOf({ platform, url, set, choices, says, skipped, login, state, problem });
+    // With single sign-on: the person whom the gate signed in, by the address that it gave ("": it gave none).
+    const who = callerOf(request);
+    const passed = !oauth && who.kind == "person" ? who.email || who.name : null;
+    const rows = rowsOf({ platform, url, set, choices, says, skipped, login, passed, state, problem });
     // The row that is open: the one with a problem, else the first that is next.
     const open = problem?.row ?? rows.find((r) => r.state == "next")?.id;
     const body = `${pageBars(null, [{ label: "Setup" }], { agent: false })}<main class="setup">
@@ -195,6 +202,8 @@ interface RowsOf {
   skipped: boolean;
   /** Who is signed in on this browser, in person. */
   login: string | null;
+  /** Single sign-on: the address of the person whom the gate signed in ("": it gave none); null: no gate signed anyone in. */
+  passed: string | null;
   state: string;
   problem?: Problem;
 }
@@ -261,20 +270,23 @@ function rowsOf(o: RowsOf): { id: Row; title: string; state: State; body: string
 </form>`,
     });
   }
+  const become = `<form method="post" action="/setup/admin"><button class="new">Become the admin of ${esc(url.host)}</button></form>`;
+  const asAdmin = "This server has no admin yet. As its admin, you decide who may use it, and you change its settings.";
   rows.push({
     id: "admin",
-    title: "Sign in as the admin",
+    title: set ? "Sign in as the admin" : "Become the admin",
     state: any ? "next" : "waiting",
     body: `${
       !any
         ? "<p>First set up GitHub or Google sign-in, above. One of them is enough.</p>"
         : o.login
-          ? `<p>You are signed in as <b>${esc(o.login)}</b>. This server has no admin yet. As its admin, you decide who may sign in, and you change its settings.</p>
-<form method="post" action="/setup/admin"><button class="new">Become the admin of ${esc(url.host)}</button></form>`
-          : `<p>Sign in to become the first admin of <code>${esc(url.host)}</code>. After that, this page is closed for good.</p>
+          ? `<p>You are signed in as <b>${esc(o.login)}</b>. ${asAdmin}</p>${become}`
+          : o.passed != null
+            ? `<p>You are signed in with your organization's sign-in${o.passed ? `, as <b>${esc(o.passed)}</b>` : ""}. ${asAdmin} After that, this page is closed for good.</p>${become}`
+            : `<p>Sign in to become the first admin of <code>${esc(url.host)}</code>. After that, this page is closed for good.</p>
 <span class="providers">${providerButtons(o.choices, "/setup/admin")}</span>`
     }
-<p class="later">You manage the rest later, on the admin pages: Sign-in, Access (who may sign in) and Deploy (the updates).</p>`,
+<p class="later">You manage the rest later, on the admin pages: ${set ? "Sign-in, Access (who may sign in)" : "Access (what the organization's people may do)"} and Deploy (the updates).</p>`,
   });
   return rows;
 }

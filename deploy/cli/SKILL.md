@@ -277,7 +277,9 @@ and `main`. There are no pull requests.
   user's own account (setup installs it and turns auto-deploy on: on Cloudflare a Worker, with a token that the user
   makes for the instance's Worker only and pastes on the setup page; on AWS a Lambda function with a role of its own, and no token), or a machine
   with `bun erga deploy`. A run again with the other answer changes it. On AWS, a run again with `cloud` also brings
-  the deployer's stack and code to this checkout's.
+  the deployer's stack and code to this checkout's. `--sign-in sso` puts the organization's single sign-on in the
+  place of GitHub and Google (Cloudflare Access, or an OIDC issuer): the setup page's link then passes that sign-in
+  first, the page has no GitHub or Google step, and one button makes the user the admin.
 
 ## The rules
 
