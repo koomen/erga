@@ -315,7 +315,7 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
     '<div id="token-live"><p class="lede" data-deployer="waits" data-give="Give the deployer a token"><b>The deployer has no token: it deploys nothing.</b> Give it one below. <span data-token-does>With a token, it deploys each new commit on main by itself.</span></p></div>'
   );
   expect(html).toContain("<summary>Give the deployer a token</summary>");
-  expect(html).toContain("for the Worker <code>erga</code> only, with the role Editor");
+  expect(html).toContain("with the role Editor, for two Workers only: <code>erga</code> and <code>erga-deployer</code>");
   // The Auto-deploy row says the same, and not that it deploys: the saved mode stays marked, and its control is off.
   expect(row(html)).toEqual({
     says: "Waits for a token: the deployer has none. Give it one below. Then it deploys each new commit on main by itself.",

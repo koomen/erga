@@ -171,7 +171,7 @@ describe("the installed Worker, in the Workers runtime", () => {
     expect(await run(readJobs(sql))).toEqual([]);
     // The token, as the instance hands it over its binding: a wide one is refused, a good one is kept. Then the next run deploys.
     expect(await says({ method: "POST", body: "mock-deployer-token" })).toMatchObject({ ok: false, why: expect.stringContaining("D1") });
-    expect(await says({ method: "POST", body: "mock-only-erga-next" })).toEqual({ ok: true, ready: true, head: SHA2 });
+    expect(await says({ method: "POST", body: "mock-pair-erga-next" })).toEqual({ ok: true, ready: true, head: SHA2 });
     expect(await worker.scheduled({ cron: "* * * * *" })).toMatchObject({ outcome: "ok" });
 
     expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA2));
@@ -185,7 +185,10 @@ describe("the installed Worker, in the Workers runtime", () => {
     expect([...new Set(calls().filter((c) => !c.includes("/workers/scripts/erga-next")))]).toEqual([
       `GET /accounts/${FLEET_ACCOUNT}/tokens/verify`,
       `GET /accounts/${FLEET_ACCOUNT}/d1/database?per_page=1`,
+      `GET /accounts/${FLEET_ACCOUNT}/workers/scripts`,
     ]);
+    // After the deploy, the deployer gave itself the release's own deployer code.
+    expect(calls().at(-1)).toBe(`PUT /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next-deployer`);
     // (The check of the token asked Cloudflare whether it knows the token; then it read only the instance's Worker,
     // the D1 list and the deployer's own name.)
     expect(await says()).toEqual({ ok: true, ready: true, head: SHA2 });

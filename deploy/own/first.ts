@@ -210,6 +210,7 @@ export async function setDeployer(o: {
     commit: o.commit,
     command: o.command,
     noTests: true,
+    deployerStays: true,
     net: o.net,
     token: o.token,
     print: o.print,

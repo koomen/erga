@@ -298,10 +298,11 @@ export const tokenSteps = (
 ) => `<p>A deployer in your Cloudflare account deploys this server. It needs a token that can change the Worker <code>${esc(worker)}</code>, and nothing else.</p>
 <ol class="how">
   <li>Open <a href="https://dash.cloudflare.com/${esc(account)}/api-tokens" target="_blank" rel="noopener">Account API tokens</a> on Cloudflare, and choose Create Token.</li>
-  <li>Give it one permission: Workers, for the Worker <code>${esc(worker)}</code> only, with the role Editor. No other permission, and no other Worker: the database needs none.</li>
+  <li>Give it one permission: Workers, with the role Editor, for two Workers only: <code>${esc(worker)}</code> and <code>${esc(worker)}-deployer</code>. No other permission, and no other Worker: the database needs none.</li>
   <li>Create the token, copy it, and paste it here.</li>
 </ol>
-<p>This server hands the token to the deployer, and keeps nothing of it. The deployer checks it with Cloudflare, and keeps it encrypted. Your agent never sees it. The deployer refuses a token that can do more.</p>`;
+<p>This server hands the token to the deployer, and keeps nothing of it. The deployer checks it with Cloudflare, and keeps it encrypted. Your agent never sees it. The deployer refuses a token that can do more.</p>
+<p>The second Worker is the deployer itself: with it, each deploy also gives the deployer its newest code. A token for <code>${esc(worker)}</code> only works too, but then the deployer's own code changes only when you run the setup command again.</p>`;
 
 /** The field for the token. */
 export const TOKEN_FIELD = `<label>The deployer's token<input class="input" type="password" name="token" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore placeholder="Paste the token" required></label>`;

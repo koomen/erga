@@ -40,7 +40,7 @@ export interface Answers {
   pages: string;
   /**
    * --deploys: who deploys each new release. cloud: a deployer in the user's own account, by itself (it holds a token
-   * for the instance's Worker only). local: the user, with `bun erga deploy`: no credential stays in the cloud.
+   * for the instance's Worker and its own). local: the user, with `bun erga deploy`: no credential stays in the cloud.
    */
   deploys: Deploys | "";
   /**

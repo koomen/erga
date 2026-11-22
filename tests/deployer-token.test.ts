@@ -17,7 +17,9 @@ beforeAll(prepareRelease, 120_000);
 
 const TARGET = { account: FLEET_ACCOUNT, worker: "erga-next" };
 const WHERE = { ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next" };
-const GOOD = "mock-only-erga-next";
+/** A token for the instance's Worker and the deployer's own; and one for the instance's Worker only. */
+const GOOD = "mock-pair-erga-next";
+const ONE = "mock-only-erga-next";
 const UNKNOWN = `Cloudflare does not know this token: it is not whole, it was deleted, or it is a token of another account than ${FLEET_ACCOUNT}.`;
 const D1 = "The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.";
 
@@ -36,7 +38,7 @@ async function account() {
 }
 
 describe("the deployer's check of a token", () => {
-  test("a token for the instance's Worker only is taken, with reads only", async () => {
+  test("a token for the instance's Worker and the deployer's is taken, with reads only; one for the instance's Worker only too", async () => {
     const { mock, check, calls } = await account();
     // Cloudflare's no to the D1 list is a 401 (the mock answers as a real token got it): a clear no, as a 403 is.
     const statuses: number[] = [];
@@ -50,22 +52,27 @@ describe("the deployer's check of a token", () => {
     const forbidden: Fetch = (input, init) =>
       String(input).includes("/d1/database") ? Promise.resolve(new Response("{}", { status: 403 })) : mock.fetch(input, init);
     expect(await check(GOOD, forbidden)).toBeNull();
-    // Reads only: the check changes nothing. The other Worker that it tries is the deployer's own name.
+    expect(await check(ONE)).toBeNull();
+    // Reads only: the check changes nothing. Its last read asks for the account's Workers: such a token lists none.
     expect(calls().every((c) => c.startsWith("GET "))).toBe(true);
-    expect(calls().at(-1)).toBe(`GET /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next-deployer/settings`);
+    expect(calls().at(-1)).toBe(`GET /accounts/${FLEET_ACCOUNT}/workers/scripts`);
   });
 
   test("a token that can do more is refused, with what it can do", async () => {
     const { mock, own, check } = await account();
     // An account's own token: D1, and each Worker.
     expect(await check("mock-deployer-token")).toBe(D1);
-    // With no D1, it still reads another Worker: the deployer itself, which setup installed before any token.
+    // With no D1, it still reads another Worker: the first one that it lists, which is not the instance's or its deployer.
     await installDeployer(own, TARGET);
     const noD1: Fetch = (input, init) =>
       String(input).includes("/d1/database") ? Promise.resolve(new Response("{}", { status: 403 })) : mock.fetch(input, init);
     expect(await check("mock-deployer-token", noD1)).toBe(
-      "The token can read another Worker (erga-next-deployer). Make a token for the Worker erga-next only."
+      "The token can read another Worker (erga). Make a token for the Workers erga-next and erga-next-deployer only."
     );
+    // A list that Cloudflare does not answer is no "none".
+    const noList: Fetch = (input, init) =>
+      String(input).endsWith("/workers/scripts") ? Promise.resolve(new Response("Bad gateway", { status: 502 })) : noD1(input, init);
+    expect(await check(GOOD, noList)).toContain("whether the token lists the account's Workers (it answered 502)");
   });
 
   test("a token that is not for the instance's Worker, that Cloudflare does not know, or that is no token, is refused at once", async () => {
@@ -142,7 +149,8 @@ describe("the check against Cloudflare's own answers", () => {
   const WORKER = `${ACC}/workers/scripts/erga-next/settings`;
   const REST = {
     [`${ACC}/d1/database?per_page=1`]: DENIED,
-    [`${ACC}/workers/scripts/erga-next-deployer/settings`]: { ...DENIED, status: 403 },
+    // (What Cloudflare answers such a token for the list of the account's Workers is not recorded: a refusal, here.)
+    [`${ACC}/workers/scripts`]: { ...DENIED, status: 403 },
   };
 
   test("a token that Cloudflare does not know: both verifies say so, and no Worker is read", async () => {

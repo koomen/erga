@@ -71,8 +71,9 @@ do not choose for the user.
 6. **Does Erga update by itself when a new release comes out?**
    - Yes (`--deploys cloud`): a small deployer in the user's own account
      deploys each new release. On AWS it is a Lambda function with a role of
-     its own. On Cloudflare it is a Worker with a token for the one Worker,
-     which the user makes and pastes on the setup page. An admin turns the
+     its own. On Cloudflare it is a Worker with a token for two Workers only
+     (the server's and its own), which the user makes and pastes on the
+     setup page. An admin turns the
      updates off and on later, and gives the deployer another token, on the
      server's Deploy page. For a server that runs already, the command
      changes no auto-deploy mode by itself. Ask the user for a mode only

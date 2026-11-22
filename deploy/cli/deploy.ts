@@ -176,6 +176,8 @@ export interface DeployOptions {
   first?: string;
   /** --write-spec: the entry's values become the instance's spec, before the deploy. Without it, a deploy stops when the two differ. */
   writeSpec?: boolean;
+  /** Setup's deploy, just after it installed the deployer with this checkout's code: the deployer's code stays. */
+  deployerStays?: boolean;
   /** GitHub's registry, for the commit's release (default: the network; under ERGA_DEPLOY_MOCK, none: this machine builds). A fake, in the tests. */
   registry?: Fetch;
 }
@@ -423,6 +425,14 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       }
       if (readsSecretsKey(release)) held = movedNames(held);
       log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(t)}: healthy.`);
+      // Its deployer, when it has one: the release's own deployer code, as the deployer in the cloud gives itself.
+      if (!o.deployerStays) {
+        const { updateDeployer } = await import("../pipeline/deployer");
+        const said = await updateDeployer(cf, { account: t.accountId, worker: t.workerName }, release).catch(
+          (e: Error) => `The deployer keeps its code: ${e.message}`
+        );
+        if (said) log(said);
+      }
     }
     await writeSpec();
     await job.end();

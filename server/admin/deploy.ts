@@ -5,7 +5,7 @@
 // look. The server deploys nothing: Deploy, Roll back and the Auto-deploy switch are the operation deploy
 // (server/operations/deploys.ts), an ask that the deployer starts within a minute.
 //
-// The deployer holds a token for this server's Worker only, which a person gives it: on a new server's setup page, and
+// The deployer holds a token for this server's Worker and its own, which a person gives it: on a new server's setup page, and
 // here after that (tokenSection, POST /admin/deploy/token: server/admin/routes.ts). The server hands the token to the
 // deployer and keeps nothing of it; the deployer checks it, and the page shows its answer.
 //

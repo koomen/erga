@@ -1,5 +1,5 @@
 // The deployer's token (worker.ts). No install gives the deployer a token: a person makes one for the instance's
-// Worker only and pastes it on the instance (a new server's /setup, later /admin/deploy). The instance keeps nothing
+// Worker and the deployer's and pastes it on the instance (a new server's /setup, later /admin/deploy). The instance keeps nothing
 // of it: it hands the token to the deployer's fetch handler, over its service binding DEPLOYER (`answer`, below). The
 // deployer checks the token with Cloudflare, seals it under its own secret (KEY) and keeps it in its own store. Each
 // run opens it from there. A new token takes the same way, and takes the old one's place.
@@ -8,8 +8,11 @@
 // a user's)? Only that answer says so: to a read of a Worker, Cloudflare answers 401 [code 10000] both to a token that
 // it does not know and to one that it knows, which may not read that Worker. Then the token must read the instance's
 // Worker, and two reads that it must not be able to make must fail: the account's D1 databases, and another Worker
-// (the deployer itself, which is there). A token that can do more than the deployer needs is refused: it would stay
-// in the cloud.
+// that the token lists. A token that can do more than the deployer needs is refused: it would stay in the cloud.
+//
+// The token is for two Workers: the instance's, and the deployer's own, so that the deployer gives itself the code of
+// each release that it deploys (worker.ts, renew). A token for the instance's Worker only is taken too: the deployer
+// then deploys the instance, and its own code changes only with setup, or with a deploy from a machine.
 //
 // Plain TypeScript, as worker.ts: no Effect.
 //
@@ -66,9 +69,17 @@ export async function tokenProblem(fetch: Fetch, env: { ACCOUNT: string; WORKER:
   const d1 = await status("/d1/database?per_page=1");
   if (d1 == 200) return "The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.";
   if (!no(d1)) return unclear("whether the token reads the account's D1 databases", d1);
-  const other = deployerName(env.WORKER);
-  const reaches = await status(`/workers/scripts/${other}/settings`);
-  if (reaches == 200) return `The token can read another Worker (${other}). Make a token for the Worker ${env.WORKER} only.`;
+  // Another Worker: the first one that the token itself lists, which is not the instance's or its deployer. A token
+  // that lists none is one for these Workers only.
+  const mine = [env.WORKER, deployerName(env.WORKER)];
+  const list = await get(`/accounts/${env.ACCOUNT}/workers/scripts`);
+  if (list?.status != 200 && !no(list?.status ?? 0)) return unclear("whether the token lists the account's Workers", list?.status ?? 0);
+  const scripts = list?.status == 200 ? ((await list.json().catch(() => null)) as { result?: { id?: unknown }[] } | null)?.result : null;
+  const other = scripts
+    ?.map((x) => x.id)
+    .find((id): id is string => typeof id == "string" && /^[\w-]{1,63}$/.test(id) && !mine.includes(id));
+  const reaches = other ? await status(`/workers/scripts/${other}/settings`) : 404;
+  if (reaches == 200) return `The token can read another Worker (${other}). Make a token for the Workers ${mine.join(" and ")} only.`;
   if (!no(reaches)) return unclear(`whether the token reads another Worker (${other})`, reaches);
   return null;
 }

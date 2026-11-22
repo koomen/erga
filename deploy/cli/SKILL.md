@@ -286,7 +286,7 @@ and `main`. There are no pull requests.
   takes that branch's head. `--deploys cloud|local` says who deploys each new release: a deployer in the
   user's own account (setup installs it; `--auto-deploy off|releases|commits` sets what it deploys by itself, and
   without it an instance that runs keeps its mode and a new one gets releases: on Cloudflare a Worker, with a token that the user
-  makes for the instance's Worker only and pastes on the setup page; on AWS a Lambda function with a role of its own, and no token), or a machine
+  makes for the instance's Worker and the deployer's and pastes on the setup page (each deploy then gives the deployer its release's code too); on AWS a Lambda function with a role of its own, and no token), or a machine
   with `bun erga deploy`. A run again with the other answer changes it. On AWS, a run again with `cloud` also brings
   the deployer's stack and code to this checkout's. `--sign-in sso` puts the organization's single sign-on in the
   place of GitHub and Google (Cloudflare Access, or an OIDC issuer): the setup page's link then passes that sign-in

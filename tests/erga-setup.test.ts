@@ -6,7 +6,7 @@
 // stops, and its entry stays. And an Erga that another clone set up: a clone with no entry for it takes it over.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CloudflareEntry, type Entry, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
@@ -24,7 +24,7 @@ import { liveOf, observe } from "../deploy/own/facts";
 import { step } from "../deploy/own/flow";
 import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
-import { installDeployer, removeDeployer } from "../deploy/pipeline/deployer";
+import { DEPLOYER_TAG, installDeployer, removeDeployer } from "../deploy/pipeline/deployer";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { HOST as RUNS, MARK } from "./helpers/cloudflare-setup.ts";
@@ -214,6 +214,54 @@ test("the deployer, installed with no token: the instance's next deploy binds it
   await deploy();
   expect(bindingsOf(mock.state, target.worker).DEPLOYER).toBeUndefined();
   expect(step(local, await observe(local, dir, connect)).state).toEqual({ at: "page" });
+}, 120_000);
+
+test("a deploy from a machine gives the instance's deployer the release's own deployer code, with the secret that it holds; with no deployer it makes none", async () => {
+  const mock = mockCloudflare();
+  await firstDeploy(first(mock, HOST));
+  const cf = new Cloudflare("mock-machine-token", mock.fetch);
+  const target = { account: ACCOUNT_ID, worker: "erga-ada-example-com" };
+  const NAME = "erga-ada-example-com-deployer";
+  const lines: string[] = [];
+  /** Each upload of the deployer: its form. */
+  const sent: FormData[] = [];
+  const net: typeof mock.fetch = (input, init) => {
+    if (init?.method == "PUT" && String(input).endsWith(`/workers/scripts/${NAME}`)) sent.push(init.body as FormData);
+    return mock.fetch(input, init);
+  };
+  const deploy = (deployerStays = false) =>
+    deployInstance({ dir, host: HOST, commit: HEAD.slice(0, 12), noTests: true, deployerStays, net, print: (l) => lines.push(l) });
+  const said = () => lines.splice(0).filter((l) => l.includes("deployer"));
+
+  // No deployer: the deploy makes none, and says nothing of one.
+  await deploy();
+  expect([said(), sent.length, NAME in mock.state.scripts]).toEqual([[], 0, false]);
+
+  // Its deployer, as setup installed it: after the deploy it has the release's code. Its secret is the one from before.
+  await installDeployer(cf, target);
+  const key = mock.state.secrets[NAME].KEY;
+  await deploy();
+  expect(said()).toEqual([`The deployer ${NAME} has the code of release ${HEAD.slice(0, 12)} now. It holds what it held.`]);
+  expect(sent).toHaveLength(1);
+  expect(await (sent[0].get("worker.js") as File).text()).toBe(readFileSync(join(ROOT, ".build/release/deployer/worker.js"), "utf8"));
+  const meta = JSON.parse(String(sent[0].get("metadata"))) as { keep_bindings: string[]; bindings: { type: string }[] };
+  expect([meta.keep_bindings, meta.bindings.some((b) => b.type == "secret_text")]).toEqual([["secret_text"], false]);
+  expect(mock.state.secrets[NAME]).toEqual({ KEY: key });
+  // Setup's own deploy, just after its install with the checkout's code, leaves the deployer.
+  await deploy(true);
+  expect([said(), sent.length]).toEqual([[], 1]);
+
+  // A deployer from before the deployer kept its own token has no such secret: the deploy leaves it, and says what replaces it.
+  await removeDeployer(cf, target);
+  const form = new FormData();
+  form.set("metadata", JSON.stringify({ main_module: "worker.js", compatibility_date: "2026-09-01", tags: [DEPLOYER_TAG] }));
+  form.append("worker.js", new File(["export default {}"], "worker.js", { type: "application/javascript+module" }));
+  await cf.call("PUT", `/accounts/${ACCOUNT_ID}/workers/scripts/${NAME}`, "upload a deployer from before", form);
+  await deploy();
+  expect(said()).toEqual([
+    `The deployer ${NAME} keeps its code: it is from before the deployer kept its own token. Run the setup command again: it replaces it.`,
+  ]);
+  expect(sent).toHaveLength(1);
 }, 120_000);
 
 test("single sign-on on Cloudflare: the gate's setting and the client's secret go with the first deploy, the documents get a domain of their own, and the next step is the setup page", async () => {
@@ -414,7 +462,7 @@ test("the dry run in a new clone, as the user's agent runs it: the plan is the t
       "PASS  Signed in to Cloudflare",
       "PASS  The account Erga holds example.com",
       "PLAN  example.com runs. I will install its deployer, with no token, and deploy example.com again, so that its Worker binds the deployer:",
-      `PLAN  • a deployer (the Worker erga-deployer) in your account: ${KEEPS}. It needs a token for the one Worker erga, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)`,
+      `PLAN  • a deployer (the Worker erga-deployer) in your account: ${KEEPS}. It needs a token for two Workers only (erga and erga-deployer), which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)`,
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run.",
     ]);
     expect(existsSync(join(tmp, ".erga"))).toBe(false);
@@ -462,7 +510,7 @@ test("the command itself, on an instance that runs with no deployer: it installs
     // The dry run: the plan says that the mode stays. Nothing is made. (A machine's auto-deploy set the mode: commits.)
     expect(dry.out.filter((l) => l.startsWith("PLAN"))).toEqual([
       `PLAN  ${RUNS} runs. I will install its deployer, with no token, and deploy ${RUNS} again, so that its Worker binds the deployer:`,
-      `PLAN  • a deployer (the Worker erga-next-deployer) in your account: ${KEEPS}. It needs a token for the one Worker erga-next, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)`,
+      `PLAN  • a deployer (the Worker erga-next-deployer) in your account: ${KEEPS}. It needs a token for two Workers only (erga-next and erga-next-deployer), which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)`,
     ]);
     expect(facts(dry)).toEqual([false, null, "commits"]);
 

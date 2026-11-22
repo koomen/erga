@@ -157,11 +157,11 @@ test("--deploys: cloud installs the deployer with no token, and binds it on the 
   // The plan says who deploys, and where the user pastes the token: on the server, never in a command.
   const f = run(cloud, CF, CF).answers;
   expect(planText(f, seen(CF))[5]).toBe(
-    "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker erga-example-com, which you make on Cloudflare and paste on the server: on its setup page"
+    "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It needs a token for two Workers only (erga-example-com and erga-example-com-deployer), which you make on Cloudflare and paste on the server: on its setup page"
   );
   // An instance that runs has its own Worker's name (its entry's): the user makes the token for that name.
   expect(deploysText(f, "erga-staging", "its Deploy page (/admin/deploy)")).toContain(
-    "(the Worker erga-staging-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker erga-staging, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)"
+    "(the Worker erga-staging-deployer) in your account: it deploys each new release by itself. It needs a token for two Workers only (erga-staging and erga-staging-deployer), which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)"
   );
   // A deployer from before the deployer kept its own token is replaced: the plan and the last line say that its token goes.
   expect([

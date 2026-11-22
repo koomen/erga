@@ -9,8 +9,9 @@
 //
 // release/ holds release.json (what's in it: the build's worker.config.json,
 // the module and file names), bundle/ (the Worker's modules), celld/ (the
-// Worker as one module, for AWS), assets/ (the editor's files, as .build has
-// them) and migrations/ (server/migrations/).
+// Worker as one module, for AWS), deployer/ (the deployer on Cloudflare, as
+// one module), assets/ (the editor's files, as .build has them) and
+// migrations/ (server/migrations/).
 // (The landing project is built into the Worker itself.)
 
 import { createHash } from "node:crypto";
@@ -18,6 +19,8 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { join, relative } from "node:path";
 import type { ReleaseIndex } from "./deployer/release-format.ts";
 import { releaseBindings } from "./deployer/bindings.ts";
+import { DEPLOYER_MODULE } from "./deployer/worker-form.ts";
+import { deployerModule } from "./pipeline/deployer.ts";
 import { ROOT } from "./root.ts";
 
 const SITE = join(ROOT, ".build"), OUT = join(SITE, "release");
@@ -95,6 +98,9 @@ export async function makeRelease(): Promise<ReleaseIndex> {
     ],
   });
   if (!one.success) throw new AggregateError(one.logs, "bundling the Worker as one module (for celld) failed");
+  // The deployer on Cloudflare, as one module: each deploy gives it to the instance's deployer (deploy/pipeline/deployer.ts).
+  mkdirSync(join(staging, DEPLOYER_MODULE, ".."), { recursive: true });
+  writeFileSync(join(staging, DEPLOYER_MODULE), await deployerModule());
   // Not the inline code (client/build.ts): the Worker's bundle has it.
   const assets = files(SITE).filter((p) => !p.startsWith("release/") && !p.startsWith("release.") && p != "inline-code.ts");
   for (const p of assets) { mkdirSync(join(staging, "assets", p, ".."), { recursive: true }); cpSync(join(SITE, p), join(staging, "assets", p)); }

@@ -1,8 +1,8 @@
 // What the tests of the deployer's Worker share (deploy/deployer/worker.ts): an instance on the mock Cloudflare whose
 // database is a real D1 binding (the Workers runtime on this machine), with its spec; a pretend GitHub that has the
 // release of SHA2; the instance's own /api/health, which answers for the release that the mock serves; and the
-// deployer's store, its real class on a Map, with a token for the instance's Worker in it, sealed as the deployer
-// seals the one that a person pastes.
+// deployer's store, its real class on a Map, with a token for the instance's Worker and the deployer's in it, sealed
+// as the deployer seals the one that a person pastes.
 
 import * as Effect from "effect/Effect";
 import { Cloudflare, DeployError } from "../../deploy/deployer/cloudflare-api";
@@ -118,7 +118,7 @@ export async function instanceOn(d1: D1, made?: ReturnType<typeof mockCloudflare
   };
   const io: IO = { fetch, now: () => state.now, sleep: async (ms) => void (state.now += ms) };
   const store = storeBinding();
-  store.cell.set("token", JSON.stringify(await seal(KEY, "mock-only-erga-next")));
+  store.cell.set("token", JSON.stringify(await seal(KEY, "mock-pair-erga-next")));
   const env: Env = {
     KEY,
     ACCOUNT: FLEET_ACCOUNT,

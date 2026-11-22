@@ -280,7 +280,7 @@ export const deploysText = (a: Answers, worker = namesOf(a.host).worker, where =
   a.deploys == "cloud" && a.where == "aws"
     ? `• a deployer (the Lambda function ${stackOf(a)}-deployer, in a stack of its own) in your AWS account: ${autoPlan(a, runs)}. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`
     : a.deploys == "cloud"
-      ? `• a deployer (the Worker ${worker}-deployer) in your account: ${autoPlan(a, runs)}. It needs a token for the one Worker ${worker}, which you make on Cloudflare and paste on the server: on ${where}`
+      ? `• a deployer (the Worker ${worker}-deployer) in your account: ${autoPlan(a, runs)}. It needs a token for two Workers only (${worker} and ${worker}-deployer), which you make on Cloudflare and paste on the server: on ${where}`
       : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
 /**

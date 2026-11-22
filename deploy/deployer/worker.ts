@@ -15,7 +15,7 @@
 //      (deploy_control, deploy_jobs), where /admin/deploy reads them. The copy is best effort: the deployer never
 //      needs it. The job's row is also the lock that a deploy from a machine takes (instance.ts).
 //
-// What setup gives it (deploy/pipeline/deployer.ts; nothing else changes this Worker, and it can't change itself):
+// What setup gives it (deploy/pipeline/deployer.ts). Each deploy after gives it its release's code, with these (renew):
 //   KEY                    a secret that setup makes: it seals the token in the store (token.ts)
 //   ACCOUNT, WORKER        the account and the instance's Worker: every call of Cloudflare's API is for those two
 //   DATABASE               the id of the instance's database, for the Worker's upload
@@ -24,7 +24,7 @@
 //   INSTANCE               the instance's Worker: /api/health, when the public address does not give the server's
 //                          answer (Cloudflare Access is in front of it)
 //
-// The token (for the instance's Worker only, the role Editor; no permission for D1) is no part of the install. A
+// The token (for the instance's Worker and the deployer's, the role Editor; no D1) is no part of the install. A
 // person pastes it on the instance, which hands it to `fetch` here over its service binding DEPLOYER (token.ts).
 // With no token, a run looks at GitHub and deploys nothing.
 //
@@ -52,7 +52,7 @@ import type { CloudflareTarget, Spec } from "./spec";
 import { storeOf } from "./store";
 import * as tags from "./tags";
 import { answer, open, type TokenStore } from "./token";
-import { HEADERS_FILE, toHex, typeOf, workerMetadata } from "./worker-form";
+import { DEPLOYER_MODULE, deployerForm, deployerName, HEADERS_FILE, toHex, typeOf, workerMetadata } from "./worker-form";
 
 export { DeployerState, LOCK_MS } from "./store";
 /** How long a deploy waits for the new release's healthy answer, and how often it asks. */
@@ -145,6 +145,8 @@ interface Run {
   at: string;
   /** The token for the instance's Worker, opened from the store. null: the deployer holds none. */
   bearer: string | null;
+  /** After a deploy: the release's deployer code (none: a release from before it had one), and the job's row. */
+  renew?: { code?: string; row: number | null };
 }
 
 const NO_TOKEN = "The deployer has no token: an admin pastes one on the instance's Deploy page (/admin/deploy).";
@@ -255,9 +257,9 @@ async function layerOf(c: Run, sha: string): Promise<{ digest: string; size: num
 
 /**
  * The release of `sha`, fetched and checked against the digest and the size that its manifest names. `files`: the
- * static files as the bundle holds them (base64), by path: they go up as they are.
+ * static files as the bundle holds them (base64), by path: they go up as they are. `self`: the deployer's own code.
  */
-async function releaseOf(c: Run, sha: string): Promise<{ release: Release; files: Record<string, string> }> {
+async function releaseOf(c: Run, sha: string): Promise<{ release: Release; files: Record<string, string>; self?: string }> {
   const at = `ghcr.io/${packageOf(c.spec)}:${sha}`;
   const layer = await layerOf(c, sha);
   if (layer == "none") throw new Error(`GitHub's registry has no release of ${short(sha)}.`);
@@ -291,7 +293,7 @@ async function releaseOf(c: Run, sha: string): Promise<{ release: Release; files
     ),
     ...(index.bindings ? { bindings: index.bindings } : {}),
   };
-  return { release, files: assets };
+  return { release, files: assets, self: files[DEPLOYER_MODULE] };
 }
 
 // ------------------------------------------------------------------ Cloudflare
@@ -477,7 +479,7 @@ async function settledHealth(c: Run, want: string | null, upload?: string): Prom
 async function deploy(c: Run, sha: string, log: (line: string) => void): Promise<void> {
   const W = c.env.WORKER;
   log("Fetch the release from GitHub...");
-  const { release, files } = await releaseOf(c, sha);
+  const { release, files, self } = await releaseOf(c, sha);
   const problem = bindingsProblem(release);
   if (problem) throw new Error(problem);
   log(`Fetch the release from GitHub: done, ghcr.io/${packageOf(c.spec)}:${sha}, checked against its digest`);
@@ -509,6 +511,7 @@ async function deploy(c: Run, sha: string, log: (line: string) => void): Promise
   log(`Upload the Worker, with its settings: done, ${W}, release ${release.version}`);
   log("Wait for its health...");
   const h = await settledHealth(c, release.version, upload);
+  if (h.ok) c.renew = { code: self, row: c.state.job!.row };
   if (h.ok) return log(`Wait for its health: done, release ${release.version}, healthy (${h.why})`);
   const why = `Release ${release.version} is deployed to ${W}, but it is not healthy after ${HEALTH_MS / 1000} seconds: ${h.why}.`;
   // The migrations only add: the version before runs on the newer tables. A person may put the database back too.
@@ -521,6 +524,21 @@ async function deploy(c: Run, sha: string, log: (line: string) => void): Promise
     Promise.reject(new Error(`${why} The rollback to ${before} failed too: ${said(e)}${restore}`))
   );
   throw new Error(`${why} It is rolled back to ${before}, which ran before.${restore}`);
+}
+
+/**
+ * After a run that deployed, and last of all (the upload starts the deployer's store again): the deployer's own code,
+ * from that release, as setup uploads it. Its line goes into the job's log. A token may be for the instance only.
+ */
+async function renew(c: Run): Promise<void> {
+  const { code, row } = c.renew!;
+  const name = deployerName(c.env.WORKER);
+  const put = async () => cf(c, "PUT", `/scripts/${name}`, deployerForm(fromBase64(code!), c.env.ACCOUNT, c.env.WORKER, c.env.DATABASE));
+  const line = await (code ? put() : Promise.reject(1)).then(
+    () => `Update the deployer: done, ${name} has this release's code`,
+    (e) => `The deployer keeps its code: ${code ? `${said(e)} A token for ${name} too changes that.` : "this release has none."}`
+  );
+  if (row != null) await quiet(rows(c.env.DB, "UPDATE deploy_jobs SET log = log || ? WHERE id = ?", `${line}\n`, row));
 }
 
 /** The rollback that an admin asked for: the version before the one that runs, and its own healthy answer. */
@@ -774,6 +792,7 @@ export const deployer = (io: IO) => ({
     delete state.lock;
     await store.put(state);
     console.log(`${line} (${c.calls} calls)`);
+    if (c.renew) await renew(c);
   },
   fetch: (request: Request, env: Env): Promise<Response> => answer(request, io.fetch, env, io.store ?? storeOf(env)),
 });

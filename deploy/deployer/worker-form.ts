@@ -32,6 +32,43 @@ export const WORKER_TAG = "erga-deploy";
 export const deployerName = (worker: string) => `${worker}-deployer`;
 export const DEPLOYER_TAG = "erga-deployer";
 
+/** The deployer's code in a release (deploy/release.ts): one module, which a deploy gives the instance's deployer. */
+export const DEPLOYER_MODULE = "deployer/worker.js";
+
+/**
+ * The deployer's own upload: its one module, and what the Worker gets (deploy/deployer/worker.ts says what each is
+ * for). Setup makes it (deploy/pipeline/deployer.ts), and so does each deploy after: a machine's, and the deployer's
+ * own, of itself. `key`: a new deployer's secret, which seals its token. None: the deployer that is there keeps its
+ * secret, and so the token in its store.
+ */
+export function deployerForm(code: Uint8Array | string, account: string, worker: string, database: string, key?: string): FormData {
+  const form = new FormData();
+  form.set(
+    "metadata",
+    JSON.stringify({
+      main_module: "worker.js",
+      compatibility_date: "2026-09-01",
+      bindings: [
+        { type: "d1", name: "DB", database_id: database, id: database },
+        { type: "plain_text", name: "DATABASE", text: database },
+        { type: "plain_text", name: "ACCOUNT", text: account },
+        { type: "plain_text", name: "WORKER", text: worker },
+        ...(key ? [{ type: "secret_text", name: "KEY", text: key }] : []),
+        { type: "durable_object_namespace", name: "STATE", class_name: "DeployerState" },
+        { type: "service", name: "INSTANCE", service: worker },
+      ],
+      ...(key ? {} : { keep_bindings: ["secret_text"] }),
+      // The deployer's own store, as a declarative export (as the instance's Durable Objects: cloudflare.ts).
+      exports: { DeployerState: { type: "durable-object", storage: "sqlite" } },
+      // Each run says one line: Cloudflare keeps the lines, for a person who looks at the deployer.
+      observability: { enabled: true, logs: { enabled: true, invocation_logs: true } },
+      tags: [DEPLOYER_TAG],
+    })
+  );
+  form.append("worker.js", new File([code as BlobPart], "worker.js", { type: "application/javascript+module" }));
+  return form;
+}
+
 /** The build's file of headers for its static assets (Cloudflare's _headers): it goes in the Worker's config, not among the files. */
 export const HEADERS_FILE = "/_headers";
 

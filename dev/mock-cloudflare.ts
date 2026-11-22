@@ -24,6 +24,8 @@
 //   mock-only-<worker>  a token for that one Worker (the deployer's): any call but that Worker's own is refused, with
 //                       the statuses that Cloudflare gave a real one on 2026-11-20: 403 for another Worker's settings,
 //                       401 for the account's D1 databases. The refusal's code and words are not a record.
+//   mock-pair-<worker>  a token for that Worker and for its deployer (<worker>-deployer): the deployer's token, with
+//                       which the deployer also changes its own code
 //
 // Zones, custom domains and Registrar: dev/mock-cloudflare-zones.ts.
 //
@@ -194,8 +196,11 @@ export function mockCloudflare(
     // Whether Cloudflare knows the token: each of the mock's tokens is an account's, so the user's verify knows none.
     if (m == "GET" && /^\/accounts\/[^/]+\/tokens\/verify$/.test(path)) return ok({ id: "0".repeat(32), status: "active" });
     if (m == "GET" && path == "/user/tokens/verify") return fail(401, 1000, "Invalid API Token");
-    const only = /^mock-only-([\w-]+)$/.exec(token)?.[1];
-    if (only && !new RegExp(`^/accounts/[^/]+/workers/scripts/${only}(/|\\?|$)`).test(path))
+    const scoped = /^mock-(only|pair)-([\w-]+)$/.exec(token);
+    if (
+      scoped &&
+      !new RegExp(`^/accounts/[^/]+/workers/scripts/${scoped[2]}${scoped[1] == "pair" ? "(-deployer)?" : ""}(/|\\?|$)`).test(path)
+    )
       return fail(path.includes("/d1/") ? 401 : 403, 10000, "Authentication error");
     const failAt = /^mock-fail-(\w+)$/.exec(token)?.[1];
     const step = stepOf(m, path);

@@ -17,7 +17,8 @@ import { decodeSpec, type Spec } from "../deploy/deployer/spec";
 import { CALLS, deployer, HEALTH_MS, LOCK_MS, type State, specOf } from "../deploy/deployer/worker";
 import { deployerModule } from "../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT } from "../dev/mock-cloudflare";
-import { instanceOn, SPEC } from "./helpers/binding.ts";
+import { seal } from "../deploy/deployer/token";
+import { instanceOn, KEY, SPEC } from "./helpers/binding.ts";
 import { bindingsOf, prepareRelease, release, ROOT, SHA1, SHA2, SHA3 } from "./helpers/deploys.ts";
 import { builtBundle } from "./helpers/github.ts";
 
@@ -99,6 +100,7 @@ describe("a run of the deployer", () => {
       "Upload the Worker, with its settings: done",
       "Wait for its health...",
       "Wait for its health: done",
+      "Update the deployer: done",
       "",
     ]);
     expect(await logOf(sql, job.id)).toContain(
@@ -122,6 +124,8 @@ describe("a run of the deployer", () => {
         `GET ${acc}/workers/scripts/erga-next/deployments`,
         `POST ${acc}/workers/scripts/erga-next/assets-upload-session`,
         `PUT ${acc}/workers/scripts/erga-next`,
+        // (After the deploy: its own code, from the release.)
+        `PUT ${acc}/workers/scripts/erga-next-deployer`,
       ].sort()
     );
     // The files' hashes are the ones that a deploy from a machine sends (cloudflare.ts, assetHash).
@@ -295,6 +299,57 @@ describe("a run of the deployer", () => {
     const from = hub.state.calls.length;
     expect(await once()).toBe(`${AT}. Auto-deploy is off. (1 calls)`);
     expect(hub.state.calls.slice(from)).toEqual(["refs"]);
+  }, 30_000);
+
+  test("after its deploy, the deployer gives itself the release's own deployer code, with its secret; a token for the instance's Worker only, or a release with none, leaves its code", async () => {
+    const UPDATED = "Update the deployer: done, erga-next-deployer has this release's code";
+    {
+      const { mock, sql, io, store, once } = await instance();
+      const key = mock.state.secrets["erga-next-deployer"].KEY;
+      const token = store.cell.get("token");
+      const sent: FormData[] = [];
+      const net = io.fetch;
+      io.fetch = (url, init) => {
+        if (init?.method == "PUT" && url.endsWith("/workers/scripts/erga-next-deployer")) sent.push(init.body as FormData);
+        return net(url, init);
+      };
+      expect(await once()).toContain("Its deploy is done.");
+      expect((await logOf(sql, (await run(readJobs(sql)))[0].id)).split("\n").at(-2)).toBe(UPDATED);
+      // The upload: the release's module, and setup's values again. The secret and the store are the ones from before.
+      expect(sent).toHaveLength(1);
+      expect(await (sent[0].get("worker.js") as File).text()).toBe(new TextDecoder().decode(release.deployer));
+      const meta = JSON.parse(String(sent[0].get("metadata"))) as { keep_bindings: string[]; bindings: { name: string; text?: string }[] };
+      expect(meta.keep_bindings).toEqual(["secret_text"]);
+      expect(meta.bindings.map((b) => b.name)).toEqual(["DB", "DATABASE", "ACCOUNT", "WORKER", "STATE", "INSTANCE"]);
+      expect(meta.bindings.find((b) => b.name == "WORKER")?.text).toBe("erga-next");
+      expect([mock.state.secrets["erga-next-deployer"], store.cell.get("token")]).toEqual([{ KEY: key }, token]);
+    }
+    {
+      // A token for the instance's Worker only: the deploy is done, and the log says why the deployer's code stays.
+      const { mock, sql, store, once, calls } = await instance();
+      store.cell.set("token", JSON.stringify(await seal(KEY, "mock-only-erga-next")));
+      const before = JSON.stringify(mock.state.scripts["erga-next-deployer"]);
+      expect(await once()).toContain("Its deploy is done.");
+      const [job] = await run(readJobs(sql));
+      expect(job.state).toEqual({ at: "done" });
+      expect((await logOf(sql, job.id)).split("\n").at(-2)).toBe(
+        "The deployer keeps its code: Cloudflare refused PUT /scripts/erga-next-deployer (it answered 403: Authentication error [code 10000]). A token for erga-next-deployer too changes that."
+      );
+      expect(JSON.stringify(mock.state.scripts["erga-next-deployer"])).toBe(before);
+      expect(calls().length).toBeLessThan(CALLS);
+    }
+    {
+      // A release from before a release carried the deployer's code.
+      const { sql, hub, once, calls } = await instance();
+      const bundle = JSON.parse(new TextDecoder().decode(builtBundle(SHA2))) as { files: Record<string, string> };
+      delete bundle.files["deployer/worker.js"];
+      hub.state.releases.set(SHA2, new TextEncoder().encode(JSON.stringify(bundle)));
+      expect(await once()).toContain("Its deploy is done.");
+      expect((await logOf(sql, (await run(readJobs(sql)))[0].id)).split("\n").at(-2)).toBe(
+        "The deployer keeps its code: this release has none."
+      );
+      expect(calls().some((c) => c.includes("erga-next-deployer"))).toBe(false);
+    }
   }, 30_000);
 
   test("with no token the deployer looks at GitHub and deploys nothing; an admin's ask ends with why", async () => {

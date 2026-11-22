@@ -530,7 +530,7 @@ test("a new server's setup page: the link one time, GitHub's app in one click, t
     expect(html).not.toContain(GOOD.secret);
     // The deployer's row names what the token is for: the server's own account and Worker.
     expect(html).toContain('href="https://dash.cloudflare.com/acc-1/api-tokens"');
-    expect(html).toContain("for the Worker <code>erga-example</code> only, with the role Editor");
+    expect(html).toContain("with the role Editor, for two Workers only: <code>erga-example</code> and <code>erga-example-deployer</code>");
 
     // Skip for now is the address's alone: the row says so, and the last step is open.
     html = await (await b.go(`${ORIGIN}/setup?skip`)).text();

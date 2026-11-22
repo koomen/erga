@@ -1,7 +1,8 @@
 // The deployer on Cloudflare, as setup installs it: deploy/deployer/worker.ts, bundled on this machine, in the person's
 // own account as the Worker <the instance's Worker>-deployer. A person installs it, with their own login: it is a part
-// of the instance's shape. The deployer can't change itself: its code is the one of the checkout that ran setup, until
-// setup runs again.
+// of the instance's shape. Its code is the one of the checkout that ran setup, until the instance's next deploy: each
+// deploy gives the deployer the code of the release that it deployed (updateDeployer, below, from a machine; the
+// deployer in the cloud does the same for itself: deploy/deployer/worker.ts).
 //
 // What the Worker gets (deploy/deployer/worker.ts says what each is for): the instance's database as the binding DB
 // and its id as plain text, the account and the instance's Worker as plain text, a secret of its own (KEY), its own
@@ -19,17 +20,12 @@ import { join } from "node:path";
 import { boundDatabase, hasDeployer, setSchedule } from "../deployer/cloudflare";
 import { type Cloudflare, DeployError } from "../deployer/cloudflare-api";
 import type { CloudflareTarget } from "../deployer/spec";
-import { DEPLOYER_TAG, deployerName } from "../deployer/worker-form";
+import type { Release } from "../deployer/release-format";
+import { DEPLOYER_TAG, deployerForm, deployerName } from "../deployer/worker-form";
 import { ROOT } from "../root";
 
 export { hasDeployer } from "../deployer/cloudflare";
 export { DEPLOYER_TAG, deployerName } from "../deployer/worker-form";
-/** The Workers runtime's date for the deployer's code. */
-const COMPATIBILITY_DATE = "2026-09-01";
-const MODULE = "worker.js";
-/** The class of the deployer's store (deploy/deployer/worker.ts). */
-const STORE = "DeployerState";
-
 /** The deployer's secret that seals its token (deploy/deployer/token.ts). */
 const KEY = "KEY";
 
@@ -78,31 +74,14 @@ export async function installDeployer(
   const keeps = !!there && (await keepsToken(cf, target));
   if (there && !keeps) await removeDeployer(cf, target);
 
-  const form = new FormData();
-  form.set(
-    "metadata",
-    JSON.stringify({
-      main_module: MODULE,
-      compatibility_date: COMPATIBILITY_DATE,
-      bindings: [
-        { type: "d1", name: "DB", database_id: database, id: database },
-        { type: "plain_text", name: "DATABASE", text: database },
-        { type: "plain_text", name: "ACCOUNT", text: target.account },
-        { type: "plain_text", name: "WORKER", text: target.worker },
-        // A deployer that is there keeps the secret that it holds (keep_bindings, below).
-        ...(keeps ? [] : [{ type: "secret_text", name: KEY, text: randomBytes(32).toString("hex") }]),
-        { type: "durable_object_namespace", name: "STATE", class_name: STORE },
-        { type: "service", name: "INSTANCE", service: target.worker },
-      ],
-      ...(keeps ? { keep_bindings: ["secret_text"] } : {}),
-      // The deployer's own store, as a declarative export (as the instance's Durable Objects: cloudflare.ts).
-      exports: { [STORE]: { type: "durable-object", storage: "sqlite" } },
-      // Each run says one line: Cloudflare keeps the lines, for a person who looks at the deployer.
-      observability: { enabled: true, logs: { enabled: true, invocation_logs: true } },
-      tags: [DEPLOYER_TAG],
-    })
+  // A deployer that is there keeps the secret that it holds.
+  const form = deployerForm(
+    await deployerModule(),
+    target.account,
+    target.worker,
+    database,
+    keeps ? undefined : randomBytes(32).toString("hex")
   );
-  form.append(MODULE, new File([await deployerModule()], MODULE, { type: "application/javascript+module" }));
   await cf.call("PUT", `${acc}/workers/scripts/${name}`, "upload the deployer", form);
   // No address: only the instance's binding reaches the deployer. (A new Worker's workers.dev address can be on.)
   await cf.call("POST", `${acc}/workers/scripts/${name}/subdomain`, "turn the deployer's workers.dev address off", {
@@ -111,6 +90,34 @@ export async function installDeployer(
   });
   await setSchedule(cf, acc, name);
   return { name, kept: keeps, replaced: !!there && !keeps };
+}
+
+/**
+ * A deploy from a machine, after the instance answers healthy: the instance's deployer gets the release's own code
+ * (deploy/release.ts builds it into each release), with the secret, the store and the token that it holds. The
+ * result: what the deploy's log says of it; null: the instance has no deployer.
+ */
+export async function updateDeployer(
+  cf: Cloudflare,
+  target: Pick<CloudflareTarget, "account" | "worker">,
+  release: Pick<Release, "version" | "deployer">
+): Promise<string | null> {
+  if (!(await hasDeployer(cf, target))) return null;
+  const name = deployerName(target.worker);
+  if (!release.deployer)
+    return `The deployer ${name} keeps its code: release ${release.version} is from before a release carried the deployer's code.`;
+  if (!(await keepsToken(cf, target)))
+    return `The deployer ${name} keeps its code: it is from before the deployer kept its own token. Run the setup command again: it replaces it.`;
+  const acc = `/accounts/${target.account}`;
+  const database = await boundDatabase(cf, acc, target.worker);
+  if (!database) return `The deployer ${name} keeps its code: the Worker ${target.worker} has no database.`;
+  await cf.call(
+    "PUT",
+    `${acc}/workers/scripts/${name}`,
+    "upload the deployer",
+    deployerForm(release.deployer, target.account, target.worker, database)
+  );
+  return `The deployer ${name} has the code of release ${release.version} now. It holds what it held.`;
 }
 
 /**

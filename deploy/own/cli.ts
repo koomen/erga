@@ -19,7 +19,7 @@
 //                              safe for one author.
 //       --deploys cloud|local  who deploys each new release. cloud: a deployer in the user's account, by itself. On
 //                              Cloudflare it is a second Worker, which the command installs with no token: the user
-//                              makes its token (for the instance's Worker only) and pastes it on the server (its
+//                              makes its token (for the instance's Worker and the deployer's) and pastes it on the server (its
 //                              setup page; later, its Deploy page). On AWS it is a Lambda function whose role is its
 //                              credential: no token. local: the user, with bun erga deploy; no credential in the
 //                              cloud. A run again with the other answer installs the deployer, or removes it.
@@ -421,8 +421,8 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
               );
           }
         }
-        // On Cloudflare too: only a person's login changes the deployer's code. It keeps the token that it holds, its
-        // store and its switch: the user makes no new token for a newer deployer.
+        // On Cloudflare too: the deployer gets this checkout's code (each deploy gives it its release's). It keeps the
+        // token that it holds, its store and its switch: the user makes no new token for a newer deployer.
         if (a.where != "aws" && there) {
           const c = await connect();
           const { keepsToken, installDeployer } = await import("../pipeline/deployer");

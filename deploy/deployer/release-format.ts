@@ -4,6 +4,7 @@
 import * as Result from "effect/Result";
 import { Base64 } from "effect/encoding";
 import { DeployError } from "./cloudflare-api";
+import { DEPLOYER_MODULE } from "./worker-form";
 
 /** One binding or Durable Object as `cf build` writes them (worker.config.json). */
 export interface BuiltBinding { type: string; value?: string; exportName?: string; worker?: string; name?: string; namespace?: string }
@@ -36,6 +37,11 @@ export interface Release {
   bindings?: Record<string, Record<string, unknown>>;
   /** The Worker as one module (celld/index.js), which the machine on AWS runs (celld.ts). A release from before 2026-11-20 has none. */
   celld?: Uint8Array;
+  /**
+   * The deployer on Cloudflare as one module (deployer/worker.js: deploy/deployer/worker.ts), which each deploy gives
+   * the instance's deployer. A release from before 2026-11-22 has none.
+   */
+  deployer?: Uint8Array;
   /**
    * The SHA-256 of the gate's source in this commit (gate/): the code of the gate in front of an instance on AWS, its
    * four CloudFront Functions and its sign-in function (Lambda@Edge). Only setup installs that code, so the deployer
@@ -71,11 +77,12 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     }));
     return out;
   };
-  const [modules, assets, migrations, celld] = await Promise.all([
+  const [modules, assets, migrations, celld, deployer] = await Promise.all([
     read("bundle", toc.modules),
     read("assets", toc.assets),
     read("migrations", toc.migrations),
     get("celld/index.js"),
+    get(DEPLOYER_MODULE),
   ]);
   return {
     version: toc.version, built: toc.built, worker: toc.worker, mainModule: toc.mainModule, modules,
@@ -83,6 +90,7 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     migrations: Object.fromEntries(Object.entries(migrations).map(([n, b]) => [n, new TextDecoder().decode(b)])),
     ...(toc.bindings ? { bindings: toc.bindings } : {}),
     ...(celld ? { celld } : {}),
+    ...(deployer ? { deployer } : {}),
     ...(toc.gate ? { gate: toc.gate } : {}),
   };
 }
