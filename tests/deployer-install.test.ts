@@ -183,9 +183,11 @@ describe("the installed Worker, in the Workers runtime", () => {
     expect(await run(readControl(sql))).toMatchObject({ auto: true, head: SHA2 });
     // At Cloudflare, the instance's Worker only.
     expect([...new Set(calls().filter((c) => !c.includes("/workers/scripts/erga-next")))]).toEqual([
+      `GET /accounts/${FLEET_ACCOUNT}/tokens/verify`,
       `GET /accounts/${FLEET_ACCOUNT}/d1/database?per_page=1`,
     ]);
-    // (The check of the token read only the instance's Worker, the D1 list and the deployer's own name.)
+    // (The check of the token asked Cloudflare whether it knows the token; then it read only the instance's Worker,
+    // the D1 list and the deployer's own name.)
     expect(await says()).toEqual({ ok: true, ready: true, head: SHA2 });
   }, 60_000);
 });

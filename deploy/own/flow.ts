@@ -258,6 +258,13 @@ export const deploysText = (a: Answers, worker = namesOf(a.host).worker, where =
       ? `• a deployer (the Worker ${worker}-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker ${worker}, which you make on Cloudflare and paste on the server: on ${where}`
       : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
+/**
+ * What setup says of a deployer from before the deployer kept its own token (its token was a secret of its Worker):
+ * setup replaces it, and the token goes with it. `will`: the dry run's plan. `where`: the page for the new token.
+ */
+export const oldDeployerText = (host: string, where: string, will = false) =>
+  `${will ? "Its deployer is from before the deployer kept its own token: I will replace it with a new one" : `The deployer of ${host} was from before the deployer kept its own token: it is replaced by a new one`}. The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on ${where}. Auto-deploy stays as it is.`;
+
 /** The plan, as the agent says it before the user's yes. */
 export function planText(a: Answers, s: Seen): string[] {
   const secret = `you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"}`;

@@ -59,7 +59,7 @@ import { fail, pass, ROOT, say } from "../root";
 import { askSecret, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { cloudflare, type Connection, observe } from "./facts";
 import { adoptEntry, firstDeploy, secretsFor } from "./first";
-import { accountName, checksOf, deploysText, missing, planText, type Seen, type State, step } from "./flow";
+import { accountName, checksOf, deploysText, missing, oldDeployerText, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, loadSecrets, namesAt, putSecret, saveSecrets, SSO_SECRET } from "./store";
 
@@ -90,6 +90,8 @@ interface Run {
   noTests: boolean;
   /** The command again, for the lines that say to run it. */
   again: string;
+  /** What the run's last line says too: a step adds to it what the user must not miss. */
+  last: string[];
 }
 
 /** Observes, and folds what was seen in, until the code finds nothing more to fill. */
@@ -219,17 +221,19 @@ async function page(a: Answers, o: Run) {
 /**
  * Cloudflare: the instance's deployer, installed with no token (or removed), and then a deploy of the release that the
  * instance runs, so that its Worker binds the deployer (or binds it no more): the server hands the deployer the token
- * that the user pastes there. A new deployer gets auto-deploy on: it deploys when it has its token.
+ * that the user pastes there. A new deployer gets auto-deploy on: it deploys when it has its token. The answer: the
+ * deployer that was there is replaced (it was from before the deployer kept its own token), and its token is gone.
  */
 async function deployerOnCloudflare(a: Answers, seen: Seen, o: Run, to: "install" | "remove", worker: string) {
   const c = await connect();
   const deployers = await import("../pipeline/deployer");
   const target = { account: a.account, worker };
   const print = (line: string) => say(`  ${line.slice(0, 200)}`);
+  let replaced = false;
   try {
     if (to == "remove") await deployers.removeDeployer(c.cf, target);
     else {
-      await deployers.installDeployer(c.cf, target);
+      replaced = seen.deployer && !(await deployers.installDeployer(c.cf, target)).kept;
       if (!seen.deployer) await Effect.runPromise(writeAuto(d1Sql(c.cf, target), "releases"));
     }
     // The release that runs is the one that deploys: its tests ran before its first deploy.
@@ -246,7 +250,11 @@ async function deployerOnCloudflare(a: Answers, seen: Seen, o: Run, to: "install
   } catch (e) {
     fail((e as Error).message, `Fix what it names, then: ${o.again}. Every step is safe to run again.`);
   }
+  return replaced;
 }
+
+/** The server's page where the user pastes the deployer's token. */
+const tokenPage = (a: Answers, seen: Seen) => (seen.admin ? `https://${a.host}/admin/deploy` : "its setup page");
 
 /** Prints what the dry run found: the checks, and the plan. */
 function printPlan(a: Answers, seen: Seen, resources: string[]) {
@@ -302,6 +310,9 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
           ? `PLAN  ${a.host} runs. I will install its deployer, with no token, and deploy ${a.host} again, so that its Worker binds the deployer:\nPLAN  ${deploysText(a, worker, seen.admin ? "its Deploy page (/admin/deploy)" : "its setup page")}`
           : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${worker}-deployer, with the token that it holds), and deploy ${a.host} again without it:\nPLAN  ${deploysText(a)}`
       );
+      const { keepsToken } = await import("../pipeline/deployer");
+      if (state.do == "install" && seen.deployer && !(await keepsToken((await connect()).cf, { account: a.account, worker })))
+        say(`PLAN  ${oldDeployerText(a.host, tokenPage(a, seen), true)}`);
       return "dry";
     }
     if (o.dryRun && (state.at == "app" || state.at == "build" || state.at == "page" || state.at == "terminal")) {
@@ -388,11 +399,12 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
           }
           break;
         }
-        await deployerOnCloudflare(a, seen, o, state.do, worker);
+        if (await deployerOnCloudflare(a, seen, o, state.do, worker)) o.last.push(oldDeployerText(a.host, tokenPage(a, seen)));
         pass(
           state.do == "remove"
             ? `The deployer of ${a.host} is removed, with the token that it held: no credential stays in the cloud.`
-            : `The deployer of ${a.host} is installed, with no token yet. The user pastes its token on the server: ${seen.admin ? `https://${a.host}/admin/deploy` : "its setup page"}.`
+            : (o.last.at(-1) ??
+                `The deployer of ${a.host} is installed, with no token yet. The user pastes its token on the server: ${tokenPage(a, seen)}.`)
         );
         break;
       }
@@ -422,20 +434,17 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         // store and its switch: the user makes no new token for a newer deployer.
         if (a.where != "aws" && seen.deployer && a.deploys == "cloud" && !did.has("deployer")) {
           const c = await connect();
-          const deployers = await import("../pipeline/deployer");
+          const { keepsToken, installDeployer } = await import("../pipeline/deployer");
           if (o.dryRun)
             say(
-              (await deployers.keepsToken(c.cf, { account: a.account, worker }))
+              (await keepsToken(c.cf, { account: a.account, worker }))
                 ? "PLAN  Its deployer's code changes to this code's. It keeps the token that it holds; auto-deploy stays as it is."
-                : `PLAN  Its deployer is from before it kept its own token. I will replace it with a new one, which holds no token: after that, an admin pastes a token on https://${a.host}/admin/deploy. Until then nothing deploys by itself. Auto-deploy stays as it is.`
+                : `PLAN  ${oldDeployerText(a.host, tokenPage(a, seen), true)}`
             );
           else {
-            const { kept } = await deployers.installDeployer(c.cf, { account: a.account, worker });
-            pass(
-              kept
-                ? `The deployer of ${a.host} has this code now. It holds what it held; auto-deploy is as it was.`
-                : `The deployer of ${a.host} was from before it kept its own token: it is new now, and holds no token. An admin pastes one on https://${a.host}/admin/deploy.`
-            );
+            const { kept } = await installDeployer(c.cf, { account: a.account, worker });
+            if (!kept) o.last.push(oldDeployerText(a.host, tokenPage(a, seen)));
+            pass(kept ? `The deployer of ${a.host} has this code now. It holds what it held; auto-deploy is as it was.` : o.last.at(-1)!);
           }
         }
         return o.dryRun ? "dry" : "done";
@@ -462,7 +471,7 @@ async function run(a: Answers, o: Run) {
       : a.where == "aws"
         ? "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's Deploy page)"
         : `its deployer, in their own account, deploys each new release of that branch by itself, while it holds its token: the user pastes it on ${end == "page" ? "the setup page" : `the server's Deploy page (https://${a.host}/admin/deploy), which also says whether the deployer holds one`}`;
-  const rest = `It tracks ${branch} of ${repo}: ${deployed}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page).`;
+  const rest = `${o.last.map((l) => `${l} `).join("")}It tracks ${branch} of ${repo}: ${deployed}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page).`;
   say(
     end == "done"
       ? `DONE  Tell the user: Erga is live at https://${a.host}, and it has its admin. ${rest}`
@@ -589,7 +598,7 @@ export async function setupMain(argv: string[]) {
       return usage(2);
     }
     const again = ["bun erga setup", host, ...args, ...(remote && !flag("--remote") ? ["--remote"] : [])].join(" ");
-    await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), again });
+    await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), again, last: [] });
   } catch (e) {
     fail((e as Error).message, `bun erga setup ${host}`);
   }

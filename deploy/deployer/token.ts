@@ -4,9 +4,12 @@
 // deployer checks the token with Cloudflare, seals it under its own secret (KEY) and keeps it in its own store. Each
 // run opens it from there. A new token takes the same way, and takes the old one's place.
 //
-// The check, with reads only: the token must read the instance's Worker, and two reads that it must not be able to
-// make must fail: the account's D1 databases, and another Worker (the deployer itself, which is there). A token that
-// can do more than the deployer needs is refused: it would stay in the cloud.
+// The check, with reads only. First: does Cloudflare know the token (its verify, for an account's token and then for
+// a user's)? Only that answer says so: to a read of a Worker, Cloudflare answers 401 [code 10000] both to a token that
+// it does not know and to one that it knows, which may not read that Worker. Then the token must read the instance's
+// Worker, and two reads that it must not be able to make must fail: the account's D1 databases, and another Worker
+// (the deployer itself, which is there). A token that can do more than the deployer needs is refused: it would stay
+// in the cloud.
 //
 // Plain TypeScript, as worker.ts: no Effect.
 //
@@ -29,23 +32,37 @@ export type DeployerAnswer = { ok: true; ready: boolean; head: string | null } |
 /** Why the token is not taken, or null. */
 export async function tokenProblem(fetch: Fetch, env: { ACCOUNT: string; WORKER: string }, token: string): Promise<string | null> {
   if (!/^[\x21-\x7e]{16,400}$/.test(token)) return token ? "That isn't a token: it is one line, with no spaces." : "Paste the token.";
-  /** Cloudflare's status for one read with the token; 0: no answer. */
-  const status = (path: string) =>
-    fetch(`https://api.cloudflare.com/client/v4/accounts/${env.ACCOUNT}${path}`, {
+  const get = (path: string) =>
+    fetch(`https://api.cloudflare.com/client/v4${path}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(20_000),
-    }).then(
-      (r) => r.status,
-      () => 0
-    );
+    }).catch(() => null);
+  /** Cloudflare's status for one read of the account with the token; 0: no answer. */
+  const status = async (path: string) => (await get(`/accounts/${env.ACCOUNT}${path}`))?.status ?? 0;
+  /** Cloudflare's verify: its status, and with 200 what it says of the token (active, disabled, expired). */
+  const verify = async (path: string) => {
+    const r = await get(path);
+    const body = r?.status == 200 ? ((await r.json().catch(() => null)) as { result?: { status?: unknown } } | null) : null;
+    return { status: r?.status ?? 0, is: String(body?.result?.status ?? "") };
+  };
   const unclear = (what: string, s: number) =>
     `Cloudflare gave no clear answer about ${what} (${s ? `it answered ${s}` : "no answer"}). Paste the token again in a minute.`;
   const no = (s: number) => s == 401 || s == 403 || s == 404;
+  // An account's token verifies at its account, and a user's token at the user.
+  let known = await verify(`/accounts/${env.ACCOUNT}/tokens/verify`);
+  if (known.status != 200) {
+    const user = await verify("/user/tokens/verify");
+    if (user.status == 200 || known.status == 401) known = user;
+  }
+  if (known.status == 401)
+    return `Cloudflare does not know this token: it is not whole, it was deleted, or it is a token of another account than ${env.ACCOUNT}.`;
+  if (known.status != 200) return unclear("whether it knows the token", known.status);
+  if (known.is != "active") return `Cloudflare knows this token, but it is ${known.is || "not active"}. Make a new one.`;
   const own = await status(`/workers/scripts/${env.WORKER}/settings`);
-  if (own == 401) return "Cloudflare does not know this token: it is not whole, it expired, or it is not a token of this account.";
-  if (own == 403) return `The token can't read the Worker ${env.WORKER}. Give it that Worker, with the role Editor.`;
+  if (own == 401 || own == 403)
+    return `Cloudflare knows this token, but the token can't read the Worker ${env.WORKER} of the account ${env.ACCOUNT} (Cloudflare answered ${own}). Give it that Worker, with the role Editor.`;
   if (own != 200) return unclear(`whether the token reads the Worker ${env.WORKER}`, own);
-  // (Cloudflare answers 401 for D1 to a token for one Worker, which it knows: recorded 2026-11-20, with a real one.)
+  // (Cloudflare answers 401 for D1 to a token for one Worker: recorded 2026-11-20, with a real one.)
   const d1 = await status("/d1/database?per_page=1");
   if (d1 == 200) return "The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.";
   if (!no(d1)) return unclear("whether the token reads the account's D1 databases", d1);

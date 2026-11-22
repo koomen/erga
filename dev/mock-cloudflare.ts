@@ -191,6 +191,9 @@ export function mockCloudflare(
       if (token == "mock-nosub") state.subdomain = null;
       onceAt = /^mock-once-(\w+)$/.exec(token)?.[1] ?? null;
     }
+    // Whether Cloudflare knows the token: each of the mock's tokens is an account's, so the user's verify knows none.
+    if (m == "GET" && /^\/accounts\/[^/]+\/tokens\/verify$/.test(path)) return ok({ id: "0".repeat(32), status: "active" });
+    if (m == "GET" && path == "/user/tokens/verify") return fail(401, 1000, "Invalid API Token");
     const only = /^mock-only-([\w-]+)$/.exec(token)?.[1];
     if (only && !new RegExp(`^/accounts/[^/]+/workers/scripts/${only}(/|\\?|$)`).test(path))
       return fail(path.includes("/d1/") ? 401 : 403, 10000, "Authentication error");
