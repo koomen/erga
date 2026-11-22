@@ -134,6 +134,19 @@ export function releaseRefusal(o: { mainTagged: string | null; commits: number }
   return null;
 }
 
+/**
+ * Why `bun erga release` must not tag `sha`, from what the instances that deploy every commit of main answer, or
+ * null. None: nothing to ask.
+ */
+export function runRefusal(sha: string, answers: Pick<Instance, "host" | "version" | "healthy" | "error">[]): string | null {
+  const off = answers.filter((a) => !a.healthy || !a.version || !sha.startsWith(a.version));
+  if (!off.length) return null;
+  const said = (a: (typeof off)[number]) =>
+    !a.version ? (a.error ?? "no answer") : !sha.startsWith(a.version) ? `runs ${a.version}` : "not healthy";
+  const one = off.length == 1;
+  return `${off.map((a) => `${a.host} (${said(a)})`).join(", ")} ${one ? "deploys" : "deploy"} every commit of main, and ${one ? "does" : "do"} not run ${sha.slice(0, 12)}, healthy. Wait for the deploy (bun erga status), and look at the instance.`;
+}
+
 /** A release's notes: main's commits since the last release, newest first. */
 export function releaseNotes(last: string | null, commits: Commit[]): string {
   const lines = commits.map((c) => `- ${c.subject} (${c.sha.slice(0, 7)})`);

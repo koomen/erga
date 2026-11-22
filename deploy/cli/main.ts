@@ -33,7 +33,9 @@
 //   bun erga test [<branch>|<commit>]   the gate's run: bun run test on a branch's merge onto main, or on a commit
 //                                       (default: main's head), in a scratch folder; a tree that ran before runs
 //                                       no more; the ops page runs it for each pushed branch
-//   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
+//   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release, when the tests
+//                                       passed on main's head and each instance that deploys every commit of main
+//                                       runs it, healthy
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine: the head
 //                                       of the branch it tracks, or a commit of that branch; no branch moves;
 //                                       the release is GitHub's (its registry), built here only when it has none;

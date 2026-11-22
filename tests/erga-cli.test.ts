@@ -14,6 +14,7 @@ import {
   pushRefusal,
   releaseNotes,
   releaseRefusal,
+  runRefusal,
   squashMessage,
   stateOf,
   statusText,
@@ -270,6 +271,85 @@ test("bun erga release refuses untested origin/main and allows tested --dry-run"
     const preview = await runRelease({ dir, clone, repo: "example/erga", dry: true, log });
     expect(preview).toMatchObject({ version: "v0.1.0", sha, url: null });
     expect(lines.join("\n")).toContain("Release v0.1.0");
+  } finally {
+    rmSync(top, { recursive: true, force: true });
+  }
+});
+
+test("bun erga release refuses unless each instance that deploys every commit of main runs main's head, healthy", async () => {
+  const { runRelease } = await import("../deploy/cli/release");
+  const { runPath, treeOf } = await import("../deploy/cli/test-run");
+  const { writeConfig } = await import("../deploy/cli/config");
+  const { commit, gitWorld, sh } = await import("./helpers/git-world.ts");
+  const { top, origin, clone } = gitWorld("erga-release-run-");
+  try {
+    const sha = commit(clone, "a.txt", "Add feature");
+    sh(clone, "git", "push", "--quiet", "origin", "main");
+    const short = sha.slice(0, 12);
+    const ok = (host: string, version = short) => ({ host, version, healthy: true });
+    expect(runRefusal(sha, [])).toBeNull();
+    expect(runRefusal(sha, [ok("s.a.com"), ok("t.a.com")])).toBeNull();
+    expect(runRefusal(sha, [ok("s.a.com"), ok("t.a.com", "def000000000")])).toContain(
+      `t.a.com (runs def000000000) deploys every commit of main, and does not run ${short}, healthy`
+    );
+    expect(runRefusal(sha, [{ ...ok("s.a.com"), healthy: false }])).toContain("s.a.com (not healthy)");
+    expect(runRefusal(sha, [{ host: "s.a.com", version: null, healthy: null, error: "no answer" }])).toContain("s.a.com (no answer)");
+
+    // The tests passed on main's head. Four instances: only staging.example.com deploys every commit of main on this origin.
+    const dir = join(clone, ".erga");
+    const tree = treeOf(clone, sha)!;
+    mkdirSync(join(dir, "tests"), { recursive: true });
+    writeFileSync(
+      runPath(dir, tree),
+      JSON.stringify({ tree, state: "passed", started: "1", pid: 1, pidStart: null, failed: [], log: "x" })
+    );
+    const entry = (host: string, repo: string, branch: string) => ({
+      host,
+      repo,
+      branch,
+      account: "acc",
+      worker: "w",
+      database: "d",
+      app: { kind: "workers.dev" as const },
+      pages: { kind: "shared" as const },
+      vars: {},
+    });
+    writeConfig(dir, {
+      instances: [
+        entry("example.com", origin, "main"),
+        entry("staging.example.com", origin, "main"),
+        entry("next.example.com", origin, "next"),
+        entry("fork.example.org", "example.org/team/erga", "main"),
+      ],
+    });
+    const modeOf = async (e: { host: string }) => (e.host == "example.com" ? ("releases" as const) : ("commits" as const));
+    const asked: string[] = [];
+    let answer = { version: "111111111111", healthy: true as boolean | null };
+    const ask = async (e: { host: string }) => (asked.push(e.host), answer);
+    const lines: string[] = [];
+    let created = false;
+    const o = {
+      dir,
+      clone,
+      repo: "example/erga",
+      log: (s: string) => void lines.push(s),
+      ask,
+      modeOf,
+      create: () => ((created = true), "https://example.com/releases/v0.1.0"),
+    };
+    // It runs another commit: no release, with --dry-run too. Only the one instance is asked.
+    const no = `staging.example.com (runs 111111111111) deploys every commit of main, and does not run ${short}, healthy.`;
+    await expect(runRelease(o)).rejects.toThrow(no);
+    await expect(runRelease({ ...o, dry: true })).rejects.toThrow("Not released.");
+    expect(asked).toEqual(["staging.example.com", "staging.example.com"]);
+    // It runs the commit, not healthy.
+    answer = { version: short, healthy: false };
+    await expect(runRelease(o)).rejects.toThrow("staging.example.com (not healthy)");
+    expect([created, sh(clone, "git", "tag")]).toEqual([false, ""]);
+    // It runs the commit, healthy: the release goes on.
+    answer = { version: short, healthy: true };
+    expect(await runRelease(o)).toMatchObject({ version: "v0.1.0", sha, url: "https://example.com/releases/v0.1.0" });
+    expect(lines).toContain(`      staging.example.com runs ${short}, healthy.`);
   } finally {
     rmSync(top, { recursive: true, force: true });
   }

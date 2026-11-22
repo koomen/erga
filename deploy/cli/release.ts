@@ -1,10 +1,17 @@
 // `bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]`: tags origin/main with the next semver version and creates
 // a GitHub Release with notes from the commits since the last tag. Only runs when Pete asks. Refuses to tag a main
-// commit whose tests have not passed (the gate: .erga/tests/<tree>.json, or a fresh run when not --dry-run).
+// commit whose tests have not passed (the gate: .erga/tests/<tree>.json, or a fresh run when not --dry-run), and one
+// that an instance which deploys every commit of main (its auto-deploy mode is commits: the staging instance) does
+// not run, healthy: a commit that broke such an instance is not released. An instance that deploys only the releases
+// is not asked.
 
-import { nextVersion, latestTag, releaseNotes, releaseRefusal } from "./flow";
+import type { AutoMode } from "../deployer/tags";
+import { type Entry, readConfig, repoName } from "./config";
+import { nextVersion, latestTag, releaseNotes, releaseRefusal, runRefusal } from "./flow";
 import { gateRefusal, testOf } from "./gate";
+import { autoOn, reachOf, sqlOf } from "./instance";
 import { commitsIn, fetchOrigin, headOf, repoOf, tagsOf } from "./observe";
+import { type Ask, instanceReader } from "./running";
 import { readRuns, type Suite, testRun, treeOf } from "./test-run";
 import { ROOT, sh } from "../root";
 
@@ -25,6 +32,10 @@ export interface ReleaseOptions {
   suite?: Suite;
   /** Output logger. */
   log?: (line: string) => void;
+  /** What each instance runs, and its health (running.ts): a fake, in the tests. */
+  ask?: Ask;
+  /** An instance's auto-deploy mode, from its own database (instance.ts, autoOn): a fake, in the tests. */
+  modeOf?: (e: Entry) => Promise<AutoMode | null>;
   /** Override for `gh release create`, for tests. */
   create?: (o: { version: string; repo: string; sha: string; notes: string }) => string;
 }
@@ -54,6 +65,19 @@ export async function runRelease(o: ReleaseOptions): Promise<ReleaseResult> {
   if ("problem" in v) throw new Error(v.problem);
   const tree = treeOf(clone, M);
   if (!tree) throw new Error(`Cannot read the git tree of origin/main (${M.slice(0, 12)}).`);
+
+  // Each instance that deploys every commit of main, on the clone's origin, ran this commit first.
+  const origin = repoName(sh(["git", "remote", "get-url", "origin"], { cwd: clone }).out);
+  const tracking = readConfig(o.dir).instances.filter((e) => e.branch == "main" && repoName(e.repo) == origin);
+  const modeOf = o.modeOf ?? (async (e: Entry) => autoOn(await sqlOf(e, await reachOf(e))));
+  const modes = await Promise.all(tracking.map(modeOf));
+  const every = tracking.filter((_, i) => modes[i] == "commits");
+  const ask = every.length ? (o.ask ?? instanceReader()) : null;
+  const answers = await Promise.all(every.map(async (e) => ({ host: e.host, ...(await ask!(e)) })));
+  const off = runRefusal(M, answers);
+  if (off) throw new Error(`${off}\nNot released.`);
+  for (const a of answers) log(`      ${a.host} runs ${a.version}, healthy.`);
+  if (!answers.length) log("NOTE  No registered instance deploys every commit of main: nothing ran this commit before its release.");
 
   // Gate: refuse to tag an untested or failing main commit.
   if (o.dry) {

@@ -115,12 +115,11 @@ the staging instance runs, and a release of `main` is what production runs.
    name.
 7. Only when Pete says that staging is stable:
    `bun erga release [vX.Y.Z|major|minor|patch]` tags `main` and makes a
-   GitHub release with notes from the commits, after checking that the
-   tests passed on `origin/main`. `--dry-run` shows the version and the
-   notes first. Production's deployer then deploys the release by itself.
-   The command does not ask the staging instance: look at
-   `bun erga status` first. The staging instance must run `main`'s head,
-   healthy.
+   GitHub release with notes from the commits. It refuses when the tests
+   did not pass on `origin/main`, or when an instance that deploys every
+   commit of `main` (the staging instance) does not run `main`'s head,
+   healthy. `--dry-run` makes the same checks, and shows the version and
+   the notes. Production's deployer then deploys the release by itself.
 
 ## The other commands
 
