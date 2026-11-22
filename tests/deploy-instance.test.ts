@@ -30,7 +30,7 @@ import {
 } from "../deploy/deployer/instance";
 import type { Spec } from "../deploy/deployer/spec";
 
-const MIGRATION = ["0470_deploys.sql", "0480_deploy_control.sql"]
+const MIGRATION = ["0470_deploys.sql", "0480_deploy_control.sql", "0540_deploy_auto_mode.sql"]
   .map((name) => readFileSync(new URL(`../server/migrations/${name}`, import.meta.url), "utf8"))
   .join("\n");
 const run = Effect.runPromise;

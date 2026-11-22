@@ -115,7 +115,8 @@ and `main`. There are no pull requests.
    <host>` does. `main` and `staging` are the branches
    on GitHub, never this clone's own branch of that name.
 8. Only when Pete asks: `bun erga release [vX.Y.Z|major|minor|patch]`
-   tags `main` and makes a GitHub release with notes from the commits.
+   tags `main` and makes a GitHub release with notes from the commits,
+   after checking that the tests passed on `origin/main`.
    `--dry-run` shows the version and the notes first.
 
 ## The other commands
@@ -230,11 +231,10 @@ and `main`. There are no pull requests.
   differs from the spec, and names each field. To deploy a change that you
   made in the entry (a setting): `bun erga deploy <host> --write-spec`. To
   take the instance's spec into the entry: `bun erga register <host>`.
-- `bun erga track <host> [--repo <repo>] [--branch <branch>]`: the
-  repository and the branch that a registered instance tracks. The
-  defaults are `github.com/koomen/erga` and `main`. With no option, it
-  prints them. It writes them into the instance's spec too. It deploys
-  nothing. Only when Pete asks.
+- `bun erga track <host> [--repo <repo>] [--branch <branch>] [--auto-deploy off|releases|commits]`: the
+  repository, the branch and the auto-deploy mode (`off`, `releases` for tagged `vX.Y.Z` releases only, or `commits`
+  for every commit) that a registered instance tracks. The defaults are `github.com/koomen/erga` and `main`. With no
+  option, it prints them. It writes them into the instance's spec and deploy_control too. It deploys nothing. Only when Pete asks.
 - `bun erga track <host> --upstream <branch> [--upstream-repo <repo>]`: the
   instance's upstream, a branch to compare its branch with: of its own
   repository, or of another one (a fork names `main` of

@@ -20,6 +20,8 @@
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type AutoMode, isAutoMode, type ReleaseTag } from "../deployer/tags";
+import { reachOf, setAutoOn, sqlOf } from "./instance";
 import { startAuto, stepAuto } from "./auto-state";
 import { type Entry, isAws, readConfig } from "./config";
 import type { Answer, Branch as StatusBranch } from "./flow";
@@ -106,8 +108,14 @@ export interface OpsPageOptions {
   run?: (args: string[], from: From) => Run;
   /** --auto-deploy: auto-deploy is on. */
   autoDeploy?: boolean;
-  /** repoHeads (observe.ts): the heads of a repository's branches, or a fake in the tests. */
-  heads?: (cwd: string, repo: string, branches: string[]) => Promise<{ heads: Record<string, string>; error: string | null }>;
+  /** repoHeads (observe.ts): the heads and release tags of a repository's branches, or a fake in the tests. */
+  heads?: (
+    cwd: string,
+    repo: string,
+    branches: string[]
+  ) => Promise<{ heads: Record<string, string>; tags?: ReleaseTag[]; error: string | null }>;
+  /** Changes an instance's auto-deploy mode on the instance (default: deploy_control via platform API), or a fake in tests. */
+  setAuto?: (e: Entry, mode: AutoMode) => Promise<void>;
   /** Runs all the tests on a branch's merge, for the tests' queue: `bun erga test <branch>` (startOpsPage), or a fake. None: no queue. */
   test?: (branch: string) => Run;
 }
@@ -139,6 +147,8 @@ export function serveOpsPage(o: OpsPageOptions) {
     polls: startPolls(),
     runs: [],
     auto: o.autoDeploy ? {} : null,
+    modes: {},
+    tags: {},
     heads: {},
     verify: { state: null, runs: [], kept: {}, busy: "", error: "" },
   };
@@ -170,6 +180,7 @@ export function serveOpsPage(o: OpsPageOptions) {
             if (stopped) return;
             onInstance[e.host] = got.jobs;
             cloud[e.host] = got.cloud;
+            if (got.autoMode !== undefined) facts.modes![e.host] = got.autoMode;
             setJobs();
           },
           () => {}
@@ -232,6 +243,8 @@ export function serveOpsPage(o: OpsPageOptions) {
       if (!up || ups[h]?.of != `${up.repo} ${up.branch}`) delete ups[h], delete facts.upstreams[h];
     }
     for (const h of Object.keys(facts.auto ?? {})) if (!hosts.has(h)) delete facts.auto![h];
+    for (const h of Object.keys(facts.modes ?? {})) if (!hosts.has(h)) delete facts.modes![h];
+    for (const h of Object.keys(facts.tags ?? {})) if (!hosts.has(h)) delete facts.tags![h];
     // Each repository that an instance tracks or names as its upstream: its branches' heads, for the commits on the
     // page and for auto-deploy.
     const repos = [...new Set(entries().flatMap((e) => [e.repo, ...(e.upstream ? [e.upstream.repo] : [])].map(repoSource)))];
@@ -254,10 +267,21 @@ export function serveOpsPage(o: OpsPageOptions) {
       return r.deploy;
     };
     for (const e of entries()) {
-      const head = facts.heads[e.host] ?? null;
+      const branchHead = facts.heads[e.host] ?? null;
+      const mode = facts.modes?.[e.host];
+      // Releases-only mode targets the newest semver tag on the tracked branch; commits mode (or no row yet) targets branch head; off targets nothing.
+      const target =
+        mode == "off"
+          ? null
+          : mode == "releases" && branchHead
+            ? (facts.tags?.[e.host]?.find((t) => inHistory(o.cwd, t.sha, branchHead))?.sha ?? null)
+            : branchHead;
       const runs = facts.answers[e.host]?.version ?? null;
+      // Never downgrade an instance running an untagged commit ahead of the latest release tag.
+      const ahead = mode == "releases" && !!target && !!runs && !target.startsWith(runs) && inHistory(o.cwd, target, runs);
+      const head = ahead ? null : target;
       const behind = !!head && !!runs && !head.startsWith(runs);
-      // A job of this instance has the head: it was tried. Else its history must have the commit that runs.
+      // A job of this instance has the target: it was tried. Else its history must have the commit that runs.
       const tried = behind && facts.jobs.some((j) => j.kind == "deploy" && j.host == e.host && j.commit == head);
       const rewritten = behind && !tried && !inHistory(o.cwd, runs!, head!);
       step(e.host, { type: "seen", head, runs, tried, rewritten, cloud: !!cloud[e.host] });
@@ -355,13 +379,17 @@ export function serveOpsPage(o: OpsPageOptions) {
       const r = repo
         ? await askRepo(o.cwd, repo, branches).catch((err: Error) => ({
             heads: {} as Record<string, string>,
+            tags: undefined as ReleaseTag[] | undefined,
             error: err.message,
           }))
-        : { heads: {}, error: null };
+        : { heads: {} as Record<string, string>, tags: undefined as ReleaseTag[] | undefined, error: null };
       if (stopped) return;
       // A repository that gave no answer: the last heads stay.
       if (!r.error) {
-        for (const e of tracking) facts.heads[e.host] = r.heads[e.branch] ?? null;
+        for (const e of tracking) {
+          facts.heads[e.host] = r.heads[e.branch] ?? null;
+          if (r.tags) facts.tags![e.host] = r.tags;
+        }
         for (const e of above) {
           const up = e.upstream!;
           ups[e.host] = { compared: ups[e.host]?.compared ?? "", of: `${up.repo} ${up.branch}`, head: r.heads[up.branch] ?? null };
@@ -476,6 +504,26 @@ export function serveOpsPage(o: OpsPageOptions) {
     return start(["deploy", c.sha.slice(0, 12), e.host], { kind: "deploy", host: e.host, commit: c.sha, branch: null, phase: "starting" });
   };
 
+  /** POST /api/auto-deploy {host, mode}: sets an instance's auto-deploy mode (off, releases, commits) on its database. */
+  const setAuto = async (req: Request) => {
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const e = "error" in facts.config ? null : facts.config.instances.find((x) => x.host == body.host);
+    if (!e) return Response.json({ error: `${String(body.host)} has no entry in .erga/config.json.` }, { status: 409 });
+    if (!isAutoMode(body.mode)) return Response.json({ error: "mode must be off, releases or commits." }, { status: 400 });
+    try {
+      if (o.setAuto) await o.setAuto(e, body.mode);
+      else {
+        const wrote = await setAutoOn(await sqlOf(e, await reachOf(e)), body.mode);
+        if (!wrote) return Response.json({ error: `${e.host} has no table for auto-deploy yet.` }, { status: 409 });
+      }
+      facts.modes![e.host] = body.mode;
+      changed();
+      return Response.json({ ok: true, mode: body.mode });
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 500 });
+    }
+  };
+
   /**
    * POST /api/verify {action, unit}: the verify suite's buttons. check: the prerequisites and the accounts again. run:
    * one setting, from deploy to remove (the page asked first, and said the cost). update: a kept setting's code again,
@@ -553,6 +601,7 @@ export function serveOpsPage(o: OpsPageOptions) {
         return new Response("Wrong origin.", { status: 403 });
       if (req.method == "POST" && (url.pathname == "/api/deploy" || url.pathname == "/api/rollback"))
         return act(req, url.pathname.slice(5));
+      if (req.method == "POST" && url.pathname == "/api/auto-deploy") return setAuto(req);
       if (req.method == "POST" && url.pathname == "/api/verify") return verify(req);
       // A run of the verify suite: its output, and its record.
       const ran = /^\/verify\/(log|run)\/([\w.-]+)$/.exec(url.pathname);

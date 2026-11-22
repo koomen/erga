@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { DeployError, type Fetch } from "./cloudflare-api";
 import type { Spec } from "./spec";
+import { parseCommitsFeed, parseRefs, type ReleaseTag } from "./tags";
 
 /** GitHub gave no answer now: not a refusal of the release. A DeployError still, so whatever shows a failure shows this one too. */
 export class TryLater extends DeployError {}
@@ -75,18 +76,23 @@ const page = (fetch: Fetch, branch: Branch, path: string, what: string): Effect.
   });
 
 /**
+ * The head of the spec's branch and all semver release tags (vX.Y.Z, newest first), in one read of git's refs list.
+ */
+export const refsAtGitHub = (fetch: Fetch, branch: Branch): Effect.Effect<{ head: string; tags: ReleaseTag[] }, DeployError> =>
+  Effect.gen(function* () {
+    const refs = yield* page(fetch, branch, ".git/info/refs?service=git-upload-pack", "the head");
+    const parsed = parseRefs(refs, branch.branch);
+    if (!parsed.head)
+      return yield* new DeployError({ message: `${branch.repo} has no branch ${branch.branch}, as GitHub lists its refs.` });
+    return { head: parsed.head, tags: parsed.tags };
+  });
+
+/**
  * The head of the spec's branch: the commit's full name. From git's list of the repository's refs, one line for each
  * ref: its length, the commit, a space and the ref's name (the first ref's line has more after a NUL).
  */
 export const headAtGitHub = (fetch: Fetch, branch: Branch): Effect.Effect<string, DeployError> =>
-  Effect.gen(function* () {
-    const refs = yield* page(fetch, branch, ".git/info/refs?service=git-upload-pack", "the head");
-    for (const line of refs.split("\n")) {
-      const ref = /([0-9a-f]{40}) (.+)$/.exec(line.split("\0")[0]);
-      if (ref?.[2] == `refs/heads/${branch.branch}`) return ref[1];
-    }
-    return yield* new DeployError({ message: `${branch.repo} has no branch ${branch.branch}, as GitHub lists its refs.` });
-  });
+  Effect.map(refsAtGitHub(fetch, branch), (r) => r.head);
 
 /** A commit of the branch, as GitHub's feed says it: its full name, the first line of its message, and its time (ms). */
 export interface BranchCommit {
@@ -95,16 +101,6 @@ export interface BranchCommit {
   at: number;
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-/** XML's text as plain text: its five names, and a character by its number. */
-const plain = (xml: string) =>
-  xml.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (all, dec, hex, name) =>
-    dec || hex ? String.fromCodePoint(Number.parseInt(dec ?? hex, dec ? 10 : 16) || 0xfffd) : (ENTITIES[name.toLowerCase()] ?? all)
-  );
-
-/** The most characters of a commit's title that a look keeps. */
-const TITLE = 200;
-
 /**
  * The branch's last commits, newest first (GitHub's feed has 20 at most). The titles are a stranger's text: whatever
  * shows them escapes them. An entry that this code can't read is an error: it never guesses a commit.
@@ -112,16 +108,10 @@ const TITLE = 200;
 export const commitsAtGitHub = (fetch: Fetch, branch: Branch): Effect.Effect<BranchCommit[], DeployError> =>
   Effect.gen(function* () {
     const feed = yield* page(fetch, branch, `/commits/${branch.branch}.atom`, "the commits");
-    const commits: BranchCommit[] = [];
-    for (const entry of feed.split("<entry>").slice(1)) {
-      const sha = /<id>[^<]*Commit\/([0-9a-f]{40})<\/id>/.exec(entry)?.[1];
-      const title = /<title>([^<]*)<\/title>/.exec(entry)?.[1];
-      const at = Date.parse(/<updated>([^<]*)<\/updated>/.exec(entry)?.[1] ?? "");
-      if (!sha || title == null || Number.isNaN(at))
-        return yield* new DeployError({
-          message: `GitHub gave the commits of ${branch.branch} on ${branch.repo} in a way Erga doesn't understand.`,
-        });
-      commits.push({ sha, title: plain(title).replace(/\s+/g, " ").trim().slice(0, TITLE), at });
-    }
+    const commits = parseCommitsFeed(feed);
+    if (!commits)
+      return yield* new DeployError({
+        message: `GitHub gave the commits of ${branch.branch} on ${branch.repo} in a way Erga doesn't understand.`,
+      });
     return commits;
   });

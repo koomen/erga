@@ -11,6 +11,7 @@ import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
 import { type InstanceView, instanceHtml, sha7 } from "../../shared/ops-view";
 import { plural, timeAgo } from "../../shared/time";
+import { type AutoMode, type ReleaseTag, tagBySha } from "../deployer/tags";
 import { type Auto, REWRITTEN } from "./auto-state";
 import { type Config, type Entry, repoName, upstreamName } from "./config";
 import type { Answer, Commit as StatusCommit } from "./flow";
@@ -54,6 +55,10 @@ export interface Facts {
   runs: TestRun[];
   /** Auto-deploy: each instance's state, by its host; null: the mode is off. */
   auto: Record<string, Auto> | null;
+  /** Each instance's auto-deploy mode from deploy_control (off, releases, commits), by its host. */
+  modes?: Record<string, AutoMode | null>;
+  /** Semver release tags (newest first) of each instance's repository, by host. */
+  tags?: Record<string, ReleaseTag[]>;
   /** The head of the branch that each instance tracks, by its host, as its repository last answered. */
   heads: Record<string, string | null>;
   /**
@@ -115,7 +120,16 @@ function stateOf(a: Answer | undefined): { cls: string; what: string } {
   return { cls: "ok", what: `runs ${a.version ?? "no known commit"}` };
 }
 
-/** An instance's word in the list, when it is not at its branch's head: what happens to it now, or how far it is behind. */
+/** The newest release tag on `e`'s log, or null. */
+const latestReleaseOf = (e: Entry, f: Facts): ReleaseTag | null => {
+  const tags = f.tags?.[e.host];
+  const log = f.logs[e.host];
+  if (!tags?.length || !log?.length) return null;
+  const shas = new Set(log.map((c) => c.sha));
+  return tags.find((t) => shas.has(t.sha)) ?? null;
+};
+
+/** An instance's word in the list, when it is not at its branch's head (or latest release): what happens now, or how far behind. */
 function wordOf(e: Entry, f: Facts): { cls: string; text: string; tip: string } | null {
   const job = activeJobs(f.jobs, f.run).find((j) => j.host == e.host && (j.kind == "deploy" || j.kind == "rollback"));
   if (job) return { cls: "deploying", text: job.kind == "deploy" ? "deploying" : "rolling back", tip: job.command };
@@ -124,6 +138,17 @@ function wordOf(e: Entry, f: Facts): { cls: string; text: string; tip: string } 
   const a = f.auto?.[e.host];
   if (a?.at == "failed") return { cls: "failed", text: "failed", tip: `Auto-deploy stopped at ${sha7(a.head)}: ${a.why}` };
   const v = f.answers[e.host]?.version;
+  const mode = f.modes?.[e.host];
+  if (mode == "releases") {
+    const rel = latestReleaseOf(e, f);
+    if (!rel) return null;
+    if (v && rel.sha.startsWith(v)) return { cls: "rel", text: rel.tag, tip: `Runs latest release ${rel.tag}` };
+    const log = f.logs[e.host] ?? [];
+    const liveIdx = v ? log.findIndex((c) => c.sha.startsWith(v)) : -1;
+    const tagIdx = log.findIndex((c) => c.sha == rel.sha);
+    if (liveIdx >= 0 && tagIdx >= 0 && liveIdx < tagIdx) return null;
+    return { cls: "behind", text: rel.tag, tip: `Release ${rel.tag} is not deployed yet` };
+  }
   const n = v ? (f.logs[e.host]?.findIndex((c) => c.sha.startsWith(v)) ?? -1) : -1;
   return n > 0 ? { cls: "behind", text: `${n} behind`, tip: `${plural(n, "commit")} of ${e.branch} not deployed` } : null;
 }
@@ -203,6 +228,19 @@ const upstreamLine = (g: Entry) =>
     ? ` Upstream: ${g.upstream.repo == g.repo ? "" : `<code>${esc(g.upstream.repo)}</code> `}<code>${esc(g.upstream.branch)}</code>.`
     : "";
 
+const MODE_BUTTONS: readonly { mode: AutoMode; label: string }[] = [
+  { mode: "off", label: "Off" },
+  { mode: "releases", label: "Releases only" },
+  { mode: "commits", label: "Every commit" },
+];
+
+/** Per-instance Auto-deploy mode selector shown beside the tracks line when the instance's deploy_control row is read. */
+const modeControl = (host: string, mode: AutoMode) =>
+  `<div class="seg" role="radiogroup" aria-label="Auto-deploy mode for ${esc(host)}">${MODE_BUTTONS.map(
+    (b) =>
+      `<button type="button" role="radio" aria-checked="${mode == b.mode}" data-ops-auto data-host="${esc(host)}" data-auto-mode="${b.mode}">${b.label}</button>`
+  ).join("")}</div>`;
+
 /** The live part of the page: the list and the chosen instance. `name` is the page's hash: <host>[/<tab>[/<job>]]. */
 export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   if ("error" in f.config)
@@ -220,13 +258,24 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   const a = f.answers[g.host];
   const repo = f.polls.sources[repoSource(g.repo)];
   const u = g.upstream ? f.upstreams[g.host] : undefined;
+  const mode = f.modes?.[g.host] ?? null;
+  const bySha = tagBySha(f.tags?.[g.host] ?? []);
+  const latest = latestReleaseOf(g, f);
+  const commits = all?.length
+    ? rowsOf(all, a?.version ?? null).map((c) => {
+        const tag = bySha.get(c.sha);
+        return tag ? { ...c, tag } : c;
+      })
+    : null;
   const view: InstanceView = {
     host: g.host,
     repo: g.repo,
     branch: g.branch,
+    ...(mode ? { autoMode: mode, tracksRight: modeControl(g.host, mode) } : {}),
+    ...(latest ? { latestRelease: latest } : {}),
     ...(u ? { upstream: { name: upstreamName({ repo: g.repo, upstream: g.upstream! }), ...u } } : {}),
-    tracksMore: upstreamLine(g),
-    commits: all?.length ? rowsOf(all, a?.version ?? null) : null,
+    tracksMore: `${latest ? ` Latest release <code>${esc(latest.tag)}</code>.` : ""}${upstreamLine(g)}`,
+    commits,
     none: repo?.error ? `This machine can't read ${g.repo}: ${repo.error}` : `The commits of ${g.branch} are not here yet.`,
     runs: a?.version ?? null,
     lost: `${g.host} runs ${a?.version}, which ${g.branch} does not have in this clone.`,

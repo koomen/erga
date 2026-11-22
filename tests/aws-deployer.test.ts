@@ -43,7 +43,7 @@ const shape: DeployerShape = {
   key: `arn:aws:kms:${REGION}:${ACCOUNT}:key/1111-2222`,
   gateKey: `arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:GateKey-AbCdEf`,
 };
-const MIGRATION = ["0470_deploys.sql", "0480_deploy_control.sql"]
+const MIGRATION = ["0470_deploys.sql", "0480_deploy_control.sql", "0540_deploy_auto_mode.sql"]
   .map((name) => readFileSync(join(ROOT, "server/migrations", name), "utf8"))
   .join("\n");
 

@@ -13,13 +13,14 @@
 import { esc } from "./html";
 import { plural, timeAgo } from "./time";
 
-/** A commit of the instance's branch. `release`: GitHub's release of it, where the page knows (none yet, or refused: no deploy). */
+/** A commit of the instance's branch. `release`: GitHub's release of it, where the page knows (none yet, or refused: no deploy). `tag`: its vX.Y.Z release tag. */
 export interface ViewCommit {
   sha: string;
   subject: string;
   author?: string;
   at: number;
   release?: "released" | "none" | "refused";
+  tag?: string;
 }
 
 /** A deploy or a rollback of the instance, as the view shows it. */
@@ -47,8 +48,14 @@ export interface InstanceView {
   branch: string;
   /** The instance's upstream: its name, its head, its commits that the instance's branch lacks (newest first), and how many the branch has that it lacks. */
   upstream?: { name: string; head: string; behind: ViewCommit[]; ahead: number };
+  /** Auto-deploy mode for this instance, when known: "releases" mutes untagged commits above the live commit. */
+  autoMode?: "off" | "releases" | "commits";
+  /** The newest semver release tag on the tracked branch, when known. */
+  latestRelease?: { tag: string; sha: string; release?: "released" | "none" | "refused" } | null;
   /** HTML after what it tracks, in the same line. */
   tracksMore?: string;
+  /** HTML at the right of the tracks line (for example, the ops page's Auto-deploy mode control). */
+  tracksRight?: string;
   /** The branch's commits, newest first, down to the one that runs. null: the page has none, and `none` says why. */
   commits: ViewCommit[] | null;
   none: string;
@@ -217,10 +224,21 @@ function commits(v: InstanceView, now: number): string {
   const above = u ? u.behind.slice(0, UPSTREAM_ROWS) : [];
   const apart = !!u && u.behind.length > 0 && u.ahead > 0;
   const total = above.length + rows.length;
-  const tag = (text: string, tip: string) => `<span class="ref" title="${esc(tip)}">${esc(text)}</span>`;
+  const tag = (text: string, tip: string, cls = "") => `<span class="ref${cls ? ` ${cls}` : ""}" title="${esc(tip)}">${esc(text)}</span>`;
   const upTag = (c: ViewCommit) => (u && c.sha == u.head ? tag(u.name, `${u.name}, the upstream, is at this commit`) : "");
-  const row = (c: ViewCommit, n: number, kind: string, tip: string, tags: string, cell: string, cut: "above" | "below" | "") =>
-    `<div class="row ${kind}" data-sha="${esc(c.sha)}"><span class="rail${n && cut != "above" ? " up" : ""}${n < total - 1 && cut != "below" ? " down" : ""} ${kind}" title="${esc(tip)}"><i class="dot ${kind}"></i></span><span class="subj" title="${esc(c.subject)}">${tags}${esc(c.subject)}</span><span class="who">${esc(c.author ?? "")}</span><code class="sha">${esc(sha7(c.sha))}</code><time>${esc(timeAgo(c.at, now))}</time>${cell}</div>`;
+  const row = (
+    c: ViewCommit,
+    n: number,
+    kind: string,
+    tip: string,
+    tags: string,
+    cell: string,
+    cut: "above" | "below" | "",
+    muted = false
+  ) => {
+    const dot = muted ? "muted" : kind;
+    return `<div class="row ${kind}${muted ? " unreleased" : ""}" data-sha="${esc(c.sha)}"><span class="rail${n && cut != "above" ? " up" : ""}${n < total - 1 && cut != "below" ? " down" : ""} ${dot}" title="${esc(tip)}"><i class="dot ${dot}"></i></span><span class="subj" title="${esc(c.subject)}">${tags}${esc(c.subject)}</span><span class="who">${esc(c.author ?? "")}</span><code class="sha">${esc(sha7(c.sha))}</code><time>${esc(timeAgo(c.at, now))}</time>${cell}</div>`;
+  };
   const upstream = above
     .map((c, i) =>
       row(
@@ -238,8 +256,11 @@ function commits(v: InstanceView, now: number): string {
     u && u.behind.length > above.length
       ? `<div class="more">${esc(`and ${plural(u.behind.length - above.length, "more commit")} of ${u.name}`)}</div>`
       : "";
-  // The newest commit that takes a deploy: the head, or the first one under it that GitHub has a release of.
-  const first = rows.findIndex((c) => !c.release || c.release == "released");
+  // The newest commit that takes a deploy: in Releases-only mode, the newest tagged release; else the head (or first with a release).
+  const releasesOnly = v.autoMode == "releases";
+  const first = releasesOnly
+    ? rows.findIndex((c) => !!c.tag && (!c.release || c.release == "released"))
+    : rows.findIndex((c) => !c.release || c.release == "released");
   const body = rows
     .map((c, i) => {
       const kind = on >= 0 && i >= on ? "on" : "off";
@@ -247,15 +268,23 @@ function commits(v: InstanceView, now: number): string {
       const deploying = v.deploying.some((d) => d.slice(0, 12) == c.sha.slice(0, 12));
       const at = deployedAt(v.jobs, c.sha);
       const live = !!v.runs && c.sha.startsWith(v.runs);
+      const muted = releasesOnly && kind == "off" && !c.tag;
       const cell =
         !live || deploying
           ? c.release && c.release != "released" && !deploying
             ? noRelease(c)
             : deployButton(v, c, deploying, i == first)
           : liveCell(v, at ? short(at, now) : "");
-      const tip = kind == "on" ? `Live on ${v.host}` : `On ${v.branch}, not on ${v.host} yet`;
-      const tags = (u && i == 0 ? tag(v.branch, `${v.branch}, the branch that ${v.host} tracks, is at this commit`) : "") + upTag(c);
-      return row(c, above.length + i, kind, tip, tags, cell, apart && i == 0 ? "above" : "");
+      const tip =
+        kind == "on"
+          ? `Live on ${v.host}`
+          : muted
+            ? `On ${v.branch}, unreleased (auto-deploy follows tagged releases only)`
+            : `On ${v.branch}, not on ${v.host} yet`;
+      const relTag = c.tag ? tag(c.tag, `Release ${c.tag}`, "rel") : "";
+      const tags =
+        relTag + (u && i == 0 ? tag(v.branch, `${v.branch}, the branch that ${v.host} tracks, is at this commit`) : "") + upTag(c);
+      return row(c, above.length + i, kind, tip, tags, cell, apart && i == 0 ? "above" : "", muted);
     })
     .join("");
   return `${note}<section class="commits" aria-label="Commits">${head}<div class="grid" style="--cols: 1">${upstream}${more}${body}</div>
@@ -275,5 +304,7 @@ export function instanceHtml(v: InstanceView, wanted: string, id: string, now = 
   const body = tab == "logs" ? logs(v, id, now) : tab == "history" ? history(v, now) : (v.top ?? "") + commits(v, now) + (v.bottom ?? "");
   const failed = v.failed ? `<p class="note bad failed">${esc(v.failed)}</p>` : "";
   const title = v.heading === false ? "" : `<h2 class="title">${esc(v.host)}</h2>`;
-  return `<section class="main" data-host="${esc(v.host)}" data-tab="${tab}">${title}<p class="tracks-line">Tracks <code>${esc(v.repo)}</code> <code>${esc(v.branch)}</code>.${v.tracksMore ?? ""}</p>${tabs}${jobLine(v, now)}${failed}<div class="tab-body">${body}</div></section>`;
+  const tracks = `<p class="tracks-line">Tracks <code>${esc(v.repo)}</code> <code>${esc(v.branch)}</code>.${v.tracksMore ?? ""}</p>`;
+  const head = v.tracksRight ? `<div class="tracks-bar">${tracks}${v.tracksRight}</div>` : tracks;
+  return `<section class="main" data-host="${esc(v.host)}" data-tab="${tab}">${title}${head}${tabs}${jobLine(v, now)}${failed}<div class="tab-body">${body}</div></section>`;
 }

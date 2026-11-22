@@ -3,7 +3,7 @@
 // And GitHub's one workflow (.github/workflows/release.yml), which publishes the release and deploys nothing.
 
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -160,7 +160,7 @@ test("GitHub runs one workflow, the release: staging, main and verify only, no s
   expect(names(dir)).toEqual(["release.yml"]);
   const text = readFileSync(new URL("release.yml", dir), "utf8");
   const flow = Bun.YAML.parse(text) as Flow;
-  expect(flow.on).toEqual({ push: { branches: ["staging", "main", "verify"] } });
+  expect(flow.on).toEqual({ push: { branches: ["staging", "main", "verify"], tags: ["v*.*.*"] } });
   // Only publish may write, and only packages: it waits for the tests, and runs nothing of the repository's.
   expect(flow.permissions).toEqual({});
   expect(Object.fromEntries(Object.entries(flow.jobs).map(([name, job]) => [name, job.permissions]))).toEqual({
@@ -180,9 +180,99 @@ test("GitHub runs one workflow, the release: staging, main and verify only, no s
   // Every expression: no secret but GitHub's own token, and no input of a person's in a script.
   expect([...new Set([...text.matchAll(/\$\{\{\s*(.*?)\s*\}\}/g)].map((m) => m[1]))]).toEqual(["github.sha", "secrets.GITHUB_TOKEN"]);
   // verify's commits (bun erga try) go to a package of their own: no instance of staging or main reads it.
-  expect(flow.jobs.publish.steps.find((step) => step.name == "publish")!.run).toContain(
+  const publishRun = flow.jobs.publish.steps.find((step) => step.name == "publish")!.run!;
+  expect(publishRun).toContain(
     'package="${GITHUB_REPOSITORY,,}"\nif [ "$GITHUB_REF_NAME" = verify ]; then package="$package-verify"; fi\nrelease="ghcr.io/$package:$GITHUB_SHA"\n'
   );
+  // A vX.Y.Z tag push aliases the commit's OCI release under :vX.Y.Z without overwriting the SHA artifact.
+  expect(publishRun).toContain('if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then');
+  expect(publishRun).toContain('./oras tag "$release" "$GITHUB_REF_NAME"');
+});
+
+test("release tags and auto-deploy mode helpers (deploy/deployer/tags.ts)", async () => {
+  const { autoModeOf, compareSemver, parseRefs, pickAutoTarget, tagBySha } = await import("../deploy/deployer/tags");
+  expect(compareSemver("v0.10.0", "v0.2.0")).toBeGreaterThan(0);
+  expect(compareSemver("v1.0.0", "v0.99.99")).toBeGreaterThan(0);
+  const A = "a".repeat(40);
+  const B = "b".repeat(40);
+  const C = "c".repeat(40);
+  const refs = [
+    `${A} refs/heads/main`,
+    `${"9".repeat(40)} refs/tags/v0.2.0`,
+    `${B} refs/tags/v0.2.0^{}`,
+    `${C} refs/tags/v0.1.0`,
+    `${A} refs/tags/v0.3.0-rc.1`,
+    `${A} refs/tags/latest`,
+    `${B} refs/tags/v0.10.0`,
+  ].join("\n");
+  const parsed = parseRefs(refs, "main");
+  expect(parsed).toEqual({
+    head: A,
+    tags: [
+      { tag: "v0.10.0", sha: B },
+      { tag: "v0.2.0", sha: B },
+      { tag: "v0.1.0", sha: C },
+    ],
+  });
+  expect(tagBySha(parsed.tags).get(B)).toBe("v0.10.0");
+  expect(autoModeOf(0, "releases")).toBe("off");
+  expect(autoModeOf(1, "releases")).toBe("releases");
+  expect(autoModeOf(1, "commits")).toBe("commits");
+  expect(autoModeOf(1, null)).toBe("commits");
+  expect(pickAutoTarget("off", "main", A, "released", null)).toEqual({ wait: "Auto-deploy is off." });
+  expect(pickAutoTarget("releases", "main", A, "released", null)).toEqual({
+    wait: "No release tag (vX.Y.Z) on main yet: nothing to deploy.",
+  });
+  expect(pickAutoTarget("releases", "main", A, "none", { tag: "v0.2.0", sha: B, release: "released" })).toEqual({
+    sha: B,
+    tag: "v0.2.0",
+    release: "released",
+  });
+});
+
+test("bun erga release refuses untested origin/main and allows tested --dry-run", async () => {
+  const { runRelease } = await import("../deploy/cli/release");
+  const { runPath, treeOf } = await import("../deploy/cli/test-run");
+  const { commit, gitWorld, sh } = await import("./helpers/git-world.ts");
+  const { top, origin, clone } = gitWorld("erga-release-");
+  try {
+    sh(clone, "git", "checkout", "--quiet", "-b", "main");
+    const sha = commit(clone, "a.txt", "Add feature");
+    sh(clone, "git", "push", "--quiet", "origin", "main");
+    const dir = join(clone, ".erga");
+    const lines: string[] = [];
+    const log = (s: string) => void lines.push(s);
+    // Dry run refuses when origin/main has no passing test record.
+    await expect(runRelease({ dir, clone, repo: "example/erga", dry: true, log })).rejects.toThrow("Tests have not passed on main");
+    // Real run refuses when the test gate fails, and creates no tag or release.
+    let created = false;
+    const failing = () => ({ run: { results: [{ file: "e2e/a.e2e.ts", titlePath: ["fails"], status: "failed" as const }] } });
+    await expect(
+      runRelease({
+        dir,
+        clone,
+        repo: "example/erga",
+        log,
+        suite: failing,
+        create: () => ((created = true), "https://example.com/releases/v0.1.0"),
+      })
+    ).rejects.toThrow("1 test failed on");
+    expect(created).toBe(false);
+    expect(sh(clone, "git", "tag")).toBe("");
+    expect(sh(origin, "git", "tag")).toBe("");
+    // With a passing test record, dry run succeeds and previews v0.1.0 without creating a tag.
+    const tree = treeOf(clone, sha)!;
+    mkdirSync(join(dir, "tests"), { recursive: true });
+    writeFileSync(
+      runPath(dir, tree),
+      JSON.stringify({ tree, commit: sha, state: "passed", started: 1, ended: 2, passed: 10, failed: 0, failedTests: [], log: "x" })
+    );
+    const preview = await runRelease({ dir, clone, repo: "example/erga", dry: true, log });
+    expect(preview).toMatchObject({ version: "v0.1.0", sha, url: null });
+    expect(lines.join("\n")).toContain("Release v0.1.0");
+  } finally {
+    rmSync(top, { recursive: true, force: true });
+  }
 });
 
 test("the workflow deletes the versions older than 7 days of verify's package, and nothing of another branch's", () => {

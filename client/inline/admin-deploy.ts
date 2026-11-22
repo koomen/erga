@@ -52,16 +52,55 @@ export default function adminDeploy(): void {
     const ask = live.querySelector<HTMLElement>(".confirm");
     const open = ask?.matches(":popover-open") ? { ...ask.dataset } : null;
     const err = ask?.querySelector(".err")?.textContent ?? "";
-    const focus = document.activeElement?.id == "auto-deploy";
+    const focus = document.activeElement?.closest<HTMLElement>("#auto-deploy [data-auto-mode]")?.dataset.autoMode;
     live.innerHTML = html;
     if (open) question(open, err);
-    if (focus) document.getElementById("auto-deploy")?.focus({ preventScroll: true });
+    if (focus) live.querySelector<HTMLElement>(`#auto-deploy [data-auto-mode="${focus}"]`)?.focus({ preventScroll: true });
     const log = live.querySelector(".log");
     if (log) log.scrollTop = atEnd || live.querySelector<HTMLElement>(".logs")?.dataset.job != job ? log.scrollHeight : old!.scrollTop;
   }
 
+  const autoDesc = (mode: string, branch: string) =>
+    mode == "off"
+      ? "Auto-deploy is off. Use Deploy on a row below to deploy by hand."
+      : mode == "releases"
+        ? `Deploys each new tagged release (vX.Y.Z) on ${branch} by itself.`
+        : `Deploys each new commit on ${branch} by itself.`;
+
   live.addEventListener("click", (e) => {
     const at = e.target as Element;
+    const autoBtn = at.closest<HTMLButtonElement>("#auto-deploy [data-auto-mode]");
+    if (autoBtn) {
+      const mode = autoBtn.dataset.autoMode!;
+      if (autoBtn.getAttribute("aria-checked") == "true") return;
+      const row = autoBtn.closest("li")!;
+      const buttons = [...row.querySelectorAll<HTMLButtonElement>("[data-auto-mode]")];
+      const prev = buttons.find((b) => b.getAttribute("aria-checked") == "true")?.dataset.autoMode ?? "off";
+      const desc = row.querySelector<HTMLElement>("[data-auto-desc]")!;
+      const branch = desc.dataset.branch ?? "the branch";
+      const show = (m: string) => {
+        for (const b of buttons) b.setAttribute("aria-checked", String(b.dataset.autoMode == m));
+        desc.textContent = autoDesc(m, branch);
+      };
+      show(mode);
+      const save = () => {
+        mark.set("auto-deploy", "saving");
+        runTool("deploy", { action: "auto", mode }).then(
+          () => {
+            mark.set("auto-deploy", "saved");
+            say(row.querySelector(".hint")!, "");
+            void draw();
+          },
+          (err: Error) => {
+            show(prev);
+            say(row.querySelector(".hint")!, err.message, true);
+            mark.set("auto-deploy", "error", { title: "Auto-deploy not saved", detail: err.message }, save);
+          }
+        );
+      };
+      save();
+      return;
+    }
     const button = at.closest<HTMLElement>("[data-deploy], [data-rollback]");
     if (button) {
       const { host, sha, ask, note } = button.dataset;
@@ -82,32 +121,6 @@ export default function adminDeploy(): void {
         (e: Error) => void (err.textContent = e.message)
       )
       .finally(() => (go.disabled = false));
-  });
-
-  // The Auto-deploy switch saves as it changes; one that the server refused goes back, and says why.
-  live.addEventListener("change", (e) => {
-    const input = e.target as HTMLInputElement;
-    if (input.id != "auto-deploy") return;
-    const row = input.closest("li")!;
-    const on = input.checked;
-    row.querySelector(".state")!.textContent = on ? "On" : "Off";
-    const save = () => {
-      mark.set("auto-deploy", "saving");
-      runTool("deploy", { action: "auto", on }).then(
-        () => {
-          mark.set("auto-deploy", "saved");
-          say(row.querySelector(".hint")!, "");
-          void draw();
-        },
-        (e: Error) => {
-          input.checked = !on;
-          row.querySelector(".state")!.textContent = on ? "Off" : "On";
-          say(row.querySelector(".hint")!, e.message, true);
-          mark.set("auto-deploy", "error", { title: "Auto-deploy not saved", detail: e.message }, save);
-        }
-      );
-    };
-    save();
   });
 
   // Draws again, at the pace that the server gave with the live part (each draw sets the next one's time: an ask

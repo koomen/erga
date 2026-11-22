@@ -16,9 +16,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { DeployError } from "./cloudflare-api";
 import { type NoTable, row, rowsAs, type Sql, type Start } from "./instance";
+import { type AutoMode, autoModeOf, type LatestRelease, SEMVER } from "./tags";
 
 /** A commit's full name. */
 const Sha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
+const Tag = Schema.String.check(Schema.isPattern(SEMVER));
+const ReleaseStatus = Schema.Literals(["released", "none", "refused"]);
 
 /** The most commits that a look writes. */
 export const COMMITS = 10;
@@ -26,16 +29,23 @@ export const COMMITS = 10;
 /**
  * A commit of the spec's branch, as the deployer's look saw it. `title`: its message's first line, as GitHub gave it
  * (whatever shows it escapes it). `release`: GitHub has its release, has none (yet), or has one that the deployer
- * refuses (it is not one release of Erga's).
+ * refuses (it is not one release of Erga's). `tag`: its newest semver release tag (vX.Y.Z), when it has one.
  */
 const Commit = Schema.Struct({
   sha: Sha,
   title: Schema.String.check(Schema.isMaxLength(200)),
   at: Schema.Number,
-  release: Schema.Literals(["released", "none", "refused"]),
+  release: ReleaseStatus,
+  tag: Schema.optionalKey(Tag),
 });
 export type Commit = typeof Commit.Type;
 const Commits = Schema.Array(Commit).check(Schema.isMaxLength(COMMITS));
+
+const LatestReleaseSchema = Schema.Struct({
+  tag: Tag,
+  sha: Sha,
+  release: ReleaseStatus,
+});
 
 /** What an admin asked for in the app: this commit's deploy, or the rollback. `by`: who asked. `at`: when, in ms. */
 export type Ask = ({ kind: "deploy"; sha: string } | { kind: "rollback" }) & { by: string; at: number };
@@ -43,10 +53,12 @@ export type Ask = ({ kind: "deploy"; sha: string } | { kind: "rollback" }) & { b
 /** The row. `looked`: when the deployer last looked (ms), or null: none did. `head`, `commits`: the last look's (newest first). */
 export interface Control {
   auto: boolean;
+  autoMode: AutoMode;
   looked: number | null;
   ask: Ask | null;
   head: string | null;
   commits: readonly Commit[];
+  latestRelease: LatestRelease | null;
 }
 
 /** An ask as the column `ask` holds it. */
@@ -54,6 +66,7 @@ const askText = (ask: Ask) => (ask.kind == "deploy" ? `deploy ${ask.sha}` : "rol
 
 const Row = Schema.Struct({
   auto: Schema.Literals([0, 1]),
+  auto_mode: Schema.NullOr(Schema.Literals(["commits", "releases"])),
   ask: Schema.NullOr(Schema.String.check(Schema.isPattern(/^(deploy [0-9a-f]{40}|rollback)$/))),
   // One line, since it goes into the job's row as where the job came from.
   by: Schema.NullOr(Schema.String.check(Schema.isMaxLength(100).abort(), Schema.isPattern(/^[^\n\r]+$/))),
@@ -61,18 +74,27 @@ const Row = Schema.Struct({
   looked: Schema.NullOr(Schema.Number),
   head: Schema.NullOr(Sha),
   commits: Commits,
+  latest_release: Schema.NullOr(LatestReleaseSchema),
 });
 
 /** The row, or null: the instance has none yet (no ask, auto-deploy off). */
 export const readControl = (sql: Sql): Effect.Effect<Control | null, DeployError | NoTable> =>
   Effect.gen(function* () {
     const rows = yield* sql(
-      `SELECT ${row("json_object('auto', auto, 'ask', ask, 'by', ask_by, 'at', ask_at, 'looked', looked, 'head', head, 'commits', json(commits))")} FROM deploy_control WHERE id = 1`,
+      `SELECT ${row("json_object('auto', auto, 'auto_mode', auto_mode, 'ask', ask, 'by', ask_by, 'at', ask_at, 'looked', looked, 'head', head, 'commits', json(commits), 'latest_release', json(latest_release))")} FROM deploy_control WHERE id = 1`,
       []
     );
     const [r] = yield* rowsAs(Row, rows);
     if (!r) return null;
-    const control = { auto: r.auto == 1, looked: r.looked, head: r.head, commits: r.commits };
+    const autoMode = autoModeOf(r.auto, r.auto_mode);
+    const control = {
+      auto: autoMode != "off",
+      autoMode,
+      looked: r.looked,
+      head: r.head,
+      commits: r.commits,
+      latestRelease: r.latest_release,
+    };
     if (r.ask == null) return { ...control, ask: null };
     if (r.by == null || r.at == null)
       return yield* new DeployError({ message: "The ask on the instance does not say who asked, and when." });
@@ -83,36 +105,45 @@ export const readControl = (sql: Sql): Effect.Effect<Control | null, DeployError
 
 /**
  * Writes the deployer's look: now, the head of the spec's branch, the branch's last commits (newest first, COMMITS at
- * most), and why the look failed (else null). It makes the row when there is none. It never touches auto-deploy or
- * the ask. A look that the row's reader could not read is refused, never written.
+ * most), its newest release tag (when it has one), and why the look failed (else null). It makes the row when there is
+ * none. It never touches auto-deploy or the ask. A look that the row's reader could not read is refused, never written.
  */
 export const writeLook = (
   sql: Sql,
-  look: { head: string | null; error: string | null; commits: readonly Commit[] }
+  look: { head: string | null; error: string | null; commits: readonly Commit[]; latestRelease?: LatestRelease | null }
 ): Effect.Effect<void, DeployError | NoTable> =>
   Effect.gen(function* () {
     const checked = yield* Effect.mapError(
-      Schema.decodeUnknownEffect(Schema.Struct({ head: Schema.NullOr(Sha), commits: Commits }), { onExcessProperty: "error" })({
+      Schema.decodeUnknownEffect(
+        Schema.Struct({ head: Schema.NullOr(Sha), commits: Commits, latestRelease: Schema.NullOr(LatestReleaseSchema) }),
+        { onExcessProperty: "error" }
+      )({
         head: look.head,
         commits: look.commits,
+        latestRelease: look.latestRelease ?? null,
       }),
       (e) => new DeployError({ message: `This is not a look: ${e.message}` })
     );
     const now = yield* Clock.currentTimeMillis;
     yield* sql(
-      "INSERT INTO deploy_control (id, looked, head, error, commits) VALUES (1, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET looked = excluded.looked, head = excluded.head, error = excluded.error, commits = excluded.commits",
-      [now, checked.head, look.error, JSON.stringify(checked.commits)]
+      "INSERT INTO deploy_control (id, looked, head, error, commits, latest_release) VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET looked = excluded.looked, head = excluded.head, error = excluded.error, commits = excluded.commits, latest_release = excluded.latest_release",
+      [now, checked.head, look.error, JSON.stringify(checked.commits), checked.latestRelease ? JSON.stringify(checked.latestRelease) : null]
     );
   });
 
 /**
- * Turns auto-deploy on or off, as the app does: setup turns it on when a person chooses deploys from the cloud. It
- * makes the row when there is none, and touches nothing else of it.
+ * Sets auto-deploy (off, releases, or commits), as the app does: setup sets it to releases when a person chooses
+ * deploys from the cloud. It makes the row when there is none, and touches nothing else of it.
  */
-export const writeAuto = (sql: Sql, on: boolean): Effect.Effect<void, DeployError | NoTable> =>
-  Effect.asVoid(
-    sql("INSERT INTO deploy_control (id, auto) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET auto = excluded.auto", [on ? 1 : 0])
-  );
+export const writeAuto = (sql: Sql, mode: AutoMode): Effect.Effect<void, DeployError | NoTable> =>
+  mode == "off"
+    ? Effect.asVoid(sql("INSERT INTO deploy_control (id, auto) VALUES (1, 0) ON CONFLICT (id) DO UPDATE SET auto = 0", []))
+    : Effect.asVoid(
+        sql(
+          "INSERT INTO deploy_control (id, auto, auto_mode) VALUES (1, 1, ?) ON CONFLICT (id) DO UPDATE SET auto = 1, auto_mode = excluded.auto_mode",
+          [mode]
+        )
+      );
 
 /**
  * Takes `ask` off the row: true when it was still there. The deployer calls it after it has the instance's lock

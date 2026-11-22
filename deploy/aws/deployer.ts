@@ -301,7 +301,7 @@ export async function installDeployer(
 export async function installWithAuto(dir: string, entry: AwsEntry, log: (line: string) => void): Promise<void> {
   await installDeployer(dir, entry, log);
   const sql = awsSql(awsCli({ profile: entry.profile, region: entry.aws.region }), entry.aws);
-  await Effect.runPromise(writeAuto(sql, true)).catch((e) => {
+  await Effect.runPromise(writeAuto(sql, "releases")).catch((e) => {
     throw new Error(
       `The deployer is installed, but auto-deploy is not on: ${e._tag == "NoTable" ? "the instance's database has no table for it yet (deploy the instance again, then set up again)" : e.message}`
     );

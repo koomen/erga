@@ -481,11 +481,13 @@ journey("an admin on the admin pages", () => {
     await soon(() => text("a.job.ok"), 5000).toContain("from the app, by tester");
     await clickOn(page, "a.job.ok");
     await soon(() => text(".logs")).toContain("Worker: done");
-    // The switch saves by itself, and the deployer reads it at its next look.
+    // The 3-way auto-deploy control saves by itself, and the deployer reads it at its next look.
     await clickOn(page, 'a.tab[href="/admin/deploy"]');
     await page.waitForSelector("#auto-deploy");
-    await clickOn(page, "li:has(#auto-deploy) .switch .track");
-    await soon(async () => (await run(readControl(sql)))?.auto).toBe(true);
+    await clickOn(page, '#auto-deploy [data-auto-mode="releases"]');
+    await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("releases");
+    await clickOn(page, '#auto-deploy [data-auto-mode="commits"]');
+    await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("commits");
     // About, the last link of the sidebar: the spec's repository and branch, the commit that the server runs (as the
     // deployer's look saw it), and the release tag that GitHub (the pretend one) has at that commit.
     await go("/admin/about", ".server dl");

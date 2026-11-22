@@ -28,6 +28,7 @@ name: release
 on:
   push:
     branches: [staging, main, verify]
+    tags: ["v*.*.*"]
 
 permissions: {}
 
@@ -134,15 +135,19 @@ jobs:
           ./oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
           if ./oras manifest fetch --descriptor "$release"; then
             echo "\`$release\` exists already: not published again." >>"$GITHUB_STEP_SUMMARY"
-            exit 0
+          else
+            ./oras push "$release" --artifact-type "$RELEASE_TYPE" \
+              --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              "bundle.json:$RELEASE_TYPE"
+            # What the registry has now is the bundle that the build made.
+            digest=$(./oras manifest fetch "$release" | jq --raw-output '.layers[0].digest')
+            [ "$digest" = "sha256:$(sha256sum bundle.json | cut -d ' ' -f 1)" ]
+            echo "\`$release\`: $(stat --format %s bundle.json) bytes, digest \`$digest\`" >>"$GITHUB_STEP_SUMMARY"
           fi
-          ./oras push "$release" --artifact-type "$RELEASE_TYPE" \
-            --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            "bundle.json:$RELEASE_TYPE"
-          # What the registry has now is the bundle that the build made.
-          digest=$(./oras manifest fetch "$release" | jq --raw-output '.layers[0].digest')
-          [ "$digest" = "sha256:$(sha256sum bundle.json | cut -d ' ' -f 1)" ]
-          echo "\`$release\`: $(stat --format %s bundle.json) bytes, digest \`$digest\`" >>"$GITHUB_STEP_SUMMARY"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            ./oras tag "$release" "$GITHUB_REF_NAME"
+            echo "\`ghcr.io/$package:$GITHUB_REF_NAME\` -> \`$GITHUB_SHA\`" >>"$GITHUB_STEP_SUMMARY"
+          fi
       # verify's package keeps 7 days of releases: each older version goes.
       - name: old verify releases
         env:

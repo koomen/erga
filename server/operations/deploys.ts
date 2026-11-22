@@ -59,6 +59,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
           : noDeployer(hostOf(caller)),
         // With no deployer the switch is nobody's: auto-deploy is a machine's, and the read says what the server knows of it.
         autoDeploy: state.look ? state.auto : machineAuto(state.jobs, Date.now()),
+        ...(state.latestRelease ? { latestRelease: state.latestRelease } : {}),
         ...(state.ask
           ? {
               asked: {
@@ -74,45 +75,56 @@ export const DEPLOY_OPERATIONS: Operation[] = [
           title: c.title,
           at: iso(c.at),
           release: c.release,
+          ...(c.tag ? { tag: c.tag } : {}),
           ...(runs && c.sha.startsWith(runs) ? { live: true } : {}),
         })),
         jobs: state.jobs.map(jobOf),
-        note: "commits: the last ones of the branch, newest first, as the deployer saw them at its last look. release: released (deploy takes it), none (GitHub has no release of it yet) or refused. An ask starts within a minute, as a job.",
+        note: "commits: the last ones of the branch, newest first, as the deployer saw them at its last look. release: released (deploy takes it), none (GitHub has no release of it yet) or refused. autoDeploy: off, releases (tagged vX.Y.Z releases only) or commits (every commit). An ask starts within a minute, as a job.",
       };
     },
   },
   {
     name: "deploy",
-    ui: "Deploy (/admin/deploy): Deploy on a commit's row, Roll back on the live row, and the Auto-deploy switch",
+    ui: "Deploy (/admin/deploy): Deploy on a commit's row, Roll back on the live row, and the Auto-deploy setting",
     label: "Deploy the server",
     activity: "asking the deployer",
     admin: true,
     off: async (caller) => ((await caller.dir.deploys.hasDeployer()) ? null : noDeployer(hostOf(caller))),
-    description: "Asks this server's deployer to deploy a commit or to roll back, or turns auto-deploy on or off.",
+    description: "Asks this server's deployer to deploy a commit or to roll back, or sets auto-deploy (off, releases, commits).",
     asks: (args) =>
       args.action == "auto"
-        ? `Turn auto-deploy ${args.on === false ? "off" : "on"} for this server`
+        ? args.mode == "off"
+          ? "Turn auto-deploy off for this server"
+          : args.mode == "releases"
+            ? "Set auto-deploy to releases only for this server"
+            : "Set auto-deploy to every commit for this server"
         : args.action == "rollback"
           ? "Roll this server back to the version from before its last deploy"
           : `Deploy ${args.commit ? `the commit ${said(args.commit)}` : "the head of its branch"} to this server`,
     parameters: Schema.Struct({
       action: Schema.Literals(["deploy", "rollback", "auto"]).annotate({
-        description:
-          "deploy (commit), rollback (to the version from before the last deploy), auto (on: each new release of the branch deploys by itself)",
+        description: "deploy (commit), rollback (to the version from before the last deploy), auto (mode: off, releases, or commits)",
       }),
       commit: Schema.optionalKey(
         Schema.String.annotate({
-          description: "deploy: one of deploys' commits (its name, or its first 7 characters or more); default: the head",
+          description:
+            "deploy: one of deploys' commits (its name, its first 7+ characters, or a release tag like v0.2.0); default: the head",
         })
       ),
-      on: Schema.optionalKey(Schema.Boolean.annotate({ description: "auto: true or false" })),
+      mode: Schema.optionalKey(
+        Schema.Literals(["off", "releases", "commits"]).annotate({
+          description: "auto: off, releases (tagged vX.Y.Z releases only), or commits (every commit on the branch)",
+        })
+      ),
     }),
     run: async (args, caller) => {
       const { dir, who } = caller;
       if (args.action == "auto") {
-        if (typeof args.on != "boolean") throw new OperationError({ message: "auto needs on: true or false.", status: 400 });
-        await dir.deploys.setAuto(who, args.on);
-        return { autoDeploy: args.on };
+        const mode = args.mode;
+        if (mode !== "off" && mode !== "releases" && mode !== "commits")
+          throw new OperationError({ message: "auto needs mode: off, releases or commits.", status: 400 });
+        await dir.deploys.setAuto(who, mode);
+        return { autoDeploy: mode };
       }
       const state = await dir.deploys.state(who);
       const no = (message: string, status = 409) => new OperationError({ message, status });
@@ -124,18 +136,25 @@ export const DEPLOY_OPERATIONS: Operation[] = [
         return { asked: "rollback", message: soon };
       }
       const branch = state.tracks?.branch ?? "its branch";
-      const wanted = typeof args.commit == "string" ? args.commit.trim().toLowerCase() : "";
-      if (wanted && !/^[0-9a-f]{7,40}$/.test(wanted))
+      const raw = typeof args.commit == "string" ? args.commit.trim() : "";
+      const byTag = /^v\d+\.\d+\.\d+$/.test(raw);
+      const wanted = byTag ? raw : raw.toLowerCase();
+      if (wanted && !byTag && !/^[0-9a-f]{7,40}$/.test(wanted))
         throw no(`"${said(args.commit)}" is not a commit's name: deploys lists the commits.`, 400);
-      const found = wanted ? state.commits.filter((c) => c.sha.startsWith(wanted)) : state.commits.slice(0, 1);
-      if (found.length != 1)
+      const latest = state.latestRelease;
+      const fromLatest =
+        latest && ((byTag && latest.tag == wanted) || (!byTag && wanted && latest.sha.startsWith(wanted)))
+          ? { sha: latest.sha, title: latest.tag, release: latest.release }
+          : null;
+      const found = wanted ? state.commits.filter((c) => (byTag ? c.tag == wanted : c.sha.startsWith(wanted))) : state.commits.slice(0, 1);
+      const commit = found.length == 1 ? found[0] : found.length == 0 ? fromLatest : null;
+      if (!commit)
         throw no(
           state.commits.length
             ? `${wanted} is not one of the last ${state.commits.length} commits of ${branch}: deploys lists them. An older one deploys from a machine.`
             : `The deployer has not seen the commits of ${branch} yet${state.look?.error ? `: ${state.look.error}` : "."}`,
           404
         );
-      const [commit] = found;
       const short = commit.sha.slice(0, 12);
       const runs = caller.platform?.deploy.version;
       if (runs && commit.sha.startsWith(runs)) throw no(`${hostOf(caller)} runs ${short} already.`);

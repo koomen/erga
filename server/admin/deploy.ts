@@ -12,7 +12,7 @@
 import { esc } from "../../shared/html.ts";
 import { type InstanceView, instanceHtml } from "../../shared/ops-view.ts";
 import { timeAgo } from "../../shared/time.ts";
-import type { DeployState } from "../directory/index.ts";
+import type { AutoDeployMode, DeployState } from "../directory/index.ts";
 import { inlineCall } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { adminPage } from "./layout.ts";
@@ -20,6 +20,19 @@ import { adminPage } from "./layout.ts";
 /** How often the page asks again: while a job runs or an ask waits, and else. */
 const BUSY_MS = 1000;
 const IDLE_MS = 10_000;
+
+const AUTO_OPTIONS: readonly { mode: AutoDeployMode; label: string }[] = [
+  { mode: "off", label: "Off" },
+  { mode: "releases", label: "Releases only" },
+  { mode: "commits", label: "Every commit" },
+];
+
+const autoDesc = (mode: AutoDeployMode, branch: string) =>
+  mode == "off"
+    ? "Auto-deploy is off. Use Deploy on a row below to deploy by hand."
+    : mode == "releases"
+      ? `Deploys each new tagged release (vX.Y.Z) on ${branch} by itself.`
+      : `Deploys each new commit on ${branch} by itself.`;
 
 /** What a server with no deployer says: here, and in the operations (server/operations/deploys.ts). */
 export const noDeployer = (host: string) =>
@@ -40,13 +53,18 @@ export function machineAuto(jobs: DeployState["jobs"], now: number): string {
   return `Auto-deploy: not known. It runs on a machine (bun erga --auto-deploy), which this server can't ask: ${seen}. ${how}`;
 }
 
-/** The Auto-deploy switch, as a setting's row. */
-const autoRow = (state: DeployState) =>
-  `<ol class="rows" aria-label="Auto-deploy"><li class="setting" data-control="switch">
-    <div class="about"><div class="head"><label class="key" for="auto-deploy">Auto-deploy</label></div><p class="desc">Each new release of ${esc(state.tracks?.branch ?? "the branch")} deploys by itself.</p></div>
-    <div class="value"><label class="switch"><input type="checkbox" role="switch" id="auto-deploy"${state.auto ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="state" aria-hidden="true">${state.auto ? "On" : "Off"}</span></label></div>
+/** The Auto-deploy setting row: Off, Releases only, or Every commit. */
+const autoRow = (state: DeployState) => {
+  const branch = state.tracks?.branch ?? "the branch";
+  const buttons = AUTO_OPTIONS.map(
+    (o) => `<button type="button" role="radio" aria-checked="${state.auto == o.mode}" data-auto-mode="${o.mode}">${o.label}</button>`
+  ).join("");
+  return `<ol class="rows" aria-label="Auto-deploy"><li class="setting" data-control="auto-mode">
+    <div class="about"><div class="head"><span class="key" id="auto-deploy-label">Auto-deploy</span></div><p class="desc" data-auto-desc data-branch="${esc(branch)}">${esc(autoDesc(state.auto, branch))}</p></div>
+    <div class="value"><div class="seg" id="auto-deploy" role="radiogroup" aria-labelledby="auto-deploy-label">${buttons}</div></div>
     <p class="hint" role="status"></p>
   </li></ol>`;
+};
 
 /** The deployer's last look, in one line under the commits. */
 function looked(look: NonNullable<DeployState["look"]>, now: number): string {
@@ -74,15 +92,24 @@ export async function deployLive(platform: Platform, session: Session, url: URL,
   const runs = platform.deploy.version;
   const ask = state.ask;
   const running = state.jobs.filter((j) => j.phase == "running");
+  const latest = state.latestRelease;
+  const runsLatest = !!(runs && latest && latest.sha.startsWith(runs));
   const view: InstanceView = {
     host,
     heading: false,
     repo: state.tracks.repo,
     branch: state.tracks.branch,
-    commits: state.commits.length ? state.commits.map((c) => ({ sha: c.sha, subject: c.title, at: c.at, release: c.release })) : null,
+    autoMode: state.look ? state.auto : undefined,
+    latestRelease: latest,
+    tracksMore: latest ? ` Latest release <code>${esc(latest.tag)}</code>.` : "",
+    commits: state.commits.length
+      ? state.commits.map((c) => ({ sha: c.sha, subject: c.title, at: c.at, release: c.release, ...(c.tag ? { tag: c.tag } : {}) }))
+      : null,
     none: state.look ? (state.look.error ?? `The deployer has not seen the commits of ${state.tracks.branch} yet.`) : noDeployer(host),
     runs,
-    lost: `${host} runs ${runs}, which is not one of the last ${state.commits.length} commits of ${state.tracks.branch}.`,
+    lost: runsLatest
+      ? `${host} runs ${latest!.tag} (${runs}), which is older than the last ${state.commits.length} commits of ${state.tracks.branch}.`
+      : `${host} runs ${runs}, which is not one of the last ${state.commits.length} commits of ${state.tracks.branch}.`,
     jobs: state.jobs.map((j) => ({
       id: String(j.id),
       commit: j.commit,

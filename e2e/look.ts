@@ -225,10 +225,18 @@ if (opsArg != undefined) {
       port: 0,
       autoDeploy: true,
       ask: async (e) => ({ version: runs[e.host].slice(0, 12), healthy: true }),
-      jobs: async (e) => ({ jobs: jobs.filter((j) => j.host == e.host), cloud: false }),
+      jobs: async (e) => ({
+        jobs: jobs.filter((j) => j.host == e.host),
+        cloud: false,
+        autoMode: e.host == "staging.example.net" ? "commits" : "releases",
+      }),
       fetch: async () => null,
       heads: async (_cwd, _repo, branches) => ({
         heads: Object.fromEntries(branches.map((b) => [b, b == "staging" ? staging : main])),
+        tags: [
+          { tag: "v0.4.0", sha: shas[2] },
+          { tag: "v0.3.0", sha: shas[1] },
+        ],
         error: null,
       }),
       // No deploy and no rollback: a job that a step starts never ends, and does nothing.

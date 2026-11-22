@@ -8,8 +8,10 @@ import * as Effect from "effect/Effect";
 import type { Aws, Where } from "../aws/cli";
 import { d1Sql } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
+import { readControl, writeAuto } from "../deployer/control";
 import { type JobLog, NoTable, openJob, readSpec, type Sql, type Start, writeSpec } from "../deployer/instance";
 import { decodeSpec, type Spec } from "../deployer/spec";
+import type { AutoMode } from "../deployer/tags";
 import { type AwsEntry, type CloudflareEntry, type Entry, isAws } from "./config";
 
 /** How this machine reaches the platforms: Cloudflare's API with its credential, and the AWS CLI (default: the machine's own). */
@@ -158,6 +160,16 @@ export const specOn = (sql: Sql) => run(readSpec(sql), null);
 
 /** Writes the instance's spec. false: its database has no table for one yet. */
 export const putSpec = (sql: Sql, spec: Spec) => run(Effect.as(writeSpec(sql, spec), true), false);
+
+/** The instance's auto-deploy mode from deploy_control, or null: no row or no table yet. */
+export const autoOn = (sql: Sql): Promise<AutoMode | null> =>
+  run(
+    Effect.map(readControl(sql), (c) => c?.autoMode ?? null),
+    null
+  );
+
+/** Sets the instance's auto-deploy mode (off, releases, commits) in deploy_control. false: no table yet. */
+export const setAutoOn = (sql: Sql, mode: AutoMode): Promise<boolean> => run(Effect.as(writeAuto(sql, mode), true), false);
 
 /** A deploy's or a rollback's job on the instance: its lines (printed, and in its row), its commit, and its end. */
 export interface InstanceJob {

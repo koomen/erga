@@ -45,8 +45,19 @@ const Seen = Schema.Struct({
   title: Schema.String,
   at: Schema.Number,
   release: Schema.Literals(["released", "none", "refused"]),
+  tag: Schema.optionalKey(Schema.String),
 });
 export type SeenCommit = typeof Seen.Type;
+
+const Latest = Schema.Struct({
+  tag: Schema.String,
+  sha: Schema.String,
+  release: Schema.Literals(["released", "none", "refused"]),
+});
+export type LatestRelease = typeof Latest.Type;
+
+/** Auto-deploy mode for an instance with a cloud deployer: off, tagged vX.Y.Z releases only, or every commit. */
+export type AutoDeployMode = "off" | "releases" | "commits";
 
 /** What an admin asked the deployer for, and it has not started yet. */
 export interface DeployAsk {
@@ -60,10 +71,12 @@ export interface DeployAsk {
 export interface DeployState {
   /** The repository (github.com/<owner>/<name>) and the branch whose commits the instance runs; null: it has no spec yet. */
   tracks: { repo: string; branch: string } | null;
-  auto: boolean;
+  auto: AutoDeployMode;
   ask: DeployAsk | null;
   /** The deployer's last look at GitHub; null: no deployer looked in the last DEPLOYER_MS. */
   look: { at: number; head: string | null; error: string | null } | null;
+  /** The newest semver release tag on the tracked branch, as that look saw it. */
+  latestRelease: LatestRelease | null;
   /** The branch's last commits, newest first, as that look saw them. */
   commits: readonly SeenCommit[];
   /** Newest first. */
@@ -95,6 +108,7 @@ export class Deploys {
       this.sql.all<{ spec: string }>("SELECT spec FROM deploy_spec WHERE id = 1"),
       this.sql.all<{
         auto: number;
+        auto_mode: string | null;
         ask: string | null;
         ask_by: string | null;
         ask_at: number | null;
@@ -102,7 +116,8 @@ export class Deploys {
         head: string | null;
         error: string | null;
         commits: string;
-      }>("SELECT auto, ask, ask_by, ask_at, looked, head, error, commits FROM deploy_control WHERE id = 1"),
+        latest_release: string | null;
+      }>("SELECT auto, auto_mode, ask, ask_by, ask_at, looked, head, error, commits, latest_release FROM deploy_control WHERE id = 1"),
       this.sql.all<{
         id: number;
         kind: "deploy" | "rollback";
@@ -117,14 +132,16 @@ export class Deploys {
     const tracks = read(Schema.Struct({ repo: Schema.String, branch: Schema.String }), spec?.spec);
     const there = control?.looked != null && Number(control.looked) > now - DEPLOYER_MS;
     const deploy = control?.ask?.startsWith("deploy ") ? control.ask.slice("deploy ".length) : null;
+    const auto: AutoDeployMode = !control?.auto ? "off" : control.auto_mode == "releases" ? "releases" : "commits";
     return {
       tracks: tracks && { repo: tracks.repo, branch: tracks.branch },
-      auto: control?.auto == 1,
+      auto,
       ask:
         control?.ask && (deploy || control.ask == "rollback")
           ? { kind: deploy ? "deploy" : "rollback", sha: deploy, by: control.ask_by ?? "", at: Number(control.ask_at ?? 0) }
           : null,
       look: control && there ? { at: Number(control.looked), head: control.head, error: control.error } : null,
+      latestRelease: there ? read(Latest, control?.latest_release) : null,
       commits: (there && read(Schema.Array(Seen), control?.commits)) || [],
       jobs: jobs.map((j) => {
         const alive = Number(j.alive);
@@ -171,12 +188,16 @@ export class Deploys {
     return (await this.setupStep()) == to;
   }
 
-  /** Turns auto-deploy on or off: the deployer reads it at its next look (admins only). */
-  async setAuto(by: Actor, on: boolean): Promise<void> {
+  /** Sets auto-deploy (off, releases, or commits): the deployer reads it at its next look (admins only). */
+  async setAuto(by: Actor, mode: AutoDeployMode): Promise<void> {
     await this.users.mustAdmin(by);
+    if (mode == "off") {
+      await this.sql.run("INSERT INTO deploy_control (id, auto) VALUES (1, 0) ON CONFLICT (id) DO UPDATE SET auto = 0");
+      return;
+    }
     await this.sql.run(
-      "INSERT INTO deploy_control (id, auto) VALUES (1, ?1) ON CONFLICT (id) DO UPDATE SET auto = excluded.auto",
-      on ? 1 : 0
+      "INSERT INTO deploy_control (id, auto, auto_mode) VALUES (1, 1, ?1) ON CONFLICT (id) DO UPDATE SET auto = 1, auto_mode = excluded.auto_mode",
+      mode
     );
   }
 

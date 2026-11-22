@@ -53,6 +53,8 @@ export function github(shas: string[] = [SHA2, SHA1]) {
     served: null as Uint8Array | null,
     /** Commits of the branch from before the feed's: GitHub's API says that the branch has them. */
     older: [] as string[],
+    /** Release tags advertised in git refs (lightweight or annotated). */
+    tags: [] as { name: string; sha: string; annotated?: boolean }[],
     /** GitHub's answer in place of its own (not the registry's). */
     down: null as number | null,
     calls: [] as string[],
@@ -72,10 +74,18 @@ export function github(shas: string[] = [SHA2, SHA1]) {
       said(refs ? "refs" : feed ? "feed" : url);
       if (state.down) return new Response("no", { status: state.down });
       const head = state.commits[0].sha;
-      if (refs)
+      if (refs) {
+        const tagLines = state.tags
+          .map((t) =>
+            t.annotated
+              ? `${pkt(`${"9".repeat(40)} refs/tags/${t.name}\n`)}${pkt(`${t.sha} refs/tags/${t.name}^{}\n`)}`
+              : pkt(`${t.sha} refs/tags/${t.name}\n`)
+          )
+          .join("");
         return new Response(
-          `${pkt("# service=git-upload-pack\n")}0000${pkt(`${head} HEAD\0multi_ack symref=HEAD:refs/heads/main agent=git/github\n`)}${pkt(`${SHA4} refs/heads/a/main\n`)}${pkt(`${head} refs/heads/main\n`)}${pkt(`${SHA4} refs/heads/main-2\n`)}${pkt(`${SHA4} refs/tags/main\n`)}0000`
+          `${pkt("# service=git-upload-pack\n")}0000${pkt(`${head} HEAD\0multi_ack symref=HEAD:refs/heads/main agent=git/github\n`)}${pkt(`${SHA4} refs/heads/a/main\n`)}${pkt(`${head} refs/heads/main\n`)}${pkt(`${SHA4} refs/heads/main-2\n`)}${pkt(`${SHA4} refs/tags/main\n`)}${tagLines}0000`
         );
+      }
       if (feed)
         return new Response(
           `<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <id>tag:github.com,2008:/example/erga/commits/main</id>\n  <title>Recent Commits to erga:main</title>\n${(

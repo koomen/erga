@@ -248,11 +248,11 @@ describe("bun erga deploy", () => {
     // with auto-deploy on. An old look, or the switch off, is no deployer.
     expect((await read(next)).cloud).toBe(false);
     await Effect.runPromise(sql("INSERT INTO deploy_control (id, auto, looked) VALUES (1, 1, ?)", [Date.now() - 60_000]));
-    expect((await read(next)).cloud).toBe(true);
+    expect(await read(next)).toMatchObject({ cloud: true, autoMode: "commits" });
     await Effect.runPromise(sql("UPDATE deploy_control SET looked = ?", [Date.now() - 10 * 60_000]));
-    expect((await read(next)).cloud).toBe(false);
+    expect(await read(next)).toMatchObject({ cloud: false, autoMode: "commits" });
     await Effect.runPromise(sql("UPDATE deploy_control SET looked = ?, auto = 0", [Date.now()]));
-    expect((await read(next)).cloud).toBe(false);
+    expect(await read(next)).toMatchObject({ cloud: false, autoMode: "off" });
     // An instance whose database has no table for its jobs has none.
     expect(await read(fleet)).toEqual({ jobs: [], cloud: false });
   }, 60_000);

@@ -27,7 +27,7 @@ beforeAll(prepareRelease, 120_000);
 const run = Effect.runPromise;
 const short = (sha: string) => sha.slice(0, 12);
 
-const MIGRATIONS = ["0470_deploys.sql", "0480_deploy_control.sql"].map((name) =>
+const MIGRATIONS = ["0470_deploys.sql", "0480_deploy_control.sql", "0540_deploy_auto_mode.sql"].map((name) =>
   readFileSync(new URL(`../server/migrations/${name}`, import.meta.url), "utf8")
 );
 
@@ -328,6 +328,52 @@ describe("a look", () => {
     );
     expect(hub.state.calls).toEqual([]);
     expect(empty.db.query("SELECT count(*) AS n FROM deploy_control").get()).toEqual({ n: 0 });
+  });
+  test("releases mode: waits with no tag, skips untagged head, deploys newest semver tag on branch, ignores prerelease and off-branch tags", async () => {
+    const SHA_OTHER = "9".repeat(40);
+    const { db, sql, hub, once } = await instance({ auto: false, shas: [SHA3, SHA2, SHA1] });
+    db.run("INSERT INTO deploy_control (id, auto, auto_mode) VALUES (1, 1, 'releases')");
+    hub.state.releases.set(SHA3, bundleOf(SHA3));
+    hub.state.releases.set(SHA2, bundleOf(SHA2));
+    hub.state.releases.set(SHA1, bundleOf(SHA1));
+
+    // No semver tag yet (only a prerelease and an off-branch tag): waits without starting a job.
+    hub.state.tags = [
+      { name: "v0.3.0-rc.1", sha: SHA3 },
+      { name: "v9.9.9", sha: SHA_OTHER },
+    ];
+    const none = await once();
+    expect(none.line).toBe(`main on github.com/example/erga is at ${short(SHA3)}. No release tag (vX.Y.Z) on main yet: nothing to deploy.`);
+    expect(await run(readJobs(sql))).toEqual([]);
+    expect((await run(readControl(sql)))?.latestRelease).toBeNull();
+
+    // Tag SHA2 with an annotated v0.2.0 while SHA3 stays untagged head: deploys SHA2 (not SHA3).
+    hub.state.tags = [
+      { name: "v0.1.0", sha: SHA1 },
+      { name: "v0.2.0", sha: SHA2, annotated: true },
+      { name: "v0.3.0-rc.1", sha: SHA3 },
+      { name: "v9.9.9", sha: SHA_OTHER },
+    ];
+    const deploy = await once();
+    expect(deploy.line).toContain("Its deploy failed:");
+    const [job] = await run(readJobs(sql));
+    expect(job).toMatchObject({ command: `deploy v0.2.0 (${short(SHA2)})`, sha: SHA2, source: "auto-deploy" });
+    const control = await run(readControl(sql));
+    expect(control?.latestRelease).toEqual({ tag: "v0.2.0", sha: SHA2, release: "released" });
+    expect(control?.commits.map((c) => [short(c.sha), c.tag ?? null])).toEqual([
+      [short(SHA3), null],
+      [short(SHA2), "v0.2.0"],
+      [short(SHA1), "v0.1.0"],
+    ]);
+
+    // A rolled-back or failed release tag is not tried again even when >10 untagged commits land on top.
+    const extra = Array.from({ length: 12 }, (_, i) => (i + 20).toString(16).padStart(2, "0").repeat(20));
+    hub.state.older.push(SHA2);
+    hub.state.commits = extra.map((sha, i) => ({ sha, title: `Extra ${i}`, at: Date.parse("2026-11-19T12:00:00Z") - i * 60_000 }));
+    hub.state.releases.set(extra[0], bundleOf(extra[0]));
+    const after = await once();
+    expect(after.line).toContain(`A job of the instance has ${short(SHA2)}`);
+    expect((await run(readControl(sql)))?.latestRelease).toEqual({ tag: "v0.2.0", sha: SHA2, release: "released" });
   });
 });
 

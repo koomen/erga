@@ -70,6 +70,19 @@
     }
   }
   ops.addEventListener("click", (e) => {
+    const autoBtn = e.target.closest("button[data-ops-auto]");
+    if (autoBtn) {
+      if (autoBtn.getAttribute("aria-checked") == "true") return;
+      const group = autoBtn.closest(".seg");
+      const btns = [...group.querySelectorAll("button")];
+      btns.forEach((b) => (b.disabled = true));
+      fetch("/api/auto-deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host: autoBtn.dataset.host, mode: autoBtn.dataset.autoMode }),
+      }).finally(() => draw());
+      return;
+    }
     const deploy = e.target.closest("[data-deploy]");
     if (deploy) {
       const { host, sha, ask, note } = deploy.dataset;

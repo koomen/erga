@@ -371,5 +371,10 @@ ol.people-rows .facts .soft, ol.people-rows .facts time { color: var(--soft); }
   ol.people-rows .facts { grid-column: 2; justify-content: flex-start; }
 }
 
-/* The Deploy page: its view (assets/ops/ops-view.css, which the build puts after this file) under the Auto-deploy row. */
+/* The Deploy page: its segmented Auto-deploy control, and its view (assets/ops/ops-view.css) under it. */
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); }
+.seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; font: 500 13px var(--font-text); color: var(--soft); cursor: pointer; white-space: nowrap; }
+.seg button:hover { color: var(--fg-strong); }
+.seg button[aria-checked="true"] { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 16%, transparent); font-weight: 600; }
+.seg button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .admin-main .ops-view { margin-top: 20px; }

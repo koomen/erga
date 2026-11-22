@@ -192,6 +192,14 @@ test("a repository's heads: the clone keeps each tracked head under its own ref,
     const ref = trackedRef(origin, "staging");
     expect(ref).toMatch(/^refs\/erga\/[\w.-]+\/staging$/);
     expect(await repoHeads(clone, origin, ["staging", "nope"])).toEqual({ heads: { staging: next }, error: null });
+    // Tagged releases are returned in the same ls-remote call, newest semver first.
+    sh(other, "git", "tag", "-a", "v0.1.0", "-m", "v0.1.0", next);
+    sh(other, "git", "push", "--quiet", "origin", "v0.1.0");
+    expect(await repoHeads(clone, origin, ["staging"])).toEqual({
+      heads: { staging: next },
+      tags: [{ tag: "v0.1.0", sha: next }],
+      error: null,
+    });
     // The clone has the commit now, under a ref that no push sends; its checkout did not move.
     expect(sh(clone, "git", "rev-parse", ref)).toBe(next);
     expect(sh(clone, "git", "rev-parse", "HEAD")).toBe(base);

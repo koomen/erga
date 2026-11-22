@@ -128,7 +128,7 @@ describe("a run of the deployer", () => {
     for (const [path, bytes] of Object.entries(servedAssets(release)))
       expect(mock.state.assets.manifest[path].hash).toBe(await assetHash(path, bytes));
     // The store: the commit that it tried, no job, and no lock.
-    expect(stored()).toMatchObject({ tried: { sha: SHA2, ok: true, up: true }, auto: true, head: SHA2 });
+    expect(stored()).toMatchObject({ tried: { sha: SHA2, ok: true, up: true }, autoMode: "commits", head: SHA2 });
     expect(stored().job).toBeUndefined();
     expect(stored().lock).toBeUndefined();
 
@@ -335,6 +335,38 @@ describe("a run of the deployer", () => {
     expect(await once()).toBe("Another run of the deployer holds its lock: this one does nothing.");
     state.now += LOCK_MS;
     expect(await once()).toContain("Auto-deploy is off.");
+  }, 30_000);
+  test("releases mode: skips untagged head, deploys newest release tag, and does not re-deploy a release that a job already tried", async () => {
+    const { sql, hub, once, runs, stored } = await instance({ auto: false });
+    await run(sql("INSERT INTO deploy_control (id, auto, auto_mode) VALUES (1, 1, 'releases')", []));
+    hub.state.commits.unshift({ sha: SHA3, title: "Untagged head", at: Date.parse("2026-11-19T10:05:00Z") });
+    hub.state.releases.set(SHA3, builtBundle(SHA3));
+    hub.state.tags = [{ name: "v0.2.0", sha: SHA2, annotated: true }];
+
+    const line = await once();
+    expect(line).toMatch(new RegExp(`^main on github\\.com/example/erga is at ${short(SHA3)}\\. Its deploy is done\\. \\(\\d+ calls\\)$`));
+    expect(runs()).toBe(short(SHA2));
+    const [job] = await run(readJobs(sql));
+    expect(job).toMatchObject({ command: `deploy v0.2.0 (${short(SHA2)})`, sha: SHA2, source: "auto-deploy", state: { at: "done" } });
+    expect(await run(readControl(sql))).toMatchObject({
+      autoMode: "releases",
+      latestRelease: { tag: "v0.2.0", sha: SHA2, release: "released" },
+    });
+    expect(stored()).toMatchObject({ autoMode: "releases", tried: { sha: SHA2, ok: true, up: true } });
+
+    // Even if another run has fresh store state (e.g. after a rollback), deploy_jobs already has SHA2 so it does not re-deploy.
+    const next = await instance({ auto: false });
+    await run(next.sql("INSERT INTO deploy_control (id, auto, auto_mode) VALUES (1, 1, 'releases')", []));
+    await run(
+      next.sql(
+        "INSERT INTO deploy_jobs (kind, command, source, sha, started, alive, state, log) VALUES ('deploy', 'deploy v0.2.0', 'auto-deploy', ?, 1, 1, 'done', '')",
+        [SHA2]
+      )
+    );
+    next.hub.state.commits.unshift({ sha: SHA3, title: "Untagged head", at: Date.parse("2026-11-19T10:05:00Z") });
+    next.hub.state.tags = [{ name: "v0.2.0", sha: SHA2 }];
+    expect(await next.once()).toContain(`The instance has ${short(SHA2)}: nothing to deploy.`);
+    expect(next.runs()).toBe(short(SHA1));
   }, 30_000);
 });
 

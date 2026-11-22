@@ -44,6 +44,7 @@ import { bindingsProblem } from "./bindings";
 import { type D1, statementsOf } from "./d1-binding";
 import type { Release, ReleaseIndex } from "./release-format";
 import type { CloudflareTarget, Spec } from "./spec";
+import * as tags from "./tags";
 import { HEADERS_FILE, toHex, typeOf, workerMetadata } from "./worker-form";
 
 /** How long a run's lock holds when the run stopped with no end. A run lasts about a minute at most. */
@@ -73,6 +74,7 @@ interface Commit {
   at: number;
   /** As GitHub's registry said it. None yet: not asked. */
   release?: ReleaseState;
+  tag?: string;
 }
 type CloudSpec = Pick<Spec, "repo" | "branch" | "settings"> & { target: CloudflareTarget };
 
@@ -82,10 +84,11 @@ export interface State {
   lock?: number;
   /** The last spec and switch that a run read from the instance. */
   spec?: CloudSpec;
-  auto?: boolean;
-  /** The last look: the branch's head and commits. */
+  autoMode?: tags.AutoMode;
+  /** The last look: the branch's head, commits and newest release tag. */
   head?: string;
   commits?: Commit[];
+  latestRelease?: tags.LatestRelease | null;
   /** The last commit that auto-deploy tried: how often, whether its deploy ended well, and whether it got to the Worker's upload. */
   tried?: { sha: string; n: number; ok: boolean; up: boolean };
   /**
@@ -213,36 +216,21 @@ async function page(c: Run, url: string, headers: Record<string, string> = {}): 
   return r;
 }
 
-/** The branch's head: the commit's full name, from git's own list of the repository's refs. */
-async function headOf(c: Run): Promise<string> {
+/** The branch's head and semver release tags (newest first), from git's own list of the repository's refs. */
+async function refsOf(c: Run): Promise<{ head: string; tags: tags.ReleaseTag[] }> {
   const { repo, branch } = c.spec;
-  const refs = await (await page(c, `https://${repo}.git/info/refs?service=git-upload-pack`))?.text();
-  for (const line of (refs ?? "").split("\n")) {
-    const ref = /([0-9a-f]{40}) (.+)$/.exec(line.split("\0")[0]);
-    if (ref?.[2] == `refs/heads/${branch}`) return ref[1];
-  }
+  const refs = (await (await page(c, `https://${repo}.git/info/refs?service=git-upload-pack`))?.text()) ?? "";
+  const parsed = tags.parseRefs(refs, branch);
+  if (parsed.head) return { head: parsed.head, tags: parsed.tags };
   throw new Error(`${repo} has no branch ${branch}, as GitHub lists its refs: the repository and the branch must be there, and public.`);
 }
-
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
 /** The branch's last commits, newest first, from its feed. The titles are a stranger's text: whatever shows them escapes them. */
 async function commitsOf(c: Run): Promise<Commit[]> {
   const feed = (await (await page(c, `https://${c.spec.repo}/commits/${c.spec.branch}.atom`))?.text()) ?? "";
-  return feed
-    .split("<entry>")
-    .slice(1)
-    .map((entry) => {
-      const sha = /<id>[^<]*Commit\/([0-9a-f]{40})<\/id>/.exec(entry)?.[1];
-      const title = /<title>([^<]*)<\/title>/.exec(entry)?.[1];
-      const at = Date.parse(/<updated>([^<]*)<\/updated>/.exec(entry)?.[1] ?? "");
-      if (!sha || title == null || Number.isNaN(at))
-        throw new Error("GitHub gave the branch's commits in a way that the deployer doesn't understand.");
-      const plain = title.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (all, dec, hex, name) =>
-        dec || hex ? String.fromCodePoint(Number.parseInt(dec ?? hex, dec ? 10 : 16) || 0xfffd) : (ENTITIES[name.toLowerCase()] ?? all)
-      );
-      return { sha, title: plain.replace(/\s+/g, " ").trim().slice(0, 200), at };
-    });
+  const parsed = tags.parseCommitsFeed(feed);
+  if (!parsed) throw new Error("GitHub gave the branch's commits in a way that the deployer doesn't understand.");
+  return parsed;
 }
 
 /** Whether the branch has the commit, as GitHub's API says it (60 calls an hour with no credential: only an ask uses it). */
@@ -442,9 +430,7 @@ async function uploadFiles(c: Run, files: Record<string, string>): Promise<strin
 
 interface Health {
   ok: boolean;
-  /** Why not, or what passed. */
   why: string;
-  /** The release that answered. */
   version?: string;
 }
 type Report = {
@@ -578,17 +564,10 @@ async function back(c: Run, log: (line: string) => void): Promise<void> {
 async function end(c: Run, lines: string[], failed: string | null) {
   const job = c.state.job;
   const state = failed ? `failed: ${failed}` : "done";
-  if (job?.row != null)
-    await quiet(
-      rows(
-        c.env.DB,
-        "UPDATE deploy_jobs SET log = log || ?, state = ?, alive = ? WHERE id = ?",
-        `${lines.join("\n")}\n`,
-        state,
-        c.io.now(),
-        job.row
-      )
-    );
+  if (job?.row != null) {
+    const sql = "UPDATE deploy_jobs SET log = log || ?, state = ?, alive = ? WHERE id = ?";
+    await quiet(rows(c.env.DB, sql, `${lines.join("\n")}\n`, state, c.io.now(), job.row));
+  }
   if (job?.sha && c.state.tried?.sha == job.sha) c.state.tried.ok = !failed;
   delete c.state.job;
 }
@@ -666,11 +645,12 @@ async function run(c: Run): Promise<string> {
     quiet(
       rows(
         db,
-        "INSERT INTO deploy_control (id, looked, head, error, commits) VALUES (1, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET looked = excluded.looked, head = excluded.head, error = excluded.error, commits = excluded.commits",
+        "INSERT INTO deploy_control (id, looked, head, error, commits, latest_release) VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET looked = excluded.looked, head = excluded.head, error = excluded.error, commits = excluded.commits, latest_release = excluded.latest_release",
         c.io.now(),
         state.head ?? null,
         error,
-        JSON.stringify((state.commits ?? []).map((k) => ({ ...k, release: k.release ?? "none" })))
+        JSON.stringify((state.commits ?? []).map((k) => ({ ...k, release: k.release ?? "none" }))),
+        state.latestRelease ? JSON.stringify(state.latestRelease) : null
       )
     );
   const stop = async (e: unknown) => {
@@ -688,29 +668,40 @@ async function run(c: Run): Promise<string> {
   }
   if (!state.spec) return "The instance's database gave no spec, and the deployer has none from before: it looks again in a minute.";
   c.spec = state.spec;
-  const control = await rows(db, "SELECT auto, ask, ask_by, ask_at FROM deploy_control WHERE id = 1").catch(() => null);
-  if (control) state.auto = !!control[0]?.auto;
+  const control = await rows(db, "SELECT auto, auto_mode, ask, ask_by, ask_at FROM deploy_control WHERE id = 1").catch(() => null);
+  if (control) state.autoMode = tags.autoModeOf(control[0]?.auto as number | undefined, control[0]?.auto_mode as string | null | undefined);
 
-  // GitHub: the head, the commits when the head is new, and each commit's release (the head's until it is there).
+  // GitHub: the head, the release tags, the commits when the head is new, and each commit's release.
   let head: string;
   let release: ReleaseState;
   try {
-    head = await headOf(c);
+    const refs = await refsOf(c);
+    head = refs.head;
     if (state.commits?.[0]?.sha != head) {
       const known = new Map((state.commits ?? []).map((k) => [k.sha, k.release]));
       const feed = await commitsOf(c);
-      // A feed that is behind the head (GitHub makes it a moment later) changes nothing: the next run reads it again.
       if (feed[0]?.sha == head) state.commits = feed.slice(0, COMMITS).map((k) => ({ ...k, release: known.get(k.sha) }));
     }
-    const stateOf = async (sha: string): Promise<ReleaseState> => {
-      const layer = await layerOf(c, sha);
-      return typeof layer == "string" ? layer : "released";
-    };
+    const bySha = tags.tagBySha(refs.tags);
+    for (const k of state.commits ?? []) k.tag = bySha.get(k.sha);
+    const latestTag = await tags.resolveLatestTag(refs.tags, head, state.commits, state.latestRelease, (sha) => onBranch(c, sha));
+    const stateOf = (sha: string): Promise<ReleaseState> => layerOf(c, sha).then((l) => (typeof l == "string" ? l : "released"));
     let asked = 0;
-    for (const k of state.commits ?? [])
-      if (k.sha == head ? k.release != "released" && k.release != "refused" : k.release == null && asked++ < ASKED)
+    for (const k of state.commits ?? []) {
+      const retry = k.sha == head || (state.autoMode == "releases" && k.sha == latestTag?.sha);
+      if (retry ? k.release != "released" && k.release != "refused" : k.release == null && asked++ < ASKED)
         k.release = await stateOf(k.sha);
+    }
     release = state.commits?.find((k) => k.sha == head)?.release ?? (await stateOf(head));
+    const prev = latestTag && state.latestRelease?.sha == latestTag.sha ? state.latestRelease.release : null;
+    state.latestRelease = latestTag
+      ? {
+          tag: latestTag.tag,
+          sha: latestTag.sha,
+          release:
+            state.commits?.find((k) => k.sha == latestTag.sha)?.release ?? (prev && prev != "none" ? prev : await stateOf(latestTag.sha)),
+        }
+      : null;
     state.head = head;
     await copy(null);
   } catch (e) {
@@ -759,21 +750,31 @@ async function run(c: Run): Promise<string> {
     });
   }
 
-  if (!state.auto) return `${c.at}. Auto-deploy is off.`;
-  const tried = state.tried?.sha == head ? state.tried : null;
-  if (tried?.ok) return `${c.at}. The instance has ${short(head)}: nothing to deploy.`;
+  const target = tags.pickAutoTarget(state.autoMode ?? "off", c.spec.branch, head, release, state.latestRelease ?? null);
+  if ("wait" in target) return `${c.at}. ${target.wait}`;
+  const tried = state.tried?.sha == target.sha ? state.tried : null;
+  if (tried?.ok) return `${c.at}. The instance has ${short(target.sha)}: nothing to deploy.`;
   if (tried && (tried.up || tried.n >= TRIES))
-    return `${c.at}. Its deploy failed: the deployer waits for a new commit, or for an admin's ask.`;
-  if (release == "none") return `${c.at}. GitHub has no release of it yet: the deployer waits.`;
-  if (release == "refused") return `${c.at}. What GitHub's registry has for it is not a release: it is not deployed.`;
-  // A head that the deployer did not try: the instance may run it already (a deploy from a machine, a new deployer).
-  if (!tried && (await healthNow(c, short(head))).ok) {
-    state.tried = { sha: head, n: 0, ok: true, up: true };
-    return `${c.at}. The instance has ${short(head)}: nothing to deploy.`;
+    return `${c.at}. Its deploy failed: the deployer waits for a new ${target.tag ? "release" : "commit"}, or for an admin's ask.`;
+  if (target.release == "none") return `${c.at}. GitHub has no release of ${target.tag ?? "it"} yet: the deployer waits.`;
+  if (target.release == "refused")
+    return `${c.at}. What GitHub's registry has for ${target.tag ?? "it"} is not a release: it is not deployed.`;
+  // A target that the deployer did not try: it may run already, or a job (deploy then rollback) already tried it.
+  if (!tried) {
+    const seen = await rows(db, "SELECT 1 FROM deploy_jobs WHERE sha = ? LIMIT 1", target.sha).catch(() => []);
+    if (seen.length || (await healthNow(c, short(target.sha))).ok) {
+      state.tried = { sha: target.sha, n: 0, ok: true, up: true };
+      return `${c.at}. The instance has ${short(target.sha)}: nothing to deploy.`;
+    }
   }
-  return job(c, { kind: "deploy", command: `deploy ${head}`, source: "auto-deploy", sha: head }, "Its deploy", (log) => {
-    log(`${c.at}: auto-deploy deploys its release.`);
-    return deploy(c, head, log);
+  const command = target.tag ? `deploy ${target.tag} (${short(target.sha)})` : `deploy ${target.sha}`;
+  return job(c, { kind: "deploy", command, source: "auto-deploy", sha: target.sha }, "Its deploy", (log) => {
+    log(
+      target.tag
+        ? `${c.at}: auto-deploy deploys release ${target.tag} (${short(target.sha)}).`
+        : `${c.at}: auto-deploy deploys its release.`
+    );
+    return deploy(c, target.sha, log);
   });
 }
 

@@ -46,11 +46,12 @@
 //                                       there; with --dry-run it only says so; the instance holds its spec, and
 //                                       a deploy stops when the entry differs from it: --write-spec makes the
 //                                       entry's values the instance's spec first
-//   bun erga track <host> [--repo <repo>] [--branch <branch>] [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]
-//                                       the repository and the branch that a registered instance tracks
-//                                       (github.com/koomen/erga, main), and its upstream: a branch (of the same
-//                                       repository, or of --upstream-repo) that the ops page and status compare its
-//                                       branch with; with no option, it prints them
+//   bun erga track <host> [--repo <repo>] [--branch <branch>] [--auto-deploy off|releases|commits]
+//                    [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]
+//                                       the repository, the branch and the auto-deploy mode (off, releases, commits)
+//                                       that a registered instance tracks (github.com/koomen/erga, main), and its
+//                                       upstream: a branch (of the same repository, or of --upstream-repo) that the
+//                                       ops page and status compare its branch with; with no option, it prints them
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
 //   bun erga register <host> [--repo <repo>] [--branch <branch>] [--upstream <branch> [--upstream-repo <repo>]]
 //                     [--host aws [--profile <name>] [--region <region>]]
@@ -74,10 +75,11 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { flagsOf } from "./flags";
-import { latestTag, mergeArgs, nextVersion, releaseNotes, releaseRefusal, statusText } from "./flow";
+import { flagsOf, TAKES } from "./flags";
+import { mergeArgs, statusText } from "./flow";
 import { gateRefusal } from "./gate";
-import { commitsOf, fetchOrigin, headOf, readState, repoOf, tagsOf } from "./observe";
+import { headOf, readState, repoOf } from "./observe";
+import { isAutoMode } from "../deployer/tags";
 import { fail, pass, ROOT, say, sh } from "../root";
 
 
@@ -208,31 +210,12 @@ async function test(name: string | undefined) {
 
 // ------------------------------------------------------------------ release
 
-function release(asked: string | undefined, dry: boolean) {
+async function release(asked: string | undefined, dry: boolean) {
   const repo = needRepo();
-  fetchOrigin();
-  const M = headOf("origin/main") ?? fail("There is no origin/main.");
-  const tags = tagsOf();
-  const last = latestTag(tags.map((t) => t.name));
-  const commits = commitsOf("--no-merges", ...(last ? [`${last}..origin/main`] : ["-n", "50", "origin/main"]));
-  const no = releaseRefusal({ mainTagged: tags.find((t) => t.sha == M)?.name ?? null, commits: commits.length });
-  if (no) fail(no);
-  const v = nextVersion(last, asked);
-  if ("problem" in v) return fail(v.problem);
-  const notes = releaseNotes(last, commits);
-  say(`Release ${v.version} at main ${M.slice(0, 12)} (${commits.length} commits since ${last ?? "the start"}).`);
-  say();
-  say(notes);
-  if (dry) {
-    say("NOTE  A dry run: nothing is made. Without --dry-run, this makes the tag and the GitHub release.");
-    return;
-  }
-  const r = sh(["gh", "release", "create", v.version, "-R", repo, "--target", M, "--title", v.version, "--notes-file", "-"], {
-    input: notes,
-  });
-  if (!r.ok) fail(`gh release create failed: ${r.err}`);
-  fetchOrigin();
-  pass(`${v.version} is released: ${r.out}`);
+  const { ergaDir } = await import("./config");
+  const { runRelease } = await import("./release");
+  const r = await runRelease({ dir: ergaDir(), asked, dry, repo, log: say }).catch((e: Error) => fail(e.message));
+  if (r.url) pass(`${r.version} is released: ${r.url}`);
 }
 
 // ------------------------------------------------------------------ deploy and rollback
@@ -363,13 +346,13 @@ interface UpstreamOptions {
 }
 
 /**
- * `bun erga track <host> [--repo <repo>] [--branch <branch>] [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]`:
- * what a registered instance tracks, and the upstream that the ops page and status compare its branch with. It deploys nothing.
+ * `bun erga track <host> [--repo <repo>] [--branch <branch>] [--auto-deploy off|releases|commits] [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]`:
+ * what a registered instance tracks, its auto-deploy mode, and the upstream that the ops page and status compare its branch with. It deploys nothing.
  */
-async function track(arg: string | undefined, o: { repo?: string; branch?: string } & UpstreamOptions) {
+async function track(arg: string | undefined, o: { repo?: string; branch?: string; autoDeploy?: string } & UpstreamOptions) {
   const { host } = await instanceOf(
     arg,
-    "bun erga track <host> [--repo <repo>] [--branch <branch>] [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]"
+    "bun erga track <host> [--repo <repo>] [--branch <branch>] [--auto-deploy off|releases|commits] [--upstream <branch> [--upstream-repo <repo>] | --no-upstream]"
   );
   const { configPath, entryOf, ergaDir, readConfig, remoteOf, repoName, upstreamName, withEntry, withUpstream, writeConfig } = await import(
     "./config"
@@ -378,36 +361,54 @@ async function track(arg: string | undefined, o: { repo?: string; branch?: strin
   const had = entryOf(readConfig(dir), host) ?? fail(`${host} has no entry in ${configPath(dir)}.`, `bun erga register ${host}`);
   const upstreamOf = (e: typeof had) =>
     e.upstream ? `Its upstream is ${upstreamName({ repo: e.repo, upstream: e.upstream })}.` : "It has no upstream.";
-  if (!o.repo && !o.branch && !o.upstream && !o.upstreamRepo && !o.noUpstream)
+  const autoMode =
+    o.autoDeploy == undefined
+      ? undefined
+      : isAutoMode(o.autoDeploy)
+        ? o.autoDeploy
+        : fail(`--auto-deploy ${o.autoDeploy}: off, releases or commits.`);
+  if (!o.repo && !o.branch && !o.upstream && !o.upstreamRepo && !o.noUpstream && autoMode == undefined)
     return say(`${host} tracks ${had.repo} ${had.branch}. ${upstreamOf(had)}`);
   const tracked = { ...had, repo: o.repo ? repoName(o.repo) : had.repo, branch: o.branch ?? had.branch };
   const made = withUpstream(tracked, o);
   const entry = typeof made == "string" ? fail(made) : made;
-  // The branch must be there: a deploy takes its head. The upstream's branch too: the comparison needs it.
-  const { remoteHead } = await import("./deploy");
-  const head =
-    remoteHead(dirname(dir), remoteOf(dirname(dir), entry.repo), entry.branch) ??
-    fail(`${entry.repo} has no branch ${entry.branch}. ${host} tracks ${had.repo} ${had.branch}, as before.`);
-  if (
-    entry.upstream &&
-    (o.upstream || o.upstreamRepo) &&
-    !remoteHead(dirname(dir), remoteOf(dirname(dir), entry.upstream.repo), entry.upstream.branch)
-  )
-    fail(
-      `${entry.upstream.repo} has no branch ${entry.upstream.branch}, or this machine can't read it. ${host} is as before. ${upstreamOf(had)}`
-    );
   const moved = entry.repo != had.repo || entry.branch != had.branch;
-  // The instance's spec holds what it tracks: it takes the new repository and branch. An instance with no spec yet
-  // gets the entry's with its next deploy.
-  if (moved) {
-    const { reachOf, sqlOf, trackOn } = await import("./instance");
-    await (async () => trackOn(await sqlOf(had, await reachOf(had)), entry.repo, entry.branch))().catch((e: Error) =>
-      fail(`${host}'s spec on the instance did not change: ${e.message}\n${host} tracks ${had.repo} ${had.branch}, as before.`)
-    );
+  const changedUpstream = !!(o.upstream || o.upstreamRepo || o.noUpstream);
+  let head: string | null = null;
+  if (moved || changedUpstream) {
+    // The branch must be there: a deploy takes its head. The upstream's branch too: the comparison needs it.
+    const { remoteHead } = await import("./deploy");
+    head =
+      remoteHead(dirname(dir), remoteOf(dirname(dir), entry.repo), entry.branch) ??
+      fail(`${entry.repo} has no branch ${entry.branch}. ${host} tracks ${had.repo} ${had.branch}, as before.`);
+    if (
+      entry.upstream &&
+      (o.upstream || o.upstreamRepo) &&
+      !remoteHead(dirname(dir), remoteOf(dirname(dir), entry.upstream.repo), entry.upstream.branch)
+    )
+      fail(
+        `${entry.upstream.repo} has no branch ${entry.upstream.branch}, or this machine can't read it. ${host} is as before. ${upstreamOf(had)}`
+      );
   }
-  writeConfig(dir, withEntry(readConfig(dir), entry));
+  if (moved || autoMode != undefined) {
+    const { reachOf, setAutoOn, sqlOf, trackOn } = await import("./instance");
+    const sql = await sqlOf(had, await reachOf(had)).catch((e: Error) => fail(`${host}: ${e.message}`));
+    if (moved)
+      await trackOn(sql, entry.repo, entry.branch).catch((e: Error) =>
+        fail(`${host}'s spec on the instance did not change: ${e.message}\n${host} tracks ${had.repo} ${had.branch}, as before.`)
+      );
+    if (autoMode != undefined) {
+      const wrote = await setAutoOn(sql, autoMode).catch((e: Error) => fail(`${host}'s auto-deploy mode did not change: ${e.message}`));
+      if (!wrote) fail(`${host}'s database has no table for auto-deploy yet: deploy it once first.`);
+    }
+  }
+  if (moved || changedUpstream) writeConfig(dir, withEntry(readConfig(dir), entry));
+  if (autoMode != undefined && !moved && !changedUpstream) {
+    pass(`${host} auto-deploy is set to ${autoMode}.`);
+    return say("NOTE  Nothing deployed. The deployer reads the new setting at its next look.");
+  }
   pass(
-    `${host} tracks ${entry.repo} ${entry.branch}${moved ? ` (before: ${had.repo} ${had.branch})` : ""}. Its head is ${head.slice(0, 12)}. ${upstreamOf(entry)}`
+    `${host} tracks ${entry.repo} ${entry.branch}${moved ? ` (before: ${had.repo} ${had.branch})` : ""}${autoMode != undefined ? `, auto-deploy ${autoMode}` : ""}.${head ? ` Its head is ${head.slice(0, 12)}.` : ""} ${upstreamOf(entry)}`
   );
   say(
     moved
@@ -430,23 +431,8 @@ export async function main(argv: string[]) {
     const i = rest.indexOf(f);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const plain = rest.filter(
-    (x, i) =>
-      !x.startsWith("-") &&
-      ![
-        "-m",
-        "--port",
-        "--repo",
-        "--branch",
-        "--upstream",
-        "--upstream-repo",
-        "--domain",
-        "--remove-domain",
-        "--host",
-        "--profile",
-        "--region",
-      ].includes(rest[i - 1] ?? "")
-  );
+  const takes = TAKES[cmd]?.options ?? [];
+  const plain = rest.filter((x, i) => !x.startsWith("-") && !takes.includes(rest[i - 1] ?? ""));
   const upstream = { upstream: opt("--upstream"), upstreamRepo: opt("--upstream-repo"), noUpstream: flag("--no-upstream") };
   switch (cmd) {
     case "skill":
@@ -526,7 +512,9 @@ export async function main(argv: string[]) {
         ...upstream,
       }).catch((e: Error) => fail(e.message));
     case "track":
-      return track(plain[0], { repo: opt("--repo"), branch: opt("--branch"), ...upstream }).catch((e: Error) => fail(e.message));
+      return track(plain[0], { repo: opt("--repo"), branch: opt("--branch"), autoDeploy: opt("--auto-deploy"), ...upstream }).catch(
+        (e: Error) => fail(e.message)
+      );
     case "verify": {
       const { verifyMain } = await import("../../dev/verify/cli");
       return verifyMain(rest);

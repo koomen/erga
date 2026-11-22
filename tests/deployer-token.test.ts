@@ -166,7 +166,7 @@ describe("cloud deploys, from a person's token", () => {
     expect(await installWithToken(mock.fetch, own, TARGET, "mock-only-erga-next")).toEqual(NEVER_SHOWN);
     expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "mock-only-erga-next" });
     expect(await hasDeployer(own, TARGET)).toBe(true);
-    expect(await Effect.runPromise(readControl(sql(own)))).toMatchObject({ auto: true, ask: null });
+    expect(await Effect.runPromise(readControl(sql(own)))).toMatchObject({ auto: true, autoMode: "releases", ask: null });
 
     // Local deploys again: the deployer goes, with its token.
     expect(await removeDeployer(own, TARGET)).toBe(true);

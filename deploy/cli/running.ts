@@ -17,6 +17,7 @@ import { d1Api, healthRow, liveDeployment, liveRelease, readHealth } from "../de
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { readControl } from "../deployer/control";
 import { holds, type Job, readJobs, readLog, type Sql } from "../deployer/instance";
+import type { AutoMode } from "../deployer/tags";
 import { AwsFacts, CloudflareFacts, DEFAULT_BRANCH, DEFAULT_REPO, type Entry, isAws } from "./config";
 import { mocked, netOf } from "./deploy";
 import type { Answer } from "./flow";
@@ -182,12 +183,13 @@ export const recordOf = (host: string, job: Job, text: string, now: number): Job
 const DEPLOYER_MS = 5 * 60_000;
 
 /**
- * What an instance's own database says of its deploys: its jobs, newest first, and `cloud`: a deployer in its own
- * account deploys it now (it looked in the last minutes, and its auto-deploy is on).
+ * What an instance's own database says of its deploys: its jobs, newest first, `cloud`: a deployer in its own account
+ * deploys it now (it looked in the last minutes, and its auto-deploy is on), and `autoMode`: its deploy_control setting.
  */
 export interface OnInstance {
   jobs: JobRecord[];
   cloud: boolean;
+  autoMode?: AutoMode | null;
 }
 
 /**
@@ -238,6 +240,7 @@ export function jobsReader(o: ReaderOptions = {}): (e: Entry) => Promise<OnInsta
     return {
       jobs: jobs.map((job) => recordOf(e.host, job, logs.get(`${e.host} ${job.id}`)?.text ?? "", now)),
       cloud: !!control?.auto && control.looked != null && control.looked > now - DEPLOYER_MS,
+      ...(control ? { autoMode: control.autoMode } : {}),
     };
   };
 }

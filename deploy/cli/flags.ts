@@ -21,7 +21,7 @@ export const TAKES: Record<string, { flags?: string[]; options?: string[] }> = {
     flags: ["--no-upstream"],
     options: ["--repo", "--branch", "--host", "--profile", "--region", "--upstream", "--upstream-repo"],
   },
-  track: { flags: ["--no-upstream"], options: ["--repo", "--branch", "--upstream", "--upstream-repo"] },
+  track: { flags: ["--no-upstream"], options: ["--repo", "--branch", "--upstream", "--upstream-repo", "--auto-deploy"] },
   verify: { flags: ["--keep", "--yes"], options: ["--browsers", "--origin"] },
   help: {},
 };

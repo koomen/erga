@@ -122,7 +122,10 @@ test("with a deployer: the page lists the commits that its look saw, and Deploy 
   expect(row(2)).toContain('<span class="w">live</span>');
   expect(row(2)).toContain("data-rollback");
   expect(row(1)).toContain("refused");
-  expect(html).toContain('<input type="checkbox" role="switch" id="auto-deploy">');
+  expect(html).toContain('id="auto-deploy" role="radiogroup"');
+  expect(html).toContain('data-auto-mode="off">Off</button>');
+  expect(html).toContain('data-auto-mode="releases">Releases only</button>');
+  expect(html).toContain('data-auto-mode="commits">Every commit</button>');
   expect(html).toContain("GitHub, by the deployer, just now");
   // No job and no ask: the page asks again each 10 seconds.
   expect(html).toContain('id="ops" data-wait="10000"');
@@ -138,7 +141,7 @@ test("with a deployer: the page lists the commits that its look saw, and Deploy 
     ["2", "released", true],
     ["1", "refused", false],
   ]);
-  expect(read.autoDeploy).toBe(false);
+  expect(read.autoDeploy).toBe("off");
 });
 
 test("an admin's ask is the deployer's job: asked, taken, run, done; the page and the read follow it", async () => {
@@ -216,13 +219,39 @@ test("what an ask refuses, a rollback, an ask in the place of one that waits, an
   expect(s.dir.deploys.ask({ login: "tester", admin: true }, { kind: "deploy", sha: "main" })).rejects.toThrow(
     "is not a commit's full name"
   );
-  // The switch.
-  expect(await runTool(s, "deploy", { action: "auto" })).toMatchObject({ status: 400, error: "auto needs on: true or false." });
-  expect((await runTool(s, "deploy", { action: "auto", on: true })).result).toEqual({ autoDeploy: true });
-  expect((await run(readControl(sql)))?.auto).toBe(true);
-  expect(await page()).toContain('id="auto-deploy" checked>');
-  expect((await runTool(s, "deploy", { action: "auto", on: false })).result).toEqual({ autoDeploy: false });
-  expect((await run(readControl(sql)))?.auto).toBe(false);
+  // The 3-way auto-deploy selector.
+  expect(await runTool(s, "deploy", { action: "auto" })).toMatchObject({
+    status: 400,
+    error: "auto needs mode: off, releases or commits.",
+  });
+  expect((await runTool(s, "deploy", { action: "auto", mode: "releases" })).result).toEqual({ autoDeploy: "releases" });
+  expect(await run(readControl(sql))).toMatchObject({ auto: true, autoMode: "releases" });
+  expect(await page()).toContain('aria-checked="true" data-auto-mode="releases"');
+  expect((await runTool(s, "deploy", { action: "auto", mode: "commits" })).result).toEqual({ autoDeploy: "commits" });
+  expect(await run(readControl(sql))).toMatchObject({ auto: true, autoMode: "commits" });
+  expect(await page()).toContain('aria-checked="true" data-auto-mode="commits"');
+  expect((await runTool(s, "deploy", { action: "auto", mode: "off" })).result).toEqual({ autoDeploy: "off" });
+  expect(await run(readControl(sql))).toMatchObject({ auto: false, autoMode: "off" });
+  // Releases-only UI: tag pills, Latest release in tracks bar, muting untagged commits above live, and deploying by tag.
+  await run(
+    writeLook(sql, {
+      head: sha(4),
+      error: null,
+      commits: COMMITS.map((c) => (c.sha == sha(3) ? { ...c, tag: "v0.2.0" } : c.sha == sha(2) ? { ...c, tag: "v0.1.0" } : c)),
+      latestRelease: { tag: "v0.2.0", sha: sha(3), release: "released" },
+    })
+  );
+  await runTool(s, "deploy", { action: "auto", mode: "releases" });
+  const relHtml = await page();
+  expect(relHtml).toContain("Latest release <code>v0.2.0</code>.");
+  expect(relHtml).toContain('<span class="ref rel" title="Release v0.2.0">v0.2.0</span>');
+  expect(relHtml).toContain('<div class="row off unreleased" data-sha="4444444444444444444444444444444444444444">');
+  expect((await runTool(s, "deploy", { action: "deploy", commit: "v0.2.0" })).result).toMatchObject({
+    asked: "deploy 333333333333",
+    commit: sha(3),
+  });
+  await runTool(s, "deploy", { action: "auto", mode: "off" });
+  await runTool(s, "deploy", { action: "rollback" });
   // The look does not touch what the app wrote, and the app's writes keep the look.
   await run(writeLook(sql, { head: sha(4), error: "GitHub answered 503.", commits: COMMITS }));
   expect((await run(readControl(sql)))?.ask).toMatchObject({ kind: "rollback" });
@@ -232,7 +261,9 @@ test("what an ask refuses, a rollback, an ask in the place of one that waits, an
   expect(asks({ action: "deploy", commit: "3333333" })).toBe("Deploy the commit 3333333 to this server");
   expect(asks({ action: "deploy" })).toBe("Deploy the head of its branch to this server");
   expect(asks({ action: "rollback" })).toBe("Roll this server back to the version from before its last deploy");
-  expect(asks({ action: "auto", on: false })).toBe("Turn auto-deploy off for this server");
+  expect(asks({ action: "auto", mode: "off" })).toBe("Turn auto-deploy off for this server");
+  expect(asks({ action: "auto", mode: "releases" })).toBe("Set auto-deploy to releases only for this server");
+  expect(asks({ action: "auto", mode: "commits" })).toBe("Set auto-deploy to every commit for this server");
 });
 
 test("a job's state is the one that the ops page of a machine reads from the same row", async () => {

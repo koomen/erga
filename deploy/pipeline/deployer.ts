@@ -208,7 +208,7 @@ export async function installWithToken(
   const checked = await checkToken(net, own, target, token);
   if (checked.refused.length) throw new DeployError({ message: checked.refused.join("\n") });
   await installDeployer(own, target, token);
-  await Effect.runPromise(writeAuto(d1Sql(own, target), true)).catch((e) => {
+  await Effect.runPromise(writeAuto(d1Sql(own, target), "releases")).catch((e) => {
     throw new DeployError({
       message: `The deployer is installed, but auto-deploy is not on: ${e._tag == "NoTable" ? "the instance's database has no table for it yet (deploy the instance again, then set up again)" : e.message}`,
     });

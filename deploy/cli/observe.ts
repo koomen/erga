@@ -4,11 +4,12 @@
 import { type Config, type Entry, remoteOf, repoName } from "./config";
 import { type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
 import type { Ask } from "./running";
+import { parseRefs, type ReleaseTag } from "../deployer/tags";
 import { git, ROOT, sh } from "../root";
 
 /** The GitHub repository of `origin` (owner/name), or null. */
-export const repoOf = (): string | null => {
-  const url = git("remote", "get-url", "origin").out;
+export const repoOf = (cwd = ROOT): string | null => {
+  const url = sh(["git", "remote", "get-url", "origin"], { cwd }).out;
   const m = /github\.com[:/]([^/]+\/[^/]+?)(\.git)?$/.exec(url);
   return m ? m[1] : null;
 };
@@ -19,11 +20,11 @@ const FETCH = ["fetch", "--quiet", "--prune", "--tags", "--force", "origin"];
  * Brings the checkout's view of GitHub up to date: branches (deleted ones too) and tags. Another fetch at the same
  * moment (the ops page's, each 30 seconds, or another worktree's) can hold a ref's lock: it tries once more.
  */
-export const fetchOrigin = () => {
-  const r = git(...FETCH);
+export const fetchOrigin = (cwd = ROOT) => {
+  const r = sh(["git", ...FETCH], { cwd });
   if (r.ok || !/\.lock\b/.test(r.err)) return r;
   Bun.sleepSync(1000);
-  return git(...FETCH);
+  return sh(["git", ...FETCH], { cwd });
 };
 
 /** fetchOrigin, for the ops page: it does not block, and stops after `timeout` ms. Null when it worked, else why not. */
@@ -49,8 +50,8 @@ export async function fetchGitHub(cwd = ROOT, timeout = 30_000): Promise<string 
   }
 }
 
-export const headOf = (ref: string): string | null => {
-  const r = git("rev-parse", "--verify", "--quiet", `${ref}^{commit}`);
+export const headOf = (ref: string, cwd = ROOT): string | null => {
+  const r = sh(["git", "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { cwd });
   return r.ok ? r.out : null;
 };
 
@@ -132,17 +133,17 @@ export const trackedRef = (repo: string, branch: string) =>
     .replace(/^[-.]+|[-.]+$/g, "")}/${branch}`;
 
 /**
- * The heads of `branches` on `repo` now (one git ls-remote: a read), for the ops page's commits and for auto-deploy.
- * A head that the clone's own ref (trackedRef) is not at is fetched into that ref, so that the page's log, a deploy and
- * the checks have the commit, and git keeps it. `error`: why the repository gave no answer, or null.
+ * The heads of `branches` and all semver release tags (vX.Y.Z, newest first) on `repo` now (one git ls-remote: a read),
+ * for the ops page's commits and for auto-deploy. A head that the clone's own ref (trackedRef) is not at is fetched
+ * into that ref, so that the page's log, a deploy and the checks have the commit, and git keeps it.
  */
 export async function repoHeads(
   cwd: string,
   repo: string,
   branches: string[]
-): Promise<{ heads: Record<string, string>; error: string | null }> {
+): Promise<{ heads: Record<string, string>; tags?: ReleaseTag[]; error: string | null }> {
   const remote = remoteOf(cwd, repo);
-  const r = await gitAsync(cwd, ["ls-remote", remote, ...branches.map((b) => `refs/heads/${b}`)]);
+  const r = await gitAsync(cwd, ["ls-remote", remote, ...branches.map((b) => `refs/heads/${b}`), "refs/tags/v*"]);
   if (!r.ok) return { heads: {}, error: r.err.split("\n").find((l) => /^(fatal|error):/i.test(l)) ?? (r.err || "git ls-remote failed") };
   const heads = Object.fromEntries(
     r.out.split("\n").flatMap((l) => {
@@ -150,12 +151,13 @@ export async function repoHeads(
       return m ? [[m[2], m[1]]] : [];
     })
   );
+  const { tags } = parseRefs(r.out, branches[0] ?? "main");
   for (const [branch, sha] of Object.entries(heads)) {
     const ref = trackedRef(repo, branch);
     if (sh(["git", "rev-parse", "--verify", "--quiet", ref], { cwd }).out != sha)
       await gitAsync(cwd, ["fetch", "--quiet", "--no-tags", remote, `+refs/heads/${branch}:${ref}`]);
   }
-  return { heads, error: null };
+  return { heads, ...(tags.length ? { tags } : {}), error: null };
 }
 
 /** Whether the clone has both commits, and `head` has `commit` in its history. */
@@ -193,8 +195,10 @@ export function branchesOf(live: Set<string> | null, cwd = ROOT, base = "origin/
 }
 
 /** The release tags, each with its commit. */
-export const tagsOf = () =>
-  git("tag", "-l", "v*", "--format=%(refname:short)%1f%(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end)")
+export const tagsOf = (cwd = ROOT) =>
+  sh(["git", "tag", "-l", "v*", "--format=%(refname:short)%1f%(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end)"], {
+    cwd,
+  })
     .out.split("\n")
     .filter(Boolean)
     .map((l) => {

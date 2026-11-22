@@ -198,12 +198,25 @@ test("the list: each instance with its branch, one word when it is not at its br
     "can&#39;t read",
     "can&#39;t read",
   ]);
-  // Auto-deploy is a fact of the whole page: one line under the list, and nothing on the right side.
+  // Auto-deploy is a fact of the whole page: one line under the list, and nothing on the right side (unless modes[host] is set).
   const on = viewHtml(facts({ auto: {} }), "example.net", NOW);
   expect(left(on)).toContain('<p class="side-auto"><i class="light ok"></i><span>Auto-deploy is on</span></p>');
   expect(left(html)).toContain("<span>Auto-deploy is off</span>");
   expect(right(on)).not.toMatch(/auto-deploy/i);
   expect(right(html)).toContain("Tracks <code>example.com/team/erga</code> <code>main</code>.</p>");
+  // Releases-only mode: shows mode selector, release tag pills, mutes untagged commits above live, and wordOf says "latest release".
+  const rel = viewHtml(
+    facts({
+      modes: { "staging.example.net": "releases" },
+      tags: { "staging.example.net": [{ tag: "v0.4.0", sha: "4".repeat(40) }] },
+    }),
+    "staging.example.net",
+    NOW
+  );
+  expect(right(rel)).toContain('data-auto-mode="releases"');
+  expect(right(rel)).toContain('<span class="ref rel" title="Release v0.4.0">v0.4.0</span>');
+  expect(right(rel)).toContain('<div class="row off unreleased" data-sha="5555555555555555555555555555555555555555">');
+  expect(words(rel)["staging.example.net"]).toBe("v0.4.0");
   expect(viewHtml(facts(), "staging.example.net", NOW)).toContain('<a class="group sel" href="#staging.example.net"');
 });
 

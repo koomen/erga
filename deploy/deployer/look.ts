@@ -27,11 +27,12 @@ import * as Effect from "effect/Effect";
 import { DeployError, type Fetch } from "./cloudflare-api";
 import { type Ask, type Commit, readControl, startOf, takeAsk, writeLook } from "./control";
 import { deploy, type Ports } from "./deploy";
-import { commitsAtGitHub, headAtGitHub, onBranchAtGitHub } from "./github";
+import { commitsAtGitHub, onBranchAtGitHub, refsAtGitHub } from "./github";
 import { holds, type Job, type JobLog, type NoTable, openJob, readJobs, readSpec, type Sql, type Start } from "./instance";
 import { fetchRelease, releaseState } from "./registry";
 import { rollback } from "./rollback";
 import type { Spec } from "./spec";
+import { type LatestRelease, pickAutoTarget, tagBySha } from "./tags";
 
 /** What a look acts through. The time is Effect's Clock. */
 export interface LookPorts {
@@ -74,17 +75,27 @@ export function due(jobs: readonly Pick<Job, "state" | "alive" | "sha" | "comman
 export const look = (ports: LookPorts): Effect.Effect<string> =>
   Effect.suspend(() => {
     const { sql, fetch } = ports;
-    /** The head and the commits as the look knows them now (first: as the last look wrote them): an error keeps them on the instance. */
-    const known = { read: false, head: null as string | null, commits: [] as readonly Commit[] };
+    /** The head, commits and latest release as the look knows them now: an error keeps them on the instance. */
+    const known = {
+      read: false,
+      head: null as string | null,
+      commits: [] as readonly Commit[],
+      latestRelease: null as LatestRelease | null,
+    };
     const body: Effect.Effect<string, DeployError | NoTable> = Effect.gen(function* () {
       const spec = yield* readSpec(sql);
       if (!spec) return "The instance has no spec: nothing to look at.";
       const control = yield* readControl(sql);
-      Object.assign(known, { read: true, head: control?.head ?? null, commits: control?.commits ?? [] });
+      Object.assign(known, {
+        read: true,
+        head: control?.head ?? null,
+        commits: control?.commits ?? [],
+        latestRelease: control?.latestRelease ?? null,
+      });
       if (!ports.mine(spec.target))
         return yield* wrong("The instance's spec names another instance than the one that this deployer is for.");
 
-      const head = yield* headAtGitHub(fetch, spec);
+      const { head, tags } = yield* refsAtGitHub(fetch, spec);
       known.head = head;
       // The commits: only when the head is not the first of those that the last look wrote. A feed that is behind the
       // head (GitHub makes it a moment later) changes nothing: the next look reads it again.
@@ -95,16 +106,45 @@ export const look = (ports: LookPorts): Effect.Effect<string> =>
         if (feed[0]?.sha == head) list = feed.slice(0, COMMITS);
       }
       // Each commit's release: as the last look found it, but for the head with none yet, and for a new commit.
+      const bySha = tagBySha(tags);
       const found = new Map(before.map((c) => [c.sha, c.release]));
-      const stateOf = (sha: string) => {
+      const stateOf = (sha: string, retry: boolean) => {
         const was = found.get(sha);
-        return was == null || (was == "none" && sha == head) ? releaseState(fetch, spec, sha) : Effect.succeed(was);
+        return was == null || (was == "none" && retry) ? releaseState(fetch, spec, sha) : Effect.succeed(was);
       };
+      // The newest semver tag (vX.Y.Z) on the tracked branch (at most 3 tags checked via compare API when older than the feed).
+      let latestTag: { tag: string; sha: string } | null = null;
+      let checked = 0;
+      for (const t of tags) {
+        const local = t.sha == head || list.some((c) => c.sha == t.sha) || known.latestRelease?.sha == t.sha;
+        if (local) {
+          latestTag = t;
+          break;
+        }
+        if (checked++ >= 3) break;
+        if (yield* onBranchAtGitHub(fetch, spec, t.sha)(short(t.sha))) {
+          latestTag = t;
+          break;
+        }
+      }
+      const mode = control?.autoMode ?? "off";
       const commits: Commit[] = [];
-      for (const c of list) commits.push({ sha: c.sha, title: c.title, at: c.at, release: yield* stateOf(c.sha) });
-      const release = commits.find((c) => c.sha == head)?.release ?? (yield* stateOf(head));
+      for (const c of list) {
+        const retry = c.sha == head || (mode == "releases" && c.sha == latestTag?.sha);
+        const tag = bySha.get(c.sha);
+        commits.push({ sha: c.sha, title: c.title, at: c.at, release: yield* stateOf(c.sha, retry), ...(tag ? { tag } : {}) });
+      }
+      const release = commits.find((c) => c.sha == head)?.release ?? (yield* stateOf(head, true));
+      let latestRelease: LatestRelease | null = null;
+      if (latestTag) {
+        const inCommits = commits.find((c) => c.sha == latestTag.sha)?.release;
+        const prev = known.latestRelease?.sha == latestTag.sha ? known.latestRelease.release : null;
+        const relState = inCommits ?? (prev && prev != "none" ? prev : yield* releaseState(fetch, spec, latestTag.sha));
+        latestRelease = { tag: latestTag.tag, sha: latestTag.sha, release: relState };
+      }
       known.commits = commits;
-      yield* writeLook(sql, { head, commits, error: null });
+      known.latestRelease = latestRelease;
+      yield* writeLook(sql, { head, commits, latestRelease, error: null });
 
       const at = `${spec.branch} on ${spec.repo} is at ${short(head)}`;
       const jobs = yield* readJobs(sql, JOBS);
@@ -163,16 +203,23 @@ export const look = (ports: LookPorts): Effect.Effect<string> =>
         );
       }
 
-      if (!control?.auto) return `${at}. Auto-deploy is off.`;
-      const wait = due(jobs, head, now);
+      const target = pickAutoTarget(mode, spec.branch, head, release, latestRelease);
+      if ("wait" in target) return `${at}. ${target.wait}`;
+      const wait = due(jobs, target.sha, now);
       if (wait) return `${at}. ${wait}`;
-      if (release == "none") return `${at}. GitHub has no release of it yet: the look waits.`;
-      if (release == "refused") return `${at}. What GitHub's registry has for it is not a release: it is not deployed.`;
-      return yield* inJob({ kind: "deploy", command: `deploy ${head}`, source: "auto-deploy" }, "Its deploy", (job) => {
-        job.commit(head);
-        job.line(`${at}: auto-deploy deploys its release.`);
-        // The commit is the head that GitHub gave a moment before: the release must say that it is that commit.
-        return deployOf(job, head, (version) => Effect.succeed(version.length >= 12 && head.startsWith(version)));
+      if (target.release == "none") return `${at}. GitHub has no release of ${target.tag ?? "it"} yet: the look waits.`;
+      if (target.release == "refused")
+        return `${at}. What GitHub's registry has for ${target.tag ?? "it"} is not a release: it is not deployed.`;
+      const command = target.tag ? `deploy ${target.tag} (${short(target.sha)})` : `deploy ${target.sha}`;
+      return yield* inJob({ kind: "deploy", command, source: "auto-deploy" }, "Its deploy", (job) => {
+        job.commit(target.sha);
+        job.line(
+          target.tag
+            ? `${at}: auto-deploy deploys release ${target.tag} (${short(target.sha)}).`
+            : `${at}: auto-deploy deploys its release.`
+        );
+        // The commit is the head or release tag that GitHub gave a moment before: the release must say that it is that commit.
+        return deployOf(job, target.sha, (version) => Effect.succeed(version.length >= 12 && target.sha.startsWith(version)));
       });
     });
     return body.pipe(
@@ -181,7 +228,10 @@ export const look = (ports: LookPorts): Effect.Effect<string> =>
       ),
       Effect.catch((e) =>
         known.read
-          ? writeLook(sql, { head: known.head, commits: [...known.commits], error: e.message }).pipe(Effect.ignore, Effect.as(e.message))
+          ? writeLook(sql, { head: known.head, commits: [...known.commits], latestRelease: known.latestRelease, error: e.message }).pipe(
+              Effect.ignore,
+              Effect.as(e.message)
+            )
           : Effect.succeed(e.message)
       )
     );

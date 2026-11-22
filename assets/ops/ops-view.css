@@ -18,8 +18,16 @@
 /* The chosen instance: its name, what it tracks, its tabs and the job line. */
 .ops-view .main { min-width: 0; container-type: inline-size; }
 .ops-view .title { margin: 4px 0 2px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
+.ops-view .tracks-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin: 0 0 8px; }
+.ops-view .tracks-bar .tracks-line { margin: 0; }
 .ops-view .tracks-line { margin: 0 0 8px; font-size: 13px; color: var(--soft); }
 .ops-view .tracks-line code { font: 12px var(--font-mono); color: var(--fg); }
+.ops-view .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); }
+.ops-view .seg button { border: 0; background: transparent; padding: 5px 10px; border-radius: 8px; font: 500 12.5px var(--font-text); color: var(--soft); cursor: pointer; white-space: nowrap; }
+.ops-view .seg button:hover { color: var(--fg-strong); }
+.ops-view .seg button[aria-checked="true"] { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 16%, transparent); font-weight: 600; }
+.ops-view .seg button:focus-visible { outline: 2px solid var(--caret, var(--fg-strong)); outline-offset: 1px; }
+.ops-view .seg button:disabled { cursor: wait; opacity: 0.6; }
 .ops-view .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--rule); }
 .ops-view .tab { padding: 6px 0 8px; margin-bottom: -1px; font-size: 14px; color: var(--soft); text-decoration: none; }
 .ops-view .tab:hover { color: var(--fg-strong); }
@@ -80,11 +88,13 @@
 
 /* Deploys: the instance's commits, in one column. */
 .ops-view .c-head { margin: 0; padding: 0 0 6px 6px; border-bottom: 1px solid var(--rule); font-size: 11.5px; font-weight: 600; color: var(--soft); }
-/* A tag at a branch's head: the instance's branch, and its upstream. And the line for an upstream's commits past the list's. */
+/* A tag at a branch's head: the instance's branch, its upstream, and vX.Y.Z release tags. */
 .ops-view .ref { margin-right: 8px; padding: 2px 7px; border-radius: 6px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--rule); font: 11px var(--font-mono); color: var(--fg); }
+.ops-view .ref.rel { font-weight: 600; color: var(--ok); background: color-mix(in srgb, var(--ok) 11%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 30%, transparent); }
 .ops-view .grid > .more { grid-column: 1 / -1; padding: 0 6px 0 28px; font-size: 12.5px; line-height: var(--row); color: var(--soft); }
 .ops-view .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .ops-view .dot.off { background: var(--bg); border: 2px solid var(--off); }
+.ops-view .dot.muted { background: var(--bg); border: 2px solid var(--chrome); }
 .ops-view .dot.on { background: var(--ok); border: 2px solid var(--ok); }
 .ops-view .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 104px 124px; align-items: center; }
 .ops-view .row { display: contents; }
@@ -93,12 +103,14 @@
 .ops-view .rail { position: relative; justify-content: center; }
 .ops-view .rail::before, .ops-view .rail::after { content: ""; position: absolute; left: calc(50% - 1px); width: 2px; height: 50%; display: none; opacity: .4; background: var(--off); }
 .ops-view .rail.on::before, .ops-view .rail.on::after { background: var(--ok); }
+.ops-view .rail.muted::before, .ops-view .rail.muted::after { background: var(--chrome); }
 .ops-view .rail::before { top: 0; }
 .ops-view .rail::after { bottom: 0; }
 .ops-view .rail.up::before, .ops-view .rail.down::after { display: block; }
 .ops-view .rail .dot { position: relative; z-index: 1; }
 .ops-view .subj { min-width: 0; padding: 0 8px 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); display: block !important; line-height: var(--row); }
 .ops-view .row.on .subj { color: var(--fg); }
+.ops-view .row.unreleased .subj { color: var(--soft); }
 .ops-view .row .who, .ops-view .row .sha, .ops-view .row time { white-space: nowrap; }
 .ops-view .row .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 .ops-view .row .sha { padding: 0 6px; font-size: 11.5px; color: var(--chrome); }
