@@ -49,6 +49,33 @@ describe("the keys", () => {
     expect(key("<p>One</p>\n<p>|Two</p>", { kind: "delete", forward: false })).toEqual({ text: "<p>One|Two</p>", undo: "own" });
   });
 
+  // Pete's bug: Enter in a list, Cmd+B, a letter, Backspace left <li><strong></strong></li>, and no Backspace took the bullet.
+  test.each([
+    ["in the empty tag", "<li><strong>|</strong></li>"],
+    ["after it", "<li><strong></strong>|</li>"],
+    ["before it", "<li>|<strong></strong></li>"],
+  ])("Backspace in an item that holds only an empty inline tag, the caret %s: the item goes, with its tag", (_, item) => {
+    const list = (last: string) => `<ul>\n  <li><strong>One.</strong> Two.</li>\n  ${last}</ul>`;
+    expect(key(list(`${item}\n`), { kind: "delete", forward: false })).toEqual({
+      text: "<ul>\n  <li><strong>One.</strong> Two.|</li>\n</ul>",
+      undo: "own",
+    });
+  });
+
+  test("Backspace on a block's last bold letter keeps the empty tag, and the next one joins the block before", () => {
+    const back = { kind: "delete", forward: false } as const;
+    const one = key("<p>One</p>\n<p><strong>x|</strong></p>", back);
+    expect(one).toEqual({ text: "<p>One</p>\n<p><strong>|</strong></p>", undo: "type" });
+    expect(key((one as { text: string }).text, back)).toEqual({ text: "<p>One|</p>", undo: "own" });
+  });
+
+  test("Delete in a block that holds only an empty inline tag joins the next block to it", () => {
+    expect(key("<p><em>|</em></p>\n<p>Two</p>", { kind: "delete", forward: true })).toEqual({
+      text: "<p><em></em>|Two</p>",
+      undo: "own",
+    });
+  });
+
   test("Delete at a paragraph's end joins the next", () => {
     expect(key("<p>One|</p>\n<p>Two</p>", { kind: "delete", forward: true })).toEqual({ text: "<p>One|Two</p>", undo: "own" });
   });

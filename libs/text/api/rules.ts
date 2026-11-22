@@ -154,7 +154,8 @@ export function joinBlocks(src: string, prev: M.Unit, next: M.Unit, pos: number)
     M.adjacent(src, prev, next) &&
     !todoBox(src, next) &&
     !placeholderBr(src, prev) &&
-    !placeholderBr(src, next) &&
+    // (A block that shows nothing goes whole, with its empty inline tags.)
+    contentIn(src, next, next.contentFrom, next.contentTo) &&
     !/<br\s*\/?>\s*$/i.test(src.slice(prev.contentFrom, prev.contentTo))
   ) {
     let at = prev.contentTo,
@@ -334,8 +335,9 @@ function deleteKey(page: Page, sel: Sel, forward: boolean): Step | null {
   // At the start of a to-do item's text: the checkbox goes, and the item is a list item again.
   const box = forward ? null : untodo(src, u, pos);
   if (box) return { ...box, undo: "own" };
-  // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
-  const blank = !!placeholderBr(src, u);
+  // A block that shows nothing has no text to delete: only its placeholder <br>, or only empty inline tags (the last
+  // letter of bold text went). The caret, anywhere in it, is at both ends.
+  const blank = !!placeholderBr(src, u) || emptyIn(src, u, u.contentFrom, u.contentTo);
   if (!forward && (blank || pos <= M.textStart(u))) {
     const rule = backspaceBlock(src, u, pos);
     return rule ? { ...rule, undo: "own" } : join(page, u.id - 1, u.id, pos, false);
