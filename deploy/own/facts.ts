@@ -156,6 +156,7 @@ export async function observe(a: Answers, dir = DIR, connect = cloudflare): Prom
       )
       .catch(() => null);
     seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
+    seen.bound = !!settings?.bindings?.some((b) => b.type == "service" && b.name == "DEPLOYER");
     seen.live = await liveOf(cf, account.id, worker, a, seen.github || undefined);
     seen.admin = !!(await adminOn(cf, acc, worker).catch(() => null));
     seen.deployer = !!scripts.find((x) => x.id == deployerName(worker))?.tags?.includes(DEPLOYER_TAG);

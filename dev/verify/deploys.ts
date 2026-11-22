@@ -11,7 +11,8 @@
 //            refuses stops a deploy before anything changes; a deploy again, and a rollback to the version before;
 //            a custom domain (--domain), a document published there, and the domain's removal (--remove-domain).
 // CLOUDFLARE (the deployer in the account deploys, with a token for the one Worker):
-//   check    the token as Cloudflare answers it (each try's own status), the install, the deployer's look; a new
+//   check    the token as Cloudflare answers it (each try's own status), the install with no token, the token as
+//            the server's Deploy page hands it to the deployer, the deployer's look; a new
 //            commit on `verify` deploys by itself; a setting that stops the server makes a deploy unhealthy, and the
 //            deployer puts the version before back; a spec whose branch is `staging` refuses verify's commit.
 //
@@ -34,20 +35,21 @@ import { repoOf } from "../../deploy/cli/observe.ts";
 import { tryBranch } from "../../deploy/cli/try.ts";
 import { d1Api, d1Sql, healthRow, liveDeployment, liveRelease, readHealth } from "../../deploy/deployer/cloudflare.ts";
 import { Cloudflare, DeployError } from "../../deploy/deployer/cloudflare-api.ts";
-import { readControl } from "../../deploy/deployer/control.ts";
+import { readControl, writeAuto } from "../../deploy/deployer/control.ts";
 import { headAtGitHub } from "../../deploy/deployer/github.ts";
 import { type Job, readJobs, readLog, readSpec, writeSpec } from "../../deploy/deployer/instance.ts";
 import { releaseState } from "../../deploy/deployer/registry.ts";
 import type { Spec } from "../../deploy/deployer/spec.ts";
-import { deployerToken } from "../../deploy/own/browser.ts";
+import { tokenProblem } from "../../deploy/deployer/token.ts";
+import { html, step } from "../../deploy/own/browser.ts";
 import { removeOnCloudflare } from "../../deploy/own/remove.ts";
-import { checkToken, deployerName, hasDeployer, installWithToken } from "../../deploy/pipeline/deployer.ts";
+import { deployerName, hasDeployer, installDeployer } from "../../deploy/pipeline/deployer.ts";
 import { type Target, targetFacts } from "../../deploy/pipeline/pipeline.ts";
 import { adaSql } from "./aws.ts";
 import { adaCookie } from "./celld.ts";
 import { cloudflare, guarded, LATER, tokenNow as suiteToken, useDedicated } from "./dedicated.ts";
 import { removeErga, tool } from "./erga.ts";
-import type { Jar } from "./http.ts";
+import { ask as request, type Jar } from "./http.ts";
 import { local, Report, resultsFile, type Run, secret, type Setting, suiteDir, until, zone } from "./run.ts";
 import { mine } from "./safe.ts";
 
@@ -412,25 +414,43 @@ export async function deployChecks(report: Report): Promise<void> {
     other ? reaches == 403 || reaches == 404 : null,
     other ? `Cloudflare answered ${reaches} for ${other.id}` : "the account has no other Worker to try"
   );
-  const checked = await checkToken(net, own, r.instance, theirs);
-  report.add(
-    `${C}: setup's check takes the token`,
-    !checked.refused.length,
-    [...checked.refused, ...checked.unconfirmed.map((u) => `not confirmed: ${u}`)].join(" | ").slice(0, 400)
-  );
-  if (checked.refused.length) return;
+  const problem = await tokenProblem(net, { ACCOUNT: r.instance.account, WORKER: DEPLOYS }, theirs);
+  report.add(`${C}: the deployer's check takes the token`, !problem, problem ?? "no read that it must not make answered 200");
+  if (problem) return;
 
-  // The install, as setup does it, and the deployer's first look.
-  const installed = await installWithToken(net, own, r.instance, theirs).then(
-    () => "",
-    (e: Error) => e.message
-  );
+  // The install, as setup does it: the deployer with no token, auto-deploy on, and a deploy of the instance again, so
+  // that its Worker binds the deployer.
+  const installed = await installDeployer(own, r.instance)
+    .then(() => run(writeAuto(r.sql, "releases")))
+    .then(() => deploy({ commit: head }))
+    .then(
+      () => "",
+      (e: Error) => e.message
+    );
   report.add(
-    `${C}: setup installs the deployer, with auto-deploy on`,
+    `${C}: setup installs the deployer with no token, and the instance's Worker binds it`,
     !installed && (await hasDeployer(r.cf, r.instance)),
     installed || deployerName(DEPLOYS)
   );
   if (installed) return;
+  // The token, as an admin pastes it on the server's Deploy page: the server hands it to the deployer, which checks
+  // it with Cloudflare and keeps it. The page comes again (303) when the deployer took it.
+  const session = sessionNow();
+  for (const row of adaSql().split("; ")) await run(r.sql(row, []));
+  const cookie = session ? await adaCookie(session, host) : null;
+  const given = cookie
+    ? await request(`https://${host}/admin/deploy/token`, {
+        jar: new Map([[`=${host}`, new Map([[cookie.name, cookie.value]])]]),
+        body: new URLSearchParams({ token: theirs }).toString(),
+        headers: { origin: `https://${host}` },
+      })
+    : null;
+  report.add(
+    `${C}: the deployer takes the token that the server's Deploy page hands it`,
+    given?.status == 303,
+    given ? `the page answered ${given.status}` : `${stateFile()} is not there: no admin's cookie`
+  );
+  if (given?.status != 303) return;
   const from = Date.now();
   const looked = async () =>
     (await run(r.sql("SELECT looked FROM deploy_control WHERE id = 1", [])).then((rows) => Number(rows[0]))) > from;
@@ -705,19 +725,24 @@ export async function removeDeploys(): Promise<void> {
 async function takeToken(): Promise<void> {
   const r = await reach();
   if (!(await r.live())) throw new Error(`The Worker ${DEPLOYS} is not there: bun erga verify deploys --keep first.`);
-  const ended = await deployerToken(
-    {
-      ...r.instance,
-      take: async (pasted) => {
-        const { net } = await suiteNet();
-        const checked = await checkToken(net, suiteOnly(net), r.instance, pasted);
-        if (checked.refused.length) throw new DeployError({ message: checked.refused.join("\n") });
-        writeFileSync(tokenFile(), `${pasted}\n`, { mode: 0o600 });
-        chmodSync(tokenFile(), 0o600);
-        return checked.unconfirmed;
-      },
+  const form = (problem = "") =>
+    html(`<h1 style="font-size:20px">A token for the suite's deployer</h1>
+<p>On Cloudflare, open <a href="https://dash.cloudflare.com/${r.instance.account}/api-tokens" target="_blank" rel="noreferrer">Account API tokens</a>, and create a token with one permission: Workers, for the Worker <code>${DEPLOYS}</code> only, with the role Editor. Paste it here. It goes into a file that only you read.</p>
+${problem ? `<p style="color:#b42318">${problem.replace(/[&<>]/g, "")}</p>` : ""}<form method="post" action="/"><input name="secret" type="password" autocomplete="off" style="width:100%;padding:6px 8px" autofocus>
+<p><button>Check it and keep it</button></p></form>`);
+  const ended = await step(
+    async (req) => {
+      if (req.method != "POST") return { res: form() };
+      const pasted = String((await req.formData()).get("secret") ?? "").trim();
+      const { net } = await suiteNet();
+      const problem = await tokenProblem(net, { ACCOUNT: r.instance.account, WORKER: DEPLOYS }, pasted);
+      if (problem) return { res: form(problem) };
+      writeFileSync(tokenFile(), `${pasted}\n`, { mode: 0o600 });
+      chmodSync(tokenFile(), 0o600);
+      return { res: html('<h1 style="font-size:20px">Done</h1><p>The token is in its file. Go back to your terminal.</p>'), end: "" };
     },
-    30 * MINUTE
+    30 * MINUTE,
+    (url) => void Bun.spawn([process.platform == "darwin" ? "open" : "xdg-open", url], { stdout: "ignore", stderr: "ignore" })
   );
   console.log(
     ended == ""

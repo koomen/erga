@@ -176,7 +176,7 @@ export function server(o: ServerOptions = {}) {
     pagesShared: () => null,
     secret: "session-secret",
     grants: new Grants(sql, dir),
-    deploy: { version: null, domains: o.domains ?? [], app: null },
+    deploy: { version: null, domains: o.domains ?? [], app: null, deployer: null },
     signIn: {
       mode: "oauth",
       apps: { github: { clientId: "", secret: "" }, google: { clientId: "", secret: "" } },

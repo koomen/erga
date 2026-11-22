@@ -7,9 +7,11 @@
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { OWNER, type Route } from "../server/directory/index.ts";
-import type { Platform } from "../server/platform";
+import type { DeployerSays, Platform } from "../server/platform";
 import { sessionOf, type SignIn, signInOf } from "../server/identity/index.ts";
 import { directoryOf, secretsKey, grantsOf } from "./d1";
 import type { Env } from "./env";
@@ -98,6 +100,38 @@ const appOf = (facts: unknown): string | null => {
   return null;
 };
 
+const Says = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), ready: Schema.Boolean, head: Schema.NullOr(Schema.String) }),
+  Schema.Struct({ ok: Schema.Literal(false), why: Schema.String }),
+]);
+
+/**
+ * The instance's deployer, through the binding DEPLOYER: its fetch handler takes a token as a POST's text, and
+ * answers any other request with where it is (deploy/deployer/token.ts). No answer, or one that this code can't read
+ * (a deployer from before it had a handler), is a refusal that says what to do.
+ */
+const deployerOf = (env: Env, facts: unknown): Platform["deploy"]["deployer"] => {
+  const f = facts as { account?: unknown; worker?: unknown } | null;
+  const binding = env.DEPLOYER;
+  if (!binding || typeof f?.account != "string" || typeof f.worker != "string") return null;
+  const none: DeployerSays = {
+    ok: false,
+    why: "The deployer gave no answer. Run the setup command again (bun erga setup, with --deploys cloud): it brings the deployer to this release's code.",
+  };
+  return {
+    account: f.account,
+    worker: f.worker,
+    ask: (token) =>
+      binding
+        .fetch("https://deployer/", token == null ? {} : { method: "POST", body: token })
+        .then((r) => r.json())
+        .then(
+          (says) => Option.getOrElse(Schema.decodeUnknownOption(Says)(says), () => none),
+          () => none
+        ),
+  };
+};
+
 /** The landing project's files. They are large (its fonts), and only the making of the default homepage needs them: they load then. */
 const LANDING: NonNullable<Platform["landing"]> = { files: () => import("./landing-files.ts").then((m) => m.LANDING) };
 
@@ -133,6 +167,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       version: settings.version || null,
       domains: domainsOf(settings.deployFacts),
       app: appOf(settings.deployFacts),
+      deployer: deployerOf(env, settings.deployFacts),
     },
     signIn: { ...signInOfEnv(env), devLogin: settings.devLogin || null, encryptionKey: secretsKey(env) },
     own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },

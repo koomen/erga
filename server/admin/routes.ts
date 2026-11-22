@@ -3,7 +3,7 @@
 // can't see the pages, nor that there are any. Each page is one thing an admin governs, with every setting of it
 // (./layout.ts, SECTIONS; ./settings.ts, PAGE_SETTINGS).
 //
-// The routes are ROUTES, below: each page, and the two POSTs that set a secret.
+// The routes are ROUTES, below: each page, and the POSTs that take a secret.
 //
 // The Agents and models page shows whether each API key is set, its last four characters,
 // and who set it when. The page never gets a saved key back, nor does any answer
@@ -187,6 +187,21 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     domain: "admin",
     exempt: SECRET,
   },
+  {
+    method: "POST",
+    path: "/admin/deploy/token",
+    // token: handed to the server's deployer, which checks it and keeps it. The answer is the page: the deployer's
+    // answer in it, or why it took no token, at the field. Never the token.
+    run: async (a, f) => {
+      const deployer = a.platform.deploy.deployer;
+      if (!deployer) return elsewhere();
+      const says = await deployer.ask(f.token.trim());
+      return says.ok ? redirect("/admin/deploy", 303) : deployPage(a.platform, a.session, a.url, says.why);
+    },
+    action: "Give the server's deployer its token, or another one (Deploy)",
+    domain: "admin",
+    exempt: SECRET,
+  },
 ];
 
 const elsewhere = () => plainJson({ error: "Not here: every other change is an operation, POST /api/tools/<name>." }, 404);
@@ -238,6 +253,7 @@ const AdminForm = Schema.Struct({
   role: Field,
   handle: Field,
   deploy: Field,
+  token: Field,
 });
 type AdminFields = typeof AdminForm.Type;
 const NO_FIELDS = Schema.decodeUnknownSync(AdminForm)({});

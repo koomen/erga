@@ -297,6 +297,22 @@ describe("a run of the deployer", () => {
     expect(hub.state.calls.slice(from)).toEqual(["refs"]);
   }, 30_000);
 
+  test("with no token the deployer looks at GitHub and deploys nothing; an admin's ask ends with why", async () => {
+    const { store, sql, once, runs, calls } = await instance();
+    store.cell.delete("token");
+    const NO = "The deployer has no token: an admin pastes one on the instance's Deploy page (/admin/deploy).";
+    expect(await once()).toBe(`${AT}. ${NO} (5 calls)`);
+    // The look is on the instance, for its Deploy page; nothing went to Cloudflare, and there is no job.
+    expect(await run(readControl(sql))).toMatchObject({ auto: true, head: SHA2 });
+    expect([runs(), calls(), await run(readJobs(sql))]).toEqual([short(SHA1), [], []]);
+    // An admin's ask is a job: it ends at its first call of Cloudflare, with the reason in its row.
+    await asks(sql, `deploy ${SHA2}`);
+    expect(await once()).toContain(`The deploy that ada asked for failed: ${NO}`);
+    const [job] = await run(readJobs(sql));
+    expect(job.state).toMatchObject({ at: "failed", why: expect.stringContaining(NO) });
+    expect([runs(), calls()]).toEqual([short(SHA1), []]);
+  }, 30_000);
+
   test("a run that stopped after the upload: the next run puts the version before back, and ends the job", async () => {
     const { mock, sql, io, env, state, once, runs, stored } = await instance();
     mock.state.unhealthy = [short(SHA2)];

@@ -28,6 +28,10 @@ export const sharedPagesHost = (t: Pick<CloudflareTarget, "worker" | "subdomain"
 /** The tag the deploy puts on the Workers it makes, so a second run knows them as its own. */
 export const WORKER_TAG = "erga-deploy";
 
+/** The name of an instance's deployer: a Worker beside the instance's own. And the tag of the Workers that setup made as one. */
+export const deployerName = (worker: string) => `${worker}-deployer`;
+export const DEPLOYER_TAG = "erga-deployer";
+
 /** The build's file of headers for its static assets (Cloudflare's _headers): it goes in the Worker's config, not among the files. */
 export const HEADERS_FILE = "/_headers";
 
@@ -38,12 +42,13 @@ export const servedAssets = (release: Release) => Object.fromEntries(Object.entr
  * The Worker's upload metadata: the build's bindings (cloudflare.config.ts
  * as `cf build` wrote it), each made the target's own: its database, its
  * text settings and where its pages run. `secrets`: setup's first deploy only (the Worker keeps its secrets after).
- * `upload`: a name of this upload's own, new at each one (ERGA_UPLOAD).
+ * `upload`: a name of this upload's own, new at each one (ERGA_UPLOAD). `deployer`: the account has the instance's
+ * deployer: the Worker binds it (DEPLOYER), to hand it the token that a person pastes (token.ts).
  */
 export function workerMetadata(
   release: Release,
   spec: CloudflareSpec,
-  o: { dbId: string; assetsJwt: string; upload: string; secrets?: Record<string, string> }
+  o: { dbId: string; assetsJwt: string; upload: string; secrets?: Record<string, string>; deployer?: boolean }
 ) {
   const w = release.worker;
   const target = spec.target;
@@ -87,6 +92,7 @@ export function workerMetadata(
       bindings.push({ type: "secret_text", name, text: value });
       named.add(name);
     }
+  if (o.deployer) bindings.push({ type: "service", name: "DEPLOYER", service: deployerName(target.worker) });
   // Where documents' pages run: a domain of their own, or the shared host.
   if (target.pages.kind == "zone")
     bindings.push({ type: "plain_text", name: "PAGES_DOMAIN", text: target.pages.domain ?? target.pages.zoneName });

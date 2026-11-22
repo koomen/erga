@@ -116,7 +116,7 @@ test("the main path: the login, the one account that holds the domain, the build
   expect([found.answers.account, found.look]).toEqual([ADA, true]);
   // No step of the user's before the build: the sign-in is the setup page's, on the server that runs.
   expect(run(a, CF, CF).state).toEqual({ at: "build" });
-  expect(run(a, CF, { ...CF, ...LIVE }).state).toEqual({ at: "page", token: false });
+  expect(run(a, CF, { ...CF, ...LIVE }).state).toEqual({ at: "page" });
   expect(run(a, CF, { ...CF, ...LIVE, admin: true }).state).toEqual({ at: "done" });
   // The dry run's checks and plan.
   const f = run(a, CF, CF).answers;
@@ -138,34 +138,37 @@ test("the main path: the login, the one account that holds the domain, the build
   expect(pages[3]).toContain("its setup page opens from a link on your terminal");
 });
 
-test("--deploys: cloud takes the deployer's token on a new server's setup page, on a page of its own after that; local removes a deployer", () => {
+test("--deploys: cloud installs the deployer with no token, and binds it on the instance's Worker; local removes it", () => {
   const cloud = options("--host", "cloudflare", "--deploys", "cloud").answers;
   const local = { ...cloud, deploys: "local" as const };
   const runs = { ...CF, ...LIVE };
-  // Not before the instance runs: the deployer binds its database. Then the setup page takes the token.
+  const whole = { deployer: true, bound: true };
+  // Not before the instance runs: the deployer binds its database. Then the command installs it, before the page.
   expect(run(cloud, CF, CF).state).toEqual({ at: "build" });
-  expect(run(cloud, CF, runs).state).toEqual({ at: "page", token: true });
-  expect(run(cloud, CF, { ...runs, deployer: true }).state).toEqual({ at: "page", token: false });
-  expect(run(cloud, CF, { ...runs, deployer: true, admin: true }).state).toEqual({ at: "done" });
+  expect(run(cloud, CF, runs).state).toEqual({ at: "deployer", do: "install" });
+  // A deployer that the instance's Worker does not bind yet is not whole: the same step again.
+  expect(run(cloud, CF, { ...runs, deployer: true }).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(cloud, CF, { ...runs, ...whole }).state).toEqual({ at: "page" });
+  expect(run(cloud, CF, { ...runs, ...whole, admin: true }).state).toEqual({ at: "done" });
   // An instance that is done: a run again with the other answer changes who deploys.
   expect(run(cloud, CF, { ...runs, admin: true }).state).toEqual({ at: "deployer", do: "install" });
-  expect(run(local, CF, { ...runs, admin: true, deployer: true }).state).toEqual({ at: "deployer", do: "remove" });
+  expect(run(local, CF, { ...runs, admin: true, ...whole }).state).toEqual({ at: "deployer", do: "remove" });
+  expect(run(local, CF, { ...runs, admin: true, bound: true }).state).toEqual({ at: "deployer", do: "remove" });
   expect(run(local, CF, { ...runs, admin: true }).state).toEqual({ at: "done" });
-  // The page is the user's step: with --remote its link needs their terminal. The removal is the command's own.
+  // The install and the removal are the command's own: with --remote they need no terminal. The page does.
   const remote = { ...cloud, remote: true };
-  expect(run(remote, CF, runs).state).toEqual({ at: "terminal" });
-  expect(run(remote, CF, { ...runs, terminal: true }).state).toEqual({ at: "page", token: true });
-  expect(run(remote, CF, { ...runs, admin: true }).state).toEqual({ at: "terminal" });
-  expect(run({ ...local, remote: true }, CF, { ...runs, admin: true, deployer: true }).state).toEqual({ at: "deployer", do: "remove" });
-  // The plan says who deploys, and where the user pastes the token.
+  expect(run(remote, CF, runs).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(remote, CF, { ...runs, ...whole }).state).toEqual({ at: "terminal" });
+  expect(run(remote, CF, { ...runs, ...whole, terminal: true }).state).toEqual({ at: "page" });
+  expect(run({ ...local, remote: true }, CF, { ...runs, admin: true, ...whole }).state).toEqual({ at: "deployer", do: "remove" });
+  // The plan says who deploys, and where the user pastes the token: on the server, never in a command.
   const f = run(cloud, CF, CF).answers;
   expect(planText(f, seen(CF))[5]).toBe(
-    "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-example-com, which you make on Cloudflare and paste on the server's setup page"
+    "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker erga-example-com, which you make on Cloudflare and paste on the server: on its setup page"
   );
-  expect(deploysText(f, "erga-staging", "in your terminal")).toContain("and paste in your terminal");
   // An instance that runs has its own Worker's name (its entry's): the user makes the token for that name.
-  expect(deploysText(f, "erga-staging")).toContain(
-    "(the Worker erga-staging-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-staging,"
+  expect(deploysText(f, "erga-staging", "its Deploy page (/admin/deploy)")).toContain(
+    "(the Worker erga-staging-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker erga-staging, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)"
   );
   expect(options("--deploys", "sometimes").problems).toEqual(["--deploys: deploys is cloud or local."]);
 });
@@ -179,7 +182,7 @@ test("--deploys on AWS: the deployer has no token, so its install is the command
   // Not before the instance runs: the deployer's role names the instance's machine and bucket.
   expect(run(cloud, there, there).state).toEqual({ at: "build" });
   expect(run(cloud, there, runs).state).toEqual({ at: "deployer", do: "install" });
-  expect(run(cloud, there, { ...runs, deployer: true }).state).toEqual({ at: "page", token: false });
+  expect(run(cloud, there, { ...runs, deployer: true }).state).toEqual({ at: "page" });
   expect(run(cloud, there, { ...runs, deployer: true, admin: true }).state).toEqual({ at: "done" });
   // An instance that is done: a run again with the other answer changes who deploys.
   expect(run(cloud, there, { ...runs, admin: true }).state).toEqual({ at: "deployer", do: "install" });
@@ -229,7 +232,7 @@ test("the command stops where only the user can go on: two accounts, no domain, 
   });
   // An Erga that another clone set up runs at the address: no stop. The command takes it over first, with no step of
   // the user's (--remote needs no terminal for it), whatever the instance has.
-  for (const more of [{}, { ...LIVE, app: true, admin: true, deployer: true }])
+  for (const more of [{}, { ...LIVE, app: true, admin: true, deployer: true, bound: true }])
     expect(run({ ...a, remote: true }, CF, { ...CF, adopt: "erga-staging", ...more }).state).toEqual({
       at: "adopt",
       worker: "erga-staging",
@@ -354,7 +357,7 @@ test("--remote: the user's steps need their terminal; an agent's shell, with non
   expect(run(a, { ...AWS, app: true }).state).toEqual({ at: "build" });
   // In the user's own terminal: the same steps as at the computer.
   expect(run(a, { ...AWS, terminal: true }).state).toEqual({ at: "app", kind: "oidc" });
-  expect(run(a, { ...AWS, ...LIVE, app: true, terminal: true }).state).toEqual({ at: "page", token: false });
+  expect(run(a, { ...AWS, ...LIVE, app: true, terminal: true }).state).toEqual({ at: "page" });
   expect(run({ ...a, remote: false }, AWS).state).toEqual({ at: "app", kind: "oidc" });
   expect(planText(a, seen(AWS))).toContain(
     "• your organization's sign-in, at the gate in front of Erga (you type its client secret in your terminal)"
@@ -428,14 +431,14 @@ test("a run again with other sign-in answers writes the entry again and deploys,
   const built = { ...AWS, ...LIVE, app: true, stack: { status: "CREATE_COMPLETE", outputs: { Proxy: "arn:p" }, resources: [] } };
   // The first build wrote the entry without the email claim.
   const vars = varsOf(a, undefined, "arn:p");
-  expect(run(a, { ...built, vars }).state).toEqual({ at: "page", token: false });
+  expect(run(a, { ...built, vars }).state).toEqual({ at: "page" });
   // The user runs setup again with --email-claim: the server's setting changes, so setup deploys again.
   expect(run(corp, { ...built, vars }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
-  expect(run(corp, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "page", token: false });
+  expect(run(corp, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "page" });
   // A run again that leaves out --email-claim means no email claim: the options are the whole answer.
   expect(run(a, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
   // Other settings of the entry are not the answers'. A registered instance is what its entry says (bun erga deploy).
-  expect(run(a, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "page", token: false });
+  expect(run(a, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "page" });
   expect(run(corp, { ...built, vars, admin: true }).state).toEqual({ at: "done" });
 });
 

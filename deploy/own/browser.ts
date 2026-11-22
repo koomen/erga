@@ -1,9 +1,7 @@
 // The user's steps in the browser that `bun erga setup` opens on this machine: a page on the loopback, for one step,
 // that stops when the step is done. No agent sees these pages or what goes through them. (A new server's own steps
-// are on its setup page, server/identity/setup.ts: these are the ones that a server can't take.)
+// are on its setup page, server/identity/setup.ts: this is the one that comes before there is a server.)
 //
-//   deployerToken the deployer's token, for an instance that has its admin already (its setup page is closed): into
-//                 the deployer's secret on Cloudflare
 //   oidcSecret    single sign-on on AWS: one field for the client secret of the organization's sign-in, into Parameter Store
 //
 // With --remote the user is at another computer, and a browser here shows nothing. Their steps go through their own
@@ -55,7 +53,8 @@ export function askSecret(label: string): string | null {
   return r.success ? r.stdout.toString().trim() : null;
 }
 
-const html = (body: string, status = 200) =>
+/** A page of a step: `body` in the steps' plain look. (The verify suite's own step, for the deployer's token, has the same look: dev/verify/deploys.ts.) */
+export const html = (body: string, status = 200) =>
   new Response(
     `<!doctype html><meta charset="utf-8"><title>Erga setup</title><body style="font:15px/1.5 system-ui;max-width:560px;margin:48px auto;padding:0 16px">${body}`,
     { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } }
@@ -67,7 +66,7 @@ const doneHtml = (what: string) =>
  * One step's page on the loopback, opened in the browser. `route` answers each request; it ends the step with "" (done)
  * or a failure, or null to go on. The result: "" (done), a failure, or null when `ms` ends first.
  */
-async function step(
+export async function step(
   route: (req: Request, url: URL) => Promise<{ res: Response; end?: string }>,
   ms: number,
   open: (url: string) => void
@@ -90,47 +89,6 @@ async function step(
     // The last page has its answer before the server stops.
     setTimeout(() => server.stop(), 500);
   }
-}
-
-/**
- * The deployer's token (cloud deploys on Cloudflare): the user makes it on Cloudflare's page and pastes it here. `take`
- * checks it and installs the deployer with it: it gives what it could not confirm about the token, or throws why the
- * token is refused (the page then asks again). The token goes to Cloudflare as the deployer's secret, nowhere else.
- */
-export function deployerToken(
-  o: { account: string; worker: string; take: (token: string) => Promise<string[]> },
-  ms: number,
-  open: (url: string) => void = openBrowser
-): Promise<string | null> {
-  const form = (problem = "") =>
-    html(`<h1 style="font-size:20px">A token for the deployer</h1>
-<p>The deployer runs in your Cloudflare account and deploys each new release of Erga to the Worker <code>${esc(o.worker)}</code>. It needs a token that can change that one Worker, and nothing else.</p>
-<ol><li>Open <a href="https://dash.cloudflare.com/${esc(o.account)}/api-tokens" target="_blank" rel="noreferrer">Account API tokens</a> on Cloudflare (Manage account, Account API tokens), and choose Create Token.</li>
-<li>Give it one permission: Workers, for the Worker <code>${esc(o.worker)}</code> only, with the role Editor. No other permission, no other Worker.</li>
-<li>Create it, copy it, and paste it here.</li></ol>
-<p>The token goes to Cloudflare, as the deployer's secret. Your agent never sees it. Erga refuses a token that can do more.</p>
-${problem ? `<p style="color:#b42318;white-space:pre-line">${esc(problem)}</p>` : ""}<form method="post" action="/"><input name="secret" type="password" autocomplete="off" style="width:100%;padding:6px 8px" autofocus>
-<p><button>Check it and install the deployer</button></p></form>`);
-  return step(
-    async (req) => {
-      if (req.method != "POST") return { res: form() };
-      const token = String((await req.formData()).get("secret") ?? "").trim();
-      if (!token) return { res: form("Paste the token.") };
-      return o.take(token).then(
-        (unconfirmed) => ({
-          res: html(
-            `<h1 style="font-size:20px">Done</h1><p>The deployer has the token. Go back to your terminal: setup goes on by itself.</p>${
-              unconfirmed.length ? `<p>Erga could not confirm:</p><ul>${unconfirmed.map((u) => `<li>${esc(u)}</li>`).join("")}</ul>` : ""
-            }`
-          ),
-          end: "",
-        }),
-        (e: Error) => ({ res: form(e.message) })
-      );
-    },
-    ms,
-    open
-  );
 }
 
 /** Single sign-on on AWS: the user types the client secret, and `put` stores it (Parameter Store). */

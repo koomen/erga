@@ -1,29 +1,24 @@
-// The deployer's token (deploy/pipeline/deployer.ts, checkToken) and the page where the person pastes it
-// (deploy/own/browser.ts, deployerToken). Against the mock Cloudflare, whose token for one Worker is the design's
-// reading of Cloudflare's scope, not a record of its answers: a real token is tried in the deploy plan's task 12.
+// The deployer's token (deploy/deployer/token.ts): the check that the deployer makes of a token, its fetch handler,
+// which takes a token from the instance (the service binding DEPLOYER), and its store, which keeps the token sealed.
+// Against the mock Cloudflare, whose token for one Worker is the design's reading of Cloudflare's scope, not a record
+// of its answers: a real token is tried in the deploy plan's task 12.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import * as Effect from "effect/Effect";
-import { d1Sql } from "../deploy/deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deploy/deployer/cloudflare-api";
-import { readControl } from "../deploy/deployer/control";
+import { type DeployerAnswer, open, tokenProblem } from "../deploy/deployer/token";
+import { deployer, type Env } from "../deploy/deployer/worker";
 import { keptLogin } from "../deploy/local-credential";
-import { deployerToken } from "../deploy/own/browser";
-import { deployerFromPage, stepOn } from "../deploy/own/first";
-import { boundDatabase } from "../deploy/deployer/cloudflare";
-import { type DeployerStep, deployerStep, sealToken } from "../server/identity/setup-link";
-import { checkToken, hasDeployer, installDeployer, installWithToken, removeDeployer } from "../deploy/pipeline/deployer";
+import { installDeployer } from "../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
+import { KEY, storeBinding } from "./helpers/binding.ts";
 import { bootstrap, prepareRelease } from "./helpers/deploys.ts";
 
 beforeAll(prepareRelease, 120_000);
 
 const TARGET = { account: FLEET_ACCOUNT, worker: "erga-next" };
-/** What no read can show: said each time. */
-const NEVER_SHOWN = [
-  "That the token may deploy to erga-next (the role Editor): Erga changes nothing to try it. The first deploy from the cloud shows it.",
-  "That the token has no other permission than those tried here (D1, another Worker): Cloudflare shows a token's permissions on its own page only.",
-];
+const WHERE = { ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next" };
+const GOOD = "mock-only-erga-next";
+const D1 = "The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.";
 
 /** The instance on the mock Cloudflare, with the person's own login. */
 async function account() {
@@ -34,13 +29,13 @@ async function account() {
   return {
     mock,
     own,
-    check: (token: string, net: Fetch = mock.fetch) => checkToken(net, own, TARGET, token),
+    check: (token: string, net: Fetch = mock.fetch) => tokenProblem(net, WHERE, token),
     calls: () => mock.state.calls.slice(from),
   };
 }
 
-describe("the check of the deployer's token", () => {
-  test("a token for the instance's Worker only is taken, and the check says what it could not confirm", async () => {
+describe("the deployer's check of a token", () => {
+  test("a token for the instance's Worker only is taken, with reads only", async () => {
     const { mock, check, calls } = await account();
     // Cloudflare's no to the D1 list is a 401 (the mock answers as a real token got it): a clear no, as a 403 is.
     const statuses: number[] = [];
@@ -49,66 +44,110 @@ describe("the check of the deployer's token", () => {
       if (String(input).includes("/d1/database")) statuses.push(answer.status);
       return answer;
     };
-    expect(await check("mock-only-erga-next", seen)).toEqual({ refused: [], unconfirmed: NEVER_SHOWN });
+    expect(await check(GOOD, seen)).toBeNull();
     expect(statuses).toEqual([401]);
     const forbidden: Fetch = (input, init) =>
       String(input).includes("/d1/database") ? Promise.resolve(new Response("{}", { status: 403 })) : mock.fetch(input, init);
-    expect(await check("mock-only-erga-next", forbidden)).toEqual({ refused: [], unconfirmed: NEVER_SHOWN });
-    // Reads only: the check changes nothing.
+    expect(await check(GOOD, forbidden)).toBeNull();
+    // Reads only: the check changes nothing. The other Worker that it tries is the deployer's own name.
     expect(calls().every((c) => c.startsWith("GET "))).toBe(true);
+    expect(calls().at(-1)).toBe(`GET /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next-deployer/settings`);
   });
 
-  test("a token that can do more is refused, with each thing that it can do", async () => {
+  test("a token that can do more is refused, with what it can do", async () => {
     const { mock, own, check } = await account();
     // An account's own token: D1, and each Worker.
-    const wide = await check("mock-deployer-token");
-    expect(wide.refused).toHaveLength(2);
-    expect(wide.refused[0]).toBe(
-      "The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it."
+    expect(await check("mock-deployer-token")).toBe(D1);
+    // With no D1, it still reads another Worker: the deployer itself, which setup installed before any token.
+    await installDeployer(own, TARGET);
+    const noD1: Fetch = (input, init) =>
+      String(input).includes("/d1/database") ? Promise.resolve(new Response("{}", { status: 403 })) : mock.fetch(input, init);
+    expect(await check("mock-deployer-token", noD1)).toBe(
+      "The token can read another Worker (erga-next-deployer). Make a token for the Worker erga-next only."
     );
-    expect(wide.refused[1]).toMatch(/^The token can read another Worker \([\w-]+\)\. Make a token for the Worker erga-next only\.$/);
-    // The other Worker that it tries is the deployer itself, when there is one: the token must not change the deployer.
-    await installDeployer(own, TARGET, "mock-only-erga-next");
-    expect((await check("mock-deployer-token")).refused[1]).toContain("another Worker (erga-next-deployer)");
-    expect(mock.state.calls.at(-1)).toBe(`GET /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next-deployer/settings`);
   });
 
-  test("a token that is not for the instance's Worker, or that Cloudflare does not know, is refused at once", async () => {
+  test("a token that is not for the instance's Worker, that Cloudflare does not know, or that is no token, is refused at once", async () => {
     const { check, calls } = await account();
-    expect((await check("mock-only-erga")).refused).toEqual([
-      "The token can't read the Worker erga-next. Give it that Worker, with the role Editor.",
+    expect(await check("mock-only-erga-000")).toBe("The token can't read the Worker erga-next. Give it that Worker, with the role Editor.");
+    expect(await check("not-a-token-0123456789")).toBe(
+      "Cloudflare does not know this token: it is not whole, it expired, or it is not a token of this account."
+    );
+    // Nothing more is tried with such a token; text that is no token is tried on nothing.
+    expect(calls()).toHaveLength(2);
+    expect([await check(""), await check("two words")]).toEqual([
+      "Paste the token.",
+      "That isn't a token: it is one line, with no spaces.",
     ]);
-    expect((await check("not-a-token")).refused).toEqual([
-      "Cloudflare does not know this token: it is not whole, it expired, or it is not a token of this account.",
-    ]);
-    // Nothing more is tried with such a token.
     expect(calls()).toHaveLength(2);
   });
 
-  test("no clear answer, and an account with no other Worker, are said: not a refusal, and not a yes", async () => {
+  test("no clear answer from Cloudflare is no yes: the token is not taken, and the person pastes it again", async () => {
     const { mock, check } = await account();
     const down: Fetch = (input, init) =>
       String(input).includes("/d1/database") ? Promise.resolve(new Response("Bad gateway", { status: 502 })) : mock.fetch(input, init);
-    expect(await check("mock-only-erga-next", down)).toEqual({
-      refused: [],
-      unconfirmed: [
-        "Whether the token can read the account's D1 databases: Cloudflare gave no clear answer (it answered 502).",
-        ...NEVER_SHOWN,
-      ],
-    });
-    // An account whose only Worker is the instance's.
-    for (const name of Object.keys(mock.state.scripts)) if (name != "erga-next") delete mock.state.scripts[name];
-    expect((await check("mock-only-erga-next")).unconfirmed).toEqual([
-      "That the token is for the Worker erga-next only: the account has no other Worker to try it on.",
-      ...NEVER_SHOWN,
-    ]);
+    expect(await check(GOOD, down)).toBe(
+      "Cloudflare gave no clear answer about whether the token reads the account's D1 databases (it answered 502). Paste the token again in a minute."
+    );
+    const gone: Fetch = () => Promise.reject(new Error("no network"));
+    expect(await check(GOOD, gone)).toContain("whether the token reads the Worker erga-next (no answer)");
   });
 });
 
-describe("the person's own login, in a setup that waits for the token", () => {
-  // What the setup of staging showed on 2026-11-20: a good token for one Worker, and Cloudflare's 401 [code 10000] to
-  // "list your Workers". That list is a call with the person's own login, which the setup had read at its start.
-  test("a login that ends while the person makes the token is read again: the check goes on", async () => {
+describe("the deployer's fetch handler, as its instance calls it", () => {
+  /** The deployer, with the mock Cloudflare as its network and its real store on a Map. */
+  async function installed() {
+    const { mock } = await account();
+    const store = storeBinding();
+    const env = { ...WHERE, KEY, STATE: store } as unknown as Env;
+    const worker = deployer({ fetch: mock.fetch, now: () => 0, sleep: async () => {} });
+    const ask = async (token?: string) =>
+      (await (
+        await worker.fetch(new Request("https://deployer/", token == null ? {} : { method: "POST", body: token }), env)
+      ).json()) as DeployerAnswer;
+    return { mock, store, ask, sealed: () => (store.cell.has("token") ? (JSON.parse(store.cell.get("token")!) as string) : null) };
+  }
+
+  test("it holds no token at first; a token that the check refuses changes nothing; a good one is kept, sealed under its own secret", async () => {
+    const { store, ask, sealed } = await installed();
+    expect(await ask()).toEqual({ ok: true, ready: false, head: null });
+    expect(await ask("mock-deployer-token")).toEqual({ ok: false, why: D1 });
+    expect([await ask(), sealed()]).toEqual([{ ok: true, ready: false, head: null }, null]);
+
+    // (The instance sends the token as the person pasted it: the space around it is not the token's.)
+    expect(await ask(`  ${GOOD}\n`)).toEqual({ ok: true, ready: true, head: null });
+    expect(await ask()).toEqual({ ok: true, ready: true, head: null });
+    // The store never holds the token in the clear, and only the deployer's own secret opens it.
+    expect([...store.cell.values()].join("\n")).not.toContain(GOOD);
+    expect([await open(KEY, sealed()), await open("another-secret", sealed())]).toEqual([GOOD, null]);
+
+    // Another token takes the same way, and the place of the first one. A refused one leaves the one that is there.
+    const first = sealed();
+    expect(await ask("mock-only-erga-000")).toMatchObject({ ok: false });
+    expect(sealed()).toBe(first);
+    expect(await ask(GOOD)).toMatchObject({ ok: true, ready: true });
+    expect(sealed()).not.toBe(first);
+    expect(await open(KEY, sealed())).toBe(GOOD);
+  });
+
+  test("the answer says the head of the last look; a run that ends while a token comes does not lose the token", async () => {
+    const { store, ask, sealed } = await installed();
+    const object = store.get("state");
+    const tell = (body: object) => object.fetch("https://state/", { method: "POST", body: JSON.stringify(body) }).then((r) => r.json());
+    // A run takes the lock, and holds the state as it read it.
+    const state = (await tell({ take: 1 })) as { lock?: number; head?: string };
+    // The token comes while the run goes on. Then the run ends, and writes its state whole.
+    expect(await ask(GOOD)).toMatchObject({ ok: true, ready: true });
+    await tell({ put: { ...state, head: "a".repeat(40) } });
+    expect(await open(KEY, sealed())).toBe(GOOD);
+    expect(await ask()).toEqual({ ok: true, ready: true, head: "a".repeat(40) });
+  });
+});
+
+describe("the person's own login, in a setup that takes long", () => {
+  // What the setup of staging showed on 2026-11-20: Cloudflare's 401 [code 10000] to "list your Workers", a call with
+  // the person's own login, which the setup had read at its start.
+  test("a login that ends while the setup runs is read again", async () => {
     const { mock } = await account();
     const HOUR = 3_600_000;
     let now = 0;
@@ -133,10 +172,14 @@ describe("the person's own login, in a setup that waits for the token", () => {
     expect(reads).toEqual(["mock-login-1"]);
 
     now = HOUR + 1;
-    expect(await checkToken(net, own, TARGET, "mock-only-erga-next")).toEqual({ refused: [], unconfirmed: NEVER_SHOWN });
+    await list();
     expect(reads).toEqual(["mock-login-1", "mock-login-2"]);
-    // With the login as it was at the start, the check stops at Cloudflare's no to the person's own list.
-    expect(await checkToken(net, new Cloudflare("mock-login-1", net), TARGET, "mock-only-erga-next").catch((e: Error) => e.message)).toBe(
+    // With the login as it was at the start, Cloudflare says no.
+    expect(
+      await new Cloudflare("mock-login-1", net)
+        .call("GET", `/accounts/${FLEET_ACCOUNT}/workers/scripts`, "list your Workers")
+        .catch((e: Error) => e.message)
+    ).toBe(
       "Cloudflare didn't accept the credential when it tried to list your Workers: the token may be expired or revoked. (Cloudflare said: Authentication error [code 10000])"
     );
   });
@@ -148,131 +191,5 @@ describe("the person's own login, in a setup that waits for the token", () => {
       () => Number.MAX_SAFE_INTEGER
     );
     expect([login()?.token, login()?.token, reads]).toEqual(["mock-1", "mock-1", 1]);
-  });
-});
-
-describe("cloud deploys, from a person's token", () => {
-  const sql = (own: Cloudflare) => d1Sql(own, TARGET);
-  test("a good token installs the deployer and turns auto-deploy on; a refused one changes nothing", async () => {
-    const { mock, own } = await account();
-    const from = mock.state.calls.length;
-    await expect(installWithToken(mock.fetch, own, TARGET, "mock-deployer-token")).rejects.toThrow(
-      /^The token can read the account's D1 databases\..*\nThe token can read another Worker \(/
-    );
-    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
-    expect(mock.state.calls.slice(from).every((c) => c.startsWith("GET "))).toBe(true);
-    expect(await Effect.runPromise(readControl(sql(own)))).toBeNull();
-
-    expect(await installWithToken(mock.fetch, own, TARGET, "mock-only-erga-next")).toEqual(NEVER_SHOWN);
-    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "mock-only-erga-next" });
-    expect(await hasDeployer(own, TARGET)).toBe(true);
-    expect(await Effect.runPromise(readControl(sql(own)))).toMatchObject({ auto: true, autoMode: "releases", ask: null });
-
-    // Local deploys again: the deployer goes, with its token.
-    expect(await removeDeployer(own, TARGET)).toBe(true);
-    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
-    expect(await hasDeployer(own, TARGET)).toBe(false);
-    expect(await removeDeployer(own, TARGET)).toBe(false);
-    expect(mock.state.scripts["erga-next"]).toBeDefined();
-  });
-});
-
-describe("the deployer's token from a new server's setup page", () => {
-  test("the command installs the deployer with the token that the page sealed; a token that is refused goes back to the page; a skip ends the wait", async () => {
-    const { mock, own } = await account();
-    const acc = `/accounts/${FLEET_ACCOUNT}`;
-    const db = (await boundDatabase(own, acc, "erga-next"))!;
-    const SECRET = "the-servers-session-secret";
-    /** The page's write (server/identity/setup.ts), as the server makes it: the step after the user's answer. */
-    const page = async (answer: { token: string } | "skip") => {
-      const { step } = await stepOn(own, acc, db);
-      const next: DeployerStep = deployerStep(
-        step,
-        answer == "skip" ? { kind: "skipped" } : { kind: "pasted", ...(await sealToken(SECRET, answer.token)) }
-      );
-      await own.call("POST", `${acc}/d1/database/${db}/query`, "the server's own write", {
-        sql: "INSERT INTO setup (id, deployer) VALUES (1, ?1) ON CONFLICT (id) DO UPDATE SET deployer = excluded.deployer",
-        params: [JSON.stringify(next)],
-      });
-    };
-    /** The command's wait: `looks` looks, and before each one after the first, what the user does on the page then. */
-    const wait = (...then: (() => Promise<void>)[]) =>
-      deployerFromPage({
-        cf: own,
-        net: mock.fetch,
-        target: TARGET,
-        secret: SECRET,
-        again: async () => {
-          const next = then.shift();
-          await next?.();
-          return !!next;
-        },
-      });
-    // Nothing pasted, and the time is over: nothing is made.
-    expect(await wait()).toBeNull();
-    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
-    // A token that can do more: refused, with the reason on the row for the page. Then the user pastes a token for
-    // the one Worker: the deployer is installed with it, and auto-deploy is on.
-    await page({ token: "mock-setup-token" });
-    const ended = await wait(async () => {
-      const refused = (await stepOn(own, acc, db)).step;
-      expect(refused).toMatchObject({ at: "refused", why: expect.stringContaining("The token can read the account's D1 databases.") });
-      expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
-      await page({ token: "mock-only-erga-next" });
-    });
-    expect(ended).toEqual({ deployer: "installed", unconfirmed: NEVER_SHOWN });
-    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "mock-only-erga-next" });
-    expect((await Effect.runPromise(readControl(d1Sql(own, TARGET))))?.auto).toBe(true);
-    // The row holds the end, and no token: not sealed either.
-    const row = await stepOn(own, acc, db);
-    expect(row.step).toEqual({ at: "installed", unconfirmed: NEVER_SHOWN });
-    expect(row.text).not.toMatch(/"(iv|data)"/);
-    // A run again: the deployer is there, so the wait ends at once.
-    expect(await wait()).toMatchObject({ deployer: "installed" });
-  });
-
-  test("the user skips the step on the page: no deployer, and the wait ends", async () => {
-    const { mock, own } = await account();
-    const acc = `/accounts/${FLEET_ACCOUNT}`;
-    const db = (await boundDatabase(own, acc, "erga-next"))!;
-    await own.call("POST", `${acc}/d1/database/${db}/query`, "the server's own write", {
-      sql: "INSERT INTO setup (id, deployer) VALUES (1, ?1)",
-      params: [JSON.stringify(deployerStep({ at: "open" }, { kind: "skipped" }))],
-    });
-    expect(await deployerFromPage({ cf: own, net: mock.fetch, target: TARGET, secret: "s", again: async () => false })).toEqual({
-      deployer: "skipped",
-    });
-    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
-  });
-});
-
-describe("the page for the deployer's token", () => {
-  test("says how to make the token, refuses one with the reason, and takes a good one: the token is on no page", async () => {
-    const taken: string[] = [];
-    const take = async (token: string) => {
-      taken.push(token);
-      if (token != "the-good-token")
-        throw new Error("The token can read another Worker (erga).\nMake a token for the Worker erga-next only.");
-      return ["That the token may deploy to erga-next."];
-    };
-    let at = "";
-    const ended = deployerToken({ account: FLEET_ACCOUNT, worker: "erga-next", take }, 20_000, (url) => (at = url));
-    expect(at).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
-    const post = async (secret: string) => (await fetch(at, { method: "POST", body: new URLSearchParams({ secret }) })).text();
-
-    const first = await (await fetch(at)).text();
-    expect(first).toContain(`href="https://dash.cloudflare.com/${FLEET_ACCOUNT}/api-tokens"`);
-    expect(first).toContain("for the Worker <code>erga-next</code> only, with the role Editor");
-    expect(first).toContain('type="password"');
-    expect(await post("  ")).toContain("Paste the token.");
-    const refused = await post("the-wide-token");
-    expect(refused).toContain("The token can read another Worker (erga).\nMake a token for the Worker erga-next only.");
-    expect(refused).toContain('type="password"');
-    const done = await post("the-good-token");
-    expect(done).toContain("The deployer has the token.");
-    expect(done).toContain("<p>Erga could not confirm:</p><ul><li>That the token may deploy to erga-next.</li></ul>");
-    expect(await ended).toBe("");
-    expect(taken).toEqual(["the-wide-token", "the-good-token"]);
-    for (const page of [first, refused, done]) expect(page).not.toMatch(/the-(wide|good)-token/);
   });
 });

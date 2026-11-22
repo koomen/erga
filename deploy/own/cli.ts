@@ -1,10 +1,11 @@
 // A new Erga instance, set up by a user with their coding agent: `bun erga setup <host>` (deploy/cli/main.ts). The
 // agent asks the user every question first (README.md, Setup), then runs this command with each answer as an option:
 // first with --dry-run (the checks and the plan; nothing is made), then, after the user's yes, without it. The
-// command does all the work in the account: it signs in, builds and deploys. Then it opens the new server's setup page
-// in the user's browser (/setup, server/identity/setup.ts), with a link that works one time. The user finishes there:
-// GitHub or Google sign-in, the deployer's token, and their own sign-in, which makes them the admin. The agent never
-// makes a token, and never sees a secret or the link.
+// command does all the work in the account, in one run: it signs in, builds and deploys the server, and installs its
+// deployer. Then it opens the new server's setup page in the user's browser (/setup, server/identity/setup.ts), with a
+// link that works one time, and ends: it waits for nothing. The user finishes on the page: GitHub or Google sign-in,
+// the deployer's token, and their own sign-in, which makes them the admin. The agent never makes a token, and never
+// sees a secret or the link. The command never has the deployer's token either: the server hands it to the deployer.
 //
 //   bun erga setup <host> --host cloudflare|aws --deploys cloud|local [<options>] [--dry-run]
 //       --repo <repo>          the repository that the instance tracks (default: github.com/koomen/erga)
@@ -16,10 +17,11 @@
 //                              subdomain of its own there. AWS needs it (a Route 53 domain). Cloudflare without it:
 //                              one shared workers.dev address, which is safe for one author.
 //       --deploys cloud|local  who deploys each new release. cloud: a deployer in the user's account, by itself. On
-//                              Cloudflare the user makes its token (for the instance's Worker only) and pastes it on
-//                              the setup page; on AWS it is a Lambda function whose role is its credential: no token.
-//                              local: the user, with bun erga deploy; no credential in the cloud. A run again with
-//                              the other answer installs the deployer, or removes it.
+//                              Cloudflare it is a second Worker, which the command installs with no token: the user
+//                              makes its token (for the instance's Worker only) and pastes it on the server (its
+//                              setup page; later, its Deploy page). On AWS it is a Lambda function whose role is its
+//                              credential: no token. local: the user, with bun erga deploy; no credential in the
+//                              cloud. A run again with the other answer installs the deployer, or removes it.
 //       --sign-in sso          the organization's single sign-on, at a gate in front of the server, in the place of
 //                              GitHub and Google sign-in:
 //         --team <name> --aud <tag>        on Cloudflare: Cloudflare Access
@@ -45,12 +47,16 @@
 // terminal (/dev/tty), never to stdout.
 
 import { closeSync, readFileSync } from "node:fs";
+import * as Effect from "effect/Effect";
 import { setupUrl } from "../../server/identity/setup-link";
 import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "../cli/config";
+import { deployInstance } from "../cli/deploy";
+import { d1Sql } from "../deployer/cloudflare";
+import { writeAuto } from "../deployer/control";
 import { fail, pass, ROOT, say } from "../root";
-import { askSecret, deployerToken, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
+import { askSecret, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { cloudflare, type Connection, observe } from "./facts";
-import { adoptEntry, deployerFromPage, firstDeploy, secretsFor } from "./first";
+import { adoptEntry, firstDeploy, secretsFor } from "./first";
 import { accountName, checksOf, deploysText, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, loadSecrets, namesAt, saveSecrets } from "./store";
@@ -110,38 +116,6 @@ async function oidcInTerminal(a: Answers): Promise<string> {
     if (!secret) continue;
     await putOidcSecret(a, secret);
     return "";
-  }
-}
-
-/**
- * Cloud deploys on Cloudflare, for an instance that has its admin (a new one takes the token on its setup page:
- * `page`): the user gives the deployer's token (on a page; --remote: in their terminal), the command checks it and
- * installs the deployer with it, and turns auto-deploy on. The result: "" (done), a failure, or null (the wait ended).
- * The token goes to Cloudflare only: this command prints none of it.
- */
-async function installWithToken(a: Answers): Promise<string | null> {
-  const c = await connect();
-  const { installWithToken: install } = await import("../pipeline/deployer");
-  const target = { account: a.account, worker: namesAt(a.host).worker };
-  const take = async (token: string) => {
-    const unconfirmed = await install(c.net, c.cf, target, token);
-    for (const u of unconfirmed) say(`NOTE  Erga could not confirm about the token: ${u}`);
-    return unconfirmed;
-  };
-  if (!a.remote) return deployerToken({ ...target, take }, WAIT_MS);
-  for (;;) {
-    const token = askSecret(
-      `A token for the deployer: on Cloudflare (Manage account, Account API tokens, Create Token), with one permission: Workers, for the Worker ${target.worker} only, with the role Editor. Paste it here (it does not show):`
-    );
-    if (token == null) return "The prompt in the terminal ended.";
-    if (!token) continue;
-    const refused = await take(token).then(
-      () => "",
-      (e: Error) => e.message
-    );
-    if (!refused) return "";
-    // Not always the token's fault (the user's own login, or Cloudflare): the reason says which.
-    tellUser(`The deployer is not installed:\n${refused}`);
   }
 }
 
@@ -212,24 +186,18 @@ async function build(a: Answers, seen: Seen, o: Run) {
   }
 }
 
-/** How the page step ended: the page is open, and what became of the deployer's token (null: the page takes none). */
-type Paged = { deployer: "installed" | "skipped" | null };
-
 /**
  * The page step: the command opens the new server's setup page in the user's browser, with a link that works one time
- * (server/identity/setup.ts), and the user finishes there: sign-in, and their own sign-in as the admin. With `token`
- * (cloud deploys on Cloudflare) the page also takes the deployer's token, sealed, into the instance's database: the
- * command waits for it there (the Cloudflare D1 API: it asks the server nothing), installs the deployer with it, and
- * writes how that ended, for the page to show. The result: how the step ended, or null when the wait ended first.
+ * (server/identity/setup.ts). The user finishes there, and the command waits for nothing.
  */
-async function page(a: Answers, o: Run, token: boolean, worker: string): Promise<Paged | null> {
+async function page(a: Answers, o: Run) {
   const secret = loadSecrets(DIR)[a.host]?.SESSION_SECRET;
   if (!secret)
     return fail(
       `This machine does not hold the SESSION_SECRET of ${a.host} (.erga/secrets.json), so it can't make the setup page's link.`,
       `Run the command on the machine that set ${a.host} up: ${o.again}`
     );
-  const to = await setupUrl(a.host, secret, { deployer: token ? { account: a.account, worker } : null });
+  const to = await setupUrl(a.host, secret);
   if (a.remote) tellUser(`Open this link in your browser. It works one time, for 30 minutes; never give it to your agent.\n${to}`);
   else openBrowser(to);
   pass(
@@ -237,23 +205,38 @@ async function page(a: Answers, o: Run, token: boolean, worker: string): Promise
       ? `The user's terminal shows the link to the setup page of ${a.host}. The user opens it in their browser.`
       : `The command opened the setup page of ${a.host} in the user's browser.`
   );
-  if (!token) return { deployer: null };
-  say("WAIT  The user makes a token for the deployer on Cloudflare, and pastes it on the setup page. It goes to Cloudflare, never to you.");
+}
+
+/**
+ * Cloudflare: the instance's deployer, installed with no token (or removed), and then a deploy of the release that the
+ * instance runs, so that its Worker binds the deployer (or binds it no more): the server hands the deployer the token
+ * that the user pastes there. A new deployer gets auto-deploy on: it deploys when it has its token.
+ */
+async function deployerOnCloudflare(a: Answers, seen: Seen, o: Run, to: "install" | "remove", worker: string) {
   const c = await connect();
-  const until = Date.now() + WAIT_MS;
-  const ended = await deployerFromPage({
-    cf: c.cf,
-    net: c.net,
-    target: { account: a.account, worker },
-    secret,
-    again: async () => (await Bun.sleep(3000), Date.now() < until),
-  }).catch((e: Error) => fail(e.message, o.again));
-  if (!ended) return null;
-  if (ended.deployer == "installed") {
-    for (const u of ended.unconfirmed) say(`NOTE  Erga could not confirm about the token: ${u}`);
-    pass(`The deployer of ${a.host} is installed: it deploys each new release of ${a.branch} by itself (auto-deploy is on).`);
+  const deployers = await import("../pipeline/deployer");
+  const target = { account: a.account, worker };
+  const print = (line: string) => say(`  ${line.slice(0, 200)}`);
+  try {
+    if (to == "remove") await deployers.removeDeployer(c.cf, target);
+    else {
+      await deployers.installDeployer(c.cf, target);
+      if (!seen.deployer) await Effect.runPromise(writeAuto(d1Sql(c.cf, target), "releases"));
+    }
+    // The release that runs is the one that deploys: its tests ran before its first deploy.
+    await deployInstance({
+      dir: DIR,
+      host: a.host,
+      commit: seen.live?.version ?? undefined,
+      command: `bun erga setup ${a.host}`,
+      noTests: true,
+      net: c.net,
+      token: c.token,
+      print,
+    });
+  } catch (e) {
+    fail((e as Error).message, `Fix what it names, then: ${o.again}. Every step is safe to run again.`);
   }
-  return { deployer: ended.deployer };
 }
 
 /** Prints what the dry run found: the checks, and the plan. */
@@ -267,7 +250,7 @@ function printPlan(a: Answers, seen: Seen, resources: string[]) {
  * One instance, from where its setup is: each step, until it is done, the user's step is still open (the wait
  * ended), or (a dry run) the first step that would make something.
  */
-async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | Paged> {
+async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "page"> {
   const did = new Set<string>();
   for (;;) {
     const r = await look(a);
@@ -307,8 +290,8 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | Page
       }
       say(
         state.do == "install"
-          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a, worker, a.remote ? "in your terminal" : "on a page that opens")}`
-          : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${worker}-deployer, with the token that it holds):\nPLAN  ${deploysText(a)}`
+          ? `PLAN  ${a.host} runs. I will install its deployer, with no token, and deploy ${a.host} again, so that its Worker binds the deployer:\nPLAN  ${deploysText(a, worker, seen.admin ? "its Deploy page (/admin/deploy)" : "its setup page")}`
+          : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${worker}-deployer, with the token that it holds), and deploy ${a.host} again without it:\nPLAN  ${deploysText(a)}`
       );
       return "dry";
     }
@@ -398,26 +381,18 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | Page
           }
           break;
         }
-        if (state.do == "remove") {
-          const c = await connect();
-          await (await import("../pipeline/deployer")).removeDeployer(c.cf, { account: a.account, worker });
-          pass(`The deployer of ${a.host} is removed, with its token: no credential stays in the cloud.`);
-          break;
-        }
-        say(
-          a.remote
-            ? "WAIT  The user makes a token for the deployer on Cloudflare, and pastes it in their terminal. It goes to Cloudflare, never to you."
-            : "WAIT  A page opens. The user makes a token for the deployer on Cloudflare, and pastes it there. It goes to Cloudflare, never to you."
+        await deployerOnCloudflare(a, seen, o, state.do, worker);
+        pass(
+          state.do == "remove"
+            ? `The deployer of ${a.host} is removed, with the token that it held: no credential stays in the cloud.`
+            : `The deployer of ${a.host} is installed, with no token yet. The user pastes its token on the server: ${seen.admin ? `https://${a.host}/admin/deploy` : "its setup page"}.`
         );
-        const ended = await installWithToken(a);
-        if (ended == null) return "wait";
-        if (ended) return fail(ended, o.again);
-        pass(`The deployer of ${a.host} is installed: it deploys each new release of ${a.branch} by itself (auto-deploy is on).`);
         break;
       }
       case "page":
-        // The user's own step, and the run's last: the command asks the user nothing more.
-        return (await page(a, o, state.token, worker)) ?? "wait";
+        // The user's own step, and the run's last: the command asks the user nothing more, and waits for nothing.
+        await page(a, o);
+        return "page";
       case "done":
         if (o.dryRun) pass(`${a.host} runs already, with an admin.`);
         if (a.where == "aws") {
@@ -443,8 +418,12 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | Page
             say("PLAN  Its deployer's code changes to this code's. It keeps the token that it holds; auto-deploy stays as it is.");
           else {
             const c = await connect();
-            await (await import("../pipeline/deployer")).installDeployer(c.cf, { account: a.account, worker }, null);
-            pass(`The deployer of ${a.host} has this code now. It holds the same token; auto-deploy is as it was.`);
+            const { kept } = await (await import("../pipeline/deployer")).installDeployer(c.cf, { account: a.account, worker });
+            pass(
+              kept
+                ? `The deployer of ${a.host} has this code now. It holds what it held; auto-deploy is as it was.`
+                : `The deployer of ${a.host} was from before it kept its own token: it is new now, and holds no token. An admin pastes one on https://${a.host}/admin/deploy.`
+            );
           }
         }
         return o.dryRun ? "dry" : "done";
@@ -468,9 +447,9 @@ async function run(a: Answers, o: Run) {
   const deployed =
     a.deploys != "cloud"
       ? `bun erga deploy ${a.host} gives it that branch's newest commit`
-      : typeof end == "object" && end.deployer == "skipped"
-        ? `no deployer is installed yet (the user skipped its token): bun erga deploy ${a.host} gives it that branch's newest commit. To install the deployer when the user is the admin: ${o.again}`
-        : "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's Deploy page)";
+      : a.where == "aws"
+        ? "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's Deploy page)"
+        : `its deployer, in their own account, deploys each new release of that branch by itself, while it holds its token: the user pastes it on ${end == "page" ? "the setup page" : `the server's Deploy page (https://${a.host}/admin/deploy), which also says whether the deployer holds one`}`;
   const rest = `It tracks ${branch} of ${repo}: ${deployed}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page).`;
   say(
     end == "done"

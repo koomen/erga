@@ -55,7 +55,8 @@ do not choose for the user.
      deploys each new release. On AWS it is a Lambda function with a role of
      its own. On Cloudflare it is a Worker with a token for the one Worker,
      which the user makes and pastes on the setup page. An admin turns the
-     updates off and on later, on the server's Deploy page.
+     updates off and on later, and gives the deployer another token, on the
+     server's Deploy page.
    - No (`--deploys local`): no deploy credential stays in the cloud. The
      user runs `bun erga deploy <address>` for each update.
 

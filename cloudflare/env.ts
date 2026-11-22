@@ -81,6 +81,11 @@ export interface Env {
    * Cloudflare, in the bindings of the Worker's version (deploy/cli/running.ts).
    */
   ERGA_DEPLOY?: string;
+  /**
+   * The instance's deployer (deploy/deployer/worker.ts), where setup installed one: a deploy binds it then
+   * (deploy/deployer/worker-form.ts). The server hands it the token that a person pastes, and asks it where it is.
+   */
+  DEPLOYER?: Fetcher;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
 

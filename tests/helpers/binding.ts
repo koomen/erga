@@ -1,14 +1,17 @@
 // What the tests of the deployer's Worker share (deploy/deployer/worker.ts): an instance on the mock Cloudflare whose
 // database is a real D1 binding (the Workers runtime on this machine), with its spec; a pretend GitHub that has the
 // release of SHA2; the instance's own /api/health, which answers for the release that the mock serves; and the
-// deployer's store, its real class on a Map.
+// deployer's store, its real class on a Map, with a token for the instance's Worker in it, sealed as the deployer
+// seals the one that a person pastes.
 
 import * as Effect from "effect/Effect";
-import { DeployError } from "../../deploy/deployer/cloudflare-api";
+import { Cloudflare, DeployError } from "../../deploy/deployer/cloudflare-api";
 import type { D1 } from "../../deploy/deployer/d1-binding";
 import { NoTable, type Sql, writeSpec } from "../../deploy/deployer/instance";
 import type { Spec } from "../../deploy/deployer/spec";
+import { seal } from "../../deploy/deployer/token";
 import { DeployerState, type Env, type Fetch, type IO } from "../../deploy/deployer/worker";
+import { installDeployer } from "../../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../../dev/mock-cloudflare";
 import { bindingsOf, bootstrap, databaseOf, release, SHA2 } from "./deploys.ts";
 import { builtBundle, github } from "./github.ts";
@@ -28,6 +31,9 @@ export const SPEC: Spec = {
   settings: { GITHUB_CLIENT_ID: "Ov23next" },
   secrets: [],
 };
+
+/** The deployer's own secret, which seals its token. */
+export const KEY = "the-deployers-own-secret";
 
 /** The instance's record of its deploys (instance.ts, Sql) through the binding: how a test reads what the deployer wrote. */
 export const sqlOf =
@@ -70,6 +76,9 @@ export function storeBinding(): Env["STATE"] & { cell: Map<string, string> } {
 export async function instanceOn(d1: D1, made?: ReturnType<typeof mockCloudflare>) {
   const mock = made ?? mockCloudflare({ fleet: true });
   if (!made) await bootstrap(mock);
+  // The deployer is in the account, as setup installs it: each upload of the instance's Worker binds it.
+  if (!mock.state.scripts["erga-next-deployer"])
+    await installDeployer(new Cloudflare("mock-setup-token", mock.fetch), { account: FLEET_ACCOUNT, worker: "erga-next" });
   await d1.prepare("CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)").all();
   const { statementsOf } = await import("../../deploy/deployer/d1-binding");
   for (const name of Object.keys(release.migrations).sort())
@@ -109,8 +118,9 @@ export async function instanceOn(d1: D1, made?: ReturnType<typeof mockCloudflare
   };
   const io: IO = { fetch, now: () => state.now, sleep: async (ms) => void (state.now += ms) };
   const store = storeBinding();
+  store.cell.set("token", JSON.stringify(await seal(KEY, "mock-only-erga-next")));
   const env: Env = {
-    CLOUDFLARE_API_TOKEN: "mock-only-erga-next",
+    KEY,
     ACCOUNT: FLEET_ACCOUNT,
     WORKER: "erga-next",
     DATABASE: databaseOf(mock.state, "erga-next").uuid,

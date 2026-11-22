@@ -398,11 +398,11 @@ test("a GitHub sign-in from start to the gate's cookie, against the pretend GitH
   }
 });
 
-test("a new server's setup page: the link one time, GitHub's app in one click, the deployer's token, then the sign-in makes the admin and closes the page", async () => {
+test("a new server's setup page: the link one time, GitHub's app in one click, the deployer's token handed to the deployer, then the sign-in makes the admin and closes the page", async () => {
   const { mockGithub } = await import("../dev/github-mock");
   const { Directory } = await import("../server/directory/index.ts");
   const { memory } = await import("./helpers/memory-sql.ts");
-  const { deployerStep, openToken, readStep, setupUrl } = await import("../server/identity/setup-link.ts");
+  const { setupUrl } = await import("../server/identity/setup-link.ts");
   const { Grants, sessionOf } = await import("../server/identity/index.ts");
   const { app: erga } = await import("../server/app.ts");
   const { browser } = await import("./helpers/gate.ts");
@@ -415,6 +415,10 @@ test("a new server's setup page: the link one time, GitHub's app in one click, t
     callback: `${ORIGIN}/_edge/callback`,
     user: "ada",
   });
+  // The server's deployer, as its binding answers (deploy/deployer/token.ts): it holds no token, and takes only this one.
+  const TOKEN = "t".repeat(40);
+  const deployer = { held: false, asked: [] as string[] };
+  const says = () => ({ ok: true as const, ready: deployer.held, head: deployer.held ? "a".repeat(40) : null });
   // A server as setup leaves it: no sign-in app, no admin and no user, and only invited people may join.
   const sql = memory();
   const directory = new Directory(sql, { admins: [], providers: ["github", "google"] });
@@ -425,6 +429,20 @@ test("a new server's setup page: the link one time, GitHub's app in one click, t
     dev: () => false,
     secret: "s".repeat(40),
     sessionOf: (request) => sessionOf(platform, request),
+    deploy: {
+      ...app().platform.deploy,
+      deployer: {
+        account: "acc-1",
+        worker: "erga-example",
+        ask: async (token) => {
+          if (token == null) return says();
+          deployer.asked.push(token);
+          if (token != TOKEN) return { ok: false, why: "The token can read another Worker (other)." };
+          deployer.held = true;
+          return says();
+        },
+      },
+    },
     signIn: {
       mode: "oauth",
       apps: { github: { clientId: "", secret: "" }, google: { clientId: "", secret: "" } },
@@ -454,8 +472,7 @@ test("a new server's setup page: the link one time, GitHub's app in one click, t
     /** Each row of the page, with its state. */
     const rows = (html: string) =>
       [...html.matchAll(/data-step="(\w+)" data-state="(\w+)"( open)?/g)].map((m) => `${m[1]} ${m[2]}${m[3] ?? ""}`);
-    const TOKEN = "t".repeat(40);
-    const link = await setupUrl("erga.example", platform.secret, { deployer: { account: "acc-1", worker: "erga-example" } });
+    const link = await setupUrl("erga.example", platform.secret);
 
     // No link: no page, and nobody may join.
     expect((await server(new Request(`${ORIGIN}/setup`))).status).toBe(410);
@@ -509,28 +526,29 @@ test("a new server's setup page: the link one time, GitHub's app in one click, t
     b.trail.length = 0;
     html = await (await b.go(create)).text();
     expect(b.trail).toEqual(["erga.example/setup/github", "erga.example/setup"]);
-    expect(rows(html)).toEqual(["github done", "google optional", "deployer next open", "admin waiting"]);
+    expect(rows(html)).toEqual(["github done", "google optional", "deployer next open", "admin next"]);
     expect(html).not.toContain(GOOD.secret);
-    // The admin's step waits for the deployer's answer.
-    expect(html).not.toContain('class="provider');
+    // The deployer's row names what the token is for: the server's own account and Worker.
+    expect(html).toContain('href="https://dash.cloudflare.com/acc-1/api-tokens"');
+    expect(html).toContain("for the Worker <code>erga-example</code> only, with the role Editor");
 
-    // The deployer's token: the row keeps it sealed, for the setup command, which holds the server's secret too.
-    html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: form, body: `token=${TOKEN}` })).text();
-    expect(rows(html)).toEqual(["github done", "google optional", "deployer working open", "admin waiting"]);
-    const kept = (await directory.deploys.setupStep())!;
-    const waiting = readStep(kept);
-    expect(kept).not.toContain(TOKEN);
-    expect(waiting.at == "waiting" && (await openToken(platform.secret, waiting))).toBe(TOKEN);
-    // The command refuses the token: the page says why, and takes another one. Or the user skips the step.
-    await directory.deploys.setSetupStep(
-      kept,
-      JSON.stringify(deployerStep(waiting, { kind: "refused", why: "The token can read another Worker (other)." }))
-    );
-    html = await (await b.go(`${ORIGIN}/setup`)).text();
-    expect(rows(html)[2]).toBe("deployer next open");
-    expect(html).toContain("The token can read another Worker (other).");
-    html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: form, body: "skip=1" })).text();
+    // Skip for now is the address's alone: the row says so, and the last step is open.
+    html = await (await b.go(`${ORIGIN}/setup?skip`)).text();
     expect(rows(html)).toEqual(["github done", "google optional", "deployer skipped", "admin next open"]);
+    // The deployer's token goes straight to the deployer. One that it refuses: its reason is at the field, and the
+    // page never has the token.
+    const wrong = "w".repeat(40);
+    const no = await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: form, body: `token=${wrong}` });
+    html = await no.text();
+    expect([no.status, rows(html)]).toEqual([400, ["github done", "google optional", "deployer next open", "admin next"]]);
+    expect(html).toContain('<p class="problem" role="alert">The token can read another Worker (other).</p>');
+    expect(html).not.toContain(wrong);
+    // One that it takes: the row shows the deployer's answer, where it is.
+    html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: form, body: `token=+${TOKEN}+` })).text();
+    expect(rows(html)).toEqual(["github done", "google optional", "deployer done", "admin next open"]);
+    expect(html).toContain("The deployer is ready, at <code>aaaaaaaaaaaa</code>");
+    expect(html).not.toContain(TOKEN);
+    expect(deployer.asked).toEqual([wrong, TOKEN]);
 
     // The last step: GitHub's button, the sign-in through the gate's callback (the page's pass lets her join), a
     // username, and she is the admin.
@@ -547,7 +565,7 @@ test("a new server's setup page: the link one time, GitHub's app in one click, t
     expect(await directory.users.isAdmin("ada")).toBe(true);
     // The first admin closes the page for good: for her browser, and for a new link.
     expect((await b.go(`${ORIGIN}/setup`)).status).toBe(410);
-    const again = await setupUrl("erga.example", platform.secret, { deployer: null });
+    const again = await setupUrl("erga.example", platform.secret);
     const late = await server(new Request(again));
     expect([late.status, await late.text()]).toEqual([410, expect.stringContaining("Setup is done")]);
   } finally {

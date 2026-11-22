@@ -22,7 +22,7 @@ import type { Step } from "./job";
 import type { Release } from "./release-format";
 import { OLD_SECRETS_KEY, readsSecretsKey, SECRETS_KEY } from "./secrets-key";
 import type { CloudflareTarget } from "./spec";
-import { assetHash, type CloudflareSpec, servedAssets, typeOf, workerMetadata } from "./worker-form";
+import { assetHash, type CloudflareSpec, DEPLOYER_TAG, deployerName, servedAssets, typeOf, workerMetadata } from "./worker-form";
 
 export {
   assetHash,
@@ -96,6 +96,13 @@ export async function liveDeployment(cf: Cloudflare, accountId: string, worker: 
   const latest = [...(r?.deployments ?? [])].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on))[0];
   const versionId = [...(latest?.versions ?? [])].sort((a, b) => b.percentage - a.percentage)[0]?.version_id;
   return latest && versionId ? { id: latest.id, versionId } : null;
+}
+
+/** Whether the account has the instance's deployer, as setup made it (deploy/pipeline/deployer.ts): a Worker with its name and its tag. */
+export async function hasDeployer(cf: Cloudflare, target: Pick<CloudflareTarget, "account" | "worker">): Promise<boolean> {
+  const scripts =
+    (await cf.call<{ id: string; tags?: string[] }[]>("GET", `/accounts/${target.account}/workers/scripts`, "list your Workers")) ?? [];
+  return !!scripts.find((s) => s.id == deployerName(target.worker))?.tags?.includes(DEPLOYER_TAG);
 }
 
 /**
@@ -547,9 +554,17 @@ const worker = (run: CloudflareRun) =>
       const before = await healthRow(await reach(run)).catch(() => null);
       carry.ticking = readHealth(before, null, now).healthy != null;
       carry.rowAt = before?.at;
+      // The instance's deployer, when setup made one: the Worker binds it, to hand it the token that a person pastes.
+      const deployer = await hasDeployer(cf, run.spec.target);
       /** `rename`: Cloudflare gives the key its new name with this upload (secrets-key.ts), or refuses the upload. */
       const upload = (rename: boolean) => {
-        const metadata = workerMetadata(release, run.spec, { dbId, assetsJwt, upload: `${release.version}-${now}`, secrets: run.secrets });
+        const metadata = workerMetadata(release, run.spec, {
+          dbId,
+          assetsJwt,
+          upload: `${release.version}-${now}`,
+          secrets: run.secrets,
+          deployer,
+        });
         if (rename) metadata.bindings.push({ type: "inherit", name: SECRETS_KEY, old_name: OLD_SECRETS_KEY });
         const form = new FormData();
         form.set("metadata", JSON.stringify(metadata));

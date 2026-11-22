@@ -5,6 +5,11 @@
 // look. The server deploys nothing: Deploy, Roll back and the Auto-deploy switch are the operation deploy
 // (server/operations/deploys.ts), an ask that the deployer starts within a minute.
 //
+// The deployer holds a token for this server's Worker only, which a person gives it: on a new server's setup page, and
+// here after that (tokenSection, POST /admin/deploy/token: server/admin/routes.ts). The server hands the token to the
+// deployer and keeps nothing of it; the deployer checks it, and the page shows its answer. With no token the
+// deployer looks at GitHub and deploys nothing, and the section says so.
+//
 // A server with no deployer deploys from a machine: the page says so, and what it knows of that machine's
 // auto-deploy, and shows its jobs, with no commits and no button. The page's script (client/inline/admin-deploy.ts) draws the live part again (GET /admin/deploy/view) while the
 // page is open.
@@ -13,8 +18,9 @@ import { esc } from "../../shared/html.ts";
 import { type InstanceView, instanceHtml } from "../../shared/ops-view.ts";
 import { timeAgo } from "../../shared/time.ts";
 import type { AutoDeployMode, DeployState } from "../directory/index.ts";
-import { inlineCall } from "../pages/index.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { TOKEN_FIELD, tokenSteps } from "../identity/index.ts";
+import { inlineCall, link } from "../pages/index.ts";
+import { type DeployerSays, type Platform, type Session, whoOf } from "../platform.ts";
 import { adminPage } from "./layout.ts";
 
 /** How often the page asks again: while a job runs or an ask waits, and else. */
@@ -140,16 +146,48 @@ export async function deployLive(platform: Platform, session: Session, url: URL,
   return `${auto}<div class="ops-view" id="ops" data-wait="${wait}">${instanceHtml(view, tab, id, now)}</div>`;
 }
 
-/** /admin/deploy. */
-export async function deployPage(platform: Platform, session: Session, url: URL) {
+/**
+ * The deployer's token: whether the deployer holds one (its own answer), and the form that gives it one, or another
+ * one. `refused`: why the deployer took no token just now, shown at the field. Not in the live part: a field that a
+ * person types in stays as it is.
+ */
+function tokenSection(deployer: NonNullable<Platform["deploy"]["deployer"]>, says: DeployerSays, session: Session, refused?: string) {
+  const ready = says.ok && says.ready;
+  const where = says.ok
+    ? ready
+      ? `The deployer holds a token${says.head ? `, and is at <code>${esc(says.head.slice(0, 12))}</code>` : ""}.`
+      : "<b>The deployer has no token: it deploys nothing.</b> Give it one below."
+    : esc(says.why);
+  return `
+  <section class="deployer-token" aria-labelledby="token-head" data-ready="${ready}">
+    <h3 class="sub-head" id="token-head">The deployer's token</h3>
+    <p class="lede">${where}</p>
+    <details${!ready || refused ? " open" : ""}>
+      <summary>${ready ? "Give the deployer another token" : "Give the deployer a token"}</summary>
+      ${tokenSteps(deployer.account, deployer.worker)}
+      ${refused ? `<p class="failed" role="alert">${esc(refused)}</p>` : ""}
+      <form method="post" action="${esc(link("/admin/deploy/token", session))}">
+        ${TOKEN_FIELD}
+        <button class="pill">Check the token</button>
+      </form>
+    </details>
+  </section>`;
+}
+
+/** /admin/deploy. `refused`: why the deployer took no token just now (status 400). */
+export async function deployPage(platform: Platform, session: Session, url: URL, refused?: string) {
   const runs = platform.deploy.version;
-  return adminPage({
-    session,
-    title: "Deploy",
-    here: "deploy",
-    lede: `${url.host} runs ${runs ?? "no release that it knows"}.`,
-    body: `
-  <div id="deploy-live">${await deployLive(platform, session, url)}</div>
+  const deployer = platform.deploy.deployer;
+  return adminPage(
+    {
+      session,
+      title: "Deploy",
+      here: "deploy",
+      lede: `${url.host} runs ${runs ?? "no release that it knows"}.`,
+      body: `
+  <div id="deploy-live">${await deployLive(platform, session, url)}</div>${deployer ? tokenSection(deployer, await deployer.ask(), session, refused) : ""}
 <script>${inlineCall("admin-deploy")}</script>`,
-  });
+    },
+    refused ? 400 : 200
+  );
 }

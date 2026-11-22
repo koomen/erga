@@ -5,7 +5,8 @@
 //
 // page: the server runs, with no sign-in and no admin. The command opens the server's setup page in the user's browser
 // (/setup, server/identity/setup.ts), and the user finishes there: GitHub or Google sign-in, the deployer's token (cloud
-// deploys on Cloudflare), and their own sign-in, which makes them the admin. The command asks the user nothing itself.
+// deploys on Cloudflare), and their own sign-in, which makes them the admin. The command asks the user nothing itself,
+// and waits for nothing: it ends when the page is open.
 //
 // app: single sign-on on AWS only: the client secret of the organization's sign-in, before the build.
 //
@@ -13,12 +14,12 @@
 // set it up. The command takes it over: it writes the entry from what Cloudflare holds of the instance, and goes on
 // from where that instance is. It changes nothing of the instance.
 //
-// deployer: the answer --deploys and what the account has differ. cloud with no deployer: the command installs it.
-// On AWS there is no token (the deployer's role is its credential), so the step is the command's own. On Cloudflare
-// the user makes the deployer's token: on a new server they paste it on the setup page (the page step), and the
-// command installs the deployer with it; on a server that has its admin, on a page that the command opens. local with
-// a deployer: the command removes it. This step is open on an instance that is done too: a run again with the other
-// answer changes it.
+// deployer: the answer --deploys and what the account has differ. cloud with no deployer: the command installs it,
+// with no step of the user's. On AWS the deployer's role is its credential. On Cloudflare the deployer is a second
+// Worker, installed with no token, and the instance's Worker binds it (a deploy of the instance again): the user
+// pastes the token on the server itself (its setup page; with an admin, its Deploy page), which hands it to the
+// deployer. local with a deployer: the command removes it. This step is open on an instance that is done too: a run
+// again with the other answer changes it.
 //
 // With --remote (answers.remote) the user is at another computer: their steps (login, app, page) go through their terminal,
 // never a browser on this machine. A command with no terminal (an agent's shell) stops there: "terminal".
@@ -64,6 +65,8 @@ export interface Seen {
   github: string;
   /** The account has the instance's deployer, which deploys each new release by itself: on Cloudflare a Worker, on AWS a Lambda function. */
   deployer: boolean;
+  /** Cloudflare: the instance's Worker binds its deployer (DEPLOYER), so the server can hand it the user's token. */
+  bound: boolean;
   /** The user's terminal (/dev/tty) opens for this command: an agent's shell has none. */
   terminal: boolean;
 }
@@ -85,6 +88,7 @@ export const nothingSeen: Seen = {
   vars: null,
   github: "",
   deployer: false,
+  bound: false,
   terminal: false,
 };
 
@@ -103,17 +107,10 @@ export type State =
    * writes the entry and deploys again. An instance with an admin is what its entry says: `bun erga deploy` changes it.
    */
   | { at: "update"; vars: string[] }
-  /**
-   * The instance runs, and who deploys it is not what --deploys says. install: on Cloudflare the user's step, the
-   * deployer's token (the instance has its admin: a new one takes the token on its setup page). remove: the command
-   * removes the deployer.
-   */
+  /** The instance runs, and who deploys it is not what --deploys says: the command installs the deployer, or removes it. */
   | { at: "deployer"; do: "install" | "remove" }
-  /**
-   * The server runs with no admin: the user finishes on its setup page, which the command opens with a one-time link.
-   * `token`: the page takes the deployer's token (cloud deploys on Cloudflare), and the command waits for it.
-   */
-  | { at: "page"; token: boolean }
+  /** The server runs with no admin: the user finishes on its setup page, which the command opens with a one-time link. */
+  | { at: "page" }
   /** --remote: the next step is the user's, in their terminal, and this command has none. The user runs it in theirs. */
   | { at: "terminal" }
   | { at: "done" };
@@ -158,11 +155,14 @@ export function stateOf(a: Answers, s: Seen): State {
     return { at: "stop", why: `Several AWS profiles: ${s.choices.map((c) => c.id).join(", ")}. Add --profile with one of them.` };
   if (!s.login?.ok) return { at: "login", ...(s.login ? { why: s.login.why } : {}) };
   if (s.adopt) return { at: "adopt", worker: s.adopt };
-  // Who deploys, against the answer: only for an instance that runs (the deployer binds its database).
+  // Who deploys, against the answer: only for an instance that runs (the deployer binds its database). On Cloudflare
+  // the deployer is whole when the instance's Worker binds it too.
+  const whole = s.deployer && (aws || s.bound);
+  const some = s.deployer || (!aws && s.bound);
   const deployer: State | null =
-    a.deploys == "cloud" && !s.deployer
+    a.deploys == "cloud" && !whole
       ? { at: "deployer", do: "install" }
-      : a.deploys == "local" && s.deployer
+      : a.deploys == "local" && some
         ? { at: "deployer", do: "remove" }
         : null;
   if (s.admin) return deployer ?? { at: "done" };
@@ -188,9 +188,7 @@ export function stateOf(a: Answers, s: Seen): State {
   if (!(s.live?.healthy && s.live.version && s.live.signIn == "ok")) return { at: "build" };
   const changed = changedVars(a, s);
   if (changed.length) return { at: "update", vars: changed };
-  // A new server on Cloudflare takes the deployer's token on its setup page: the install is a part of that step.
-  const token = !aws && deployer?.do == "install";
-  return deployer && !token ? deployer : { at: "page", token };
+  return deployer ?? { at: "page" };
 }
 
 /**
@@ -209,9 +207,7 @@ export function step(a: Answers, s: Seen): { answers: Answers; state: State; loo
   const fill = filled(a, s);
   const answers = { ...a, ...fill };
   const state = stateOf(answers, s);
-  // (The deployer's install is the user's step only where it has a token: on Cloudflare.)
-  const theirs =
-    state.at == "login" || state.at == "app" || state.at == "page" || (state.at == "deployer" && state.do == "install" && a.where != "aws");
+  const theirs = state.at == "login" || state.at == "app" || state.at == "page";
   return {
     answers,
     state: theirs && answers.remote && !s.terminal ? { at: "terminal" } : state,
@@ -238,13 +234,13 @@ export function checksOf(a: Answers, s: Seen): string[] {
 /**
  * Who deploys each new release, as the plan says it. `worker`: the instance's Worker, when it is not a new instance's
  * (an instance that runs has its entry's name: store.ts, namesAt). The user makes the token for that name. `where`:
- * where the user pastes it, when not on a new server's setup page.
+ * the server's page where the user pastes it, when not a new server's setup page.
  */
-export const deploysText = (a: Answers, worker = namesOf(a.host).worker, where = "on the server's setup page") =>
+export const deploysText = (a: Answers, worker = namesOf(a.host).worker, where = "its setup page") =>
   a.deploys == "cloud" && a.where == "aws"
     ? `• a deployer (the Lambda function ${stackOf(a)}-deployer, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`
     : a.deploys == "cloud"
-      ? `• a deployer (the Worker ${worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${worker}, which you make on Cloudflare and paste ${where}`
+      ? `• a deployer (the Worker ${worker}-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker ${worker}, which you make on Cloudflare and paste on the server: on ${where}`
       : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
 /** The plan, as the agent says it before the user's yes. */

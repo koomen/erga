@@ -1,7 +1,8 @@
 // `bun erga setup`'s build (deploy/own/first.ts) against the mock Cloudflare (ERGA_DEPLOY_MOCK=1), from the answers to
 // a healthy deploy of a new instance: its entry in .erga/config.json, the secrets set one time, and a database with no
-// user and no rule. Then a second instance, by the same flow. Then the setup page's steps, which setup sees in the
-// database through Cloudflare's D1 API: the deployer's token, and the admin. And an instance that runs already, with names that setup would not give: setup
+// user and no rule. Then a second instance, by the same flow. Then its deployer, installed with no token, which the
+// instance's Worker binds at its next deploy. Then the admin, whom setup sees in the database through Cloudflare's D1
+// API. And an instance that runs already, with names that setup would not give: setup
 // stops, and its entry stays. And an Erga that another clone set up: a clone with no entry for it takes it over.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -12,7 +13,7 @@ import { type CloudflareEntry, type Entry, readConfig, withEntry, writeConfig } 
 import type { MockState } from "../dev/mock-cloudflare";
 import { writePass } from "./helpers/pass.ts";
 import { Cloudflare } from "../deploy/deployer/cloudflare-api";
-import { adminOn, adoptEntry, endStep, type First, firstDeploy, stepOn, writeEntry } from "../deploy/own/first";
+import { adminOn, adoptEntry, type First, firstDeploy, writeEntry } from "../deploy/own/first";
 import { specOn, sqlOf } from "../deploy/cli/instance";
 import { instanceReader, jobsReader } from "../deploy/cli/running";
 import { deployInstance } from "../deploy/cli/deploy";
@@ -20,7 +21,7 @@ import { liveOf, observe } from "../deploy/own/facts";
 import { step } from "../deploy/own/flow";
 import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt } from "../deploy/own/store";
-import { deployerStep, openToken, readStep, sealToken } from "../server/identity/setup-link";
+import { installDeployer, removeDeployer } from "../deploy/pipeline/deployer";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { bindingsOf, bootstrap, fleet, next, prepareRelease, ROOT } from "./helpers/deploys.ts";
@@ -149,7 +150,39 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, no 
   );
 }, 120_000);
 
-test("the setup page's steps: setup sees the deployer's token and the admin in the database, through Cloudflare's API", async () => {
+test("the deployer, installed with no token: the instance's next deploy binds it on its Worker, and its removal's next deploy does not", async () => {
+  const mock = mockCloudflare();
+  await firstDeploy(first(mock, HOST));
+  const cf = new Cloudflare("mock-machine-token", mock.fetch);
+  const connect = async () => ({ cf, net: mock.fetch, token: "mock-machine-token" });
+  const a = { ...first(mock, HOST).answers, deploys: "cloud" as const };
+  const target = { account: ACCOUNT_ID, worker: "erga-ada-example-com" };
+  const deploy = () => deployInstance({ dir, host: HOST, commit: HEAD.slice(0, 12), noTests: true, net: mock.fetch, print: () => {} });
+  // A new instance has no deployer, and binds none: the flow's next step is the install.
+  expect(bindingsOf(mock.state, target.worker).DEPLOYER).toBeUndefined();
+  expect(step(a, await observe(a, dir, connect)).state).toEqual({ at: "deployer", do: "install" });
+  // The install alone leaves the instance's Worker as it is: the deployer is not whole yet.
+  expect(await installDeployer(cf, target)).toEqual({ name: "erga-ada-example-com-deployer", kept: false });
+  expect(await observe(a, dir, connect)).toMatchObject({ deployer: true, bound: false });
+  expect(step(a, await observe(a, dir, connect)).state).toEqual({ at: "deployer", do: "install" });
+  // A deploy of the release that runs: the Worker binds its deployer, and the flow goes on to the setup page.
+  await deploy();
+  expect(bindingsOf(mock.state, target.worker).DEPLOYER).toMatchObject({ type: "service", service: "erga-ada-example-com-deployer" });
+  expect(await observe(a, dir, connect)).toMatchObject({ deployer: true, bound: true });
+  expect(step(a, await observe(a, dir, connect)).state).toEqual({ at: "page" });
+  // No token went anywhere: the deployer's one secret is its own.
+  expect(Object.keys(mock.state.secrets["erga-ada-example-com-deployer"])).toEqual(["KEY"]);
+  // The other answer: the deployer goes, and a deploy again binds none.
+  const local = { ...a, deploys: "local" as const };
+  expect(step(local, await observe(local, dir, connect)).state).toEqual({ at: "deployer", do: "remove" });
+  await removeDeployer(cf, target);
+  expect(step(local, await observe(local, dir, connect)).state).toEqual({ at: "deployer", do: "remove" });
+  await deploy();
+  expect(bindingsOf(mock.state, target.worker).DEPLOYER).toBeUndefined();
+  expect(step(local, await observe(local, dir, connect)).state).toEqual({ at: "page" });
+}, 120_000);
+
+test("the setup ends with the admin: setup sees the user's row in the database, through Cloudflare's API", async () => {
   const mock = mockCloudflare();
   await firstDeploy(first(mock, HOST));
   const cf = new Cloudflare("mock-machine-token", mock.fetch);
@@ -158,27 +191,6 @@ test("the setup page's steps: setup sees the deployer's token and the admin in t
   expect(await adminOn(cf, acc, "erga-ada-example-com")).toBeNull();
   expect(await adminOn(cf, acc, "erga-nowhere")).toBeNull();
   const db = bindingsOf(mock.state, "erga-ada-example-com").DB.database_id;
-  // The deployer's step: the page has no row yet. Then the user pastes the token: the server seals it with its
-  // SESSION_SECRET, which this machine holds too, and writes the row (here, as the server writes it).
-  expect(await stepOn(cf, acc, db)).toEqual({ text: null, step: { at: "open" } });
-  const secret = loadSecrets(dir)[HOST].SESSION_SECRET;
-  const waiting = deployerStep({ at: "open" }, { kind: "pasted", ...(await sealToken(secret, "token-of-the-user")) });
-  await cf.call("POST", `${acc}/d1/database/${db}/query`, "the server's own write", {
-    sql: "INSERT INTO setup (id, deployer) VALUES (1, ?1)",
-    params: [JSON.stringify(waiting)],
-  });
-  const at = await stepOn(cf, acc, db);
-  expect(at.step.at).toBe("waiting");
-  // Only the server's own secret opens it, and the row never holds it in the clear.
-  expect(at.step.at == "waiting" && [await openToken(secret, at.step), await openToken("another-secret", at.step)]).toEqual([
-    "token-of-the-user",
-    null,
-  ]);
-  expect(at.text).not.toContain("token-of-the-user");
-  // Setup writes how the install ended, onto the row as it read it: the token is gone from the row.
-  await endStep(cf, acc, db, at, { kind: "installed", unconfirmed: ["That the token may deploy."] });
-  expect(await stepOn(cf, acc, db)).toMatchObject({ step: { at: "installed", unconfirmed: ["That the token may deploy."] } });
-  expect(readStep("not a step")).toEqual({ at: "open" });
   // The user's own sign-in, at the page's last step, makes the row (server/identity/setup.ts): here, as the server writes it.
   const calls = mock.state.calls.length;
   await cf.call("POST", `${acc}/d1/database/${db}/query`, "the server's own write", {
@@ -307,13 +319,13 @@ test("the dry run in a new clone, as the user's agent runs it: the plan is the t
       stdin: "ignore",
     });
     expect([p.exitCode, p.stderr.toString()]).toEqual([0, ""]);
-    // (An agent's shell has no terminal: the plan is the deployer's all the same, with the Worker's own name.)
+    // (An agent's shell has no terminal: the deployer's install needs none. The plan names the Worker's own name.)
     expect(p.stdout.toString().trim().split("\n")).toEqual([
       "PLAN  example.com runs already: it is the Erga of the Worker erga, in the Cloudflare account Erga. I will take it over as it is: its entry goes into this clone's .erga/config.json, as bun erga register writes it. Its Worker, its database and its documents stay.",
       "PASS  Signed in to Cloudflare",
       "PASS  The account Erga holds example.com",
-      "PLAN  example.com runs. I will install its deployer:",
-      "PLAN  • a deployer (the Worker erga-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga, which you make on Cloudflare and paste in your terminal",
+      "PLAN  example.com runs. I will install its deployer, with no token, and deploy example.com again, so that its Worker binds the deployer:",
+      "PLAN  • a deployer (the Worker erga-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker erga, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)",
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run.",
     ]);
     expect(existsSync(join(tmp, ".erga"))).toBe(false);

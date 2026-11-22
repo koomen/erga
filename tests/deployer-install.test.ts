@@ -1,6 +1,7 @@
 // The deployer on Cloudflare, as setup installs it (deploy/pipeline/deployer.ts): on the mock Cloudflare, what the
 // install uploads; and in the Workers runtime on this machine (Miniflare), that the uploaded module runs: its schedule
-// deploys a release, with the mock Cloudflare and a pretend GitHub as all that it can reach. Nothing real is touched.
+// takes its token as its instance hands it over, and deploys a release, with the mock Cloudflare and a pretend GitHub
+// as all that it can reach. Nothing real is touched.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -21,15 +22,15 @@ const short = (sha: string) => sha.slice(0, 12);
 const TARGET = { account: FLEET_ACCOUNT, worker: "erga-next" };
 
 describe("the install", () => {
-  test("puts the deployer beside the instance's Worker: its database, its token as a secret, a schedule, no address", async () => {
+  test("puts the deployer beside the instance's Worker: its database, a secret of its own, a schedule, no address, and no token", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const cf = new Cloudflare("mock-setup-token", mock.fetch);
     const from = mock.state.calls.length;
-    expect(await installDeployer(cf, TARGET, "the-deployer-token-0123456789")).toBe("erga-next-deployer");
+    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: false });
     const script = mock.state.scripts["erga-next-deployer"];
     const bindings = bindingsOf(mock.state, "erga-next-deployer");
-    expect(Object.keys(bindings).sort()).toEqual(["ACCOUNT", "CLOUDFLARE_API_TOKEN", "DATABASE", "DB", "INSTANCE", "STATE", "WORKER"]);
+    expect(Object.keys(bindings).sort()).toEqual(["ACCOUNT", "DATABASE", "DB", "INSTANCE", "KEY", "STATE", "WORKER"]);
     expect(bindings.DB).toMatchObject({ type: "d1", database_id: databaseOf(mock.state, "erga-next").uuid });
     expect(bindings.DATABASE.text).toBe(databaseOf(mock.state, "erga-next").uuid);
     // Its own store, a Durable Object of its own class; and the instance's Worker, for the health check.
@@ -38,10 +39,10 @@ describe("the install", () => {
     expect(bindings.INSTANCE).toMatchObject({ type: "service", service: "erga-next" });
     expect(bindings.ACCOUNT.text).toBe(FLEET_ACCOUNT);
     expect(bindings.WORKER.text).toBe("erga-next");
-    // The token is a secret of the Worker: Cloudflare gives it back to nobody.
-    expect(bindings.CLOUDFLARE_API_TOKEN.type).toBe("secret_text");
-    expect(JSON.stringify(script.metadata)).not.toContain("the-deployer-token");
-    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "the-deployer-token-0123456789" });
+    // Its only secret is its own, new: what seals the token that comes later. No token goes with the install.
+    expect(bindings.KEY.type).toBe("secret_text");
+    const key = mock.state.secrets["erga-next-deployer"].KEY;
+    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ KEY: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(script.modules).toEqual(["worker.js"]);
     expect(script.tags).toEqual([DEPLOYER_TAG]);
     expect(script.workersDev).toBe(false);
@@ -57,26 +58,47 @@ describe("the install", () => {
     ]);
     expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA1));
 
-    // A second install (a new token) replaces the first one's.
-    await installDeployer(cf, TARGET, "another-token-0123456789");
-    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "another-token-0123456789" });
-    // An update with no token: the deployer gets this code again, and keeps the token that it holds.
+    // A second install: the deployer gets this code again, and keeps its secret (and so the token in its store).
     const uploads = () => mock.state.calls.filter((c) => c == `PUT ${acc}/workers/scripts/erga-next-deployer`).length;
     const before = uploads();
-    await installDeployer(cf, TARGET, null);
+    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: true });
     expect(uploads()).toBe(before + 1);
-    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "another-token-0123456789" });
-    expect(JSON.stringify(mock.state.scripts["erga-next-deployer"].metadata)).not.toContain("another-token");
+    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ KEY: key });
+    expect(JSON.stringify(mock.state.scripts["erga-next-deployer"].metadata)).not.toContain(key);
     // The Worker has the same bindings as before, its secret among them.
     expect(Object.keys(bindingsOf(mock.state, "erga-next-deployer")).sort()).toEqual([
       "ACCOUNT",
-      "CLOUDFLARE_API_TOKEN",
       "DATABASE",
       "DB",
       "INSTANCE",
+      "KEY",
       "STATE",
       "WORKER",
     ]);
+  });
+
+  test("a deployer from before it kept its own token (its token was a secret of the Worker) is replaced by a new one", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const cf = new Cloudflare("mock-setup-token", mock.fetch);
+    const acc = `/accounts/${FLEET_ACCOUNT}`;
+    const form = new FormData();
+    form.set(
+      "metadata",
+      JSON.stringify({
+        main_module: "worker.js",
+        compatibility_date: "2026-09-01",
+        bindings: [{ type: "secret_text", name: "CLOUDFLARE_API_TOKEN", text: "a-token-from-before" }],
+        tags: [DEPLOYER_TAG],
+      })
+    );
+    form.append("worker.js", new File(["export default {}"], "worker.js", { type: "application/javascript+module" }));
+    await cf.call("PUT", `${acc}/workers/scripts/erga-next-deployer`, "upload a deployer from before", form);
+    const from = mock.state.calls.length;
+    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: false });
+    // The old Worker went, with its secret: the new one holds only its own.
+    expect(mock.state.calls.slice(from)).toContain(`DELETE ${acc}/workers/scripts/erga-next-deployer?force=true`);
+    expect(Object.keys(mock.state.secrets["erga-next-deployer"])).toEqual(["KEY"]);
   });
 
   test("never replaces a Worker that Erga did not make, and needs the instance's Worker and database", async () => {
@@ -89,24 +111,16 @@ describe("the install", () => {
     form.append("index.js", new File(["export default {}"], "index.js", { type: "application/javascript+module" }));
     await cf.call("PUT", `/accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next-deployer`, "upload a Worker of the person's own", form);
     const from = mock.state.calls.length;
-    await expect(installDeployer(cf, TARGET, "the-deployer-token-0123456789")).rejects.toThrow(
+    await expect(installDeployer(cf, TARGET)).rejects.toThrow(
       "Your account has a Worker erga-next-deployer that Erga did not make. Erga does not replace it"
     );
     expect(mock.state.calls.slice(from).filter((c) => !c.startsWith("GET "))).toEqual([]);
     expect(mock.state.scripts["erga-next-deployer"].modules).toEqual(["index.js"]);
 
-    // With no token there must be a deployer to update.
-    const none = mockCloudflare({ fleet: true });
-    await bootstrap(none);
-    await expect(installDeployer(new Cloudflare("mock-setup-token", none.fetch), TARGET, null)).rejects.toThrow(
-      "erga-next has no deployer to update: install it first, with a token"
-    );
-    await expect(installDeployer(cf, { account: FLEET_ACCOUNT, worker: "no-such-worker" }, "t")).rejects.toThrow(
+    await expect(installDeployer(cf, { account: FLEET_ACCOUNT, worker: "no-such-worker" })).rejects.toThrow(
       "The Worker no-such-worker is not there, or it has no database. Deploy the instance first"
     );
-    await expect(installDeployer(cf, { account: FLEET_ACCOUNT, worker: "w".repeat(60) }, "t")).rejects.toThrow(
-      "has more than 63 characters"
-    );
+    await expect(installDeployer(cf, { account: FLEET_ACCOUNT, worker: "w".repeat(60) })).rejects.toThrow("has more than 63 characters");
   });
 });
 
@@ -114,11 +128,13 @@ describe("the installed Worker, in the Workers runtime", () => {
   let runtime: Miniflare;
   afterAll(() => runtime?.dispose());
 
-  test("its schedule deploys the head's release: the module that the install uploads runs, and reaches only what a Worker can", async () => {
+  test("it takes its token from its instance, and its schedule deploys the head's release: the module that the install uploads runs, and reaches only what a Worker can", async () => {
     // All that the Worker reaches outside itself comes here: Cloudflare's API (the mock) and GitHub (the pretend one).
     let out: Awaited<ReturnType<typeof instanceOn>>["fetch"] = async () => new Response("the test is not ready", { status: 503 });
     const made = mockCloudflare({ fleet: true });
     await bootstrap(made);
+    // The account has the deployer, as setup installs it: the instance's Worker binds it at each upload.
+    await installDeployer(new Cloudflare("mock-setup-token", made.fetch), TARGET);
     runtime = new Miniflare(
       convertV4MiniflareOptions({
         modules: [{ type: "ESModule", path: "worker.js", contents: await deployerModule() }],
@@ -131,7 +147,7 @@ describe("the installed Worker, in the Workers runtime", () => {
           ACCOUNT: FLEET_ACCOUNT,
           WORKER: "erga-next",
           DATABASE: databaseOf(made.state, "erga-next").uuid,
-          CLOUDFLARE_API_TOKEN: "mock-only-erga-next",
+          KEY: "the-deployers-own-secret",
         },
         outboundService: async (request: Request) => {
           const body = request.method == "GET" || request.method == "HEAD" ? undefined : await request.arrayBuffer();
@@ -144,6 +160,15 @@ describe("the installed Worker, in the Workers runtime", () => {
     out = fetch;
     await run(sql("INSERT INTO deploy_control (id, auto) VALUES (1, 1)", []));
     const worker = (await runtime.getWorker()) as unknown as { scheduled(event: { cron: string }): Promise<{ outcome: string }> };
+    // With no token, a run looks at GitHub and deploys nothing.
+    const says = async (init?: { method: string; body: string }) => (await runtime.dispatchFetch("https://deployer/", init)).json();
+    expect(await says()).toEqual({ ok: true, ready: false, head: null });
+    expect(await worker.scheduled({ cron: "* * * * *" })).toMatchObject({ outcome: "ok" });
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA1));
+    expect(await run(readJobs(sql))).toEqual([]);
+    // The token, as the instance hands it over its binding: a wide one is refused, a good one is kept. Then the next run deploys.
+    expect(await says({ method: "POST", body: "mock-deployer-token" })).toMatchObject({ ok: false, why: expect.stringContaining("D1") });
+    expect(await says({ method: "POST", body: "mock-only-erga-next" })).toEqual({ ok: true, ready: true, head: SHA2 });
     expect(await worker.scheduled({ cron: "* * * * *" })).toMatchObject({ outcome: "ok" });
 
     expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA2));
@@ -154,9 +179,10 @@ describe("the installed Worker, in the Workers runtime", () => {
     );
     expect(await run(readControl(sql))).toMatchObject({ auto: true, head: SHA2 });
     // At Cloudflare, the instance's Worker only.
-    expect(calls().filter((c) => !c.includes("/workers/scripts/erga-next"))).toEqual([]);
-    // The Worker answers no request: it has no fetch handler.
-    const answer = await runtime.dispatchFetch("https://deployer.example.com/");
-    expect(answer.status).toBe(500);
+    expect([...new Set(calls().filter((c) => !c.includes("/workers/scripts/erga-next")))]).toEqual([
+      `GET /accounts/${FLEET_ACCOUNT}/d1/database?per_page=1`,
+    ]);
+    // (The check of the token read only the instance's Worker, the D1 list and the deployer's own name.)
+    expect(await says()).toEqual({ ok: true, ready: true, head: SHA2 });
   }, 60_000);
 });

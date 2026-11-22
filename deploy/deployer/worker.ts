@@ -16,13 +16,17 @@
 //      needs it. The job's row is also the lock that a deploy from a machine takes (instance.ts).
 //
 // What setup gives it (deploy/pipeline/deployer.ts; nothing else changes this Worker, and it can't change itself):
-//   CLOUDFLARE_API_TOKEN   a secret: a token for the instance's Worker only (the role Editor). No permission for D1.
+//   KEY                    a secret that setup makes: it seals the token in the store (token.ts)
 //   ACCOUNT, WORKER        the account and the instance's Worker: every call of Cloudflare's API is for those two
 //   DATABASE               the id of the instance's database, for the Worker's upload
 //   DB                     the instance's database: the spec, the migrations and the copy
-//   STATE                  its own Durable Object: the lock, the last commit tried, the job that runs
+//   STATE                  its own Durable Object (store.ts): the lock, the last commit tried, the job that runs, the token
 //   INSTANCE               the instance's Worker: /api/health, when the public address does not give the server's
 //                          answer (Cloudflare Access is in front of it)
+//
+// The token (for the instance's Worker only, the role Editor; no permission for D1) is no part of the install. A
+// person pastes it on the instance, which hands it to `fetch` here over its service binding DEPLOYER (token.ts).
+// With no token, a run looks at GitHub and deploys nothing.
 //
 // Health is the server's own answer to a request ({ok, version, checks, upload}: server/health.ts). It is never a row
 // that the new release must write. `upload` is the name that this deployer gave its upload: the answer must be that
@@ -31,10 +35,11 @@
 //
 // No Effect here, by Pete's word (2026-11-20): "the deployer as compact and dead simple as possible, so a bad Erga
 // deploy can't take it down". This is the one exception to AGENTS.md's "Effect by default": plain TypeScript, and only
-// the plain files of this folder (worker-form.ts, bindings.ts, d1-binding.ts). A test holds its size, its lines and
+// the plain files of this folder (worker-form.ts, bindings.ts, d1-binding.ts, store.ts, token.ts). A test holds its size, its lines and
 // its calls (tests/deployer-worker.test.ts).
 //
-// Trap: it has no fetch handler. A handler is an address: a way for a stranger to start, or to slow, a deploy.
+// Trap: its fetch handler takes a token to check, and nothing else (token.ts): it starts no deploy. The Worker has
+// no route and no address, so only a Worker that binds it reaches the handler: the instance's.
 // Trap: Cloudflare takes a Worker's module only when each thing that it exports is a handler or a class: the module
 // that it runs is worker-main.ts, which exports the Worker and its store, and nothing else of this file.
 // Trap: one run may make CALLS calls at most (Cloudflare's free plan stops a run at 50). Every call goes through `net`.
@@ -44,11 +49,12 @@ import { bindingsProblem } from "./bindings";
 import { type D1, statementsOf } from "./d1-binding";
 import type { Release, ReleaseIndex } from "./release-format";
 import type { CloudflareTarget, Spec } from "./spec";
+import { storeOf } from "./store";
 import * as tags from "./tags";
+import { answer, open, type TokenStore } from "./token";
 import { HEADERS_FILE, toHex, typeOf, workerMetadata } from "./worker-form";
 
-/** How long a run's lock holds when the run stopped with no end. A run lasts about a minute at most. */
-export const LOCK_MS = 3 * 60_000;
+export { DeployerState, LOCK_MS } from "./store";
 /** How long a deploy waits for the new release's healthy answer, and how often it asks. */
 export const HEALTH_MS = 30_000;
 const HEALTH_EACH_MS = 5000;
@@ -98,14 +104,14 @@ export interface State {
   job?: { row: number | null; sha: string | null; before?: string | null; upload?: string };
 }
 
-export interface Store {
+export interface Store extends TokenStore {
   /** The state, with the lock taken at `now`. null: another run holds it. */
   take(now: number): Promise<State | null>;
   put(state: State): Promise<void>;
 }
 
 export interface Env {
-  CLOUDFLARE_API_TOKEN: string;
+  KEY: string;
   ACCOUNT: string;
   WORKER: string;
   DATABASE: string;
@@ -137,7 +143,11 @@ interface Run {
   direct?: boolean;
   /** "<branch> on <repo> is at <head>": how each line of a look starts. */
   at: string;
+  /** The token for the instance's Worker, opened from the store. null: the deployer holds none. */
+  bearer: string | null;
 }
+
+const NO_TOKEN = "The deployer has no token: an admin pastes one on the instance's Deploy page (/admin/deploy).";
 
 const short = (sha: string) => sha.slice(0, 12);
 const said = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -156,28 +166,6 @@ const rows = async (db: D1, sql: string, ...values: (string | number | null)[]) 
 function net(c: Run, url: string, init: RequestInit = {}, via: Fetch = c.io.fetch): Promise<Response> {
   if (++c.calls > CALLS) throw new Error(`The run made ${CALLS} calls: it stops here.`);
   return via(url, { ...init, signal: AbortSignal.timeout(CALL_MS) });
-}
-
-// ------------------------------------------------------------------ the store
-
-const storeOf = (env: Env): Store => {
-  const stub = env.STATE.get(env.STATE.idFromName("state"));
-  const ask = (body: object) => stub.fetch("https://state/", { method: "POST", body: JSON.stringify(body) }).then((r) => r.json());
-  return { take: (now) => ask({ take: now }) as Promise<State | null>, put: (state) => ask({ put: state }).then(() => undefined) };
-};
-
-/** The deployer's store: one value. Cloudflare runs one request of it at a time, so one run only takes the lock. */
-export class DeployerState {
-  constructor(private ctx: { storage: { get(key: string): Promise<unknown>; put(key: string, value: unknown): Promise<void> } }) {}
-  async fetch(request: Request): Promise<Response> {
-    const ask = (await request.json()) as { take?: number; put?: State };
-    let state = ((await this.ctx.storage.get("state")) ?? {}) as State;
-    if (ask.put) state = ask.put;
-    else if (state.lock && ask.take! - state.lock < LOCK_MS) return Response.json(null);
-    else state.lock = ask.take;
-    await this.ctx.storage.put("state", state);
-    return Response.json(state);
-  }
 }
 
 // ------------------------------------------------------------------ the spec
@@ -309,13 +297,8 @@ async function releaseOf(c: Run, sha: string): Promise<{ release: Release; files
 // ------------------------------------------------------------------ Cloudflare
 
 /** One call of Cloudflare's API for the instance's Worker: its result. `bearer`: an upload's own token. */
-async function cf<T>(
-  c: Run,
-  method: string,
-  path: string,
-  body?: object | FormData | Blob,
-  bearer = c.env.CLOUDFLARE_API_TOKEN
-): Promise<T> {
+async function cf<T>(c: Run, method: string, path: string, body?: object | FormData | Blob, bearer = c.bearer): Promise<T> {
+  if (!bearer) throw new Error(NO_TOKEN);
   const plain = body && !(body instanceof FormData) && !(body instanceof Blob);
   const r = await net(c, `https://api.cloudflare.com/client/v4/accounts/${c.env.ACCOUNT}/workers${path}`, {
     method,
@@ -519,7 +502,7 @@ async function deploy(c: Run, sha: string, log: (line: string) => void): Promise
   await c.store.put(c.state);
   log("Upload the Worker, with its settings...");
   const form = new FormData();
-  form.set("metadata", JSON.stringify(workerMetadata(release, c.spec, { dbId: c.env.DATABASE, assetsJwt, upload })));
+  form.set("metadata", JSON.stringify(workerMetadata(release, c.spec, { dbId: c.env.DATABASE, assetsJwt, upload, deployer: true })));
   for (const [module, bytes] of Object.entries(release.modules))
     form.append(module, new File([new Uint8Array(bytes)], module, { type: "application/javascript+module" }));
   await cf(c, "PUT", `/scripts/${W}`, form);
@@ -752,6 +735,7 @@ async function run(c: Run): Promise<string> {
 
   const target = tags.pickAutoTarget(state.autoMode ?? "off", c.spec.branch, head, release, state.latestRelease ?? null);
   if ("wait" in target) return `${c.at}. ${target.wait}`;
+  if (!c.bearer) return `${c.at}. ${NO_TOKEN}`;
   const tried = state.tried?.sha == target.sha ? state.tried : null;
   if (tried?.ok) return `${c.at}. The instance has ${short(target.sha)}: nothing to deploy.`;
   if (tried && (tried.up || tried.n >= TRIES))
@@ -784,10 +768,12 @@ export const deployer = (io: IO) => ({
     const store = io.store ?? storeOf(env);
     const state = await store.take(io.now());
     if (!state) return console.log("Another run of the deployer holds its lock: this one does nothing.");
-    const c: Run = { io, env, store, state, spec: state.spec!, calls: 0, at: "" };
+    const bearer = await open(env.KEY, (await store.token()).token);
+    const c: Run = { io, env, store, state, spec: state.spec!, calls: 0, at: "", bearer };
     const line = await run(c).catch((e) => `The deployer stopped: ${said(e)}`);
     delete state.lock;
     await store.put(state);
     console.log(`${line} (${c.calls} calls)`);
   },
+  fetch: (request: Request, env: Env): Promise<Response> => answer(request, io.fetch, env, io.store ?? storeOf(env)),
 });

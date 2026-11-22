@@ -169,25 +169,6 @@ export class Deploys {
     return row ? row.log : null;
   }
 
-  /**
-   * The deployer's step of the setup page, as the row has it (server/identity/setup-link.ts reads it); null: no row.
-   * For the setup page only, which its own pass guards (server/identity/setup.ts): a server with an admin has no such page.
-   */
-  async setupStep(): Promise<string | null> {
-    const [row] = await this.sql.all<{ deployer: string }>("SELECT deployer FROM setup WHERE id = 1");
-    return row?.deployer ?? null;
-  }
-
-  /** Writes the step, while the row is still `from` (the setup command writes it too): whether the row is `to` now. */
-  async setSetupStep(from: string | null, to: string): Promise<boolean> {
-    await this.sql.run(
-      "INSERT INTO setup (id, deployer) VALUES (1, ?1) ON CONFLICT (id) DO UPDATE SET deployer = excluded.deployer WHERE setup.deployer IS ?2",
-      to,
-      from
-    );
-    return (await this.setupStep()) == to;
-  }
-
   /** Sets auto-deploy (off, releases, or commits): the deployer reads it at its next look (admins only). */
   async setAuto(by: Actor, mode: AutoDeployMode): Promise<void> {
     await this.users.mustAdmin(by);

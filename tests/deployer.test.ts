@@ -98,12 +98,15 @@ describe("on Cloudflare", () => {
     expect(now.PAGES_DOMAIN.text).toBe("example-pages-next.com");
     expect(now.ERGA_DEPLOY.text).toBe(before.ERGA_DEPLOY.text);
     expect(mock.state.secrets["erga-next"]).toMatchObject(nextSecrets);
-    // Every call is one of the code steps': none reads or changes the account, a zone, a domain, a route or a bucket,
-    // and none makes a database.
+    // Every call is one of the code steps': none changes the account, a zone, a domain, a route or a bucket, and
+    // none makes a database. One reads the account: the list of its Workers, for the instance's deployer, which the
+    // Worker binds when setup installed one (none here).
+    expect(now.DEPLOYER).toBeUndefined();
     const acc = `/accounts/${FLEET_ACCOUNT}`;
     expect(kinds(mock.state.calls.slice(from))).toEqual(
       [
         `GET ${acc}/d1/database/*/time_travel/bookmark`,
+        `GET ${acc}/workers/scripts`,
         `GET ${acc}/workers/scripts/erga-next/deployments`,
         `GET ${acc}/workers/scripts/erga-next/settings`,
         `GET ${acc}/workers/scripts/erga-next/versions/*`,

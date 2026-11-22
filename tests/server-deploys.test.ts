@@ -266,6 +266,57 @@ test("what an ask refuses, a rollback, an ask in the place of one that waits, an
   expect(asks({ action: "auto", mode: "commits" })).toBe("Set auto-deploy to every commit for this server");
 });
 
+test("the deployer's token: the Deploy page says whether the deployer holds one, and hands it a pasted one; only an admin, and only where there is a deployer", async () => {
+  const { s } = await world();
+  const TOKEN = "t".repeat(40);
+  const held = { yes: false, asked: [] as string[] };
+  const says = () => ({ ok: true as const, ready: held.yes, head: held.yes ? sha(4) : null });
+  const post = (token: string, user = "") =>
+    s.fetch(`/admin/deploy/token${user}`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin: "http://localhost", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token }).toString(),
+    });
+  // A server with no deployer in the cloud has no such section, and takes no token.
+  expect(await (await s.fetch("/admin/deploy")).text()).not.toContain("deployer-token");
+  expect((await post(TOKEN)).status).toBe(404);
+
+  s.platform.deploy.deployer = {
+    account: "acc-1",
+    worker: "erga",
+    ask: async (token) => {
+      if (token == null) return says();
+      held.asked.push(token);
+      if (token != TOKEN) return { ok: false, why: "The token can read another Worker (other)." };
+      held.yes = true;
+      return says();
+    },
+  };
+  // No token yet: the section says that the deployer deploys nothing, and how to make the token for this Worker.
+  let html = await (await s.fetch("/admin/deploy")).text();
+  expect(html).toContain('data-ready="false"');
+  expect(html).toContain("<b>The deployer has no token: it deploys nothing.</b>");
+  expect(html).toContain("for the Worker <code>erga</code> only, with the role Editor");
+  // A token that the deployer refuses: the page again, with the deployer's reason at the field, and never the token.
+  const refused = await post("w".repeat(40));
+  html = await refused.text();
+  expect(refused.status).toBe(400);
+  expect(html).toContain('<p class="failed" role="alert">The token can read another Worker (other).</p>');
+  expect(html).not.toContain("w".repeat(40));
+  // One that it takes: back to the page, which shows the deployer's answer. Another token later takes the same way.
+  const taken = await post(` ${TOKEN} `);
+  expect([taken.status, taken.headers.get("location")]).toEqual([303, "/admin/deploy"]);
+  html = await (await s.fetch("/admin/deploy")).text();
+  expect(html).toContain('data-ready="true"');
+  expect(html).toContain(`The deployer holds a token, and is at <code>${sha(4).slice(0, 12)}</code>.`);
+  expect(html).toContain("Give the deployer another token");
+  expect(html).not.toContain(TOKEN);
+  // Only an admin, from this site's own page.
+  expect((await post(TOKEN, "?user=ada")).status).toBe(403);
+  expect(held.asked).toEqual(["w".repeat(40), TOKEN]);
+});
+
 test("a job's state is the one that the ops page of a machine reads from the same row", async () => {
   const { s, sql } = await world();
   const start = { kind: "deploy", command: "bun erga deploy localhost", source: "terminal" } as const;

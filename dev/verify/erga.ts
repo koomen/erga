@@ -172,7 +172,7 @@ export async function seed(run: Run): Promise<void> {
   }
   const ada = await person(run, "ada");
   // The setup page's link, as setup opens it, and its last step: ada, whom the gate signed in, becomes the admin.
-  const link = new URL(await setupUrl(run.shell, run.erga!.session, { deployer: null }));
+  const link = new URL(await setupUrl(run.shell, run.erga!.session));
   const asked = await page(run, ada, link.pathname + link.search);
   const claimed = await ask(`${shell}/setup/admin`, { jar: ada, body: "", headers: { origin: shell } });
   const me = await tool<{ login: string; adminPower: boolean }>(run, ada, "whoami");

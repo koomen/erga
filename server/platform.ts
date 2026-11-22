@@ -82,6 +82,9 @@ export type LiveRows = (platform: Platform, session: Session, keys: string[], or
  * (agents/models.ts) and `adminAgent`
  * (agents/person/sessions.ts). cloudflare/platform.ts builds the whole of it.
  */
+/** What a deployer says: whether it holds a token, and the head of the branch at its last look; or why it took no token. */
+export type DeployerSays = { ok: true; ready: boolean; head: string | null } | { ok: false; why: string };
+
 export interface Platform {
   /** Who's asking, if anyone: a signed-in person, or an agent with their token (server/identity/admit.ts). */
   sessionOf(request: Request): Promise<Session | null>;
@@ -127,6 +130,13 @@ export interface Platform {
     domains: string[];
     /** The app's own host in the deploy facts (app), or null: where a custom domain sends a visitor to sign in. */
     app: string | null;
+    /**
+     * The instance's deployer in the cloud, where the deploy bound one (Cloudflare: deploy/deployer/worker.ts); null:
+     * none (a machine deploys it; AWS's deployer has no token). `account`, `worker`: what a person makes the
+     * deployer's token for. `ask`: what the deployer says; with a token, it checks the token first and keeps it. The
+     * server keeps nothing of the token.
+     */
+    deployer: { account: string; worker: string; ask(token?: string): Promise<DeployerSays> } | null;
   };
   /** How people sign in: where the gate runs and its values, from the deploy (server/identity/mode.ts), and what both modes read. */
   signIn: SignIn & {

@@ -5,8 +5,9 @@
 //   GitHub   one click: GitHub makes a GitHub App from a manifest and comes back here with a code; the server changes
 //            it for the app's client ID and secret, and keeps them as /admin/auth does (apps.ts: encrypted)
 //   Google   the person makes an OAuth client and pastes its client ID and secret; the server checks them with Google
-//   Updates  only where the link says so (cloud deploys on Cloudflare): the person pastes the deployer's token, and the
-//            setup command installs the deployer with it (setup-link.ts says how the two meet)
+//   Updates  only where the server has a deployer in the cloud (Platform.deploy.deployer: setup installed it, with no
+//            token): the person pastes the deployer's token, and the server hands it to the deployer at once. The
+//            deployer checks it with Cloudflare and keeps it; the row shows its answer. The server keeps no token.
 //   Admin    the person signs in with a provider that is set up, and becomes the server's first admin
 //
 // One provider is enough. With a gate in front (mode.ts) the page has no provider's row: the gate signs people in.
@@ -15,7 +16,7 @@
 //   GET  /setup              the page
 //   GET  /setup/github       GitHub's answer, with the app's code
 //   POST /setup/google       clientId, secret
-//   POST /setup/deployer     token, or skip
+//   POST /setup/deployer     token
 //   GET, POST /setup/admin   the person who is signed in becomes the admin (the sign-in comes back here)
 //
 // The page is there only while the server has no admin: the first admin closes it for good. No agent sees it: a
@@ -31,28 +32,19 @@ import { esc } from "../../shared/html.ts";
 import { PROVIDER_CSS, providerButtons, type SignInChoice } from "../../shared/sign-in.ts";
 import { call, ctx, Field, form, html, NO_STORE, redirect, type Route, text } from "../http.ts";
 import { appPage, inlineStyle, page, pageBars } from "../pages/index.ts";
-import type { Platform } from "../platform";
+import type { DeployerSays, Platform } from "../platform";
 import { signed } from "../signed.ts";
 import { AuthError, type ProvidersOn } from "./apps.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { CALLBACK_PATH, PROVIDERS } from "./providers.ts";
 import { appsSet, setUpApp, signInChoices } from "./settings.ts";
-import {
-  type DeployerEvent,
-  type DeployerStep,
-  deployerStep,
-  LINK_SECONDS,
-  PASS_SECONDS,
-  readStep,
-  sealToken,
-  type SetupFacts,
-  SetupFacts as Facts,
-  SetupLink,
-} from "./setup-link.ts";
+import { LINK_SECONDS, SetupLink } from "./setup-link.ts";
 
 const COOKIE = "erga_setup";
-/** The pass of the browser that opened the link: the link's facts, for as long as a setup may take. */
-const Pass = signed("setup", Facts, PASS_SECONDS);
+/** How long the browser that opened the link keeps the page: as long as a setup may take. */
+const PASS_SECONDS = 12 * 60 * 60;
+/** The pass of the browser that opened the link. */
+const Pass = signed("setup", Schema.Struct({}), PASS_SECONDS);
 /** GitHub's `state`: its answer is to this server's own form. */
 const GithubState = signed("setup-github", Schema.Struct({}), LINK_SECONDS);
 /** The links that were used (their `n`), in the server's own storage. */
@@ -82,10 +74,7 @@ const closed = () => page("Setup is done", 'This server has an admin: its setup 
 type Problem = { row: Row; message: string; clientId?: string };
 type Row = "github" | "google" | "deployer" | "admin";
 
-const SetupForm = Schema.Struct({ clientId: Field, secret: Field, token: Field, skip: Field });
-
-/** A token as a person pastes it: one line, with no spaces. */
-const TOKEN = /^[\x21-\x7e]{20,400}$/;
+const SetupForm = Schema.Struct({ clientId: Field, secret: Field, token: Field });
 
 export const setupRoute: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
@@ -93,20 +82,18 @@ export const setupRoute: Route = Effect.gen(function* () {
   if (post && request.headers.get("origin") != url.origin) return text("Forbidden", 403);
   const dev = platform.dev(url);
   if (!dev && (yield* call(() => platform.directory.users.hasAdmin()))) return closed();
-  let facts: SetupFacts | null = yield* call(() => Pass.open(platform.secret, cookies(request).get(COOKIE)));
+  const held = !!(yield* call(() => Pass.open(platform.secret, cookies(request).get(COOKIE))));
   const t = url.searchParams.get("t");
   if (url.pathname == "/setup" && !post && t) {
     const link = yield* call(() => SetupLink.open(platform.secret, t));
-    // A link that was used, in the browser that has the page: the page. (A new link brings its own facts: a run
-    // again of the setup command, with another answer.)
-    if (!link || !(yield* call(() => spend(platform, link.n)))) return facts ? redirect("/setup", 302, NO_STORE) : gone();
-    const pass = yield* call(() => Pass.seal(platform.secret, { deployer: link.deployer }));
+    // A link that was used, in the browser that has the page: the page.
+    if (!link || !(yield* call(() => spend(platform, link.n)))) return held ? redirect("/setup", 302, NO_STORE) : gone();
+    const pass = yield* call(() => Pass.seal(platform.secret, {}));
     return withCookie(redirect("/setup", 302, NO_STORE), request, COOKIE, pass, PASS_SECONDS);
   }
-  facts ??= dev ? { deployer: null } : null;
-  if (!facts) return gone();
-  const deploys = platform.directory.deploys;
-  const show = (problem?: Problem) => setupPage(platform, request, url, facts, problem);
+  if (!held && !dev) return gone();
+  const deployer = platform.deploy.deployer;
+  const show = (problem?: Problem) => setupPage(platform, request, url, problem);
   /** Sets a provider's app, then the page again: with why not, in the provider's row. */
   const setApp = (provider: "github" | "google", input: { clientId: string; secret: string }) =>
     Effect.gen(function* () {
@@ -138,25 +125,11 @@ export const setupRoute: Route = Effect.gen(function* () {
       return yield* setApp("google", { clientId: f.clientId, secret: f.secret });
     }
     case "POST /setup/deployer": {
-      if (!facts.deployer) return redirect("/setup", 303, NO_STORE);
+      if (!deployer) return redirect("/setup", 303, NO_STORE);
       const f = yield* form(SetupForm).pipe(Effect.orDie);
-      const token = f.token.trim();
-      if (!f.skip && !TOKEN.test(token))
-        return yield* show({
-          row: "deployer",
-          message: token ? "That isn't a token: it is one line, with no spaces." : "Paste the token.",
-        });
-      const event: DeployerEvent = f.skip
-        ? { kind: "skipped" }
-        : { kind: "pasted", ...(yield* call(() => sealToken(platform.secret, token))) };
-      // The setup command writes the row too: the event goes onto the row as it is now, until that holds.
-      yield* call(async () => {
-        for (let i = 0; i < 5; i++) {
-          const from = await deploys.setupStep();
-          if (await deploys.setSetupStep(from, JSON.stringify(deployerStep(readStep(from), event)))) return;
-        }
-      });
-      return redirect("/setup", 303, NO_STORE);
+      // Straight to the deployer, which checks it and keeps it: nothing of the token stays here.
+      const says = yield* call(() => deployer.ask(f.token.trim()));
+      return says.ok ? redirect("/setup", 303, NO_STORE) : yield* show({ row: "deployer", message: says.why });
     }
     case "GET /setup/admin":
     case "POST /setup/admin": {
@@ -171,42 +144,28 @@ export const setupRoute: Route = Effect.gen(function* () {
   return text("Not found", 404);
 });
 
-type State = "done" | "next" | "optional" | "skipped" | "working" | "waiting";
-const CHIP: Record<State, string> = {
-  done: "Done",
-  next: "Next",
-  optional: "Optional",
-  skipped: "Skipped",
-  working: "Installing",
-  waiting: "Waiting",
-};
+type State = "done" | "next" | "optional" | "skipped" | "waiting";
+const CHIP: Record<State, string> = { done: "Done", next: "Next", optional: "Optional", skipped: "Skipped", waiting: "Waiting" };
 
 /** The page: each row as the server is now. `problem`: what a row's last try said, shown in that row (status 400). */
-const setupPage = (platform: Platform, request: Request, url: URL, facts: SetupFacts, problem?: Problem) =>
+const setupPage = (platform: Platform, request: Request, url: URL, problem?: Problem) =>
   Effect.gen(function* () {
     const oauth = platform.signIn.mode == "oauth";
-    const [set, choices, step, session, state] = yield* call(() =>
+    const [set, choices, says, session, state] = yield* call(() =>
       Promise.all([
         oauth ? appsSet(platform) : null,
         signInChoices(platform),
-        facts.deployer ? platform.directory.deploys.setupStep().then(readStep) : null,
+        platform.deploy.deployer?.ask() ?? null,
         platform.sessionOf(request),
         GithubState.seal(platform.secret, {}),
       ])
     );
-    const rows = rowsOf({
-      platform,
-      url,
-      facts,
-      set,
-      choices,
-      step,
-      login: session && !session.agent ? session.login : null,
-      state,
-      problem,
-    });
+    // "Skip for now" is the address's alone (?skip): the server keeps nothing of it.
+    const skipped = url.searchParams.has("skip");
+    const login = session && !session.agent ? session.login : null;
+    const rows = rowsOf({ platform, url, set, choices, says, skipped, login, state, problem });
     // The row that is open: the one with a problem, else the first that is next.
-    const open = problem?.row ?? rows.find((r) => r.state == "next" || r.state == "working")?.id;
+    const open = problem?.row ?? rows.find((r) => r.state == "next")?.id;
     const body = `${pageBars(null, [{ label: "Setup" }], { agent: false })}<main class="setup">
   <h1>Setup</h1>
   <p class="lede">Finish the setup of <code>${esc(url.host)}</code>. Do each step below. This page closes for good when you are done.</p>
@@ -220,19 +179,20 @@ const setupPage = (platform: Platform, request: Request, url: URL, facts: SetupF
       )
       .join("\n    ")}
   </ol>
-</main>${step?.at == "waiting" ? `<script>setTimeout(()=>location.replace("/setup"),3000)</script>` : ""}`;
+</main>`;
     return html(appPage("Setup", `${inlineStyle("setup")}${PROVIDER_CSS}`, body), problem ? 400 : 200, NO_STORE);
   });
 
 interface RowsOf {
   platform: Platform;
   url: URL;
-  facts: SetupFacts;
   /** The OAuth mode: the providers that have an app. null: a gate in front signs people in. */
   set: ProvidersOn | null;
   choices: SignInChoice[];
-  /** null: the page has no step for the deployer. */
-  step: DeployerStep | null;
+  /** What the server's deployer says; null: the server has none, and the page has no step for it. */
+  says: DeployerSays | null;
+  /** The person skipped the deployer's step. */
+  skipped: boolean;
   /** Who is signed in on this browser, in person. */
   login: string | null;
   state: string;
@@ -241,7 +201,7 @@ interface RowsOf {
 
 /** The rows, in order: each one's state, and what it says. */
 function rowsOf(o: RowsOf): { id: Row; title: string; state: State; body: string }[] {
-  const { url, set, step } = o;
+  const { url, set, says } = o;
   const origin = url.origin;
   const rows: { id: Row; title: string; state: State; body: string }[] = [];
   const any = !set || set.github || set.google;
@@ -280,50 +240,34 @@ function rowsOf(o: RowsOf): { id: Row; title: string; state: State; body: string
 </form>`,
     });
   }
-  if (step && o.facts.deployer) {
-    const { account, worker } = o.facts.deployer;
-    const state: State =
-      step.at == "installed" ? "done" : step.at == "skipped" ? "skipped" : step.at == "waiting" ? "working" : any ? "next" : "waiting";
-    const formHtml = `<p>A deployer in your Cloudflare account deploys each new release of Erga by itself. It needs a token that can change the Worker <code>${esc(worker)}</code>, and nothing else.</p>
-<ol class="how">
-  <li>Open <a href="https://dash.cloudflare.com/${esc(account)}/api-tokens" target="_blank" rel="noopener">Account API tokens</a> on Cloudflare, and choose Create Token.</li>
-  <li>Give it one permission: Workers, for the Worker <code>${esc(worker)}</code> only, with the role Editor. No other permission, and no other Worker: the database needs none.</li>
-  <li>Create the token, copy it, and paste it here.</li>
-</ol>
-<p>This server keeps the token sealed, until the setup command on your machine installs the deployer with it. Then the token is the deployer's secret on Cloudflare, and this server holds it no more. Your agent never sees it. Erga refuses a token that can do more.</p>
-<form method="post" action="/setup/deployer" class="fields">
-  <label>The deployer's token<input class="input" type="password" name="token" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore placeholder="Paste the token"></label>
-  <div class="buttons"><button class="new">Install the deployer</button>${step.at == "skipped" ? "" : `<button class="pill" name="skip" value="1" formnovalidate>Skip for now</button>`}</div>
-</form>`;
+  const deployer = o.platform.deploy.deployer;
+  const ready = !!says?.ok && says.ready;
+  if (deployer && says) {
+    const { account, worker } = deployer;
     rows.push({
       id: "deployer",
       title: "Turn on automatic updates",
-      state,
-      body:
-        step.at == "installed"
-          ? `<p>The deployer is installed: each new release of Erga deploys by itself. An admin turns that off on the Deploy page (<code>/admin/deploy</code>).</p>${
-              step.unconfirmed.length
-                ? `<p>Erga could not confirm:</p><ul class="how">${step.unconfirmed.map((u) => `<li>${esc(u)}</li>`).join("")}</ul>`
-                : ""
-            }`
-          : step.at == "waiting"
-            ? `<p><b>Erga checks the token and installs the deployer.</b> This takes some seconds, and the page shows the result by itself.</p><p>The setup command on your machine does this work. If nothing changes after a minute, ask your agent to run its <code>bun erga setup</code> command again.</p>`
-            : `${step.at == "refused" ? `<p class="problem" role="alert">The deployer is not installed:<br>${esc(step.why).replace(/\n/g, "<br>")}</p>` : ""}${
-                step.at == "skipped"
-                  ? `<p><b>Skipped.</b> No deployer is installed: you deploy each new release from your machine, with <code>bun erga deploy ${esc(url.host)}</code>. To install the deployer after all, paste a token now, or run setup again later.</p>`
-                  : ""
-              }${formHtml}`,
+      state: ready ? "done" : o.skipped ? "skipped" : any ? "next" : "waiting",
+      body: ready
+        ? `<p>The deployer is ready${says.ok && says.head ? `, at <code>${esc(says.head.slice(0, 12))}</code>` : ""}: each new release of Erga deploys by itself. An admin turns that off, or gives the deployer another token, on the Deploy page (<code>/admin/deploy</code>).</p>`
+        : `${says.ok || o.problem?.row == "deployer" ? "" : `<p class="problem" role="alert">${esc(says.why)}</p>`}${
+            o.skipped
+              ? `<p><b>Skipped.</b> The deployer has no token, so it deploys nothing: you deploy each new release from your machine, with <code>bun erga deploy ${esc(url.host)}</code>. Paste a token now, or later on the Deploy page (<code>/admin/deploy</code>).</p>`
+              : ""
+          }${tokenSteps(account, worker)}
+<form method="post" action="/setup/deployer" class="fields">
+  ${TOKEN_FIELD}
+  <div class="buttons"><button class="new">Check the token</button>${o.skipped ? "" : `<a class="pill" href="/setup?skip">Skip for now</a>`}</div>
+</form>`,
     });
   }
-  const answered = !step || step.at == "installed" || step.at == "skipped";
-  const ready = any && answered;
   rows.push({
     id: "admin",
     title: "Sign in as the admin",
-    state: ready ? "next" : "waiting",
+    state: any ? "next" : "waiting",
     body: `${
-      !ready
-        ? `<p>${any ? "First answer the step for automatic updates, above." : "First set up GitHub or Google sign-in, above. One of them is enough."}</p>`
+      !any
+        ? "<p>First set up GitHub or Google sign-in, above. One of them is enough.</p>"
         : o.login
           ? `<p>You are signed in as <b>${esc(o.login)}</b>. This server has no admin yet. As its admin, you decide who may sign in, and you change its settings.</p>
 <form method="post" action="/setup/admin"><button class="new">Become the admin of ${esc(url.host)}</button></form>`
@@ -334,3 +278,18 @@ function rowsOf(o: RowsOf): { id: Row; title: string; state: State; body: string
   });
   return rows;
 }
+
+/** How a person makes the deployer's token, and where it goes: on the setup page, and on the Deploy page (server/admin/deploy.ts). */
+export const tokenSteps = (
+  account: string,
+  worker: string
+) => `<p>A deployer in your Cloudflare account deploys each new release of Erga by itself. It needs a token that can change the Worker <code>${esc(worker)}</code>, and nothing else.</p>
+<ol class="how">
+  <li>Open <a href="https://dash.cloudflare.com/${esc(account)}/api-tokens" target="_blank" rel="noopener">Account API tokens</a> on Cloudflare, and choose Create Token.</li>
+  <li>Give it one permission: Workers, for the Worker <code>${esc(worker)}</code> only, with the role Editor. No other permission, and no other Worker: the database needs none.</li>
+  <li>Create the token, copy it, and paste it here.</li>
+</ol>
+<p>This server hands the token to the deployer, and keeps nothing of it. The deployer checks it with Cloudflare, and keeps it encrypted. Your agent never sees it. The deployer refuses a token that can do more.</p>`;
+
+/** The field for the token. */
+export const TOKEN_FIELD = `<label>The deployer's token<input class="input" type="password" name="token" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore placeholder="Paste the token" required></label>`;
