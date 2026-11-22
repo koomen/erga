@@ -49,8 +49,12 @@ declare global {
 }
 
 const KEYS = { last: "erga:live:reloads" };
-/** The address the server made this page for. Its build is that address's: the pencil changes the address (?edit), not the page. */
-const MADE_FOR = location.pathname + location.search;
+/**
+ * The address the server made this page for. Its build is that address's: the pencil changes the address (?edit), not
+ * the page. A document's page says it (server/documents/view.ts): the tab can load it at another address, from the
+ * browser's copy of before the pencil (client/inline/offline-sw.ts).
+ */
+const MADE_FOR = document.querySelector<HTMLMetaElement>('meta[name="erga-build"]')?.dataset.for ?? location.pathname + location.search;
 const now = () => Date.now();
 const nativeFetch = window.fetch.bind(window);
 const session = {

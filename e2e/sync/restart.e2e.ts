@@ -72,6 +72,8 @@ const START_MS = 30_000;
 
 journey("a restart, a kill, and a kill that loses the history", () => {
   let a: Editor, b: Editor, pages: string, room: Room, file: string, cy: Person, epoch: string | undefined;
+  /** What the second person's page said on its console. */
+  const said: string[] = [];
   const people = crowd();
   test.afterAll(() => people.leave());
   /** The two pages hold the same source, with one heading, and `text` in it. */
@@ -95,6 +97,7 @@ journey("a restart, a kill, and a kill that loses the history", () => {
     // (The pages' errors are checked by hand after each start: while the server is down, the browser logs each request that fails.)
     a = await openEditor(tab, s, "page", { query: "?user=Ada", allowErrors: true });
     b = await secondPage(tab, a, "Bo", "pencil");
+    b.page.on("console", (m) => said.push(m.text()));
     const other = await s.fixture("page");
     room = roomOf(other.address);
     file = join(other.dir, "index.html");
@@ -164,6 +167,7 @@ journey("a restart, a kill, and a kill that loses the history", () => {
   test("the server starts again: the edits that the open pages and people held come back one time, and the pages and the empty folder are there", {
     timeout: START_MS,
   }, async ({ tab }) => {
+    const checked = b.page.waitForResponse((r) => r.request().headers()["x-erga-check"] == "build", { timeout: START_MS });
     await s.start();
     await until(() => cy.synced || cy.refused, 10_000, "the third person is back in the room, or refused");
     expect(cy.refused, "the room kept its history: it takes the person back").toBe(false);
@@ -172,6 +176,13 @@ journey("a restart, a kill, and a kill that loses the history", () => {
     expect(text.split("<h1>").length, "one heading").toBe(2);
     await pagesAgree("Launch notes offline, twice");
     expect(ownErrors(tab)).toEqual([]);
+    // Was a bug (GitHub's release run, 22 November): the tab from the browser's copy holds the viewer's page at ?edit.
+    // It asked for the build of the page at its address, the editor's, and loaded again a moment later: in the
+    // middle of a later step, on a slow machine.
+    expect(new URL((await checked).url()).search, "the second person's page asks for the build of the page it is").toBe("?user=Bo");
+    // (Its answer is in: live.js decides at once.)
+    await b.eval(`new Promise((r) => setTimeout(r, 0))`);
+    expect(said.filter((t) => t.includes("a new release"))).toEqual([]);
     expect(await pagesOf(pages)).toEqual(expect.arrayContaining(["empty/", "blog/post.html", "about.html"]));
   });
 

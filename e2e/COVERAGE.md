@@ -81,7 +81,7 @@ The rules:
 | S2 | `e2e/shell/panels.e2e.ts` | A panel or a bar covers the text, or a control is out of reach on a phone or at a zoom. A pinch moves the page from under the pointer; a zoomed page has an edge out of reach; the browser's own zoom of the window has no way back. | 10 |
 | S3 | `e2e/shell/offline.e2e.ts` | Edits made offline (a new title too) are lost or doubled, or the save mark does not say that they are not saved; a signed-out tab keeps writing, or asks the server on with no word; a kept page with a refused pass stays blank. | 9 |
 | Y1 | `e2e/sync/two-people.e2e.ts` | Two people lose or double text; they end with different documents; undo takes the other person's text. | 10 |
-| Y2 | `e2e/sync/restart.e2e.ts` | A deploy or a crash loses edits, doubles the document, or loses pages. A tab that loads again while the server is down fails, though the browser has a copy of its page. | 10 |
+| Y2 | `e2e/sync/restart.e2e.ts` | A deploy or a crash loses edits, doubles the document, or loses pages. A tab that loads again while the server is down fails, though the browser has a copy of its page; or it opens, and loads again by itself after the server is back. | 10 |
 | Y3 | `e2e/sync/bad-input.e2e.ts` | Bad bytes, a storm of sockets or a huge paste stops the server or reaches other files. | 4 |
 | G1 | `e2e/agent/turn.e2e.ts` | The agent's turn is not shown, cannot be undone, or acts without the person's Approve. A sent message shows nothing until the model's first word. A document's panel shows another page's thread, or opens or closes because of another page. | 16 |
 | G2 | `e2e/agent/tools.e2e.ts` | An agent tool edits the wrong file, shows a wrong picture, or works on a document it may not open. | 21 |

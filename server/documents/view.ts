@@ -417,7 +417,9 @@ async function render(
     platform.edge.background(
       dir.activity.add(session?.login ?? null, { view: 1 }).catch((e) => console.log(`couldn't count a view: ${e}`))
     );
-  const live = `<meta name="erga-build" content="${build}">${scriptTag("live.js")}`;
+  // (data-for: the address this page is made for. A tab can hold it at another: the pencil's, and the browser's copy
+  // of before the pencil, client/inline/offline-sw.ts.)
+  const live = `<meta name="erga-build" content="${build}" data-for="${esc(url.pathname + url.search)}">${scriptTag("live.js")}`;
   const body = before + after + live + "\n</body>\n</html>";
   const etag = `"${await digestOf(body)}"`;
   headers.ETag = etag;
