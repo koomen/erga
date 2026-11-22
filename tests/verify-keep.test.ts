@@ -104,8 +104,8 @@ test("a part's hash is of its build's output: the same code gives the same hash"
   expect(await issuerPart(s, run, "https://team.example/callback").hash()).not.toBe(hash);
   expect(await issuerPart(s, { idp: { ...run.idp, password: "q" } }, "https://s2.example/_edge/callback").hash()).not.toBe(hash);
 
-  // A setting's Workers: the stub and the gate's own Worker; with the gate inside (OAuth), the stub alone; with a real
-  // Erga as the origin, the gate's Worker alone (the Erga is a part of its own: its release).
+  // A setting's Workers: the stub, with the gate inside it; with a real Erga as the origin, none here (the Erga is a
+  // part of its own: its release).
   const cf = (more: Partial<Run> = {}): Run => ({
     n: 2,
     name: "cf-sso",
@@ -114,7 +114,6 @@ test("a part's hash is of its build's output: the same code gives the same hash"
     shell: "s2.verify-shell.example",
     content: "c2.verify-pages.example",
     key: "edge",
-    gateKey: "gate",
     parts: {},
     idp: { url: "https://erga-verify-idp-2.example.workers.dev", secret: "s", password: "p" },
     ...more,
@@ -127,20 +126,17 @@ test("a part's hash is of its build's output: the same code gives the same hash"
     docs: hosts.map((host, i) => ({ id: `d${i}`, address: `/ada/d${i}`, host })),
   });
   const hashes = async (r: Run) => Object.fromEntries(await Promise.all(workerParts(r).map(async (p) => [p.name, await p.hash()])));
-  expect(Object.keys(await hashes(cf()))).toEqual(["stub", "gate"]);
+  expect(Object.keys(await hashes(cf()))).toEqual(["stub"]);
   expect(Object.keys(await hashes(cf({ who: "oauth" })))).toEqual(["stub"]);
-  expect(Object.keys(await hashes(cf({ erga: erga([]) })))).toEqual(["gate"]);
+  expect(Object.keys(await hashes(cf({ erga: erga([]) })))).toEqual([]);
   const before = await hashes(cf());
   expect(await hashes(cf())).toEqual(before);
-  // A new key is a new secret of both; a new issuer's address is a setting of the gate's Worker only.
-  const rekeyed = await hashes(cf({ gateKey: "another" }));
-  expect([rekeyed.stub == before.stub, rekeyed.gate == before.gate]).toEqual([true, false]);
-  const moved = await hashes(cf({ idp: { url: "https://other.example.workers.dev", secret: "s", password: "p" } }));
-  expect([moved.stub == before.stub, moved.gate == before.gate]).toEqual([true, false]);
-  // The real Erga's documents' hosts are the gate's: a new document's host is a new deploy of the gate's Worker.
-  const one = await hashes(cf({ erga: erga(["d0-ada.c2.verify-pages.example"]) }));
-  expect(await hashes(cf({ erga: erga(["d0-ada.c2.verify-pages.example"]) }))).toEqual(one);
-  expect((await hashes(cf({ erga: erga(["d0-ada.c2.verify-pages.example", "d1-ada.c2.verify-pages.example"]) }))).gate).not.toBe(one.gate);
+  // A new edge key is a new secret of the stub; a new issuer's address is a setting of the gate inside it; so is who
+  // signs people in (anyone, or behind Access).
+  expect((await hashes(cf({ key: "another" }))).stub).not.toBe(before.stub);
+  expect((await hashes(cf({ idp: { url: "https://other.example.workers.dev", secret: "s", password: "p" } }))).stub).not.toBe(before.stub);
+  expect((await hashes(cf({ who: "oauth" }))).stub).not.toBe(before.stub);
+  expect((await hashes(cf({ who: "access", access: { team: "t", aud: "a".repeat(64) } }))).stub).not.toBe(before.stub);
 
   const bytes = (text: string) => new TextEncoder().encode(text);
   const release = (more: Partial<Release> = {}): Release => ({

@@ -47,8 +47,9 @@ do not choose for the user.
 4. **Which domain holds the documents' pages?** A second domain, not the
    app's domain and not a subdomain of it: a document's scripts must not
    share the app's site or its cookies. Each document gets a subdomain of
-   its own there (`--pages <domain>`). AWS needs it. On Cloudflare, a user
-   who is the only author can leave it out: the pages then share one
+   its own there (`--pages <domain>`). AWS needs it, and so does single
+   sign-on on Cloudflare. On Cloudflare without single sign-on, a user who
+   is the only author can leave it out: the pages then share one
    `workers.dev` address.
 5. **Does Erga update by itself when a new release comes out?**
    - Yes (`--deploys cloud`): a small deployer in the user's own account
@@ -59,11 +60,27 @@ do not choose for the user.
      server's Deploy page.
    - No (`--deploys local`): no deploy credential stays in the cloud. The
      user runs `bun erga deploy <address>` for each update.
+6. **Do people sign in with GitHub or Google, or with the organization's
+   single sign-on?**
+   - GitHub or Google: no option. The user sets it up on the setup page.
+   - Single sign-on (`--sign-in sso`): only people who pass it reach Erga.
+     - Cloudflare, with Cloudflare Access (`--team <name> --aud <tag>`):
+       the Zero Trust team name, and the Application Audience (AUD) tag of
+       a self-hosted Access application that the user adds for the
+       address. The user adds a second Access application too, for the
+       paths of the address that carry no Access sign-in, with one policy:
+       Bypass, everyone. The dry run lists those paths.
+     - Cloudflare with no Access, or AWS (`--issuer <URL> --client <ID>`):
+       the OpenID Connect issuer URL, and Erga's client ID there (its
+       callback: `https://<address>/_edge/callback`). The issuer must give
+       the `email` claim, with `email_verified`. The user types the
+       client's secret on a page that opens.
 
 Then run the dry run. It makes nothing, and prints the plan:
 
     bun erga setup <address> --host cloudflare|aws [--repo <repo>] [--branch <branch>] \
-      [--account <name>] [--profile <name>] [--pages <domain>] --deploys cloud|local --dry-run
+      [--account <name>] [--profile <name>] [--pages <domain>] --deploys cloud|local \
+      [--sign-in sso --team <name> --aud <tag> | --sign-in sso --issuer <URL> --client <ID>] --dry-run
 
 Show the user the plan, and ask if you may go on. On their yes, run the
 same command without `--dry-run`, in the background: the first build takes
@@ -79,7 +96,9 @@ Rules:
   opens its setup page (`https://<address>/setup`) in the user's browser,
   with a link that works one time. There the user sets up GitHub or Google
   sign-in, pastes the deployer's token if the page asks for it, and signs
-  in: they become the admin. Tell the user to finish there.
+  in: they become the admin. With single sign-on the page has no GitHub or
+  Google step: the user signs in with it first. Tell the user to finish
+  there.
 - **No secret goes through you.** A secret goes only into the page, where
   the user types it: never into the chat, a command or a file. You make no
   token. Never open, read or repeat the setup page or its link.

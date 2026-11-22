@@ -1,13 +1,16 @@
 // The way in: every request to the app passes here first (cloudflare/index.ts; the tests' server), whatever the mode
-// (mode.ts).
+// (mode.ts). This file decides nothing about who may pass: the gate does (gate/).
 //
-//   oauth   The gate runs here, as the first call (gate/mounts/web.ts, `handle`): it answers its own paths (the
-//           sign-in's start and callback, MCP's authorization server), drops its cookies and tokens, and passes the
-//           rest on with the caller. Its two tasks that need the network or the database are Erga's: the callback's
-//           code exchange (sign-in.ts: each provider's own, GitHub's too), and the settings (caller.ts).
-//   gate    The gate is in front. A request counts only with the key that the gate and this server share (the header
-//           x-erga-front): any other request gets nothing, so the caller's header can't come from anyone else. The
-//           key goes no further than this check: the app hears the request without it.
+//   the gate inside   The gate runs here, as the first call (gate/mounts/web.ts, `handle`): it answers its own paths
+//                     (the sign-in's start and callback, MCP's authorization server), drops its cookies and tokens,
+//                     and passes the rest on with the caller. Where anyone may come in (oauth), its two tasks that
+//                     need the network or the database are Erga's: the callback's code exchange (sign-in.ts: each
+//                     provider's own, GitHub's too), and the settings (caller.ts). With the organization's sign-in
+//                     (gate/sso.ts), only a request with a proof goes on: the exchange and Access's proof are the
+//                     gate's own.
+//   the gate in front A request counts only with the key that the gate and this server share (gate/core.ts, `front`):
+//                     any other request gets nothing, so the caller's header can't come from anyone else. The key
+//                     goes no further than this check: the app hears the request without it.
 //
 // Local development has no issuer, so this file is one (`dev`): each request with no sign-in of its own comes in as
 // the person a tab names (?user=Ada, carried along in its links), else as the dev login, unless the browser signed
@@ -17,14 +20,13 @@
 // document's pages origin there (its authors' code) and a deployed server never get it.
 
 import { HttpServerResponse } from "effect/http";
-import { handle, type Exchanged, type Mount, parseCookies } from "../../gate/mounts/web.ts";
+import { type Exchanged, fromFront, handle, type Mount, parseCookies } from "../../gate/mounts/web.ts";
 import { webPort } from "../../gate/port.ts";
-import { sameText } from "../../shared/bytes.ts";
 import { runOn, toWeb } from "../http.ts";
 import type { Platform } from "../platform.ts";
-import { DEV, FRONT, gateConfig, SIGNED_OUT, signInCookiesFor } from "./caller.ts";
+import { DEV, gateConfig, SIGNED_OUT, signInCookiesFor } from "./caller.ts";
 import { cookieName } from "./cookies.ts";
-import { exchange } from "./sign-in.ts";
+import { exchange, signInFailed } from "./sign-in.ts";
 
 /** A name as a login: letters and digits, the rest as dashes ("Ada Lovelace" → "ada-lovelace"). */
 const loginOf = (name: string) =>
@@ -55,23 +57,28 @@ async function devRequest(platform: Platform, request: Request): Promise<Request
 /** The app's answer to a request, behind the gate: `erga` is the app. */
 export async function gated(platform: Platform, request: Request, erga: (request: Request) => Promise<Response>): Promise<Response> {
   const signIn = platform.signIn;
-  if (signIn.mode == "gate") {
-    const ok = signIn.key.length >= 32 && sameText(request.headers.get(FRONT) ?? "", signIn.key);
-    if (!ok) return new Response(null, { status: 403, headers: { "cache-control": "no-store" } });
-    // The key ends here: the app has no use for it, and copies a request's headers on (to a document's host).
-    const headers = new Headers(request.headers);
-    headers.delete(FRONT);
-    return erga(new Request(request, { headers }));
+  if (signIn.mode == "gate" && signIn.at == "front") {
+    const through = fromFront(request, signIn.key);
+    return through ? erga(through) : new Response(null, { status: 403, headers: { "cache-control": "no-store" } });
   }
+  const sso = signIn.mode == "gate" ? signIn.sso : null;
   const mount: Mount = {
     config: (r) => gateConfig(platform, new URL(r.url)),
     port: webPort,
-    // The callback's code, traded by the provider's own entry: who signed in, or the page that says why not.
-    exchange: async (x, r): Promise<Exchanged> => {
-      const ended = await runOn(exchange(x), r, platform);
-      return HttpServerResponse.isHttpServerResponse(ended) ? toWeb(ended) : ended;
-    },
+    exchange: sso
+      ? // The organization's issuer: the gate's own exchange. Who signed in, or the page that says it didn't work.
+        async (x): Promise<Exchanged> => {
+          const identity = await sso.exchange(x);
+          return identity ? { identity } : toWeb(signInFailed("the organization's sign-in gave no person for the code"));
+        }
+      : // The callback's code, traded by the provider's own entry: who signed in, or the page that says why not.
+        async (x, r): Promise<Exchanged> => {
+          const ended = await runOn(exchange(x), r, platform);
+          return HttpServerResponse.isHttpServerResponse(ended) ? toWeb(ended) : ended;
+        },
+    ...(sso?.access ? { access: sso.access } : {}),
     upstream: erga,
   };
-  return handle(await devRequest(platform, request), mount);
+  // (Local development's own sign-in is only where anyone may come in.)
+  return handle(sso ? request : await devRequest(platform, request), mount);
 }

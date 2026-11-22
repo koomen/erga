@@ -2,7 +2,7 @@
 // No server and no browser: a request in, an answer out. (Its agents' side: tests/gate-agents.test.ts.)
 
 import { describe, expect, test } from "bun:test";
-import { type Config, edge, GATE_COOKIES, open, type Req, seal, signedIn } from "../gate/core.ts";
+import { type Config, edge, GATE_COOKIES, HEALTH, open, type Req, seal, signedIn } from "../gate/core.ts";
 import {
   access,
   ADA,
@@ -65,6 +65,27 @@ describe("the shell, SSO", () => {
         'Bearer resource_metadata="https://erga.example.com/.well-known/oauth-protected-resource"'
       );
     }
+  });
+
+  test("the health report, where the mount names it: a GET goes on as nobody with no proof; nothing else of the server does", async () => {
+    // (The gate inside a Worker: the deployer asks the server's health after each deploy, and has no sign-in.)
+    const inside = { ...sso, health: HEALTH };
+    const health = (more: Parameters<typeof req>[1] = {}) => req("https://erga.example.com/api/health", more);
+    expect(forwarded(await gate(health(), inside, port))).toEqual({ kind: "none" });
+    // A proof that is no good changes nothing there: the report is nobody's.
+    expect(forwarded(await gate(health({ cookie: { "__Host-shell": "s.bad.bad" }, bearer: "t.bad.bad" }), inside, port))).toEqual({
+      kind: "none",
+    });
+    for (const r of [
+      health({ method: "POST" }),
+      req("https://erga.example.com/api/health/x"),
+      req("https://erga.example.com/api/healthz"),
+      req("https://erga.example.com/api/tools/whoami", { method: "POST" }),
+      req("https://x-ada.pages.example.net/api/health"),
+    ])
+      expect(responded(await gate(r, inside, port)).status).not.toBe(200);
+    // A mount that names no report (the gate in front, on AWS: the machine asks itself): a 401, as any other path.
+    expect(responded(await gate(health(), sso, port)).status).toBe(401);
   });
 
   test("the shell cookie names the person; a forged, expired, other-key or other-kind one names nobody", async () => {

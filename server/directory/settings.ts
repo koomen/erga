@@ -205,7 +205,7 @@ export const SETTINGS = {
   sign_in_days: setting<number>({
     label: "A sign-in lasts",
     description:
-      "How long a person stays signed in. A change applies to new sign-ins. With single sign-on, the gate's deploy sets it instead.",
+      "How long a person stays signed in. A change applies to new sign-ins. With single sign-on on AWS, the gate's deploy sets it instead; behind Cloudflare Access, Access's own session sets it.",
     values: `Days, from 1 to ${SIGN_IN_DAYS_MAX}. A person who is signed in keeps the end they have. An agent's grant is apart: 30 days.`,
     default: SIGN_IN_DAYS,
     parse: integer(1, SIGN_IN_DAYS_MAX),

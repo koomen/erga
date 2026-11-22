@@ -1,12 +1,12 @@
-// The sign-in's code exchange with an OIDC issuer (Cognito, or any other): the one network call of a sign-in. The
-// gate's Worker makes it (worker.ts), and on AWS, Lambda@Edge does (lambda.ts), which holds no edge key and signs
-// nothing: the core signs what this gives.
+// The sign-in's code exchange with an OIDC issuer (Cognito, or any other): the one network call of a sign-in. On
+// Cloudflare the gate inside Erga's Worker makes it (sso.ts), and on AWS, Lambda@Edge does (mounts/lambda.ts), which
+// holds no edge key and signs nothing: the core signs what this gives.
 //
 // The ID token comes straight from the issuer's token endpoint, over TLS, with this server's client secret: so its
 // signature needs no check (OpenID Connect Core 3.1.3.7), and the gate needs no RS256. Its claims are still checked:
 // the issuer, this client, and its end. Its address counts only with the issuer's own word that it verified it.
 
-import type { Identity } from "../core.ts";
+import type { Identity } from "./core.ts";
 
 export interface Oidc {
   /** The issuer (the `iss` of its tokens), and its token endpoint. */

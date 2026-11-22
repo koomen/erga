@@ -2,7 +2,8 @@
 // that stops when the step is done. No agent sees these pages or what goes through them. (A new server's own steps
 // are on its setup page, server/identity/setup.ts: this is the one that comes before there is a server.)
 //
-//   oidcSecret    single sign-on on AWS: one field for the client secret of the organization's sign-in, into Parameter Store
+//   oidcSecret    single sign-on at an issuer: one field for the client secret of the organization's sign-in. On AWS
+//                 into Parameter Store; on Cloudflare into .erga/secrets.json, for the first deploy
 //
 // With --remote the user is at another computer, and a browser here shows nothing. Their steps go through their own
 // terminal (/dev/tty), never through stdin, stdout or stderr, which the agent that runs the command has: a hidden
@@ -91,11 +92,11 @@ export async function step(
   }
 }
 
-/** Single sign-on on AWS: the user types the client secret, and `put` stores it (Parameter Store). */
+/** Single sign-on at an issuer: the user types the client secret, and `put` stores it (cli.ts, putClientSecret). */
 export function oidcSecret(a: Answers, put: (secret: string) => Promise<void>, ms: number): Promise<string | null> {
   const form = (problem = "") =>
     html(`<h1 style="font-size:20px">The client secret of your organization's sign-in</h1>
-<p>Erga's client <code>${esc(a.client)}</code> at ${esc(a.issuer)}. The secret goes to AWS Parameter Store, never to your agent.</p>
+<p>Erga's client <code>${esc(a.client)}</code> at ${esc(a.issuer)}. The secret goes to ${a.where == "aws" ? "AWS Parameter Store" : "your Erga's Worker on Cloudflare, with its first deploy"}, never to your agent.</p>
 ${problem ? `<p style="color:#b42318">${esc(problem)}</p>` : ""}<form method="post" action="/"><input name="secret" type="password" autocomplete="off" style="width:100%;padding:6px 8px" autofocus>
 <p><button>Save</button></p></form>`);
   return step(
@@ -104,8 +105,8 @@ ${problem ? `<p style="color:#b42318">${esc(problem)}</p>` : ""}<form method="po
       const secret = String((await req.formData()).get("secret") ?? "").trim();
       if (!secret) return { res: form("Type the client secret.") };
       return put(secret).then(
-        () => ({ res: doneHtml("AWS has the client secret."), end: "" }),
-        (e: Error) => ({ res: form(`AWS did not take the secret: ${e.message}`) })
+        () => ({ res: doneHtml("The client secret is saved."), end: "" }),
+        (e: Error) => ({ res: form(`The secret was not saved: ${e.message}`) })
       );
     },
     ms,

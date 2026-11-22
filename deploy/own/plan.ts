@@ -2,11 +2,11 @@
 // first and gives as the command's options, and what follows from them alone: the instance's names, its entry in
 // .erga/config.json, its plain settings, its database's first rows. Pure: no network, no files. The flow (what the
 // command does next) is deploy/own/flow.ts. How people sign in is no answer: the user sets it up on the new server's
-// setup page (server/identity/setup.ts). Single sign-on alone is the deploy's (--sign-in sso): a gate in front.
+// setup page (server/identity/setup.ts). Single sign-on alone is the deploy's (--sign-in sso): the gate (gate/).
 
 import { type CloudflareEntry, DEFAULT_BRANCH, DEFAULT_REPO, repoName } from "../cli/config";
 import { type Target, targetFacts } from "../pipeline/pipeline";
-import { SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
+import { CALLBACK, SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 export type Where = "cloudflare" | "aws";
 /** Who deploys each new release: a deployer in the user's own account, or the user from a machine. */
@@ -26,17 +26,15 @@ export interface Answers {
   profile: string;
   region: string;
   egress: string;
-  /** --sign-in sso: the organization's single sign-on, at a gate in front. "": the OAuth providers that the user sets up on the setup page. */
+  /** --sign-in sso: the organization's single sign-on, at the gate. "": the OAuth providers that the user sets up on the setup page. */
   signIn: "sso" | "";
-  /** sso on Cloudflare (Cloudflare Access): the Zero Trust team's name, and the Access application's audience tag (typed on the page). */
+  /** sso on Cloudflare, with Cloudflare Access in front: the Zero Trust team's name, and the Access application's audience tag. */
   team: string;
   aud: string;
-  /** sso on AWS (an Application Load Balancer): the organization's OIDC issuer's URL, and Erga's client ID there. */
+  /** sso with an OIDC issuer (AWS; on Cloudflare, in place of Access): the organization's issuer's URL, and Erga's client ID there. */
   issuer: string;
   client: string;
-  /** sso on AWS, when the sign-in gives no `email`: the claim with the address, and the text before it ("preferred_username:corp|"). */
-  emailClaim: string;
-  /** sso on AWS: how many days a sign-in at the gate lasts ("": the gate's 30). Without sso, an admin sets it on /admin/settings. */
+  /** sso on AWS: how many days a sign-in at the gate lasts ("": the gate's 30). Elsewhere, an admin sets it on /admin/settings. */
   signInDays: string;
   /** Documents' pages: "shared", or a domain. "": the default (pagesOf). */
   pages: string;
@@ -66,7 +64,6 @@ export const noAnswers = (host: string): Answers => ({
   aud: "",
   issuer: "",
   client: "",
-  emailClaim: "",
   signInDays: "",
   pages: "",
   deploys: "",
@@ -75,13 +72,17 @@ export const noAnswers = (host: string): Answers => ({
 
 export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
 
+/** Single sign-on on Cloudflare with Cloudflare Access in front (--team, --aud); else an OIDC issuer signs people in (--issuer, --client). */
+export const viaAccess = (a: Pick<Answers, "signIn" | "where" | "team" | "aud">) => sso(a) && a.where != "aws" && !!(a.team || a.aud);
+
 /**
  * Where documents' pages run. Cloudflare: one shared workers.dev address (safe for one author), or a second domain of
- * the account, where each document has a subdomain of its own (for many authors). AWS: a domain. With single sign-on it is pages.<host>: the gate in front guards both, with the
- * user's sign-on. Without it, the pages need a whole zone that isn't the app's (a page's
- * script must not share the app's site), so the user names one ("": not answered).
+ * the account, where each document has a subdomain of its own (for many authors). With single sign-on there, the
+ * domain ("": not answered): the gate has no way to guard the shared address. AWS: a domain. With single sign-on it
+ * is pages.<host>: the gate in front guards both, with the user's sign-on. Without it, the pages need a whole zone
+ * that isn't the app's (a page's script must not share the app's site), so the user names one.
  */
-export const pagesOf = (a: Answers): string => a.pages || (a.where != "aws" ? "shared" : sso(a) ? `pages.${a.host}` : "");
+export const pagesOf = (a: Answers): string => a.pages || (a.where != "aws" ? (sso(a) ? "" : "shared") : sso(a) ? `pages.${a.host}` : "");
 
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
@@ -133,12 +134,6 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
       );
     case "client":
       return is(/^[\w.~-]{1,128}$/.test(v), v, `"${v}" isn't a client ID.`);
-    case "emailClaim":
-      return is(
-        /^[A-Za-z_][\w.-]{0,63}(:[^\s@:]{0,64})?$/.test(v),
-        v,
-        `"${v}" isn't <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".`
-      );
     case "signInDays":
       return is(
         /^[1-9]\d?$/.test(v) && Number(v) <= SIGN_IN_DAYS_MAX,
@@ -158,15 +153,17 @@ export const zoneOf = (host: string, zones: string[]): string | null =>
 export function pagesProblem(a: Answers, zones: string[]): string | null {
   const pages = pagesOf(a);
   const other = "The documents' pages need another domain than the app's: a page's script must not share the app's site.";
+  if (!pages) return null;
   if (a.where != "aws")
     return pages == "shared"
-      ? null
+      ? sso(a)
+        ? "With single sign-on the documents' pages need a domain."
+        : null
       : !zones.includes(pages)
         ? `${pages} isn't a domain of this Cloudflare account: the pages need a whole domain of their own.`
         : zoneOf(a.host, zones) == pages
           ? other
           : null;
-  if (!pages) return null;
   if (pages == "shared") return "On AWS the documents' pages need a domain.";
   if (sso(a))
     return !zoneOf(pages, zones)
@@ -189,39 +186,36 @@ export const defaultsOf = (a: Pick<Answers, "signIn">) => ({
   delete_docs_after_hours: null,
 });
 
-/** --email-claim's parts: the claim with the address, and the text before the address; null: not answered. */
-export const emailOf = (a: Pick<Answers, "emailClaim">): { claim: string; prefix: string } | null => {
-  const [claim, prefix = ""] = a.emailClaim.split(":");
-  return claim ? { claim, prefix } : null;
-};
+/** The endpoints of an OIDC issuer, as it publishes them (deploy/aws/setup.ts, discoverOidc). */
+export interface Endpoints {
+  authorize: string;
+  token: string;
+}
 
 /**
- * Single sign-on: the server's setting for the proxy in front (PROXY_SIGN_IN, which the server reads no more: the gate replaced it, server/identity/mode.ts); null without
- * it. `signer`: on AWS, the proxy's ARN (the stack's output). A proxy whose values aren't all known yet gives "{}".
- * A server with any value here and no gate's key (GATE_KEY) refuses to come up: no other sign-in stands in.
+ * Single sign-on on Cloudflare: the server's setting for the gate inside its Worker (SSO: gate/sso.ts); null without
+ * it, and on AWS (there the gate is in front, and its values are in its own code: deploy/aws/gate.ts). `oidc`: the
+ * issuer's endpoints; an issuer whose endpoints aren't known yet gives none, and that server does not come up.
  */
-export function proxySetting(a: Answers, signer?: string): string | null {
-  if (!sso(a)) return null;
-  if (a.where == "aws") {
-    const email = emailOf(a);
-    return signer ? JSON.stringify({ kind: "aws-alb", signer, issuer: a.issuer, client: a.client, ...(email ? { email } : {}) }) : "{}";
-  }
-  return JSON.stringify({ kind: "cloudflare-access", team: a.team, aud: a.aud });
+export function ssoSetting(a: Answers, oidc?: Endpoints | null): string | null {
+  if (!sso(a) || a.where == "aws") return null;
+  if (viaAccess(a)) return JSON.stringify({ access: { team: a.team, aud: a.aud } });
+  return JSON.stringify({ oidc: { issuer: a.issuer, authorize: oidc?.authorize ?? "", token: oidc?.token ?? "", client: a.client } });
 }
 
 /** The names of the plain settings that varsOf gives: what the answers decide in an entry. */
-export const ANSWER_VARS = ["GITHUB_CLIENT_ID", "PROXY_SIGN_IN", "SERVER_DEFAULTS"];
+export const ANSWER_VARS = ["GITHUB_CLIENT_ID", "SSO", "SERVER_DEFAULTS"];
 
 /**
- * The instance's plain settings: the proxy of its single sign-on, and the settings' defaults. `github`: the client id
- * of a GitHub app that the deploy itself gives the server (an instance from before the setup page; the verify suite).
- * Setup gives none: the user makes the app on the server's setup page, and the server keeps it.
+ * The instance's plain settings: the gate's single sign-on on Cloudflare (SSO), and the settings' defaults. `github`:
+ * the client id of a GitHub app that the deploy itself gives the server (an instance from before the setup page; the
+ * verify suite). Setup gives none: the user makes the app on the server's setup page, and the server keeps it.
  */
-export function varsOf(a: Answers, github: string | undefined, signer?: string): Record<string, string> {
-  const proxy = proxySetting(a, signer);
+export function varsOf(a: Answers, github: string | undefined, oidc?: Endpoints | null): Record<string, string> {
+  const setting = ssoSetting(a, oidc);
   return {
-    GITHUB_CLIENT_ID: proxy == null ? (github ?? "") : "",
-    ...(proxy == null ? {} : { PROXY_SIGN_IN: proxy }),
+    GITHUB_CLIENT_ID: sso(a) ? "" : (github ?? ""),
+    ...(setting == null ? {} : { SSO: setting }),
     SERVER_DEFAULTS: JSON.stringify(defaultsOf(a)),
   };
 }
@@ -276,13 +270,16 @@ export function namesOf(
 /** The stack's name of the instance on AWS. */
 export const stackOf = (a: Answers) => namesOf(a.host).worker;
 
-export const callbackOf = (host: string) => `https://${host}/_edge/callback`;
+export const callbackOf = (host: string) => `https://${host}${CALLBACK}`;
 
 /**
  * The entry of `.erga/config.json` for a new instance on Cloudflare, from the answers alone: its names, its plain
  * settings, and the repository and the branch that it tracks (its first deploy takes that branch's head).
  */
-export function setupEntry(a: Answers, o: { zones: string[]; subdomain: string | null; github?: string }): CloudflareEntry {
+export function setupEntry(
+  a: Answers,
+  o: { zones: string[]; subdomain: string | null; github?: string; oidc?: Endpoints | null }
+): CloudflareEntry {
   const n = namesOf(a.host);
   const pages = pagesOf(a);
   const target: Target = {
@@ -293,7 +290,7 @@ export function setupEntry(a: Answers, o: { zones: string[]; subdomain: string |
     ...(pages == "shared" ? { subdomain: o.subdomain ?? n.worker.slice(0, 40), createSubdomain: !o.subdomain } : {}),
     app: { kind: "domain", zoneName: zoneOf(a.host, o.zones)!, hostname: a.host },
     pages: pages == "shared" ? { kind: "shared" } : { kind: "zone", zoneName: pages },
-    vars: varsOf(a, o.github),
+    vars: varsOf(a, o.github, o.oidc),
     secrets: {},
   };
   return {

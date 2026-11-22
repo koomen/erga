@@ -408,16 +408,15 @@ test("the sign-in's endpoints come from its issuer; setup's check of the sign-in
   );
   await expect(discoverOidc("https://none.example.com", issuer(document))).rejects.toThrow("didn't answer");
 
-  // The settings that the release runs with must be the answers' sign-in. (The proxy's setting is from before the
-  // gate: the server reads it no more, and setup still compares it.)
-  const signer = "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1";
-  const deployed = varsOf(viaGate, undefined, signer);
-  expect(signInOf(viaGate, undefined, deployed, signer)).toBe("ok");
-  expect(signInOf({ ...viaGate, client: "client-2" }, undefined, deployed, signer)).toMatchObject({
+  // The settings that the release runs with must be the answers' sign-in. On AWS the gate's values are in its own
+  // code, in the stacks: the server's settings name no sign-in, and the proxy's old setting is gone.
+  const deployed = varsOf(viaGate, undefined);
+  expect(Object.keys(deployed)).toEqual(["GITHUB_CLIENT_ID", "SERVER_DEFAULTS"]);
+  expect(signInOf(viaGate, undefined, deployed)).toBe("ok");
+  // A release from before, with the proxy's setting: setup deploys again.
+  expect(signInOf(viaGate, undefined, { ...deployed, PROXY_SIGN_IN: "{}" })).toMatchObject({
     bad: expect.stringContaining("PROXY_SIGN_IN"),
   });
-  // A release from before the stack had its proxy runs with no proxy at all.
-  expect(signInOf(viaGate, undefined, { PROXY_SIGN_IN: "{}" }, signer)).toMatchObject({ bad: expect.stringContaining("deploy again") });
   // An instance whose entry names a GitHub app (one from before the setup page): its client id.
   const github = { ...aws, pages: "example-pages.com" };
   expect(signInOf(github, "Iv1.ada", { GITHUB_CLIENT_ID: "Iv1.ada" })).toBe("ok");
@@ -510,18 +509,18 @@ print(json.dumps({"ok": True, "version": "v1", "upload": upload, "checks": {}}))
       "/var/lib/erga",
       join(dir, "state")
     );
-  const run = (proxy: string, script: string, more: Record<string, string> = {}) => {
+  const run = (setting: string, script: string, more: Record<string, string> = {}) => {
     const release = join(dir, "release");
     mkdirSync(release, { recursive: true });
-    writeFileSync(join(release, "wrangler.json"), JSON.stringify({ vars: { PROXY_SIGN_IN: proxy } }));
+    writeFileSync(join(release, "wrangler.json"), JSON.stringify({ vars: { A_SETTING: setting } }));
     Bun.spawnSync(["tar", "-czf", join(dir, "release.tgz"), "-C", release, "."]);
     rmSync(join(dir, "loaded.json"), { force: true });
     return Bun.spawnSync(["bash", "-c", script], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE: dir, FAKE_SECRET: SECRET, ...more },
     });
   };
-  const deploy = (proxy: string, script = scriptOf(), more: Record<string, string> = {}) => {
-    const r = run(proxy, script, more);
+  const deploy = (setting: string, script = scriptOf(), more: Record<string, string> = {}) => {
+    const r = run(setting, script, more);
     expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
     // Each load has a name of its own, which the health check wants (tests/aws-deployer.test.ts): the rest is the release's.
     const { ERGA_UPLOAD, ...vars } = JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars;
@@ -529,10 +528,10 @@ print(json.dumps({"ok": True, "version": "v1", "upload": upload, "checks": {}}))
     return vars;
   };
   try {
-    expect(deploy("old")).toEqual({ PROXY_SIGN_IN: "old", SESSION_SECRET: "s" });
-    expect(deploy("new")).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s" });
+    expect(deploy("old")).toEqual({ A_SETTING: "old", SESSION_SECRET: "s" });
+    expect(deploy("new")).toEqual({ A_SETTING: "new", SESSION_SECRET: "s" });
     // With the gate in front: the machine reads the key that the gate sends from the stack's secret, as Erga's GATE_KEY.
-    expect(deploy("new", scriptOf(SECRET))).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s", GATE_KEY: "the-gate-key" });
+    expect(deploy("new", scriptOf(SECRET))).toEqual({ A_SETTING: "new", SESSION_SECRET: "s", GATE_KEY: "the-gate-key" });
     // A machine that can't read the key loads nothing: without it Erga would take itself for a server with no gate.
     const refused = run("new", scriptOf("arn:another"));
     expect([refused.exitCode == 0, existsSync(join(dir, "loaded.json"))]).toEqual([false, false]);
@@ -546,7 +545,7 @@ print(json.dumps({"ok": True, "version": "v1", "upload": upload, "checks": {}}))
       `export AWS_REGION=us-west-2\nGATE_KEY=$(aws secretsmanager get-secret-value --secret-id '${SECRET}' --query SecretString --output text) || true\nprintf 'x-erga-front: %s\\n' "$GATE_KEY" | curl -sS -m 10 -H @- localhost:8080/api/health 2>/dev/null || true`
     );
     // With no gate, a GATE_KEY of the machine's own environment is not the release's.
-    expect(deploy("new", scriptOf(), { GATE_KEY: "stray" })).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s" });
+    expect(deploy("new", scriptOf(), { GATE_KEY: "stray" })).toEqual({ A_SETTING: "new", SESSION_SECRET: "s" });
     expect(readFileSync(join(dir, "state", "deployed"), "utf8")).toBe("v1\n");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -613,7 +612,7 @@ test("on the machine: a release's deploy facts for bun erga register, and setup'
   // The bucket gives the release that the machine's list names last; celld prints its command's rows as a table.
   tool("aws", `[ "$1 $2" = "s3 cp" ] && { echo "$3" > "$FAKE/asked"; cat "$FAKE/release.tgz"; }`);
   tool("celld", `echo "$@" > "$FAKE/celld"; printf '| who |\\n| admin:ada@example.com |\\n'`);
-  const facts = { aws: { stack: "erga" }, vars: { PROXY_SIGN_IN: "p" } };
+  const facts = { aws: { stack: "erga" }, vars: { A_SETTING: "p" } };
   const release = join(dir, "release");
   mkdirSync(release);
   writeFileSync(join(release, "wrangler.json"), JSON.stringify({ vars: { ERGA_DEPLOY: JSON.stringify(facts), SESSION_SECRET: "never" } }));

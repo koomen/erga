@@ -222,8 +222,8 @@ test("the rule is asked before each call, and a refused call is not sent", async
 test("wrangler deploys only a Worker of the suite's, at a run's hosts, bound to the suite's own", () => {
   const c = { shell: CF.shell, content: CF.content };
   const config = {
-    name: "erga-verify-gate-2",
-    main: "gate/mounts/worker.ts",
+    name: "erga-verify-stub-2",
+    main: "dev/verify/stub.ts",
     compatibility_date: "2026-01-01",
     workers_dev: false,
     services: [{ binding: "ERGA", service: "erga-verify-2" }],

@@ -8,12 +8,13 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { CALLBACK } from "../../gate/core.ts";
 import { githubAvatar, googleAvatar } from "../../shared/avatars.ts";
 import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { groupOf, NotAllowed, type Vouched } from "../directory/index.ts";
 
 /** Where every provider sends a person back: the gate's callback (gate/core.ts). */
-export const CALLBACK_PATH = "/_edge/callback";
+export const CALLBACK_PATH = CALLBACK;
 
 /** An app's two values. An empty string: not set. */
 export interface AppValues {

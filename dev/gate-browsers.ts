@@ -1,7 +1,7 @@
 // Checks, in real browsers, what the gate's hand-off needs of a browser's cookies (gate/core.ts): `bun dev/gate-browsers.ts`.
 // Not a part of the suite: it runs Chromium, Firefox and WebKit (Playwright's builds, headless, each with a new
-// profile), against the gate's own Worker mount (gate/mounts/worker.ts) on this machine, with a pretend Erga behind
-// it and a pretend issuer. Three sites, all this one server, behind a proxy that sends every host here:
+// profile), against the gate inside a Worker (gate/mounts/web.ts, with the organization's sign-in: gate/sso.ts) on
+// this machine, with a pretend Erga behind it and a pretend issuer. Three sites, all this one server, behind a proxy that sends every host here:
 //
 //   erga.example.com            the shell
 //   <doc>.pages.example.net     the documents (another site), with accept.pages.example.net
@@ -35,9 +35,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, firefox, webkit, type BrowserType } from "playwright-core";
 import { ASK } from "../gate/core.ts";
-import { handle, parseCookies, readCaller } from "../gate/mounts/web.ts";
-import { mountOf } from "../gate/mounts/worker.ts";
+import { handle, type Mount, parseCookies, readCaller } from "../gate/mounts/web.ts";
 import { webPort } from "../gate/port.ts";
+import { ssoOf } from "../gate/sso.ts";
 
 const SHELL = "erga.example.com";
 const CONTENT = "pages.example.net";
@@ -106,24 +106,30 @@ const idToken = () => {
 };
 const issuer = (async () => Response.json({ id_token: idToken() })) as unknown as typeof fetch;
 
-const mount = mountOf(
-  {
-    ERGA: { fetch: erga },
-    EDGE_KEY: "an-edge-key-of-thirty-two-characters!",
-    GATE_KEY: "the-key-that-the-gate-sends-to-erga!",
-    SHELL,
-    CONTENT,
-    IDP: JSON.stringify({
-      name: "sso",
-      issuer: `https://${IDP}`,
-      authorize: `https://${IDP}/authorize`,
-      token: `https://${IDP}/token`,
-      client: "client-1",
-    }),
-    IDP_SECRET: "secret",
-  },
+const sso = ssoOf(
+  JSON.stringify({
+    oidc: { issuer: `https://${IDP}`, authorize: `https://${IDP}/authorize`, token: `https://${IDP}/token`, client: "client-1" },
+  }),
+  "secret",
   issuer
 );
+const mount: Mount = {
+  config: () => ({
+    key: "an-edge-key-of-thirty-two-characters!",
+    shell: SHELL,
+    content: CONTENT,
+    https: true,
+    open: false,
+    idp: sso.idp,
+    oauth: true,
+  }),
+  port: webPort,
+  exchange: async (x) => {
+    const identity = await sso.exchange(x);
+    return identity ? { identity } : new Response("Sign-in didn't work. Try again.", { status: 400 });
+  },
+  upstream: erga,
+};
 
 const dir = mkdtempSync(join(tmpdir(), "erga-gate-tls-"));
 execFileSync(

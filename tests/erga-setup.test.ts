@@ -20,7 +20,7 @@ import { deployInstance } from "../deploy/cli/deploy";
 import { liveOf, observe } from "../deploy/own/facts";
 import { step } from "../deploy/own/flow";
 import { noAnswers } from "../deploy/own/plan";
-import { loadSecrets, namesAt } from "../deploy/own/store";
+import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { installDeployer, removeDeployer } from "../deploy/pipeline/deployer";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
@@ -180,6 +180,61 @@ test("the deployer, installed with no token: the instance's next deploy binds it
   await deploy();
   expect(bindingsOf(mock.state, target.worker).DEPLOYER).toBeUndefined();
   expect(step(local, await observe(local, dir, connect)).state).toEqual({ at: "page" });
+}, 120_000);
+
+test("single sign-on on Cloudflare: the gate's setting and the client's secret go with the first deploy, the documents get a domain of their own, and the next step is the setup page", async () => {
+  const mock = mockCloudflare();
+  const SSO = "sso.ada-example.com",
+    WORKER = "sso-ada-example-com",
+    ISSUER = "https://idp.example.com";
+  const token = "mock-machine-token";
+  const endpoints = { authorize: `${ISSUER}/authorize`, token: `${ISSUER}/token` };
+  // The account, and beside it the organization's issuer, which publishes its endpoints.
+  const net: First["net"] = (input, init) =>
+    String(input).startsWith(ISSUER)
+      ? Promise.resolve(Response.json({ issuer: ISSUER, authorization_endpoint: endpoints.authorize, token_endpoint: endpoints.token }))
+      : mock.fetch(input, init);
+  const connect = async () => ({ cf: new Cloudflare(token, net), net, token });
+  const answers = {
+    ...noAnswers(SSO),
+    where: "cloudflare" as const,
+    account: ACCOUNT_ID,
+    signIn: "sso" as const,
+    issuer: ISSUER,
+    client: "erga-client",
+    pages: "ada-pages.net",
+    deploys: "local" as const,
+  };
+  // The client's secret is the user's step, on setup's page: the build waits for it.
+  let seen = await observe(answers, dir, connect);
+  expect([seen.oidc, step(answers, seen).state]).toEqual([endpoints, { at: "app", kind: "oidc" }]);
+  putSecret(SSO, "SSO_CLIENT_SECRET", "the-client-secret", dir);
+  seen = await observe(answers, dir, connect);
+  expect(step(answers, seen).state).toEqual({ at: "build" });
+  expect(await firstDeploy({ dir, answers, seen, net: mock.fetch, token, print: () => {} })).toBe(HEAD);
+  // The Worker has the gate's setting, with the issuer's endpoints, and the client's secret; no GitHub App, and no
+  // setting from before the gate.
+  const bound = bindingsOf(mock.state, WORKER);
+  expect(JSON.parse(bound.SSO.text!)).toEqual({ oidc: { issuer: ISSUER, ...endpoints, client: "erga-client" } });
+  expect([bound.GITHUB_CLIENT_ID.text, bound.PROXY_SIGN_IN, bound.GATE_KEY]).toEqual(["", undefined, undefined]);
+  expect(Object.keys(mock.state.secrets[WORKER]).sort()).toEqual(["SECRETS_KEY", "SESSION_SECRET", "SSO_CLIENT_SECRET"]);
+  expect(mock.state.secrets[WORKER].SSO_CLIENT_SECRET).toBe("the-client-secret");
+  // Its own address, and every name of the documents' domain: no shared pages Worker, which the gate could not guard.
+  expect(mock.state.domains.map((d) => [d.hostname, d.service])).toEqual([[SSO, WORKER]]);
+  expect(JSON.stringify(mock.state.routes)).toContain("*.ada-pages.net/*");
+  expect(Object.keys(mock.state.scripts)).toEqual([WORKER]);
+  // Anyone whom the organization's sign-in lets through may write.
+  expect(rowsOf(mock.state, WORKER).join("\n")).toContain("anyone_access");
+  // The release runs with the answers' sign-in: the next step is the setup page.
+  seen = await observe(answers, dir, connect);
+  expect([seen.live?.signIn, seen.app]).toEqual(["ok", true]);
+  // With Cloudflare Access in front instead (a run again with other answers): the setting changes, and setup deploys again.
+  const access = { ...answers, issuer: "", client: "", team: "acme", aud: "f".repeat(64) };
+  seen = await observe(access, dir, connect);
+  expect(seen.live?.signIn).toEqual({ bad: "the deployed single sign-on (SSO) is not the one that the answers name: deploy again" });
+  await firstDeploy({ dir, answers: access, seen, net: mock.fetch, token, print: () => {} });
+  expect(JSON.parse(bindingsOf(mock.state, WORKER).SSO.text!)).toEqual({ access: { team: "acme", aud: "f".repeat(64) } });
+  expect((await observe(access, dir, connect)).live?.signIn).toBe("ok");
 }, 120_000);
 
 test("the setup ends with the admin: setup sees the user's row in the database, through Cloudflare's API", async () => {

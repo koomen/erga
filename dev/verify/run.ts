@@ -60,7 +60,7 @@ export const settings = (): Setting[] => settingsOf(local().cloudflare, local().
 export interface Run extends Setting {
   /** The edge key. */
   key: string;
-  /** The key that a gate in front proves itself to Erga with (GATE_KEY, on both Workers): never the edge key. */
+  /** AWS, SSO: the key that the gate in front proves itself to Erga with (GATE_KEY): never the edge key. */
   gateKey?: string;
   /** Each part of the deploy, with the hash of what its last deploy deployed (update.ts). On AWS: in the unit's own file (aws.ts). */
   parts: Record<string, string>;
@@ -68,7 +68,7 @@ export interface Run extends Setting {
   idp: { url: string; secret: string; password: string };
   /** Cloudflare Access in front of the shell (access.ts): the team's name, and the application's audience tag. */
   access?: { team: string; aud: string };
-  /** The origin's own address, if it had one (workers.dev): it must not answer. And one that answers, to compare. */
+  /** The address that the origin's Worker would have on workers.dev: it must not answer. */
   originAddress?: string;
   /**
    * The real Erga behind the gate (erga.ts; none: the stub is the origin): its database's ID (Cloudflare's D1; "" on
@@ -93,6 +93,18 @@ export const acceptHost = (r: Setting) => `accept.${r.content}`;
 export const warmHost = (r: Setting) => `warm.${r.content}`;
 export const otherSite = (r: Setting) => !`.${r.content}`.endsWith(`.${r.shell}`);
 export const CLIENT = "erga-verify";
+/**
+ * On Cloudflare: the setting of the gate inside the origin's Worker (gate/sso.ts, SSO): Cloudflare Access in front, or
+ * the test issuer. Null: anyone may come in (OAuth).
+ */
+export const ssoSetting = (run: Pick<Run, "who" | "access" | "idp">): string | null =>
+  run.who == "oauth"
+    ? null
+    : run.access
+      ? JSON.stringify({ access: run.access })
+      : JSON.stringify({
+          oidc: { issuer: run.idp.url, authorize: `${run.idp.url}/authorize`, token: `${run.idp.url}/token`, client: CLIENT },
+        });
 /** A host's zone on Cloudflare: the test zone that it is under. */
 export function zone(host: string): string {
   const z = cloudflareZones().find((name) => under(host, name));

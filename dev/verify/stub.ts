@@ -18,13 +18,15 @@
 //                                         and sets a cookie of the member cookie's name
 //   any other address                     JSON: what the origin saw
 //
-// GATE = "front": the gate's own Worker is in front (gate/mounts/worker.ts), and this Worker has no address of its
-// own. GATE = "inside": the gate is this Worker's first call (gate/mounts/web.ts), as in OAuth mode.
+// The gate is this Worker's first call (gate/mounts/web.ts), as it is in Erga's own Worker on Cloudflare. With SSO set,
+// only a request with a proof goes on (gate/sso.ts: Cloudflare Access in front, or the test issuer); else anyone may
+// come in, and the test issuer signs people in (IDP).
 
 import { ASK, type Caller, type Config, signOutAt } from "../../gate/core.ts";
-import { oidcExchange } from "../../gate/mounts/oidc.ts";
-import { handle, parseCookies, readCaller } from "../../gate/mounts/web.ts";
+import { oidcExchange } from "../../gate/oidc.ts";
+import { handle, type Mount, parseCookies, readCaller } from "../../gate/mounts/web.ts";
 import { webPort } from "../../gate/port.ts";
+import { ssoOf } from "../../gate/sso.ts";
 
 interface Storage {
   put(key: string, value: unknown): Promise<void>;
@@ -33,10 +35,11 @@ interface Storage {
 interface Env {
   SHELL: string;
   CONTENT: string;
-  GATE: "front" | "inside";
   LOG: { idFromName(name: string): unknown; get(id: unknown): { fetch(url: string, init?: RequestInit): Promise<Response> } };
-  /** GATE = "inside": the gate's values (gate/mounts/worker.ts has the same). */
-  EDGE_KEY?: string;
+  /** The gate's values: its edge key; then the organization's sign-in (as Erga's Worker has it), or the open mode's issuer. */
+  EDGE_KEY: string;
+  SSO?: string;
+  SSO_CLIENT_SECRET?: string;
   IDP?: string;
   IDP_SECRET?: string;
 }
@@ -165,32 +168,32 @@ const add = (id, src) => new Promise((done) => { const f = document.createElemen
   return Response.json(saw, { headers: HEAD });
 }
 
-/** GATE = "inside": the gate's settings, as Erga's own Worker has them in OAuth mode. */
-function inside(env: Env) {
-  const idp = JSON.parse(env.IDP!) as { name: string; issuer: string; authorize: string; token: string; client: string };
+/** The gate's mount: with the organization's sign-in (SSO), or as Erga's own Worker has it where anyone may come in. */
+function mount(env: Env): Mount {
+  const sso = env.SSO ? ssoOf(env.SSO, env.SSO_CLIENT_SECRET ?? "") : null;
+  const idp = sso ? null : (JSON.parse(env.IDP!) as { name: string; issuer: string; authorize: string; token: string; client: string });
   const config: Config = {
-    key: env.EDGE_KEY!,
+    key: env.EDGE_KEY,
     shell: env.SHELL,
     content: env.CONTENT,
     https: true,
-    open: true,
-    idp: { [idp.name]: { authorize: idp.authorize, client: idp.client, scope: "openid email profile" } },
-    chooser: "/auth/sign-in",
+    open: !sso,
+    idp: sso ? sso.idp : { [idp!.name]: { authorize: idp!.authorize, client: idp!.client, scope: "openid email profile" } },
+    ...(sso ? {} : { chooser: "/auth/sign-in" }),
     oauth: true,
   };
   return {
     config: () => config,
     port: webPort,
-    exchange: async (x: { code: string; verifier: string; redirect: string }) => {
-      const identity = await oidcExchange(idp.name, { ...idp, secret: env.IDP_SECRET! }, x);
+    exchange: async (x) => {
+      const identity = sso ? await sso.exchange(x) : await oidcExchange(idp!.name, { ...idp!, secret: env.IDP_SECRET! }, x);
       return identity ? { identity } : new Response("Sign-in didn't work. Try again.", { status: 400 });
     },
+    ...(sso?.access ? { access: sso.access } : {}),
     upstream: (request: Request) => erga(request, env),
   };
 }
 
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
-    return env.GATE == "inside" ? handle(request, inside(env)) : erga(request, env);
-  },
+  fetch: (request: Request, env: Env): Promise<Response> => handle(request, mount(env)),
 };

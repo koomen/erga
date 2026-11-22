@@ -2,7 +2,8 @@
 // (deploy/cli/config.ts, ergaDir), which git ignores. Each worktree of the clone uses the same folder.
 //
 //   .erga/secrets.json    mode 600: by host, the secrets `bun erga setup` gave that server one time (SESSION_SECRET,
-//                         SECRETS_KEY). Never printed.
+//                         SECRETS_KEY, and with single sign-on at an issuer on Cloudflare the client's secret
+//                         there). Never printed.
 //
 // A user who loses .erga/ keeps a working server: the secrets stay on the server. Keep a copy of secrets.json in a
 // password manager.
@@ -21,6 +22,9 @@ export function namesAt(host: string, dir = DIR) {
   return namesOf(host, entry && !isAws(entry) ? entry : null);
 }
 
+/** Single sign-on on Cloudflare with an issuer: the name of the client's secret, in the file and on the Worker (cloudflare/env.ts). */
+export const SSO_SECRET = "SSO_CLIENT_SECRET";
+
 /** By host: that server's secrets, by name. */
 export type Secrets = Record<string, Record<string, string>>;
 
@@ -36,4 +40,10 @@ export function saveSecrets(s: Secrets, dir = DIR) {
   const path = join(dir, "secrets.json");
   writeFileSync(path, `${JSON.stringify(s, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
+}
+/** Sets one secret of `host` in the secrets file. */
+export function putSecret(host: string, name: string, value: string, dir = DIR) {
+  const s = loadSecrets(dir);
+  s[host] = { ...s[host], [name]: value };
+  saveSecrets(s, dir);
 }

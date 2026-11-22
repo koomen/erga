@@ -21,7 +21,7 @@
 // providers are on; one that's off signs in only admins (a test).
 
 import * as Effect from "effect/Effect";
-import { type Answer, signOutAt } from "../../gate/core.ts";
+import { type Answer, SIGN_IN, SIGN_OUT, signOutAt } from "../../gate/core.ts";
 import { esc } from "../../shared/html.ts";
 import { PROVIDER_CSS, providerButtons, SSO } from "../../shared/sign-in.ts";
 import { call, ctx, redirect, type Route } from "../http.ts";
@@ -126,7 +126,7 @@ export const startSignIn = (provider: Provider): Route =>
     if (testing && !app) return nothingToTest();
     // No app yet (until an admin makes one): the provider would answer an error, so say so here instead.
     if (!app?.clientId) return notSetUp(provider, url.origin);
-    const to = `/_edge/sign-in?idp=${provider}&next=${encodeURIComponent(next)}${testing ? "&x=pending" : ""}`;
+    const to = `${SIGN_IN}?idp=${provider}&next=${encodeURIComponent(next)}${testing ? "&x=pending" : ""}`;
     return redirect(to, 302, { "Cache-Control": "no-store" });
   });
 
@@ -207,7 +207,7 @@ export const signOut: Route = Effect.gen(function* () {
   const accept = acceptOrigin(platform, url);
   const to = signOutAt(who) ?? afterSignOut(platform, url);
   const out = asking(
-    page("Signing out", `<p>Signing out…</p>${inlineScript("sign-out", { to, gate: accept && `${accept}/_edge/sign-out` })}`, 200),
+    page("Signing out", `<p>Signing out…</p>${inlineScript("sign-out", { to, gate: accept && `${accept}${SIGN_OUT}` })}`, 200),
     "out"
   );
   // Locally someone is always signed in (the dev login), unless the browser signs out: then nobody, as on a deployed instance.

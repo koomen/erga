@@ -1,14 +1,14 @@
-// A gate in front of the server (server/identity/mode.ts, the mode "gate"; gate/mounts/): the whole app in memory, as
-// its Worker runs with GATE_KEY set. The server runs no gate of its own: a request counts only with the key that the
+// A gate in front of the server (server/identity/mode.ts, the mode "gate", at the front; on AWS: gate/mounts/
+// cloudfront.ts): the whole app in memory, as its Worker runs with GATE_KEY set. The server runs no gate of its own: a request counts only with the key that the
 // gate sends, the caller is who the gate names, and the server's answers ask the gate for what only the gate does
 // (a code, a token, sign-out). The gate itself is tested in tests/gate-*.test.ts.
 
 import { expect, test } from "bun:test";
-import { ASK, type Caller, signOutAt } from "../gate/core.ts";
+import { ASK, type Caller, FRONT, signOutAt } from "../gate/core.ts";
 import { HttpServerResponse } from "effect/http";
 import { toWeb } from "../server/http.ts";
 import { forwarded } from "../server/documents/index.ts";
-import { asking, callerOf, FRONT } from "../server/identity/caller";
+import { asking, callerOf } from "../server/identity/caller";
 import { authOps, gated, signInChoices, signInOf } from "../server/identity/index.ts";
 import { calling, server as app } from "./helpers/app";
 
@@ -34,7 +34,7 @@ async function front() {
   const s = app();
   const admin = { login: "tester", admin: true };
   await s.dir.setAnyone(admin, "write");
-  (s.platform as { signIn: unknown }).signIn = { mode: "gate", key: KEY, devLogin: null, encryptionKey: "local:secret" };
+  (s.platform as { signIn: unknown }).signIn = { mode: "gate", at: "front", key: KEY, devLogin: null, encryptionKey: "local:secret" };
   const ask = (path: string, caller: Caller, init: RequestInit = {}) =>
     s.fetch(ORIGIN + path, {
       redirect: "manual",
@@ -82,15 +82,40 @@ test("the gate's key ends at the check: the app never hears it, nor does a docum
   expect(forwarded(heard[0], new URL(asked.url), "/api/room", null).headers.get(FRONT)).toBeNull();
 });
 
-test("a server still on the old sign-in at a proxy does not come up: PROXY_SIGN_IN with no gate's key says what to do", () => {
+test("the mode is the deploy's: a gate in front (GATE_KEY), the gate inside (SSO), or anyone; values that name no sign-in do not come up", () => {
   const none = { clientId: "", secret: "" };
-  const values = { gate: "", proxy: "", apps: { github: none, google: none }, origins: { github: null, google: null } };
+  const values = {
+    gate: "",
+    sso: "",
+    ssoSecret: "",
+    proxy: "",
+    apps: { github: none, google: none },
+    origins: { github: null, google: null },
+  };
+  expect(signInOf(values).mode).toBe("oauth");
+  expect(signInOf({ ...values, gate: KEY })).toEqual({ mode: "gate", at: "front", key: KEY });
+  // The gate inside the Worker: Cloudflare Access in front, or an issuer with its client's secret.
+  const access = JSON.stringify({ access: { team: "acme", aud: "f".repeat(64) } });
+  expect(signInOf({ ...values, sso: access })).toMatchObject({ mode: "gate", at: "inside", sso: { idp: "access" } });
+  const oidc = JSON.stringify({
+    oidc: { issuer: "https://idp.example.com", authorize: "https://idp.example.com/a", token: "https://idp.example.com/t", client: "c" },
+  });
+  expect(signInOf({ ...values, sso: oidc, ssoSecret: "s" })).toMatchObject({
+    mode: "gate",
+    at: "inside",
+    sso: { idp: { sso: { client: "c" } } },
+  });
+  // A setting that names no sign-in, an issuer with no secret, or both places at once: the server does not come up.
+  // It never comes up as one where anyone may come in.
+  expect(() => signInOf({ ...values, sso: oidc })).toThrow("SSO_CLIENT_SECRET");
+  expect(() => signInOf({ ...values, sso: "{}" })).toThrow("SSO must be");
+  expect(() => signInOf({ ...values, sso: access, gate: KEY })).toThrow("one of them");
   // The setting that the server read before the gate, and no gate: it would come up with no sign-in that works.
   for (const proxy of ['{"kind":"cloudflare-access","team":"t","aud":"a"}', "{}", " x "])
-    expect(() => signInOf({ ...values, proxy })).toThrow(/PROXY_SIGN_IN.*GATE_KEY/s);
-  // With the gate's key the gate signs people in, whatever the old setting says; with neither, the OAuth providers.
-  expect(signInOf({ ...values, proxy: "{}", gate: KEY })).toEqual({ mode: "gate", key: KEY });
-  expect(signInOf(values).mode).toBe("oauth");
+    expect(() => signInOf({ ...values, proxy })).toThrow(/PROXY_SIGN_IN.*no gate/s);
+  // With a gate the gate signs people in, whatever the old setting says.
+  expect(signInOf({ ...values, proxy: "{}", gate: KEY })).toEqual({ mode: "gate", at: "front", key: KEY });
+  expect(signInOf({ ...values, proxy: "{}", sso: access }).mode).toBe("gate");
   expect(signInOf({ ...values, proxy: "  " }).mode).toBe("oauth");
 });
 

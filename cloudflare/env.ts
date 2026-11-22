@@ -100,14 +100,22 @@ export interface Env {
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
   /**
-   * A gate in front of the server (server/identity/mode.ts; gate/mounts/): the key that it sends with each request
-   * (the header x-erga-front), a secret of 32 characters or more that the deploy gives both. Any value: this Worker
-   * runs no gate of its own, trusts the caller that the gate names, and refuses every request without the key.
+   * A gate in front of the server (server/identity/mode.ts; on AWS: gate/mounts/cloudfront.ts): the key that it sends
+   * with each request, a secret of 32 characters or more that the deploy gives both. Any value: this Worker runs no
+   * gate of its own, trusts the caller that the gate names, and refuses every request without the key.
    */
   GATE_KEY?: string;
   /**
+   * Single sign-on with the gate inside this Worker (on Cloudflare: gate/sso.ts), as JSON: Cloudflare Access in front
+   * of the app's host ({"access": {"team", "aud"}}), or an OIDC issuer ({"oidc": {"issuer", "authorize", "token",
+   * "client"}}). Any value: only the organization's people come in.
+   */
+  SSO?: string;
+  /** With an OIDC issuer in SSO: the client's secret there (a secret). */
+  SSO_CLIENT_SECRET?: string;
+  /**
    * The setting of the sign-in at a proxy in front, from before the gate. The server reads nothing from it: a server
-   * that still has it, and no GATE_KEY, refuses every request with an error that says so (server/identity/mode.ts).
+   * that still has it, and no gate, refuses every request with an error that says so (server/identity/mode.ts).
    */
   PROXY_SIGN_IN?: string;
   /** On celld (deploy/aws/machine.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */

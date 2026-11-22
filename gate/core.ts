@@ -1,18 +1,24 @@
 // The gate: the one check in front of every request, in every configuration. Plain functions that read a request and
 // give an answer (a redirect, a cookie, a token) or who is calling (`Caller`): `gate`, for a request; `signedIn` and
 // `after`, for what follows it. It does no IO: it reads no body, calls no network and keeps no state, and its only
-// tools are HMAC and SHA-256 (`Port`). So it runs as it is in CloudFront Functions, in a Worker in front of Erga, and
-// inside Erga's own Worker. `gate` is three parts in turn (`agents`, `edge`, `pass`): on CloudFront each part is a
-// function of its own, for its own paths, under CloudFront's 10 KB (tests/gate-mounts.test.ts holds each there).
-// A mount (gate/mounts/) turns its platform's request into a `Req`, does what an answer asks, and does the two things
-// the gate can't: the sign-in's code exchange (a network call) and reading /oauth/token's body into a header.
+// tools are HMAC and SHA-256 (`Port`). So it runs as it is in CloudFront Functions (in front of Erga, on AWS) and
+// inside Erga's own Worker (on Cloudflare, and wherever anyone may come in). `gate` is three parts in turn (`agents`,
+// `edge`, `pass`): on CloudFront each part is a function of its own, for its own paths (`PATTERNS`), under
+// CloudFront's 10 KB (tests/gate-mounts.test.ts holds each there).
+//
+// Every decision about who may pass is in this folder, and most of them in this file. The two that need the network
+// are beside it: the check of Cloudflare Access's proof (access.ts) and the sign-in's code exchange (oidc.ts). A mount
+// (gate/mounts/) decides nothing: it turns its platform's request into a `Req`, does what an answer asks, calls those
+// two, and reads /oauth/token's body into a header. No other folder holds a list of open paths or a check of a
+// sign-in (tests/gate-one-place.test.ts).
 //
 // The configuration decides what runs, never a second design:
 //
 //   open       anyone may come in (OAuth mode): a request with no proof goes on as nobody. Else (SSO) only a request
 //              with a proof goes on.
-//   idp        who signs people in: OIDC issuers by name, or "access" (Cloudflare Access in front: the mount gives
-//              each request's person, and the gate has no sign-in, no callback and no shell cookie of its own).
+//   idp        who signs people in: OIDC issuers by name, or "access" (Cloudflare Access in front of the shell's host:
+//              the mount gives each request's person, as access.ts found them, and the gate has no sign-in, no
+//              callback and no shell cookie of its own).
 //   content    the documents' domain. Under the shell's host (pages.erga.dev under erga.dev): one member cookie for the
 //              shell's domain, and no vouch, accept, ticket or nonce. Anywhere else: the hand-off below.
 //
@@ -60,6 +66,10 @@
 //   accept.<content>/_edge/accept         its proof is the ticket, with the browser's nonce.
 //
 // The vouch and sign-out's frame on the accept host need a member cookie.
+//
+// Behind Cloudflare Access, Access must let the paths through that carry no proof of its own (`ACCESS_OPEN`): there the
+// gate checks its own values, as everywhere. Every other path of the shell comes with Access's proof, or goes nowhere.
+// A gate in front proves itself to Erga with a key (`front`): Erga answers no request without it.
 //
 // Trap: the ticket goes only to the accept host, which has no documents. A document's script reads the address of any
 // frame on its own origin (an error page's too), so a ticket in an address there is a ticket stolen.
@@ -113,6 +123,14 @@ export interface Config {
   grantDays?: number;
   /** Local development: a suffix of every cookie's name (one server for each port). */
   tag?: string;
+  /**
+   * The path of the server's health report (HEALTH), where the deploy's own check has no other way to it: a GET of it
+   * goes on as nobody, with no proof. Only the gate inside a Worker names it: the account's deployer asks the report
+   * after each deploy, through its binding to the Worker, and that request passes the gate as every other does. The
+   * report names the release and its checks, and nothing of a person or a document. A gate in front names none: there
+   * the machine asks itself.
+   */
+  health?: string;
 }
 
 /** Who a sign-in says someone is. */
@@ -172,6 +190,41 @@ export const ASK = "x-erga-gate";
 /** The header a pasted token goes back in. */
 export const TOKEN = "x-erga-token";
 
+
+/** The gate's own paths, and those of MCP's authorization server that are open with no proof. */
+const EDGE = "/_edge/";
+export const SIGN_IN = "/_edge/sign-in";
+export const CALLBACK = "/_edge/callback";
+const VOUCH = "/_edge/vouch";
+const ACCEPT = "/_edge/accept";
+export const SIGN_OUT = "/_edge/sign-out";
+const TOKEN_PATH = "/oauth/token";
+const REGISTER = "/oauth/register";
+/** Where an agent's app reads which server signs it in (RFC 9728), and that server's addresses (RFC 8414). */
+export const RESOURCE = "/.well-known/oauth-protected-resource";
+/** The server's health report (Config.health). */
+export const HEALTH = "/api/health";
+const SERVER = "/.well-known/oauth-authorization-server";
+
+/**
+ * The paths of each part, as patterns, for a mount that runs the parts apart (CloudFront: a behavior each). `edge`: the
+ * gate's own paths. `forms`: the agents' paths whose POST has a body for the gate. `fixed`: the agents' metadata.
+ * Every other path is `pass`'s.
+ */
+export const PATTERNS = { edge: [`${EDGE}*`], forms: [TOKEN_PATH, REGISTER], fixed: ["/.well-known/oauth-*"] };
+
+/**
+ * Behind Cloudflare Access: the paths of the shell's host that the Access application must let through with no
+ * sign-in (a bypass policy for everyone), because what comes there has no Access proof. The vouch: a frame of the
+ * documents' site, and the browser sends no Lax cookie with it. The agents' metadata, registration and token
+ * endpoint: an agent's app has no proof before its token. MCP: an agent's app has the gate's token, never an Access
+ * sign-in. The gate checks its own values on each.
+ */
+export const ACCESS_OPEN = [VOUCH, RESOURCE, SERVER, TOKEN_PATH, REGISTER, "/mcp"];
+
+/** The header a gate in front proves itself to Erga with: the key that the deploy gave both. Never from outside. */
+export const FRONT = "x-erga-front";
+
 const HOUR = 3600;
 /**
  * How many days a sign-in lasts when nobody says (Config.hours), and the most that a deploy or an admin may say (from
@@ -189,6 +242,12 @@ const same = (a: string, b: string) => {
   for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i % (b.length || 1));
   return d == 0;
 };
+
+/**
+ * Whether a request came through the gate in front: it carries the key that only that gate and Erga hold (`sent`: the
+ * header FRONT). A key too short to be a secret is no key: then nothing passes.
+ */
+export const front = (sent: string | null | undefined, key: string) => key.length >= 32 && same(sent ?? "", key);
 
 /** The value `<kind>.<claims>.<HMAC>`: `claims` with its end `e` (seconds). */
 export async function seal(p: Port, key: string, kind: string, claims: object, e: number): Promise<string> {
@@ -345,7 +404,7 @@ export const gate = async (q: Req, c: Config, p: Port): Promise<Answer> =>
   (await agents(q, c, p)) ?? (await edge(q, c, p)) ?? pass(q, c, p);
 
 /** The gate's own addresses: its paths (/_edge/...), and everything on the accept host. */
-const own = (q: Req, c: Config) => q.path.startsWith("/_edge/") || q.host == acceptHost(c);
+const own = (q: Req, c: Config) => q.path.startsWith(EDGE) || q.host == acceptHost(c);
 
 /** A request to any address but the gate's own and the agents' open ones: an answer, or on to Erga with the caller. */
 export async function pass(q: Req, c: Config, p: Port): Promise<Answer> {
@@ -355,6 +414,8 @@ export async function pass(q: Req, c: Config, p: Port): Promise<Answer> {
   if (isContent(q.host, c)) return content(q, c, p, now);
   // Another host (a custom domain's published site): its own, with nobody; behind SSO, nothing.
   if (q.host != c.shell) return c.open ? forward(NOBODY) : respond(404, "Not found");
+  // The health report (Config.health): nobody's, whatever came with the request.
+  if (c.health && q.method == "GET" && q.path == c.health) return forward(NOBODY);
   const who = await callerOf(q, c, p, now);
   if (who == "bad") return unauthorized(c, /^Bearer\s/i.test(q.headers.authorization ?? ""));
   if (c.oauth && q.path == "/oauth/authorize") {
@@ -378,12 +439,12 @@ export const memberFor = async (q: Req, c: Config, p: Port, who: Caller, now = M
 
 const unauthorized = (c: Config, invalid = false) =>
   respond(401, "Sign in first.", {
-    "www-authenticate": `Bearer resource_metadata="${scheme(c)}${c.shell}/.well-known/oauth-protected-resource"${invalid ? ', error="invalid_token"' : ""}`,
+    "www-authenticate": `Bearer resource_metadata="${scheme(c)}${c.shell}${RESOURCE}"${invalid ? ', error="invalid_token"' : ""}`,
   });
 
 /** Off to sign in, and back to this address. Under Access there is no sign-in of the gate's: Access signs in, before it. */
 const toSignIn = (q: Req, c: Config) =>
-  c.idp == "access" ? unauthorized(c) : to(withQuery(c.chooser ?? "/_edge/sign-in", { next: withQuery(q.path, q.query) }));
+  c.idp == "access" ? unauthorized(c) : to(withQuery(c.chooser ?? SIGN_IN, { next: withQuery(q.path, q.query) }));
 
 /**
  * Who calls the shell: an agent by its token, else a person by the shell cookie (or Access's proof). "bad": a token
@@ -435,7 +496,7 @@ async function content(q: Req, c: Config, p: Port, now: number): Promise<Answer>
   if (await each(p, c.key, "d", q.cookies[NONCE(c)], now)) return unsupported(401);
   const nonce = await p.hmac(c.key, `nonce.${q.id}`);
   const back = withQuery(`${scheme(c)}${q.host}${q.path}`, q.query);
-  return hop(withQuery(`${scheme(c)}${c.shell}/_edge/vouch`, { back, n: await p.sha256(nonce) }), [
+  return hop(withQuery(`${scheme(c)}${c.shell}${VOUCH}`, { back, n: await p.sha256(nonce) }), [
     cookie(c, NONCE(c), nonce, 120, "None", c.content),
   ]);
 }
@@ -447,17 +508,17 @@ export async function edge(q: Req, c: Config, p: Port): Promise<Answer | null> {
   const shell = c.idp != "access" && q.host == c.shell;
   if (q.method != "GET") return respond(404, "Not found");
   if (q.host == acceptHost(c) && !sameSite(c)) {
-    if (q.path == "/_edge/accept") return accept(q, c, p, now);
+    if (q.path == ACCEPT) return accept(q, c, p, now);
     // Sign-out's hidden frame: the content domain's member cookie ends, in the shell's partition, and the accept's
     // mark with it (else the next sign-in's first frame gets a 401 while the mark lasts). Only for a browser that has
     // the member cookie (where anyone may come in, there is no proof to ask for).
-    if (q.path == "/_edge/sign-out")
+    if (q.path == SIGN_OUT)
       return c.open || (await each(p, c.key, "m", q.cookies[MEMBER(c)], now))
         ? respond(200, "", {}, [cookie(c, MEMBER(c), "", 0, "None", c.content), cookie(c, NONCE(c), "", 0, "None", c.content)])
         : respond(401, "Sign in first.");
-  } else if (q.host == c.shell && q.path == "/_edge/vouch" && !sameSite(c)) return vouch(q, c, p, now);
-  else if (shell && q.path == "/_edge/sign-in") return signIn(q, c, p, now);
-  else if (shell && q.path == "/_edge/callback") return callback(q, c, p, now);
+  } else if (q.host == c.shell && q.path == VOUCH && !sameSite(c)) return vouch(q, c, p, now);
+  else if (shell && q.path == SIGN_IN) return signIn(q, c, p, now);
+  else if (shell && q.path == CALLBACK) return callback(q, c, p, now);
   return respond(404, "Not found");
 }
 
@@ -478,7 +539,7 @@ async function signIn(q: Req, c: Config, p: Port, now: number): Promise<Answer> 
   const at = withQuery(idp.authorize, {
     response_type: "code",
     client_id: idp.client,
-    redirect_uri: `${scheme(c)}${c.shell}/_edge/callback`,
+    redirect_uri: `${scheme(c)}${c.shell}${CALLBACK}`,
     scope: idp.scope,
     state: s,
     code_challenge: await p.sha256(v),
@@ -513,7 +574,7 @@ async function callback(q: Req, c: Config, p: Port, now: number): Promise<Answer
     idp: st.p,
     code: q.query.code,
     verifier: st.v,
-    redirect: `${scheme(c)}${c.shell}/_edge/callback`,
+    redirect: `${scheme(c)}${c.shell}${CALLBACK}`,
     next: st.x,
     x: st.t,
   };
@@ -526,8 +587,7 @@ async function callback(q: Req, c: Config, p: Port, now: number): Promise<Answer
  */
 export async function signedIn(q: Req, c: Config, p: Port, id: Identity, next?: string): Promise<Answer> {
   const now = Math.floor(q.now / 1000);
-  const st =
-    q.method == "GET" && q.host == c.shell && q.path == "/_edge/callback" && c.idp != "access" ? await stateOf(q, c, p, now) : null;
+  const st = q.method == "GET" && q.host == c.shell && q.path == CALLBACK && c.idp != "access" ? await stateOf(q, c, p, now) : null;
   if (!st || st.p != id.p || !id.sub || typeof id.sub != "string") return respond(400, "This sign-in expired. Start again.");
   return to(local(next ?? st.x), [...(await signInCookies(q.now, c, p, id)), cookie(c, STATE(c), "", 0, "Lax")]);
 }
@@ -559,7 +619,7 @@ async function vouch(q: Req, c: Config, p: Port, now: number): Promise<Answer> {
   const { back, n } = q.query;
   if (!onContent(back, c) || !n || n.length != 43 || !B64.test(n)) return respond(400, "Not a document's address.");
   const ticket = await seal(p, c.key, "t", { n, m: m.e }, Math.min(now + 60, m.e));
-  return hop(withQuery(`${scheme(c)}${acceptHost(c)}/_edge/accept`, { ticket, back }));
+  return hop(withQuery(`${scheme(c)}${acceptHost(c)}${ACCEPT}`, { ticket, back }));
 }
 
 /** /_edge/accept?ticket=&back=, on the accept host: the ticket, by the browser that holds its nonce, for the member cookie. */
@@ -615,8 +675,8 @@ function asked(q: Req, c: Config) {
 export async function agents(q: Req, c: Config, p: Port): Promise<Answer | null> {
   if (!c.oauth || q.host != c.shell) return null;
   const now = Math.floor(q.now / 1000);
-  if (q.path == "/oauth/token") return token(q, c, p, now);
-  if (q.path == "/oauth/register") return register(q, c, p, now);
+  if (q.path == TOKEN_PATH) return token(q, c, p, now);
+  if (q.path == REGISTER) return register(q, c, p, now);
   return metadata(q, c);
 }
 
@@ -689,20 +749,20 @@ export const clientLabel = (clientId: string) =>
 function metadata(q: Req, c: Config): Answer | null {
   const origin = `${scheme(c)}${c.shell}`;
   const cache = { "cache-control": "public, max-age=3600" };
-  if (q.path == "/.well-known/oauth-protected-resource" || q.path == "/.well-known/oauth-protected-resource/mcp")
+  if (q.path == RESOURCE || q.path == `${RESOURCE}/mcp`)
     return json(
       200,
       { resource: `${origin}/mcp`, authorization_servers: [origin], bearer_methods_supported: ["header"], resource_name: "Erga" },
       cache
     );
-  if (q.path == "/.well-known/oauth-authorization-server")
+  if (q.path == SERVER)
     return json(
       200,
       {
         issuer: origin,
         authorization_endpoint: `${origin}/oauth/authorize`,
-        token_endpoint: `${origin}/oauth/token`,
-        registration_endpoint: `${origin}/oauth/register`,
+        token_endpoint: `${origin}${TOKEN_PATH}`,
+        registration_endpoint: `${origin}${REGISTER}`,
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
         token_endpoint_auth_methods_supported: ["none"],

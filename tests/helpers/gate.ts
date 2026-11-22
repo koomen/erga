@@ -13,7 +13,9 @@ import {
   type Req,
   seal,
 } from "../../gate/core.ts";
+import type { Mount } from "../../gate/mounts/web.ts";
 import { webPort as port } from "../../gate/port.ts";
+import { ssoOf } from "../../gate/sso.ts";
 
 export { gate, port };
 export const KEY = "edge-key-1";
@@ -37,6 +39,33 @@ export const near: Config = { ...sso, content: "pages.erga.example.com" };
 export const oauth: Config = { ...sso, open: true, idp: { github: IDP, google: IDP }, chooser: "/auth/sign-in" };
 /** SSO behind Cloudflare Access. */
 export const access: Config = { ...sso, idp: "access" };
+
+/**
+ * The gate inside a Worker with the organization's sign-in (gate/sso.ts), as Erga's own Worker mounts it
+ * (server/identity/mount.ts): only a request with a proof goes on to `upstream`. `sso`: the deploy's setting.
+ */
+export function insideMount(o: {
+  key: string;
+  shell: string;
+  content: string;
+  sso: object;
+  secret?: string;
+  ask?: typeof fetch;
+  upstream: (request: Request) => Promise<Response>;
+}): Mount {
+  const sso = ssoOf(JSON.stringify(o.sso), o.secret ?? "", o.ask);
+  const config: Config = { key: o.key, shell: o.shell, content: o.content, https: true, open: false, idp: sso.idp, oauth: true };
+  return {
+    config: () => config,
+    port,
+    exchange: async (x) => {
+      const identity = await sso.exchange(x);
+      return identity ? { identity } : new Response("Sign-in didn't work. Try again.", { status: 400 });
+    },
+    ...(sso.access ? { access: sso.access } : {}),
+    upstream: o.upstream,
+  };
+}
 
 export const ADA = { p: "sso", sub: "sub-ada", email: "ada@example.com", name: "Ada" };
 

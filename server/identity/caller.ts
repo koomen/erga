@@ -3,7 +3,7 @@
 // for the few things only the gate does (it alone signs): an agent's code or token, and sign-out.
 //
 // Where the gate runs is the deploy's choice (mode.ts): inside this Worker, as its first call (mount.ts), or in front
-// of it. Erga's code is the same in both: it reads the caller here, and answers with the header x-erga-gate.
+// of it. Erga's code is the same in both: it reads the caller here, and answers with the header that asks the gate.
 //
 // Trap: the caller's header counts only because nothing reaches the app but through the gate. cloudflare/index.ts
 // passes every request through `gated` (mount.ts), and nothing else may call the app with an outside request.
@@ -11,9 +11,9 @@
 // before the app, and a new server's first ones come before its database has a table (cloudflare/dev.ts,
 // /__erga/migrate): a read on every path stops them all.
 
-import { ASK, type Caller, type Config, type Identity, signInCookies } from "../../gate/core.ts";
+import { ASK, CALLBACK, type Caller, type Config, HEALTH, type Identity, SIGN_IN, signInCookies } from "../../gate/core.ts";
 import { webPort } from "../../gate/port.ts";
-import { FRONT, readCaller } from "../../gate/mounts/web.ts";
+import { readCaller } from "../../gate/mounts/web.ts";
 import { HttpServerResponse } from "effect/http";
 import { isLocal } from "../../shared/http.ts";
 import { SIGN_IN_PROVIDERS, SSO } from "../../shared/sign-in.ts";
@@ -28,7 +28,6 @@ export const callerOf = (request: Request): Caller => readCaller(request, webPor
 
 /** Local development's issuer: its subject is an account's login. It counts only there (admit.ts). */
 export const DEV = "dev";
-export { FRONT };
 /** Local development: this browser signed out, so it's nobody (not the dev login) until it signs in again (mount.ts). */
 export const SIGNED_OUT = "erga_signed_out";
 
@@ -74,35 +73,46 @@ const portOf = (url: URL) => (isLocal(url) && url.port ? `:${url.port}` : "");
 export const contentDomain = (platform: Pick<Platform, "pagesDomain">, url: URL) => `${platform.pagesDomain(url)}${portOf(url)}`;
 
 /**
- * The gate's settings, where it runs inside this Worker: anyone may come in (a request with no proof goes on as
- * nobody), and the OAuth providers sign people in. `url`: the request's address. Its issuers are read only by the
- * gate's own sign-in (/_edge/sign-in?idp=): there, the app of the provider it names (x=pending: the values that wait
- * for a test sign-in). How long a sign-in lasts is the admins' setting (sign_in_days), read only where the gate signs
- * one: its callback (this file's second trap). A change is for the sign-ins after it: a cookie keeps the end it was
- * signed with. Local development's own sign-in (signInCookiesFor) lasts the gate's own 30 days, whatever the setting.
+ * The gate's settings, where it runs inside this Worker. `url`: the request's address.
+ *
+ * Where anyone may come in (oauth): a request with no proof goes on as nobody, and the OAuth providers sign people in.
+ * Its issuers are read only by the gate's own sign-in (?idp=): there, the app of the provider it names (x=pending:
+ * the values that wait for a test sign-in).
+ * With the organization's sign-in (gate/sso.ts): only a request with a proof goes on, and the issuer is the deploy's,
+ * or Cloudflare Access. The shell is the deploy's app host and no other: an address of this Worker that the deploy
+ * did not name (workers.dev) is no way in. One path goes on with no proof, as nobody: the server's health report,
+ * which the account's deployer asks after each deploy (gate/core.ts, Config.health).
+ *
+ * How long a sign-in lasts is the admins' setting (sign_in_days), read only where the gate signs one: its callback
+ * (this file's second trap). A change is for the sign-ins after it: a cookie keeps the end it was signed with. Local
+ * development's own sign-in (signInCookiesFor) lasts the gate's own 30 days, whatever the setting.
  */
 export async function gateConfig(platform: Platform, url: URL): Promise<Config> {
   const content = contentDomain(platform, url);
   const host = url.host.toLowerCase();
+  const sso = platform.signIn.mode == "gate" && platform.signIn.at == "inside" ? platform.signIn.sso : null;
   // A document's host, or a custom domain's, has the app's host as its shell: the deploy says which that is.
   const apart =
     host.endsWith(`.${content}`) || url.hostname == platform.pagesShared?.(url) || platform.deploy.domains.includes(url.hostname);
   const idp: Config["idp"] = {};
-  const id = url.pathname == "/_edge/sign-in" ? providerOf(url.searchParams.get("idp")) : null;
+  const id = url.pathname == SIGN_IN ? providerOf(url.searchParams.get("idp")) : null;
   if (id && platform.signIn.mode == "oauth") {
     const app = await signInApp(platform, url.searchParams.get("x") == "pending" ? "pending" : "active", id);
     if (app?.clientId) idp[id] = await issuerOf(platform, id, app.clientId);
   }
+  const app = platform.deploy.app ? platform.deploy.app + portOf(url) : "";
   return {
     key: await edgeKey(platform.secret),
-    shell: apart ? (platform.deploy.app ? platform.deploy.app + portOf(url) : "") : host,
+    shell: apart ? app : (sso && app) || host,
     content,
     https: url.protocol == "https:",
-    open: true,
-    idp,
-    chooser: "/auth/sign-in",
+    open: !sso,
+    idp: sso ? sso.idp : idp,
+    // (With the organization's sign-in: the deployer's check of a new release has no sign-in. Where anyone may come
+    // in, the report goes on as every path does.)
+    ...(sso ? { health: HEALTH } : { chooser: "/auth/sign-in" }),
     oauth: true,
-    ...(url.pathname == "/_edge/callback" ? { hours: (await platform.directory.config.get("sign_in_days")) * 24 } : {}),
+    ...(url.pathname == CALLBACK ? { hours: (await platform.directory.config.get("sign_in_days")) * 24 } : {}),
     grantDays: GRANT_DAYS,
     tag: portOf(url).replace(":", "_"),
   };

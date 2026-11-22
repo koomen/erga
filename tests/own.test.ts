@@ -8,16 +8,7 @@ import { join } from "node:path";
 import { openTerminal } from "../deploy/own/browser";
 import { readOptions } from "../deploy/own/cli";
 import { checksOf, deploysText, missing, nothingSeen, planText, type Seen, step } from "../deploy/own/flow";
-import {
-  type Answers,
-  firstRows,
-  namesOf,
-  noAnswers,
-  parseAnswer,
-  proxySetting,
-  setupEntry,
-  varsOf,
-} from "../deploy/own/plan";
+import { type Answers, firstRows, namesOf, noAnswers, parseAnswer, setupEntry, ssoSetting, varsOf } from "../deploy/own/plan";
 import { MARK } from "./helpers/aws-setup";
 
 const HOST = "erga.example.com";
@@ -86,9 +77,11 @@ test("the command says each option it still needs, before it looks at anything",
   expect(missing(options("--host", "cloudflare").answers)).toEqual([
     "--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.",
   ]);
-  expect(missing(options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--deploys", "cloud").answers)).toEqual([
-    "--aud <tag>: the Access application's Audience tag.",
-  ]);
+  expect(
+    missing(
+      options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--pages", "example-pages.com", "--deploys", "cloud").answers
+    )
+  ).toEqual(["--aud <tag>: the Access application's Audience tag."]);
   // AWS: without single sign-on the pages need a domain of their own.
   expect(missing(options("--host", "aws").answers)).toEqual([
     "--pages <domain>: a second Route 53 domain of the account, for the documents' pages.",
@@ -250,14 +243,73 @@ test("a new server's settings and first rows: invited users only; single sign-on
   expect(firstRows(a)).toEqual([]);
   // Setup gives the server no GitHub app: only a deploy that has one of its own names it.
   expect([varsOf(a, undefined).GITHUB_CLIENT_ID, varsOf(a, "Iv1.x").GITHUB_CLIENT_ID]).toEqual(["", "Iv1.x"]);
-  // Single sign-on on Cloudflare: the team and the Audience tag are options; no app step.
-  const sso = options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--aud", "f".repeat(64)).answers;
-  expect(run(sso, CF, CF).state).toEqual({ at: "build" });
+  // Single sign-on on Cloudflare, with Cloudflare Access in front: the team and the Audience tag are options; no app
+  // step. The documents need a domain of their own: a whole one, and not the app's.
+  const CF2 = { ...CF, zones: ["example.com", "example-pages.com"] };
+  const access = ["--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--aud", "f".repeat(64)];
+  expect(missing({ ...options(...access).answers, deploys: "local" })).toEqual([
+    "--pages <domain>: a second domain of the Cloudflare account, for the documents' pages (with single sign-on they need one).",
+  ]);
+  const sso = options(...access, "--pages", "example-pages.com").answers;
+  expect(run(sso, CF2, CF2).state).toEqual({ at: "build" });
   expect(JSON.parse(varsOf(sso, undefined).SERVER_DEFAULTS)).toMatchObject({ anyone_access: "none", public_sharing: false });
-  expect(varsOf(run(sso, CF).answers, "Iv1.unused")).toMatchObject({
-    GITHUB_CLIENT_ID: "",
-    PROXY_SIGN_IN: JSON.stringify({ kind: "cloudflare-access", team: "acme", aud: "f".repeat(64) }),
+  expect(run({ ...sso, pages: "example.com" }, CF2, CF2).state).toMatchObject({
+    at: "stop",
+    why: expect.stringContaining("another domain than the app's"),
   });
+  expect(run({ ...sso, pages: "pages.example.com" }, CF2, CF2).state).toMatchObject({
+    at: "stop",
+    why: expect.stringContaining("a whole domain of their own"),
+  });
+  expect(run({ ...sso, pages: "shared" }, CF2, CF2).state).toMatchObject({ at: "stop", why: expect.stringContaining("need a domain") });
+  expect(varsOf(run(sso, CF2).answers, "Iv1.unused")).toEqual({
+    GITHUB_CLIENT_ID: "",
+    SSO: JSON.stringify({ access: { team: "acme", aud: "f".repeat(64) } }),
+    SERVER_DEFAULTS: expect.any(String),
+  });
+  expect(setupEntry(run(sso, CF2).answers, { zones: CF2.zones, subdomain: null }).pages).toEqual({
+    kind: "zone",
+    zoneName: "example-pages.com",
+  });
+  // The plan names the paths that the Access application must let through: the gate's own list.
+  expect(planText(sso, seen(CF2)).join("\n")).toContain(
+    "(Bypass, everyone): /_edge/vouch, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /oauth/token, /oauth/register, /mcp."
+  );
+  // Or with no Access: an issuer of the organization's own. Its client's secret is the page's alone (the app step),
+  // and the server's setting names the endpoints that the issuer publishes.
+  const issuer = [
+    "--host",
+    "cloudflare",
+    "--sign-in",
+    "sso",
+    "--issuer",
+    "https://idp.example.com",
+    "--client",
+    "c1",
+    "--pages",
+    "example-pages.com",
+  ];
+  const oidc = options(...issuer).answers;
+  const endpoints = { authorize: "https://idp.example.com/authorize", token: "https://idp.example.com/token" };
+  expect(run(oidc, CF2, { ...CF2, oidc: endpoints }).state).toEqual({ at: "app", kind: "oidc" });
+  expect(run(oidc, CF2, { ...CF2, oidc: endpoints, app: true }).state).toEqual({ at: "build" });
+  expect(run(oidc, CF2, { ...CF2, oidc: { why: "The sign-in's issuer didn't answer." } }).state).toEqual({
+    at: "stop",
+    why: "The sign-in's issuer didn't answer. Give another --issuer.",
+  });
+  expect(JSON.parse(ssoSetting(run(oidc, CF2).answers, endpoints)!)).toEqual({
+    oidc: { issuer: "https://idp.example.com", ...endpoints, client: "c1" },
+  });
+  expect(planText(oidc, seen(CF2)).join("\n")).toContain("Nothing else is in front of the Worker");
+  // One of the two, and each one whole.
+  const need = (...more: string[]) =>
+    missing({ ...options("--host", "cloudflare", "--sign-in", "sso", "--pages", "example-pages.com", ...more).answers, deploys: "local" });
+  expect(need()).toEqual([expect.stringContaining("--team <name> and --aud <tag>")]);
+  expect(need("--team", "acme")).toEqual(["--aud <tag>: the Access application's Audience tag."]);
+  expect(need("--issuer", "https://idp.example.com")).toEqual(["--client <ID>: Erga's client ID at the organization's sign-in."]);
+  expect(need("--team", "acme", "--aud", "f".repeat(64), "--issuer", "https://idp.example.com", "--client", "c")).toEqual([
+    "--team and --aud (Cloudflare Access), or --issuer and --client (the organization's own sign-in): not both.",
+  ]);
   // Single sign-on is the wall: anyone who passes it may write (Anyone's level).
   expect(firstRows(sso, 5)).toEqual([
     {
@@ -267,7 +319,8 @@ test("a new server's settings and first rows: invited users only; single sign-on
       onConflict: "(key) DO UPDATE SET value = excluded.value",
     },
   ]);
-  expect(proxySetting(a)).toBeNull();
+  // No single sign-on, or on AWS (the gate in front has its values in its own code): no such setting.
+  expect([ssoSetting(a), ssoSetting({ ...sso, where: "aws" })]).toEqual([null, null]);
 });
 
 test("AWS: the profile, the region from it, the stack as the plan, and the organization's sign-in on a page of its own", () => {
@@ -283,43 +336,30 @@ test("AWS: the profile, the region from it, the stack as the plan, and the organ
     at: "stop",
     why: "Several AWS profiles: default, work. Add --profile with one of them.",
   });
-  // A sign-in with no email claim: where the address is, after its prefix, reaches the server's setting.
-  const corp = options(
-    "--host",
-    "aws",
-    "--sign-in",
-    "sso",
-    "--issuer",
-    "https://idp.example.com/pool",
-    "--client",
-    "c",
-    "--email-claim",
-    "preferred_username:corp|"
+  expect(planText(r.answers, seen(AWS))).toContain(
+    "• your organization's sign-in, at the gate in front of Erga (you type its client secret on a page that opens). When the server runs, its setup page opens in your browser: you sign in with your organization's sign-in, and you become the admin"
   );
-  expect(JSON.parse(proxySetting(corp.answers, "arn:p")!)).toEqual({
-    kind: "aws-alb",
-    signer: "arn:p",
-    issuer: "https://idp.example.com/pool",
-    client: "c",
-    email: { claim: "preferred_username", prefix: "corp|" },
-  });
-  expect(planText({ ...r.answers, emailClaim: "preferred_username:corp|" }, seen(AWS))).toContain(
-    '• your organization\'s sign-in, at the gate in front of Erga (you type its client secret on a page that opens); the email address in preferred_username, after "corp|"'
-  );
-  expect(options("--email-claim", "preferred_username corp|").problems).toEqual([
-    '--email-claim: "preferred_username corp|" isn\'t <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".',
-  ]);
-  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), emailClaim: "upn", deploys: "local" })).toEqual([
-    "--email-claim is only for --sign-in sso on AWS: leave it out.",
-  ]);
+  // The option from before the gate (the load balancer read the address from another claim) is gone: the gate takes
+  // the email claim only, with the issuer's word that it verified it.
+  expect(options("--email-claim", "preferred_username:corp|").problems).toEqual(["--email-claim isn't an option of bun erga setup."]);
   // How long a sign-in at the gate lasts: the deploy's to say, from 1 to 90 days.
   expect(options("--sign-in-days", "7").answers.signInDays).toBe("7");
   for (const bad of ["0", "91", "1.5", "week"])
     expect(options("--sign-in-days", bad).problems).toEqual([`--sign-in-days: "${bad}" isn't a whole number of days from 1 to 90.`]);
   expect(planText({ ...r.answers, signInDays: "7" }, seen(AWS)).join("\n")).toContain("; a sign-in lasts 7 days");
-  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), signInDays: "7", deploys: "local" })).toEqual([
-    "--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page.",
-  ]);
+  expect(
+    missing({
+      ...sso,
+      where: "cloudflare",
+      issuer: "",
+      client: "",
+      team: "acme",
+      aud: "f".repeat(64),
+      pages: "example-pages.com",
+      signInDays: "7",
+      deploys: "local",
+    })
+  ).toEqual(["--sign-in-days is only for --sign-in sso on AWS: leave it out. An admin sets it on the server's Settings page."]);
   // The client's secret is the page's alone: the app step.
   expect(run(r.answers, AWS).state).toEqual({ at: "app", kind: "oidc" });
   expect(planText(r.answers, seen(AWS))).toContain(`• the documents' pages on pages.${HOST}`);
@@ -360,7 +400,7 @@ test("--remote: the user's steps need their terminal; an agent's shell, with non
   expect(run(a, { ...AWS, ...LIVE, app: true, terminal: true }).state).toEqual({ at: "page" });
   expect(run({ ...a, remote: false }, AWS).state).toEqual({ at: "app", kind: "oidc" });
   expect(planText(a, seen(AWS))).toContain(
-    "• your organization's sign-in, at the gate in front of Erga (you type its client secret in your terminal)"
+    "• your organization's sign-in, at the gate in front of Erga (you type its client secret in your terminal). When the server runs, its setup page opens from a link on your terminal: you sign in with your organization's sign-in, and you become the admin"
   );
   // The terminal is /dev/tty, the user's own: never stdin, stdout or stderr. None (an agent's shell): null.
   const asked: string[] = [];
@@ -414,32 +454,40 @@ test("an instance's names come from its entry, or from its address; its entry fr
 });
 
 test("a run again with other sign-in answers writes the entry again and deploys, before the setup page", () => {
-  const sso = options(
+  const CF2 = { ...CF, zones: ["example.com", "example-pages.com"] };
+  const a = options(
     "--host",
-    "aws",
+    "cloudflare",
     "--sign-in",
     "sso",
-    "--issuer",
-    "https://idp.example.com/pool",
-    "--client",
-    "c",
-    "--profile",
-    "work"
-  );
-  const a = { ...sso.answers, region: "us-west-2" };
-  const corp = { ...a, emailClaim: "preferred_username:corp|" };
-  const built = { ...AWS, ...LIVE, app: true, stack: { status: "CREATE_COMPLETE", outputs: { Proxy: "arn:p" }, resources: [] } };
-  // The first build wrote the entry without the email claim.
-  const vars = varsOf(a, undefined, "arn:p");
-  expect(run(a, { ...built, vars }).state).toEqual({ at: "page" });
-  // The user runs setup again with --email-claim: the server's setting changes, so setup deploys again.
-  expect(run(corp, { ...built, vars }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
-  expect(run(corp, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "page" });
-  // A run again that leaves out --email-claim means no email claim: the options are the whole answer.
-  expect(run(a, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
+    "--team",
+    "acme",
+    "--aud",
+    "f".repeat(64),
+    "--pages",
+    "example-pages.com",
+    "--deploys",
+    "local"
+  ).answers;
+  const other = { ...a, aud: "e".repeat(64) };
+  const built = { ...CF2, ...LIVE };
+  // The first build wrote the entry for one Access application.
+  const vars = varsOf(a, undefined);
+  expect(run(a, CF2, { ...built, vars }).state).toEqual({ at: "page" });
+  // The user runs setup again with another application's tag: the server's setting changes, so setup deploys again.
+  expect(run(other, CF2, { ...built, vars }).state).toEqual({ at: "update", vars: ["SSO"] });
+  expect(run(other, CF2, { ...built, vars: varsOf(other, undefined) }).state).toEqual({ at: "page" });
   // Other settings of the entry are not the answers'. A registered instance is what its entry says (bun erga deploy).
-  expect(run(a, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "page" });
-  expect(run(corp, { ...built, vars, admin: true }).state).toEqual({ at: "done" });
+  expect(run(a, CF2, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "page" });
+  expect(run(other, CF2, { ...built, vars, admin: true }).state).toEqual({ at: "done" });
+  // On AWS the gate's values are in the stacks, which each run of setup brings to the answers: no setting changes.
+  const aws = {
+    ...options("--host", "aws", "--sign-in", "sso", "--issuer", "https://idp.example.com/pool", "--client", "c", "--profile", "work")
+      .answers,
+    region: "us-west-2",
+  };
+  const stack = { ...AWS, ...LIVE, app: true, stack: { status: "CREATE_COMPLETE", outputs: {}, resources: [] } };
+  expect(run({ ...aws, client: "c2" }, { ...stack, vars: varsOf(aws, undefined) }).state).toEqual({ at: "page" });
 });
 
 /**

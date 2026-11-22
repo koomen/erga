@@ -1,14 +1,17 @@
-// The two halves together: the gate's own Worker (gate/mounts/worker.ts: an OIDC issuer signs people in, and nobody
-// comes in without a proof) in front of the whole app in memory (tests/helpers/app.ts), whose deploy says a gate is in
-// front (GATE_KEY). One browser, one person's journey: sign in one time, then documents open, on the app's site and on
-// the documents' site (another site: the hand-off); an agent connects (authorize, approve, token, refresh); a revoke,
-// after which the agent gets a 401; a token to paste; a code that is traded two times; sign-out, which ends her
-// other browser's sign-in too.
+// The two halves together, as on Cloudflare with single sign-on: the whole app in memory (tests/helpers/app.ts), whose
+// deploy says that the gate is inside its Worker with the organization's sign-in (the setting SSO: gate/sso.ts). Every
+// request passes the gate first (server/identity/mount.ts), and nobody comes in without a proof.
+//
+// With an OIDC issuer, one browser, one person's journey: sign in one time, then documents open, on the app's site and
+// on the documents' site (another site: the hand-off); an agent connects (authorize, approve, token, refresh); a
+// revoke, after which the agent gets a 401; a token to paste; a code that is traded two times; sign-out, which ends
+// her other browser's sign-in too. Then the same server behind Cloudflare Access: Access's proof is the sign-in. Last,
+// a new server with no admin: the setup page (server/identity/setup.ts) behind the gate.
 
 import { expect, test } from "bun:test";
-import type { Config } from "../gate/core.ts";
-import { handle } from "../gate/mounts/web.ts";
-import { type Env, mountOf } from "../gate/mounts/worker.ts";
+import { ACCESS_OPEN } from "../gate/core.ts";
+import { ssoOf } from "../gate/sso.ts";
+import { firstRows, noAnswers } from "../deploy/own/plan";
 import { server as app } from "./helpers/app";
 import { browser } from "./helpers/gate.ts";
 
@@ -16,8 +19,7 @@ const SHELL = "erga.example";
 // (The test server's documents are under localhost: <id>-<owner>.localhost, another site than the app's.)
 const CONTENT = "localhost";
 const ISSUER = "https://idp.example.com";
-const IDP = { name: "corp", issuer: ISSUER, authorize: `${ISSUER}/authorize`, token: `${ISSUER}/token`, client: "client-1" };
-const GATE_KEY = "the-key-of-the-gate-and-of-erga-".repeat(2);
+const IDP = { issuer: ISSUER, authorize: `${ISSUER}/authorize`, token: `${ISSUER}/token`, client: "client-1" };
 /** Where the agent's app listens, on the person's computer. */
 const APP = "http://localhost:53682/callback";
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
@@ -25,23 +27,21 @@ const ORIGIN = `https://${SHELL}`;
 const JSON_POST = { "content-type": "application/json", origin: ORIGIN };
 const FORM_POST = { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN };
 
-/** The gate in front of a new server, an issuer that signs Ada in, and her browser. */
-async function setUp() {
+/** A new server whose people come in by `sso` only, each with an account named from their address. */
+async function serverWith(sso: ReturnType<typeof ssoOf>) {
   const s = app();
-  (s.platform as { signIn: unknown }).signIn = { mode: "gate", key: GATE_KEY, devLogin: null, encryptionKey: "local:secret" };
+  (s.platform as { signIn: unknown }).signIn = { mode: "gate", at: "inside", sso, devLogin: null, encryptionKey: "local:secret" };
+  // The app's host, as the deploy's facts name it: the gate's shell, on a document's host too.
+  (s.platform.deploy as { app: string | null }).app = SHELL;
   const admin = { login: "tester", admin: true };
   // Everybody whom the organization's sign-in lets through may make an account, named from their address.
   await s.dir.setAnyone(admin, "write");
   await s.dir.config.set(admin, "usernames", "email");
-  const env: Env = {
-    ERGA: { fetch: (request) => s.fetch(request.url, request) },
-    EDGE_KEY: "an-edge-key-that-erga-never-holds-".repeat(2),
-    GATE_KEY,
-    SHELL,
-    CONTENT,
-    IDP: JSON.stringify(IDP),
-    IDP_SECRET: "idp-secret",
-  };
+  return s;
+}
+
+/** A new server with the gate inside it, an issuer that signs Ada in, and her browser. */
+async function setUp() {
   /** The issuer's token endpoint: Ada's ID token for the code "ada". */
   const issuer = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const sent = new URLSearchParams(String(init?.body));
@@ -56,8 +56,8 @@ async function setUp() {
     };
     return Response.json({ id_token: `${b64({ alg: "RS256" })}.${b64({ ...claims, name: "Ada Lovelace" })}.sig` });
   }) as typeof fetch;
-  const mount = mountOf(env, issuer);
-  const gate = (request: Request) => handle(request, mount);
+  const s = await serverWith(ssoOf(JSON.stringify({ oidc: IDP }), "idp-secret", issuer));
+  const gate = (request: Request) => s.fetch(request.url, request);
   /** The addresses the browser reached that are not the gate's: the issuer's sign-in page, and the agent's app. */
   const outside: URL[] = [];
   const net = async (request: Request) => {
@@ -69,20 +69,24 @@ async function setUp() {
   return { s, gate, b: browser(net), phone: browser(net), outside };
 }
 
-test("the gate's Worker: a sign-in lasts the deploy's SIGN_IN_DAYS, from 1 to 90, or 30 days when it says none", () => {
-  const env = { ERGA: { fetch: async () => new Response() }, EDGE_KEY: "e".repeat(40), GATE_KEY, SHELL, CONTENT, ACCESS: "{}" };
-  const hours = (o: Partial<Env>) => (mountOf({ ...env, ...o }).config(new Request(ORIGIN)) as Config).hours;
-  expect([hours({}), hours({ SIGN_IN_DAYS: "7" }), hours({ SIGN_IN_DAYS: 1 })]).toEqual([30 * 24, 7 * 24, 24]);
-  for (const days of ["0", "91", "1.5", "", "soon", -1]) expect(() => hours({ SIGN_IN_DAYS: days })).toThrow("SIGN_IN_DAYS");
-});
-
-test("behind the gate: one sign-in, then documents open on both sites; an agent connects, is revoked, and gets a 401; a token to paste; sign-out", async () => {
+test("the gate inside, with an issuer: one sign-in, then documents open on both sites; an agent connects, is revoked, and gets a 401; a token to paste; sign-out", async () => {
   const { s, gate, b, phone, outside } = await setUp();
-  // Nothing of the server answers without a proof: anything but a page gets a 401, and the server's own address
-  // answers nobody (it has none, on Cloudflare; and no request counts without the gate's key).
+  // Nothing of the server answers without a proof: anything but a page gets a 401, on both sites, and a caller's
+  // header from outside names nobody.
   expect((await gate(new Request(`${ORIGIN}/api/tools/whoami`, { method: "POST" }))).status).toBe(401);
   expect((await gate(new Request(`https://x-ada.${CONTENT}/t/x/`))).status).toBe(401);
-  expect((await s.fetch(`${ORIGIN}/documents`)).status).toBe(403);
+  // One address goes on with no proof, as nobody: the server's health report, which the account's deployer asks after
+  // each deploy (gate/core.ts, Config.health). Its route is the Worker's own (cloudflare/deploy-routes.ts): here the
+  // server itself answers that it has none, where the gate answers a 401 for any other address.
+  const status = async (path: string, init?: RequestInit) => (await gate(new Request(`${ORIGIN}${path}`, init))).status;
+  expect([await status("/api/health"), await status("/api/nothing"), await status("/api/health", { method: "POST" })]).toEqual([
+    404, 401, 401,
+  ]);
+  const forged = Buffer.from(JSON.stringify({ kind: "person", p: "sso", sub: "sub-ada", email: "ada@example.com", name: "Ada", i: 1 }));
+  expect(
+    (await gate(new Request(`${ORIGIN}/api/tools/whoami`, { method: "POST", headers: { "x-erga-caller": forged.toString("base64url") } })))
+      .status
+  ).toBe(401);
 
   // --- Sign in, one time. A page with no proof goes to the organization's sign-in; back, the server makes her account
   // from her address at once, and her list shows.
@@ -248,4 +252,123 @@ test("behind the gate: one sign-in, then documents open on both sites; an agent 
   expect([outside.length, outside.at(-1)!.host, phone.cookie("__Host-erga", SHELL)]).toEqual([asked + 1, "idp.example.com", undefined]);
   const back2 = await phone.go(`${ORIGIN}/_edge/callback?code=ada&state=${outside.at(-1)!.searchParams.get("state")}`);
   expect([back2.status, phone.trail.at(-1)]).toEqual([200, `${SHELL}/documents`]);
+});
+
+test("the gate inside, behind Cloudflare Access: Access's proof is the sign-in; the paths that Access lets through take the gate's own values", async () => {
+  const pair = await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const jwks = { keys: [{ ...(await crypto.subtle.exportKey("jwk", pair.publicKey)), kid: "k1" }] };
+  const access = { team: "team-of-erga", aud: "a1".repeat(32) };
+  const certs = (async () => Response.json(jwks)) as unknown as typeof fetch;
+  const s = await serverWith(ssoOf(JSON.stringify({ access }), "", certs));
+  const proof = async (claims: object) => {
+    const signed = `${b64({ alg: "RS256", kid: "k1" })}.${b64({ iss: `https://${access.team}.cloudflareaccess.com`, aud: [access.aud], exp: Math.floor(Date.now() / 1000) + 600, ...claims })}`;
+    const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(signed));
+    return `${signed}.${Buffer.from(sig).toString("base64url")}`;
+  };
+  const ada = await proof({ sub: "sub-ada", email: "ada@example.com", name: "Ada Lovelace" });
+  // Access in front of the app's host: each request it lets through carries its proof; the paths that it lets through
+  // with no sign-in (the gate's own list) carry none, and neither does the documents' site.
+  const bypassed = (path: string) => ACCESS_OPEN.some((open) => path == open || path.startsWith(`${open}/`));
+  const behind = (jwt: string | null) => (request: Request) => {
+    const url = new URL(request.url);
+    const headers = new Headers(request.headers);
+    headers.delete("cf-access-jwt-assertion");
+    if (jwt && url.host == SHELL && !bypassed(url.pathname)) headers.set("cf-access-jwt-assertion", jwt);
+    return s.fetch(request.url, new Request(request, { headers }));
+  };
+  const b = browser(behind(ada));
+  // Her first page: no sign-in of the gate's own, and her account at once, from the address that Access gave.
+  const list = await b.go(`${ORIGIN}/documents`);
+  expect([list.status, b.trail]).toEqual([200, [`${SHELL}/documents`, `${SHELL}/auth/sign-in`, `${SHELL}/auth/sso`, `${SHELL}/documents`]]);
+  expect((await s.dir.identities.find("sso", "sub-ada"))?.login).toBe("ada");
+  expect([b.cookie("__Host-erga", SHELL), !!b.cookie("__Host-member", SHELL)]).toEqual([undefined, true]);
+  // A document opens in its frame on the documents' site, through the gate's hand-off (the vouch has no Access proof).
+  const html = await (await b.go(`${ORIGIN}/new`)).text();
+  const frame = new RegExp(`https://[a-z0-9]+-ada\\.${CONTENT}/t/[\\w.-]+/`).exec(html)![0];
+  expect((await b.go(frame, { frame: true })).status).toBe(200);
+  // With no proof, with a proof that the team did not sign, or for another application: nobody, and nothing of Erga.
+  const other = await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const [head, body] = ada.split(".");
+  const badSig = Buffer.from(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", other.privateKey, new TextEncoder().encode(`${head}.${body}`)));
+  const whoami = (jwt: string | null) =>
+    behind(jwt)(new Request(`${ORIGIN}/api/tools/whoami`, { method: "POST", headers: JSON_POST, body: "{}" }));
+  expect((await whoami(ada)).status).toBe(200);
+  for (const jwt of [null, `${head}.${body}.${badSig.toString("base64url")}`, await proof({ sub: "sub-ada", aud: ["b2".repeat(32)] })])
+    expect((await whoami(jwt)).status).toBe(401);
+  expect((await behind(null)(new Request(frame, { headers: { "sec-fetch-dest": "empty" } }))).status).toBe(401);
+  // The deployer asks the server's health through its binding to the Worker, past Access and with no proof: the gate
+  // lets that one address through, as nobody (the server in memory has no such route: its own 404).
+  expect((await behind(null)(new Request(`${ORIGIN}/api/health`))).status).toBe(404);
+  // An agent has no Access sign-in: its token, which the gate signed for her, opens /mcp, a path that Access lets through.
+  const made = await b.go(`${ORIGIN}/tokens/new`, {
+    method: "POST",
+    dest: "empty",
+    headers: JSON_POST,
+    body: JSON.stringify({ label: "Script", scope: "documents" }),
+  });
+  const mcp = (bearer: string | null) =>
+    behind(null)(
+      new Request(`${ORIGIN}/mcp`, {
+        method: "POST",
+        headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "documents", arguments: { op: "whoami" } } }),
+      })
+    );
+  expect([(await mcp(made.headers.get("x-erga-token"))).status, (await mcp(null)).status, (await mcp("a.forged.token")).status]).toEqual([
+    200, 401, 401,
+  ]);
+  // Sign-out: the gate's cookies end, and the page goes on to Access's own sign-out, which ends Access's sign-in.
+  const out = await b.go(`${ORIGIN}/auth/logout`, { method: "POST", headers: { origin: ORIGIN } });
+  expect([out.status, b.cookie("__Host-member", SHELL), /"to":"([^"]+)"/.exec(await out.text())![1]]).toEqual([
+    200,
+    undefined,
+    "/cdn-cgi/access/logout",
+  ]);
+});
+
+test("the gate inside, on a new server: the setup page's link passes the organization's sign-in, and the person who signs in becomes the admin", async () => {
+  const { Directory } = await import("../server/directory/index.ts");
+  const { memory } = await import("./helpers/memory-sql.ts");
+  const { Grants, sessionOf } = await import("../server/identity/index.ts");
+  const { setupUrl } = await import("../server/identity/setup-link.ts");
+  const { s, b, outside } = await setUp();
+  // A server as setup leaves it: no admin and no user; everybody whom the organization's sign-in lets through may join.
+  const sql = memory();
+  const directory = new Directory(sql, { admins: [], providers: ["github", "google"] });
+  for (const { table, row } of firstRows({ ...noAnswers(SHELL), signIn: "sso" }))
+    await sql.run(`INSERT INTO ${table} (${Object.keys(row)}) VALUES (${Object.keys(row).map(() => "?")})`, ...Object.values(row));
+  const p = s.platform as unknown as Record<string, unknown>;
+  Object.assign(p, {
+    directory,
+    grants: new Grants(sql, directory),
+    dev: () => false,
+    sessionOf: (r: Request) => sessionOf(s.platform, r),
+  });
+  const link = await setupUrl(SHELL, s.platform.secret);
+  // The link, with no proof: the organization's sign-in first, and back to the link.
+  await b.go(link);
+  expect(outside.at(-1)!.origin + outside.at(-1)!.pathname).toBe(IDP.authorize);
+  b.trail.length = 0;
+  const page = await b.go(`${ORIGIN}/_edge/callback?code=ada&state=${outside.at(-1)!.searchParams.get("state")}`);
+  expect([page.status, b.trail]).toEqual([200, [`${SHELL}/_edge/callback`, `${SHELL}/setup`, `${SHELL}/setup`]]);
+  // The page has no provider's row: the gate signs people in. Its one step is the admin's.
+  const html = await page.text();
+  expect([...html.matchAll(/data-step="(\w+)" data-state="(\w+)"/g)].map((m) => `${m[1]} ${m[2]}`)).toEqual(["admin next"]);
+  const go = /class="provider sso" href="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");
+  expect(go).toBe("/auth/sso?next=%2Fsetup%2Fadmin");
+  await b.go(`${ORIGIN}${go}`);
+  // Her account is new: she names it, and comes back as the admin. The page is closed then.
+  b.trail.length = 0;
+  await b.go(`${ORIGIN}/auth/username`, { method: "POST", headers: FORM_POST, body: "username=ada" });
+  expect(b.trail.slice(0, 3)).toEqual([`${SHELL}/auth/username`, `${SHELL}/setup/admin`, `${SHELL}/`]);
+  expect(await directory.users.isAdmin("ada")).toBe(true);
+  expect((await b.go(`${ORIGIN}/setup`)).status).toBe(410);
 });

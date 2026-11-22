@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FRONT } from "../../gate/mounts/web.ts";
+import { FRONT } from "../../gate/core.ts";
 import { CHROME_DEVTOOLS } from "../deployer/aws";
 import { DEPLOYER } from "../deployer/aws-cloud";
 import { type Aws, pause } from "./cli";
