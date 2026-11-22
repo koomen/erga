@@ -2,7 +2,8 @@
 // stay here; the setting's row, ./settings.ts), then the feedback people sent, which only the admins read. The
 // unresolved ones first, newest first, each with who sent it, when, the page it came from and Resolve; under them the resolved
 // ones, closed until an admin opens them, each with Reopen. A click saves the status by itself
-// (client/inline/admin-feedback.ts).
+// (client/inline/admin-feedback.ts). A feedback with a context (shared/feedback-context.ts) shows it under its text,
+// closed: where the caret was, the keys pressed last, the problems the editor showed, and the page's HTML there.
 
 import { esc } from "../../shared/html.ts";
 import { inlineCall, TIMES_SCRIPT } from "../pages/index.ts";
@@ -19,6 +20,20 @@ function fromHtml(f: FeedbackRow): string {
   return `<p class="from">${avatarHtml(f.login, f.avatar)}<span class="name">${esc(named ? f.name! : f.login)}</span>${named ? `<span class="login">${esc(f.login)}</span>` : ""}${f.via ? `<span class="via">via ${esc(f.via)}</span>` : ""}</p>`;
 }
 
+/** A feedback's context, closed until an admin opens it: text of a document, shown as text. */
+function contextHtml(f: FeedbackRow): string {
+  const c = f.context;
+  if (!c) return "";
+  return `<details class="context"><summary>Context</summary>
+      <dl>
+        <dt>Caret</dt><dd><code>${esc(c.file)}</code>, line ${c.line}, column ${c.column}</dd>
+        <dt>Window</dt><dd>${esc(c.view)}</dd>
+        <dt>Last keys</dt><dd>${c.keys ? `<code class="keys">${esc(c.keys)}</code>` : "None"}</dd>${c.problems.length ? `\n        <dt>Problems shown</dt><dd>${c.problems.map((p) => `<p>${esc(p)}</p>`).join("")}</dd>` : ""}
+        <dt>HTML near the caret</dt><dd>From line ${c.htmlFrom}:<pre>${esc(c.html)}</pre></dd>
+      </dl>
+    </details>`;
+}
+
 /** One feedback's row. */
 function feedbackRow(f: FeedbackRow): string {
   const at = new Date(f.at).toISOString();
@@ -27,6 +42,7 @@ function feedbackRow(f: FeedbackRow): string {
     <p class="text">${esc(f.text)}</p>
     <p class="meta"><time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>${f.page ? ` · <code class="page">${esc(f.page)}</code>` : ""} · <code class="id">${esc(f.id)}</code></p>
     <button type="button" class="pill resolve">${f.status == "resolved" ? "Reopen" : "Resolve"}</button>
+    ${contextHtml(f)}
   </li>`;
 }
 

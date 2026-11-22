@@ -39,6 +39,9 @@ S3's budget is 9 since the save mark: its first step types for longer than the 2
 G1's budget is 16 since its step for the panel, open or closed on each document: it loads seven pages (1.1 s alone).
 A4's budget is 8 since its Deploy step: the page asks the server again each second while a job runs or an ask waits, and
 the step waits for that one time (1.4 s of 6.4 s alone).
+A4's budget is 9 since its editor step sends a feedback through the agent, with the page's context: keys in the page,
+then one turn of the agent (0.5 s). A3's budget is 9 since its step for `bun erga feedback`: the command's sign-in
+loads the approval page three times (0.5 s).
 
 The rules:
 
@@ -73,8 +76,8 @@ The rules:
 | D2 | `e2e/documents/tree.e2e.ts` | A page or folder cannot be made, renamed, moved or deleted; the tree shows old rows; files dragged onto the tree go nowhere. | 13 |
 | A1 | `e2e/access/sign-in.e2e.ts` | A person cannot sign in, or a person who may not, can. A new server's setup page does not open its rows, or does not take its GitHub app. | 10 |
 | A2 | `e2e/access/share.e2e.ts` | A person without access reads or edits; access taken away stays; a share does not arrive. | 9 |
-| A3 | `e2e/access/tokens.e2e.ts` | A token gives more than its scope; an agent cannot sign in; a key shows in a page. | 8 |
-| A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values; a setting is not on the page of what it governs; the Deploy page does not ask the deployer, or does not show its job. | 8 |
+| A3 | `e2e/access/tokens.e2e.ts` | A token gives more than its scope; an agent cannot sign in; a key shows in a page. The feedback watch reads with no admin power, or keeps a sign-in that its person revoked. | 9 |
+| A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values; a setting is not on the page of what it governs; the Deploy page does not ask the deployer, or does not show its job. A feedback from the agent lacks the page, the keys or the HTML at the caret. | 9 |
 | C1 | `e2e/comments/comments.e2e.ts` | A comment is lost, lands on the wrong text, or a commenter changes the text. A card covers its text, or leaves the screen at a zoom or on a phone. | 9 |
 | R1 | `e2e/versions/versions.e2e.ts` | A version is not cut; Restore gives the wrong text; a document publishes by itself. | 13 |
 | H1 | `e2e/publishing/publishing.e2e.ts` | A domain shows the wrong document, or a site that was unpublished; a publish breaks the site; a new server has no homepage; someone who is not an admin publishes. | 7 |

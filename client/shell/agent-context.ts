@@ -1,7 +1,11 @@
 // What the editor tells your agent with each message (client/agent/person-agent.ts asks, window.ergaPage.agentContext):
 // the page open, how it's seen, the selection or the caret, and the problems the alerts' card shows, so "this", "here"
-// and "the error" mean something to it.
+// and "the error" mean something to it. And, while the server asks for it (the setting feedback_context), what a
+// feedback keeps when the agent sends one (window.ergaPage.feedbackContext, shared/feedback-context.ts): the same,
+// with the page's HTML near the caret and the keys pressed last.
 
+import { isMac } from "../common/app-keys";
+import { type FeedbackContext, lookSteps, type Pressed, pressedWith, sourceNear } from "../../shared/feedback-context";
 import { pageReport } from "../../shared/page-report";
 import { plural } from "../../shared/time";
 import type { Shell } from "./shell";
@@ -44,3 +48,23 @@ function caretContext(shell: Shell): string {
   return `The user's caret is on line ${line.number} of ${shell.pagePath}: ${text}`;
 }
 
+/** The keys pressed last in the page, oldest first (the page says each: client/inline/reader.ts). */
+let pressed: Pressed[] = [];
+export function keyPressed(key: Pressed): void {
+  pressed = pressedWith(pressed, key);
+}
+
+/** What a feedback keeps of the page, if the agent sends one for the message that this goes with. */
+export function feedbackContext(shell: Shell): FeedbackContext {
+  const s = shell.currentState();
+  const w = shell.frame.clientWidth,
+    h = shell.frame.clientHeight;
+  return {
+    page: new URL(shell.addressOf(shell.pagePath), location.href).pathname,
+    file: shell.pagePath,
+    ...sourceNear(s.doc.toString(), s.selection.main.head),
+    keys: lookSteps(pressed, isMac),
+    view: `${w}×${h} CSS pixels, ${matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"} mode`,
+    problems: shell.alerts.said(),
+  };
+}

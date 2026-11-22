@@ -72,6 +72,13 @@
 //                                       stays, kept; bun erga verify update <setting>|all deploys only the code
 //                                       again on a kept setting, and checks it; bun erga verify remove <setting>|all
 //                                       removes a kept setting, and what a run left; the ops page shows all of it
+//   bun erga feedback <host> [--no-open]
+//                                       watches the feedback that people send to an instance (a registered host, or
+//                                       any Erga server's address): it prints each unresolved one, with its
+//                                       context, and then each new one as it arrives, until it is stopped; it only
+//                                       reads; the first time, you sign it in: it opens the approval page in your
+//                                       browser (--no-open: it only prints the address), where you choose Admin
+//                                       power and approve; it keeps that sign-in in .erga/feedback/ for the next run
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -522,6 +529,25 @@ export async function main(argv: string[]) {
     case "setup": {
       const { setupMain } = await import("../own/cli");
       return setupMain(rest);
+    }
+    case "feedback": {
+      if (!plain[0]) return fail("Name the instance: bun erga feedback <host>.");
+      const { ergaDir, originOf } = await import("./config");
+      const { tokensPath, watchFeedback } = await import("./feedback");
+      const { openBrowser } = await import("../own/browser");
+      const origin = originOf(plain[0]);
+      const open = !flag("--no-open");
+      return watchFeedback({
+        origin,
+        path: tokensPath(ergaDir(), origin),
+        say,
+        show: (url) => {
+          say(
+            `NEXT  Sign in: approve this command in your browser, with Admin power.${open ? " The page opens now:" : " Open:"}\n      ${url}`
+          );
+          if (open) openBrowser(url);
+        },
+      }).catch((e: Error) => fail(e.message));
     }
     case "help":
     case "--help":

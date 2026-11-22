@@ -23,6 +23,7 @@ export const TAKES: Record<string, { flags?: string[]; options?: string[] }> = {
   },
   track: { flags: ["--no-upstream"], options: ["--repo", "--branch", "--upstream", "--upstream-repo", "--auto-deploy"] },
   verify: { flags: ["--keep", "--yes"], options: ["--browsers", "--origin"] },
+  feedback: { flags: ["--no-open"] },
   help: {},
 };
 

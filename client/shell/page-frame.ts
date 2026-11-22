@@ -10,6 +10,7 @@
 import type { EditMode } from "../../libs/text/ui/mode";
 import type { Word } from "./editor-state";
 import type { Keys } from "../common/app-keys";
+import type { Pressed } from "../../shared/feedback-context";
 import type { RawProblem } from "./problems";
 import { readMessage, type AlertAct, type Event as AlertEvent } from "../common/alerts";
 import type { At } from "../common/save-mark";
@@ -42,6 +43,8 @@ export interface PageFrameConfig {
   /** The pointer moved over the page, in the viewer's coordinates. */
   onPointer: (x: number, y: number) => void;
   onActivity: (kind: "focus" | "key") => void;
+  /** A key pressed in the page, or text typed there with no key (not in a field of the page's own): for a feedback's context. */
+  onPressed: (key: Pressed) => void;
   /** A link on the page to another of the document's pages was followed (its path in the document). */
   onOpen: (path: string) => void;
   /** A problem the page reported (`base`: the page's folder on its origin, for the names of its files). */
@@ -60,6 +63,13 @@ export interface PageFrameConfig {
   onLoad: () => void;
   /** The page shows its steps bar (a presentation), at the bottom centre. */
   onSteps: (on: boolean) => void;
+}
+
+/** A key as the page said it (the page could have sent anything): null for none. */
+function keysOf(sent: unknown): Keys | null {
+  const k = sent as Record<string, unknown> | null | undefined;
+  if (!k || typeof k.key != "string" || k.key.length > 30) return null;
+  return { key: k.key, metaKey: !!k.metaKey, ctrlKey: !!k.ctrlKey, shiftKey: !!k.shiftKey, altKey: !!k.altKey };
 }
 
 export function mountPageFrame(c: PageFrameConfig) {
@@ -147,9 +157,8 @@ export function mountPageFrame(c: PageFrameConfig) {
         window.ergaFrames.reload("?erga-edit");
         return;
       case "erga-key": {
-        const k = m.keys as Record<string, unknown> | undefined;
-        if (k && typeof k.key == "string")
-          c.onKey({ key: k.key, metaKey: !!k.metaKey, ctrlKey: !!k.ctrlKey, shiftKey: !!k.shiftKey, altKey: !!k.altKey });
+        const k = keysOf(m.keys);
+        if (k) c.onKey(k);
         return;
       }
       case "erga-press":
@@ -194,6 +203,10 @@ export function mountPageFrame(c: PageFrameConfig) {
       }
       case "erga-activity":
         if (m.kind == "focus" || m.kind == "key") c.onActivity(m.kind as "focus" | "key");
+        if (m.kind == "key" && keysOf(m.keys)) c.onPressed(keysOf(m.keys)!);
+        return;
+      case "erga-typed":
+        if (typeof m.text == "string" && m.text) c.onPressed({ text: m.text.slice(0, 200) });
         return;
       case "erga-open":
         if (typeof m.path == "string" && m.path.length < 1000) c.onOpen(m.path);

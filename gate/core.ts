@@ -204,7 +204,7 @@ const REGISTER = "/oauth/register";
 export const RESOURCE = "/.well-known/oauth-protected-resource";
 /** The server's health report (Config.health). */
 export const HEALTH = "/api/health";
-const SERVER = "/.well-known/oauth-authorization-server";
+export const SERVER = "/.well-known/oauth-authorization-server";
 
 /**
  * The paths of each part, as patterns, for a mount that runs the parts apart (CloudFront: a behavior each). `edge`: the

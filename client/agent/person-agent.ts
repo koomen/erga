@@ -5,7 +5,8 @@
 //
 //   GET  /api/agent              the state: on or off (and why), the model, the conversation so far (?fresh: the
 //                                settings read now, after a key changed; else they may be up to 5 s old)
-//   POST /api/agent              { text, context }: a message; context is the page note (the page open, what is selected)
+//   POST /api/agent              { text, context, page? }: a message; context is the page note (the page open, what is
+//                                selected), page the editor's context for a feedback (the setting feedback_context)
 //   (each of them with ?doc=<the document's id> on a page of a document: that document's thread)
 //   POST /api/agent/abort|reset|model|approve|deny
 //   /api/agent/events            { type: "agent", ev } for this person's agent (a WebSocket)
@@ -269,10 +270,24 @@ function context(): string | null {
   return `Open: ${trail || document.title} (${location.pathname}).${doc ? ` The document ${doc}${page ? `, its file ${page}` : ""}${editing ? ", in the editor" : ""}.` : ""}${editing ? `\n${editing}` : ""}`;
 }
 
+/** What the editor's menu knows of the account (meta erga-account, server/documents/view.ts): {} on any other page. */
+const accountMeta = (): Record<string, unknown> =>
+  JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "{}");
+
+/**
+ * The editor's context for a feedback (shared/feedback-context.ts), while the server asks for it (the setting
+ * feedback_context): it goes with each message, and the agent's send_feedback keeps the last one.
+ */
+function feedbackContext(): object | undefined {
+  if (!accountMeta().feedbackContext || !document.body.classList.contains("erga-editing")) return undefined;
+  return (window.ergaPage as { feedbackContext?: () => object } | undefined)?.feedbackContext?.();
+}
+
 /** Sends a message, with the tab's own id for it (sends.ts): Try again sends it again with the same id. */
 function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   const id = crypto.randomUUID();
-  const post = () => void postMessage(id, { text, context: ctx, files, id }, files.length > 0);
+  const page = feedbackContext();
+  const post = () => void postMessage(id, { text, context: ctx, files, id, page }, files.length > 0);
   talk.pending(id, text, fileRefs(files), post);
   begin();
   post();
@@ -621,9 +636,7 @@ window.ergaAgentPanel = {
 // gives the agent other models: the panel reads them again. Send feedback opens only where the server offers it (the
 // setting feedback): its link is in the account menu (server/pages/account-menu.ts), or among the editor's (meta
 // erga-account, server/documents/view.ts).
-const feedbackOn = () =>
-  !!document.querySelector('.erga-account-menu a[href="#feedback"]') ||
-  "feedback" in JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "{}");
+const feedbackOn = () => !!document.querySelector('.erga-account-menu a[href="#feedback"]') || "feedback" in accountMeta();
 const DIALOGS: Record<string, () => void> = {
   "#settings": () => void import("./settings-dialog").then((m) => m.openSettings()),
   "#feedback": () => void (feedbackOn() && import("./feedback-dialog").then((m) => m.openFeedback())),

@@ -8,6 +8,7 @@ import { Directory, NotAllowed } from "../server/directory/index.ts";
 import { opsOf, toolsFor } from "../agents/tools.ts";
 import { systemPrompt } from "../agents/person/prompt.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
+import { WITH_CONTEXT } from "../server/operations/feedback.ts";
 import { accountMarkup, accountOf } from "../server/pages/index.ts";
 import { person, server, signedOut } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
@@ -126,6 +127,56 @@ test("a feedback is unresolved until an admin resolves it, and unresolved again 
     status: 404,
   });
   expect(await texts()).toEqual(["C", "B"]);
+});
+
+test("the setting feedback_context, on: a person's own agent's feedback keeps what their editor said of the page, cut to size; the admins read it, the sender hears so; off, or with no page, none", async () => {
+  const s = server();
+  const dir = s.platform.directory;
+  const admin = { login: "tester", admin: true };
+  const context = {
+    page: "/bob/plan",
+    file: "index.html",
+    line: 12,
+    column: 5,
+    html: "<ul>\n<li>Milk</li>\n</ul>",
+    htmlFrom: 11,
+    keys: "'type:- Milk' Enter Tab",
+    view: "1100×800 CSS pixels, light mode",
+    problems: ["A <script> failed"],
+  };
+  const agent = { dir, who: { ...bob, via: "their agent" }, here: "doc1", page: context };
+  const sent = (answer: unknown) => answer as { id: string; message: string };
+  // Off, the default: the feedback has no context, and no word of one.
+  expect(await dir.config.entry("feedback_context")).toMatchObject({ value: false, source: "default" });
+  const plain = sent(await runOperation(send, { text: "No indent" }, agent));
+  expect(plain.message).toBe("Thanks, sent. This server's admins read it, and see that it is from you.");
+  expect(await dir.feedback.list(admin)).toMatchObject([{ id: plain.id, page: null, context: null }]);
+  // On: the context is kept, and the feedback's page is the context's.
+  await dir.config.set(admin, "feedback_context", true);
+  const full = sent(await runOperation(send, { text: "Tab does not indent" }, agent));
+  expect(full.message).toBe(`Thanks, sent. This server's admins read it, and see that it is from you. ${WITH_CONTEXT}`);
+  const read = (await runOperation(list, {}, { dir, who: admin })) as { feedback: { id: string; page: string | null; context?: object }[] };
+  expect(read.feedback.map((f) => [f.id, f.page, f.context])).toEqual([
+    [full.id, "/bob/plan", context],
+    [plain.id, null, undefined],
+  ]);
+  // The admins' page shows it under the text, as text.
+  const row = /<li class="feedback-row"[^]*?<\/li>/.exec(await (await s.fetch("/admin/feedback")).text())![0];
+  expect(row).toContain("<code>index.html</code>, line 12, column 5");
+  expect(row).toContain(`<code class="keys">&#39;type:- Milk&#39; Enter Tab</code>`);
+  expect(row).toContain("<p>A &lt;script&gt; failed</p>");
+  expect(row).toContain("From line 11:<pre>&lt;ul&gt;\n&lt;li&gt;Milk&lt;/li&gt;\n&lt;/ul&gt;</pre>");
+  // A page sends what it likes: each part is cut, and what is no context is none. From the dialog (no page): none.
+  const long = { ...context, html: "h".repeat(9000), keys: `${"k".repeat(3000)} Tab`, problems: Array(20).fill("p".repeat(900)) };
+  await runOperation(send, { text: "Long" }, { ...agent, page: long });
+  const [kept] = await dir.feedback.list(admin);
+  expect([kept.context!.html.length, kept.context!.keys.length, kept.context!.keys.endsWith(" Tab")]).toEqual([4010, 1500, true]);
+  expect(kept.context!.problems.map((p) => p.length)).toEqual(Array(8).fill(500));
+  for (const page of [undefined, "text", { ...context, line: "12" }, { page: "/x" }]) {
+    const none = sent(await runOperation(send, { text: "None" }, { ...agent, page }));
+    expect(none.message).not.toContain(WITH_CONTEXT);
+    expect((await dir.feedback.list(admin))[0]).toMatchObject({ id: none.id, context: null });
+  }
 });
 
 test("a feedback kept before the admins saw names is unresolved, and stays without a name", async () => {

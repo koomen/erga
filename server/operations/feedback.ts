@@ -1,10 +1,13 @@
 // Feedback: a person sends it from any page (the account menu's Send feedback) or asks their agent to (send_feedback),
 // while the setting feedback is on: only someone signed in, and it is theirs, with their name. The server keeps it, and
 // only the admins and their agents read it (feedback, and /admin/feedback), also when the setting is off: each one is
-// unresolved until an admin says that it is resolved (set_feedback, the page's Resolve).
+// unresolved until an admin says that it is resolved (set_feedback, the page's Resolve). While the setting
+// feedback_context is on, a feedback that the person's own agent sends from the editor keeps what the editor said of
+// the open page with their message (Caller.page: its address, its HTML near the caret, the last keys): the admins and
+// their agents read it with the feedback, and repair the problem with no question. The answer tells the sender.
 
 import * as Schema from "effect/Schema";
-import { ANYONE, FEEDBACK_MAX, FEEDBACK_STATUSES, type FeedbackRow, type FeedbackStatus } from "../directory/index.ts";
+import { ANYONE, contextOf, FEEDBACK_MAX, FEEDBACK_STATUSES, type FeedbackRow, type FeedbackStatus } from "../directory/index.ts";
 import { iso, type Operation, OperationError, said, str } from "./operation.ts";
 
 /** The path of the page it was sent from: a path on this site, short; a URL gives its path. */
@@ -21,6 +24,10 @@ export function pageOf(page: unknown): string | null {
 
 const STATUS = Schema.Literals(FEEDBACK_STATUSES);
 
+/** What the sender hears when their feedback went with its context. */
+export const WITH_CONTEXT =
+  "With it went the open page's address, its HTML near your caret, the keys you pressed last and the problems the editor showed.";
+
 /** The status an admin gave (`or`: when they gave none), or the reason it is not one. */
 function statusOf(status: unknown, or?: FeedbackStatus): FeedbackStatus {
   const found = status == null ? or : FEEDBACK_STATUSES.find((s) => s == status);
@@ -36,6 +43,7 @@ const answerOf = (f: FeedbackRow) => ({
   page: f.page,
   at: iso(f.at),
   status: f.status,
+  ...(f.context ? { context: f.context } : {}),
 });
 
 export const FEEDBACK_OPERATIONS: Operation[] = [
@@ -58,11 +66,17 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
       if (!text) throw new OperationError({ message: "Write the feedback first.", status: 400 });
       if (text.length > FEEDBACK_MAX)
         throw new OperationError({ message: `Feedback is at most ${FEEDBACK_MAX} characters: this is ${text.length}.`, status: 400 });
+      const context = (await caller.dir.config.get("feedback_context")) ? contextOf(caller.page) : null;
       const id = await caller.dir.feedback.add(caller.who, {
         text,
-        page: pageOf(args.page ?? caller.here),
+        page: pageOf(args.page ?? context?.page ?? caller.here),
+        context,
       });
-      return { sent: true, id, message: "Thanks, sent. This server's admins read it, and see that it is from you." };
+      return {
+        sent: true,
+        id,
+        message: `Thanks, sent. This server's admins read it, and see that it is from you.${context ? ` ${WITH_CONTEXT}` : ""}`,
+      };
     },
   },
   {
@@ -71,7 +85,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
     label: "Read the feedback",
     activity: "reading the feedback",
     admin: true,
-    description: "The feedback people sent, newest first, each with who sent it: the unresolved ones, or the resolved.",
+    description: "The feedback people sent, newest first, each with who sent it and its context: the unresolved ones, or the resolved.",
     parameters: Schema.Struct({
       status: Schema.optionalKey(STATUS.annotate({ description: "Which ones: unresolved (the default) or resolved." })),
     }),

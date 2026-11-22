@@ -120,16 +120,30 @@ export default function reader(C: ReaderConfig): void {
         return;
       }
       if (editing()) {
-        tell({ type: "erga-activity", kind: "key" });
+        // The key itself too, for a feedback's context (client/shell/agent-context.ts): never one typed in a field of
+        // the page's own (a password box), which is no text of the document.
+        const keys = { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey };
+        tell({ type: "erga-activity", kind: "key", ...(inField(e) ? {} : { keys }) });
         if (!isAppShortcut(e, isMac)) return;
         if (e.key != "Escape") e.preventDefault();
-        tell({ type: "erga-key", keys: { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey } });
+        tell({ type: "erga-key", keys });
         return;
       }
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() != "k") return;
       e.preventDefault();
       tell({ type: "erga-quick-search" });
+    },
+    true
+  );
+  /** An event in a field of the page's own: what is typed there is no text of the document. */
+  const inField = (e: Event) => e.target instanceof Element && e.target.matches("input, textarea, select");
+  // Editing: text that the page takes (a phone's keyboard and a composition give no keydown that names it), for a
+  // feedback's context.
+  addEventListener(
+    "beforeinput",
+    (e) => {
+      if (editing() && e.inputType == "insertText" && e.data && !inField(e)) tell({ type: "erga-typed", text: e.data.slice(0, 200) });
     },
     true
   );

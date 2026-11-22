@@ -89,6 +89,8 @@ const listener = (request: Request): Listener => {
 interface Thread {
   agent: AgentSession;
   origin: string;
+  /** What the editor said of the open page with the person's last message (Caller.page), if it said so. */
+  page: unknown;
 }
 
 export class PersonAgents {
@@ -144,7 +146,12 @@ export class PersonAgents {
       s.agent.configure(cfg);
       return s;
     }
-    const state: { origin: string; name: string; turn: string | null } = { origin, name: name ?? login, turn: null };
+    const state: { origin: string; name: string; turn: string | null; page: unknown } = {
+      origin,
+      name: name ?? login,
+      turn: null,
+      page: null,
+    };
     /** The documents its tools ran in this turn (callDocument): each hears when the turn is done (a version is cut there). */
     const touched = new Map<string, DocRoute>();
     const admin = await this.platform.directory.users.isAdmin(login);
@@ -156,6 +163,7 @@ export class PersonAgents {
       origin: state.origin,
       // The thread's document: the default for a tool's `document`.
       ...(doc ? { here: doc } : {}),
+      page: state.page,
       platform: this.platform,
       auth: authOps(this.platform, state.origin),
       ranIn: (doc) => touched.set(doc.id, doc),
@@ -210,7 +218,10 @@ export class PersonAgents {
     return { enabled: true as const, ...modelState(s.agent), log: s.agent.log() };
   }
 
-  /** A message, from a page (`doc`: the id of the document it has open, if any: the message goes to that document's thread). */
+  /**
+   * A message, from a page (`doc`: the id of the document it has open, if any: the message goes to that document's
+   * thread; `page`: what the editor said of the open page, for a feedback's context).
+   */
   async agentPrompt(
     login: string,
     origin: string,
@@ -219,10 +230,12 @@ export class PersonAgents {
     attached?: unknown,
     doc?: string | null,
     name?: string,
-    id?: string
+    id?: string,
+    page?: unknown
   ): Promise<{ ok: boolean; reason?: string }> {
     const s = await this.session(login, doc ?? null, origin, name);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
+    s.page = page ?? null;
     // Sent again (Try again, after an answer that came too late): the transcript has it already.
     if (id && s.agent.log().items.some((i) => i.kind == "user" && i.id == id)) return { ok: true };
     const files = checkAttachments(attached);

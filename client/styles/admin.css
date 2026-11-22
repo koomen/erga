@@ -282,6 +282,15 @@ section.everyone li.off .switch { cursor: default; }
 .feedback .text { grid-column: 1; margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--fg-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
 .feedback .meta { grid-column: 1; margin: 6px 0 0; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; }
 .feedback .resolve { grid-column: 2; grid-row: 1 / span 3; }
+/* Its context, where the sender's agent sent one: closed, then a list of its parts; the page's HTML scrolls sideways. */
+.feedback .context { grid-column: 1 / -1; margin: 8px 0 0; min-width: 0; font-size: 12.5px; }
+.feedback .context > summary { color: var(--soft); cursor: pointer; }
+.feedback .context dl { margin: 8px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; }
+.feedback .context dt { color: var(--soft); }
+.feedback .context dd { margin: 0; min-width: 0; color: var(--fg); overflow-wrap: anywhere; }
+.feedback .context dd p { margin: 0 0 4px; }
+.feedback .context pre { margin: 4px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; border-radius: 8px; background: var(--code-bg); font: 12px/1.5 var(--font-mono); color: var(--fg-strong); white-space: pre; }
+@media (max-width: 600px) { .feedback .context dl { grid-template-columns: minmax(0, 1fr); gap: 2px; } .feedback .context dd { margin-bottom: 6px; } }
 .feedback-lists { margin-top: 32px; }
 .feedback-lists .resolved { margin: 20px 0 0; }
 .feedback-lists .resolved[hidden] { display: none; }

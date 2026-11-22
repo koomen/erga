@@ -189,6 +189,14 @@ export const SETTINGS = {
     default: true,
     parse: boolean,
   }),
+  feedback_context: setting<boolean>({
+    label: "Agents add the page's context to feedback",
+    description:
+      "With feedback from the editor, a user's agent sends the page's address, its HTML near their caret, their last keys and the problems the editor showed. The agent tells them.",
+    values: "false: a feedback has its text, its page and its sender only. Only the admins and their agents read the context.",
+    default: false,
+    parse: boolean,
+  }),
   usernames: setting<UsernameRule>({
     label: "Usernames are assigned based on",
     description: "A name that is taken or reserved: that user chooses. Existing accounts keep their usernames.",

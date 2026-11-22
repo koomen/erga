@@ -24,7 +24,7 @@ export const PAGE_SETTINGS = {
   agents: ["agent_daily_tokens"],
   llmApi: ["document_llm_api"],
   llmApiOn: ["document_llm_guests", "document_llm_daily_usd", "document_llm_max_tokens"],
-  feedback: ["feedback"],
+  feedback: ["feedback", "feedback_context"],
 } as const;
 /** Settings with a control of their own: the Access page's menu and switch, the Sign-in page's radio, and the Agents and models page's choice and models' boxes. */
 export const OWN = ["anyone_access", "public_sharing", "usernames", "agent_keys", "agent_models_off", "document_llm_models_off"] as const;

@@ -49,6 +49,11 @@ export interface Caller {
   readonly name?: string;
   /** The document open on the person's page, as their own agent's message said (agents/person/): the default for a `document` argument. */
   readonly here?: string;
+  /**
+   * What the person's editor said of the open page with their last message to their own agent (agents/person/), as
+   * it came: send_feedback keeps it as the feedback's context (shared/feedback-context.ts).
+   */
+  readonly page?: unknown;
   /** The server's origin, for URLs in answers (else addresses only). */
   readonly origin?: string;
   /** The platform: for the operations on documents, their files and the person's tokens. */

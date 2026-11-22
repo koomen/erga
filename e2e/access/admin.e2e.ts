@@ -6,7 +6,8 @@
 // turns Send feedback off and on. Deploy
 // shows the server's own deploys: Deploy on a commit asks the server's deployer, played here by the deployer's own code,
 // and its job shows as it runs. Analytics shows the day's counts. Then the
-// editor (the admin pages' bars look as its bars, and Send feedback works from a document), and the pages in dark mode.
+// editor (the admin pages' bars look as its bars, Send feedback works from a document, and the agent's feedback has the
+// page's context while the setting feedback_context is on), and the pages in dark mode.
 import * as Effect from "effect/Effect";
 import { readControl, startOf, takeAsk, writeLook } from "../../deploy/deployer/control";
 import { openJob, writeSpec } from "../../deploy/deployer/instance";
@@ -16,6 +17,7 @@ import { agentClosed, expect, journey, servers, settle, test, until, type Page }
 import { hold } from "../helpers/hold";
 import { joinRoom } from "../helpers/room";
 import { runTool } from "../helpers/tools";
+import { answered, say, script } from "../agent/panel";
 import { editorUp, mint, newDoc, soon, unique } from "./access";
 import { clickOn } from "../helpers/press";
 import { markCard, markOf, marksSeen, markThere, watchMark } from "../helpers/save-mark";
@@ -75,10 +77,16 @@ journey("an admin on the admin pages", () => {
   /** The feedback an admin's agent reads: the unresolved ones, or the resolved. */
   const feedback = async (status?: "resolved") =>
     (
-      await agent<{ feedback: { id: string; text: string; from: object | null; page: string | null; status: string }[] }>(
-        "feedback",
-        status ? { status } : {}
-      )
+      await agent<{
+        feedback: {
+          id: string;
+          text: string;
+          from: object | null;
+          page: string | null;
+          status: string;
+          context?: { page: string; html: string; htmlFrom: number; line: number; keys: string };
+        }[];
+      }>("feedback", status ? { status } : {})
     ).feedback;
   /** A link of the sidebar shows another admin page in place: its path, and what the page has. */
   const go = async (path: string, shows: string) => {
@@ -546,10 +554,12 @@ journey("an admin on the admin pages", () => {
   });
 
   // The admin pages' bars once had the glass for a coloured page: untinted, with the full shadow.
-  test("the admin pages' bars and agent have the editor's look on a white document; the editor's avatar menu sends feedback too", async ({
+  test("the admin pages' bars and agent have the editor's look on a white document; the editor's avatar menu sends feedback too; with the context on, the agent's feedback has the page, the keys and the HTML at the caret", async ({
     tab,
   }) => {
-    await openEditor(tab, own, "top/white");
+    // (Before the editor opens: its page tells the agent's panel that the server asks for the context.)
+    await agent("set_setting", { key: "feedback_context", value: true });
+    const ed = await openEditor(tab, own, "top/white");
     await editorUp(page);
     const editor = await looks(page, { left: "#nav-documents", right: ".chrome-top" });
     // A white document's glass: tinted.
@@ -560,6 +570,32 @@ journey("an admin on the admin pages", () => {
     const text = `From the editor ${Date.now()}`;
     await sendFeedback([text]);
     await soon(async () => (await feedback()).map((f) => f.text)).toContain(text);
+    // The person presses keys in the page, then asks their agent to send one: it has where they were and what they
+    // pressed, and the admin's agent reads it with the feedback. (The dialog's has none: tests/feedback.test.ts.)
+    await ed.clickEnd("h1");
+    await ed.press("Enter");
+    await page.keyboard.type("- Milk");
+    await ed.press("Enter");
+    await ed.press("Tab");
+    await ed.idle();
+    await ed.openAgent();
+    const told = `Tab moved my bullet ${Date.now()}`;
+    await say(page, script("Tell the admins.", [{ tool: "documents", args: { op: "send_feedback", text: told } }, { text: "Sent." }]));
+    await answered(page, "Sent.");
+    const sent = (await feedback()).find((f) => f.text == told)!;
+    const at = new URL(ed.address).pathname;
+    expect(sent.page).toBe(at);
+    expect(sent.context).toMatchObject({
+      page: at,
+      file: "index.html",
+      keys: "Enter 'type:- Milk' Enter Tab",
+      view: expect.stringMatching(/^\d+×\d+ CSS pixels, light mode$/),
+      problems: [],
+    });
+    // The HTML is the source at the caret: the new bullet, under the heading.
+    const lines = sent.context!.html.split("\n");
+    expect(lines[sent.context!.line - sent.context!.htmlFrom]).toContain("<li>");
+    expect(sent.context!.html).toContain("<li>Milk");
   });
 
   test("in dark mode: dark glass on the bars, the switch's circle in the page's colour, and a link in the editor's link colour", async () => {

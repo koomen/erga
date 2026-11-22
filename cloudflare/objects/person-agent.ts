@@ -37,9 +37,10 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
     attached?: unknown,
     doc?: string | null,
     name?: string,
-    id?: string
+    id?: string,
+    page?: unknown
   ) {
-    return this.agents.agentPrompt(login, origin, text, context, attached, doc, name, id);
+    return this.agents.agentPrompt(login, origin, text, context, attached, doc, name, id, page);
   }
   agentControl(login: string, doc: string | null, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
     return this.agents.agentControl(login, doc, op, model);

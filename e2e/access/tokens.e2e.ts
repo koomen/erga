@@ -6,9 +6,13 @@
 // The second journey is on a server of this file's own, with no agent key: a token of a smaller scope reaches its
 // document and nothing else, the agent's panel says how to turn the agent on, and the admin saves the server's keys
 // on /admin/agents (they are the whole server's).
+// The feedback watch of `bun erga` (deploy/cli/feedback.ts) signs in the same way, and the person gives it Admin power.
 // A test never makes a token by itself: it asks as the Settings dialog does (POST /tokens/new), or as an agent does.
+import { mkdtempSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { hold } from "../helpers/hold";
@@ -16,6 +20,8 @@ import { agentPrompt } from "../../client/common/agent-prompt";
 import { getter, mint, signIn, soon, tool, unique, upload } from "./access";
 import { markOf } from "../helpers/save-mark";
 import { watchCalls } from "../agent/panel";
+import { runTool } from "../helpers/tools";
+import { ENDED, NO_ADMIN, readTokens, tokensPath, watchFeedback } from "../../deploy/cli/feedback";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("tokens")]);
 
@@ -233,6 +239,77 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     } finally {
       app.close();
     }
+  });
+
+  test("bun erga feedback signs in the same way: documents only reads no feedback; with Admin power it prints the unresolved feedback, then each new one; the next run needs no sign-in; a revoke ends it, and Deny stops it", async () => {
+    const path = tokensPath(mkdtempSync(join(tmpdir(), "erga-feedback-")), root);
+    const said: string[] = [],
+      shown: string[] = [];
+    /** The watch's wait between two reads ends when the test says so. */
+    let tick = () => {};
+    let stop = false;
+    const run = () =>
+      watchFeedback({
+        origin: root,
+        path,
+        say: (text) => said.push(text),
+        show: (url) => shown.push(url),
+        sleep: () => new Promise<void>((r) => (tick = r)),
+        until: () => stop,
+      });
+    const says = (text: string) => until(() => said.some((line) => line.includes(text)), 10_000, `the watch says "${text}"`);
+    /** The person opens the approval page that the command showed, and answers; the browser goes back to the command. */
+    const answer = async (i: number, click: (page: Page) => Promise<void>) => {
+      await page.goto(await until(() => shown[i], 10_000, "the approval page's address"));
+      expect(await page.textContent(".approve h2")).toContain("Erga feedback watch wants to act for you");
+      await click(page);
+      await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\/callback\?/);
+      return page.textContent("p");
+    };
+    const send = async (text: string) => expect((await runTool(root, "send_feedback", { text })).status).toBe(200);
+    const before = `Before the watch ${Date.now()}`;
+    await send(before);
+
+    // Approve as it is (documents only): the command is signed in, and the server refuses its read. It says why, and asks again.
+    let watch = run();
+    expect(await answer(0, (p) => p.click("button[value=approve]"))).toBe("Signed in. Go back to the terminal.");
+    await says(NO_ADMIN);
+    await answer(1, async (p) => {
+      await p.getByLabel(/Admin power/).check();
+      await p.click("button[value=approve]");
+    });
+    // The feedback that waits, then one that arrives while it watches.
+    await says("unresolved now. New ones print as they arrive.");
+    expect(said.find((line) => line.includes(before))).toMatch(/^=== Feedback fb-\w+, .*, from tester\n {4}Before the watch/);
+    const arrived = `While it watches ${Date.now()}`;
+    await send(arrived);
+    expect(said.join("\n")).not.toContain(arrived);
+    tick();
+    await says(arrived);
+    // It keeps the sign-in in a file of this user's only: the next run reads with it, and shows no approval page.
+    stop = true;
+    tick();
+    await watch;
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    said.length = 0;
+    stop = false;
+    watch = run();
+    await says(arrived);
+    expect([shown.length, said.filter((line) => line.startsWith("=== Feedback")).length]).toEqual([2, said.length - 2]);
+    // The person revokes it in Settings: the next read is refused, also with a token new from the refresh grant. The
+    // command says that the sign-in ended, drops it, and asks again. Deny on the page stops the command.
+    const me = await whoami(root, readTokens(path)!.access);
+    expect(me).toMatchObject({ adminPower: true, token: { scope: "admin", label: "Erga feedback watch" } });
+    expect((await runTool(root, "revoke", { token: me.token.id })).status).toBe(200);
+    tick();
+    await says(ENDED);
+    expect(readTokens(path)).toBeNull();
+    const stopped = watch.then(
+      () => "it goes on",
+      (e: Error) => e.message
+    );
+    expect(await answer(2, (p) => p.click("button[value=deny]"))).toBe("Not signed in. Go back to the terminal.");
+    expect(await stopped).toBe("Denied on the page: not signed in.");
   });
 
   test("Settings: a key that its provider refuses isn't kept, with the provider's reason; their own key gives their agent its models, and the page never shows it again", async () => {

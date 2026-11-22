@@ -29,6 +29,7 @@ const Prompt = Schema.Struct({
   context: Schema.optionalKey(Schema.Unknown),
   files: Schema.optionalKey(Schema.Unknown),
   id: Schema.optionalKey(Schema.Unknown),
+  page: Schema.optionalKey(Schema.Unknown),
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
 const AnswerBody = Schema.Struct({ id: Schema.optionalKey(Schema.String) });
@@ -102,8 +103,8 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
   {
     method: "POST",
     path: "/api/agent",
-    // { text, context, files?, id? }: a message (it steers a turn that is running). context is the page note (the
-    // page open, what is selected there), id
+    // { text, context, files?, id?, page? }: a message (it steers a turn that is running). context is the page note (the
+    // page open, what is selected there), page the editor's context for a feedback (shared/feedback-context.ts), id
     // the tab's own id for the message: its copy in the transcript carries it, and a second message with the same id
     // (Try again, after the first got there) is not sent again.
     run: (a) =>
@@ -118,7 +119,8 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
             b.files,
             docOf(a.url),
             a.me.name,
-            typeof b.id == "string" && /^[\w-]{1,64}$/.test(b.id) ? b.id : undefined
+            typeof b.id == "string" && /^[\w-]{1,64}$/.test(b.id) ? b.id : undefined,
+            b.page
           )
         );
         return json(r, r.ok ? 200 : 409);

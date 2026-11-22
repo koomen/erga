@@ -36,7 +36,7 @@ import { mountUploads } from "./uploads";
 import { ms } from "../../libs/text/ui/timescale";
 import { mountPageRequests } from "./page-requests";
 import { awaitHello } from "./opening";
-import { messageContext } from "./agent-context";
+import { feedbackContext, keyPressed, messageContext } from "./agent-context";
 import { keepOffline, rememberOrigin } from "../common/offline";
 
 declare global {
@@ -410,6 +410,7 @@ const TITLE_NOT_SAVED = {
       shell.chrome.toggleQuick(false);
       shell.save.close();
     },
+    onPressed: keyPressed,
     onActivity: (kind) => {
       activate();
       if (kind == "key") {
@@ -640,6 +641,7 @@ const TITLE_NOT_SAVED = {
     page,
     collab,
     agentContext: () => messageContext(shell),
+    feedbackContext: () => feedbackContext(shell),
     setEditing,
     get pagePath() {
       return shell.pagePath;
