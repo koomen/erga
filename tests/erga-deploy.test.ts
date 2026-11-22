@@ -152,6 +152,20 @@ describe("bun erga deploy", () => {
     ]);
   }, 60_000);
 
+  test("a deploy that ends in the millisecond in which it started: the server's row after the upload is still a newer row", async () => {
+    // A deploy takes the server's health row only when it is newer than the row from before the upload. The mock's
+    // server writes a row at each read, on a clock of milliseconds, and a deploy on the mock takes about one: on a
+    // fast run the two reads had the same time, and the deploy failed ("wrote no health row in 3 minutes"). Here the
+    // clock does not move at all.
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    fresh(next);
+    const at = Date.now();
+    mock.state.now = () => at;
+    expect(await deployInstance({ dir, host: next.host, commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
+  });
+
   test("a Worker keeps its database: its entry takes the name of the database that the Worker is bound to", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);

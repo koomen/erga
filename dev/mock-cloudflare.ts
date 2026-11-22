@@ -476,8 +476,11 @@ export function runScheduled(state: MockState, db: string) {
   const version = bindings(worker).find((b) => b.name == "ERGA_VERSION" && b.type == "plain_text")?.text ?? null;
   if (version && state.silent?.includes(version)) return;
   const bad = !!version && !!state.unhealthy?.includes(version);
+  // A row that the server writes later has a later time, as a real one has (a real server writes one each minute). The
+  // mock's server writes one at each read, and two reads of one deploy can come in one millisecond: the deploy takes
+  // only a row that is newer than the one from before its upload (deploy/deployer/cloudflare.ts, readHealth).
   state.health[db] = {
-    at: (state.now ?? Date.now)(),
+    at: Math.max((state.now ?? Date.now)(), (state.health[db]?.at ?? 0) + 1),
     version,
     ok: bad ? 0 : 1,
     checks: JSON.stringify({
