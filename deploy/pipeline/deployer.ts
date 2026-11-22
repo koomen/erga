@@ -74,14 +74,7 @@ export async function installDeployer(
     throw new DeployError({
       message: `Your account has a Worker ${name} that Erga did not make. Erga does not replace it: rename it or delete it, then set up again.`,
     });
-  const settings = there
-    ? await cf.call<{ bindings?: { type: string; name: string }[] }>(
-        "GET",
-        `${acc}/workers/scripts/${name}/settings`,
-        "read the deployer's settings"
-      )
-    : null;
-  const keeps = !!settings?.bindings?.some((b) => b.type == "secret_text" && b.name == KEY);
+  const keeps = !!there && (await keepsToken(cf, target));
   if (there && !keeps) await removeDeployer(cf, target);
 
   const form = new FormData();
@@ -117,6 +110,19 @@ export async function installDeployer(
   });
   await setSchedule(cf, acc, name);
   return { name, kept: keeps };
+}
+
+/**
+ * Whether the deployer that is there keeps what it holds through an install: it has its own secret, which seals the
+ * token in its store. A deployer from before that (its token was a secret of the Worker) is replaced by a new one.
+ */
+export async function keepsToken(cf: Cloudflare, target: Pick<CloudflareTarget, "account" | "worker">): Promise<boolean> {
+  const settings = await cf.call<{ bindings?: { type: string; name: string }[] }>(
+    "GET",
+    `/accounts/${target.account}/workers/scripts/${deployerName(target.worker)}/settings`,
+    "read the deployer's settings"
+  );
+  return !!settings?.bindings?.some((b) => b.type == "secret_text" && b.name == KEY);
 }
 
 /**

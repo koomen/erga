@@ -414,11 +414,16 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         // On Cloudflare too: only a person's login changes the deployer's code. It keeps the token that it holds, its
         // store and its switch: the user makes no new token for a newer deployer.
         if (a.where != "aws" && seen.deployer && a.deploys == "cloud" && !did.has("deployer")) {
+          const c = await connect();
+          const deployers = await import("../pipeline/deployer");
           if (o.dryRun)
-            say("PLAN  Its deployer's code changes to this code's. It keeps the token that it holds; auto-deploy stays as it is.");
+            say(
+              (await deployers.keepsToken(c.cf, { account: a.account, worker }))
+                ? "PLAN  Its deployer's code changes to this code's. It keeps the token that it holds; auto-deploy stays as it is."
+                : `PLAN  Its deployer is from before it kept its own token. I will replace it with a new one, which holds no token: after that, an admin pastes a token on https://${a.host}/admin/deploy. Until then nothing deploys by itself. Auto-deploy stays as it is.`
+            );
           else {
-            const c = await connect();
-            const { kept } = await (await import("../pipeline/deployer")).installDeployer(c.cf, { account: a.account, worker });
+            const { kept } = await deployers.installDeployer(c.cf, { account: a.account, worker });
             pass(
               kept
                 ? `The deployer of ${a.host} has this code now. It holds what it held; auto-deploy is as it was.`

@@ -10,7 +10,7 @@ import { Cloudflare } from "../deploy/deployer/cloudflare-api";
 import type { D1 } from "../deploy/deployer/d1-binding";
 import { readControl } from "../deploy/deployer/control";
 import { readJobs, readLog } from "../deploy/deployer/instance";
-import { DEPLOYER_TAG, deployerModule, installDeployer } from "../deploy/pipeline/deployer";
+import { DEPLOYER_TAG, deployerModule, installDeployer, keepsToken } from "../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { instanceOn } from "./helpers/binding.ts";
 import { bindingsOf, bootstrap, databaseOf, prepareRelease, SHA1, SHA2 } from "./helpers/deploys.ts";
@@ -94,8 +94,11 @@ describe("the install", () => {
     );
     form.append("worker.js", new File(["export default {}"], "worker.js", { type: "application/javascript+module" }));
     await cf.call("PUT", `${acc}/workers/scripts/erga-next-deployer`, "upload a deployer from before", form);
+    // Setup's dry run says so before: this deployer does not keep what it holds.
+    expect(await keepsToken(cf, TARGET)).toBe(false);
     const from = mock.state.calls.length;
     expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: false });
+    expect(await keepsToken(cf, TARGET)).toBe(true);
     // The old Worker went, with its secret: the new one holds only its own.
     expect(mock.state.calls.slice(from)).toContain(`DELETE ${acc}/workers/scripts/erga-next-deployer?force=true`);
     expect(Object.keys(mock.state.secrets["erga-next-deployer"])).toEqual(["KEY"]);
