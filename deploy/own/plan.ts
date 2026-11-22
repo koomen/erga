@@ -1,15 +1,14 @@
-// A new Erga instance (`bun erga setup <host> --host ... --sign-in ...`): the user's answers, which the agent asked
+// A new Erga instance (`bun erga setup <host> --host ... --deploys ...`): the user's answers, which the agent asked
 // first and gives as the command's options, and what follows from them alone: the instance's names, its entry in
-// .erga/config.json, its plain settings, its database's first rows, its GitHub App. Pure: no network, no files. The
-// flow (what the command does next) is deploy/own/flow.ts.
+// .erga/config.json, its plain settings, its database's first rows. Pure: no network, no files. The flow (what the
+// command does next) is deploy/own/flow.ts. How people sign in is no answer: the user sets it up on the new server's
+// setup page (server/identity/setup.ts). Single sign-on alone is the deploy's (--sign-in sso): a gate in front.
 
 import { type CloudflareEntry, DEFAULT_BRANCH, DEFAULT_REPO, repoName } from "../cli/config";
 import { type Target, targetFacts } from "../pipeline/pipeline";
 import { SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 export type Where = "cloudflare" | "aws";
-/** Who may sign in: users the admin invites, they and an organization's users, or everyone the organization's single sign-on lets pass. */
-export type SignIn = "invite" | "organization" | "sso";
 /** Who deploys each new release: a deployer in the user's own account, or the user from a machine. */
 export type Deploys = "cloud" | "local";
 
@@ -27,9 +26,8 @@ export interface Answers {
   profile: string;
   region: string;
   egress: string;
-  signIn: SignIn | "";
-  /** organization: a GitHub organization's login, or a Google Workspace's domain. */
-  organization: string;
+  /** --sign-in sso: the organization's single sign-on, at a gate in front. "": the OAuth providers that the user sets up on the setup page. */
+  signIn: "sso" | "";
   /** sso on Cloudflare (Cloudflare Access): the Zero Trust team's name, and the Access application's audience tag (typed on the page). */
   team: string;
   aud: string;
@@ -64,7 +62,6 @@ export const noAnswers = (host: string): Answers => ({
   region: "",
   egress: "nat-instance",
   signIn: "",
-  organization: "",
   team: "",
   aud: "",
   issuer: "",
@@ -79,8 +76,8 @@ export const noAnswers = (host: string): Answers => ({
 export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
 
 /**
- * Where documents' pages run. Cloudflare: one shared workers.dev address (safe for one author; a domain of their own
- * is a later change). AWS: a domain. With single sign-on it is pages.<host>: the gate in front guards both, with the
+ * Where documents' pages run. Cloudflare: one shared workers.dev address (safe for one author), or a second domain of
+ * the account, where each document has a subdomain of its own (for many authors). AWS: a domain. With single sign-on it is pages.<host>: the gate in front guards both, with the
  * user's sign-on. Without it, the pages need a whole zone that isn't the app's (a page's
  * script must not share the app's site), so the user names one ("": not answered).
  */
@@ -115,15 +112,9 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
         "egress is nat-instance, nat-gateway, or <vpc id>/<private subnet id>."
       );
     case "signIn":
-      return is(low == "invite" || low == "organization" || low == "sso", low, "signIn is invite, organization or sso.");
+      return is(low == "sso", low, "--sign-in takes sso only. Without it, you set up GitHub or Google sign-in on the server's setup page.");
     case "deploys":
       return is(low == "cloud" || low == "local", low, "deploys is cloud or local.");
-    case "organization":
-      return is(
-        /^[a-z0-9][a-z0-9.-]{0,99}$/.test(low),
-        low,
-        `"${v}" isn't a GitHub organization (acme-inc) or an email domain (acme.com).`
-      );
     case "team": {
       const team = low.replace(/\.cloudflareaccess\.com$/, "");
       return is(
@@ -163,10 +154,19 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
 export const zoneOf = (host: string, zones: string[]): string | null =>
   zones.filter((z) => host == z || host.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0] ?? null;
 
-/** Why the pages' domain can't be `pages`, on AWS, or null. `zones`: the account's Route 53 zones. */
+/** Why the pages' domain can't be `pages`, or null. `zones`: the account's domains (AWS: its Route 53 zones). */
 export function pagesProblem(a: Answers, zones: string[]): string | null {
   const pages = pagesOf(a);
-  if (a.where != "aws" || !pages) return null;
+  const other = "The documents' pages need another domain than the app's: a page's script must not share the app's site.";
+  if (a.where != "aws")
+    return pages == "shared"
+      ? null
+      : !zones.includes(pages)
+        ? `${pages} isn't a domain of this Cloudflare account: the pages need a whole domain of their own.`
+        : zoneOf(a.host, zones) == pages
+          ? other
+          : null;
+  if (!pages) return null;
   if (pages == "shared") return "On AWS the documents' pages need a domain.";
   if (sso(a))
     return !zoneOf(pages, zones)
@@ -175,16 +175,17 @@ export function pagesProblem(a: Answers, zones: string[]): string | null {
         ? "The documents' pages need a name of their own: not the app's, and not one above it."
         : null;
   if (!zones.includes(pages)) return `${pages} isn't a Route 53 zone of this account: the pages need a whole zone of their own.`;
-  return zoneOf(a.host, zones) == pages
-    ? "The documents' pages need another domain than the app's: a page's script must not share the app's site."
-    : null;
+  return zoneOf(a.host, zones) == pages ? other : null;
 }
 
-/** The settings' defaults that the answer sets (SERVER_DEFAULTS): an admin can change each on its admin page (/admin). */
+/**
+ * The settings' defaults of a new server (SERVER_DEFAULTS): an admin can change each on its admin page (/admin).
+ * Only users that the admin invites sign in (/admin/access); they share with anyone with the link: Anyone may view
+ * public documents, and the switch is on. With single sign-on, nobody outside the organization sees a document.
+ */
 export const defaultsOf = (a: Pick<Answers, "signIn">) => ({
-  // Invited users share with anyone with the link: Anyone may view public documents, and the switch is on.
-  anyone_access: a.signIn == "invite" ? "public" : "none",
-  public_sharing: a.signIn == "invite",
+  anyone_access: sso(a) ? "none" : "public",
+  public_sharing: !sso(a),
   delete_docs_after_hours: null,
 });
 
@@ -211,7 +212,11 @@ export function proxySetting(a: Answers, signer?: string): string | null {
 /** The names of the plain settings that varsOf gives: what the answers decide in an entry. */
 export const ANSWER_VARS = ["GITHUB_CLIENT_ID", "PROXY_SIGN_IN", "SERVER_DEFAULTS"];
 
-/** The instance's plain settings: its sign-in (the GitHub App's id, or the proxy), and the settings' defaults. */
+/**
+ * The instance's plain settings: the proxy of its single sign-on, and the settings' defaults. `github`: the client id
+ * of a GitHub app that the deploy itself gives the server (an instance from before the setup page; the verify suite).
+ * Setup gives none: the user makes the app on the server's setup page, and the server keeps it.
+ */
 export function varsOf(a: Answers, github: string | undefined, signer?: string): Record<string, string> {
   const proxy = proxySetting(a, signer);
   return {
@@ -232,18 +237,11 @@ export interface FirstRow {
 
 /**
  * The rows a new server's database gets with its first deploy, only while it has no admin (each host writes them in its
- * own way: first.ts, deploy/aws/setup.ts): the access rule that the answer names. An organization's users may sign in and
- * write: a GitHub organization's members, or a Google Workspace's (once Google sign-in is on). With single sign-on,
- * anyone who passes the proxy may: Anyone's level (the setting anyone_access, server/directory/access.ts). No admin: the
- * user who opens setup's one-time link becomes it (server/identity/claim.ts).
+ * own way: first.ts, deploy/aws/setup.ts). With single sign-on, anyone who passes the gate may sign in and write:
+ * Anyone's level (the setting anyone_access, server/directory/access.ts). Else none: only users that the admin invites
+ * sign in. No admin: the user who finishes the server's setup page becomes it (server/identity/setup.ts).
  */
 export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
-  const rule = (kind: string, value: string): FirstRow => ({
-    who: `${kind} ${value}`,
-    table: "access_rules",
-    row: { kind, value, access: "write", created: now },
-    onConflict: "(kind, value) DO UPDATE SET access = 'write'",
-  });
   if (sso(a))
     return [
       {
@@ -253,8 +251,6 @@ export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
         onConflict: "(key) DO UPDATE SET value = excluded.value",
       },
     ];
-  if (a.signIn == "organization" && a.organization)
-    return [rule(a.organization.includes(".") ? "workspace" : "github_org", a.organization)];
   return [];
 }
 
@@ -307,16 +303,3 @@ export function setupEntry(a: Answers, o: { zones: string[]; subdomain: string |
     ...targetFacts(target),
   };
 }
-
-/** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions. */
-export const githubManifest = (a: Answers, redirect: string): Record<string, unknown> => ({
-  name: `Erga ${a.host}`.slice(0, 34),
-  url: `https://${a.host}`,
-  redirect_url: redirect,
-  callback_urls: [callbackOf(a.host)],
-  description: `Sign-in for the Erga at https://${a.host}`,
-  public: false,
-  request_oauth_on_install: false,
-  hook_attributes: { url: `https://${a.host}/`, active: false },
-  default_permissions: {},
-});

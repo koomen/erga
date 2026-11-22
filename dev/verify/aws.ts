@@ -109,7 +109,7 @@ export function answersOf(unit: AwsUnit, issuer = ""): Answers {
     profile: l.aws.profile,
     region: REGION,
     pages: l.aws.content,
-    ...(unit == "5" ? { signIn: "sso", issuer, client: CLIENT } : { signIn: "invite" }),
+    ...(unit == "5" ? { signIn: "sso", issuer, client: CLIENT } : {}),
   };
 }
 

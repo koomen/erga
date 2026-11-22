@@ -58,9 +58,10 @@
 //                                       its plain settings, read from its platform with this machine's login
 //                                       (Cloudflare's API; with --host aws, the AWS CLI), and the repository and
 //                                       branch it tracks
-//   bun erga setup <host> --host ... --sign-in ... [--repo <repo>] [--branch <branch>] [--dry-run]
+//   bun erga setup <host> --host ... --deploys ... [--repo <repo>] [--branch <branch>] [--dry-run]
 //                                       a new instance, on Cloudflare or AWS, from the user's answers: the checks and
-//                                       the plan (--dry-run), then the build and the first admin (bun erga setup --help)
+//                                       the plan (--dry-run), then the build; the user finishes on the new server's
+//                                       setup page, which the command opens (bun erga setup --help)
 //   bun erga verify [<setting>...|all] [--keep] [--browsers a,b] [--origin stub|erga] [--yes]
 //                                       the verify suite, which is no part of bun run test: with no setting, it checks
 //                                       the suite's prerequisites and each setting's state, and deploys nothing; with

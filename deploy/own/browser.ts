@@ -1,9 +1,9 @@
-// The user's steps in the browser that `bun erga setup` opens: a page on this machine's loopback, for one step, that
-// stops when the step is done. No agent sees these pages or what goes through them.
+// The user's steps in the browser that `bun erga setup` opens on this machine: a page on the loopback, for one step,
+// that stops when the step is done. No agent sees these pages or what goes through them. (A new server's own steps
+// are on its setup page, server/identity/setup.ts: these are the ones that a server can't take.)
 //
-//   githubApp     the page posts the app's manifest to GitHub (GitHub's manifest flow needs a form POST); GitHub makes
-//                 the app and comes back with a code; the page changes it for the app's id and secret, into
-//                 .erga/secrets.json, under the host
+//   deployerToken the deployer's token, for an instance that has its admin already (its setup page is closed): into
+//                 the deployer's secret on Cloudflare
 //   oidcSecret    single sign-on on AWS: one field for the client secret of the organization's sign-in, into Parameter Store
 //
 // With --remote the user is at another computer, and a browser here shows nothing. Their steps go through their own
@@ -12,11 +12,9 @@
 //
 // Trap: a page here never shows a secret, and the command never prints one.
 
-import { randomBytes } from "node:crypto";
 import { closeSync, openSync, writeSync } from "node:fs";
 import { esc } from "../../shared/html";
-import { type Answers, githubManifest } from "./plan";
-import { DIR, putSecret } from "./store";
+import type { Answers } from "./plan";
 
 /** Opens `url` in the user's browser. */
 export const openBrowser = (url: string) =>
@@ -92,45 +90,6 @@ async function step(
     // The last page has its answer before the server stops.
     setTimeout(() => server.stop(), 500);
   }
-}
-
-/** The GitHub App of `a`: the user clicks Create on GitHub. Its id and secret go into .erga/secrets.json. */
-export function githubApp(
-  a: Answers,
-  ms: number,
-  o: { dir?: string; api?: typeof fetch; open?: (url: string) => void } = {}
-): Promise<string | null> {
-  const { dir = DIR, api = fetch, open = openBrowser } = o;
-  const state = randomBytes(16).toString("hex");
-  return step(
-    async (req, url) => {
-      if (url.pathname == "/") {
-        const manifest = JSON.stringify(githubManifest(a, `${url.origin}/created`));
-        return {
-          res: html(`<form method="post" action="https://github.com/settings/apps/new?state=${state}"><input type="hidden" name="manifest" value="${esc(manifest)}"><p>Sending you to GitHub to make the app for ${esc(a.host)}…</p><button>Go on</button></form>
-<script>document.forms[0].submit()</script>`),
-        };
-      }
-      if (url.pathname != "/created") return { res: html("Not found.", 404) };
-      const code = url.searchParams.get("code") ?? "";
-      if (url.searchParams.get("state") != state || !/^[0-9a-f]{8,64}$/i.test(code))
-        return { res: html("That answer from GitHub was not for this setup.", 400) };
-      const r = await api(`https://api.github.com/app-manifests/${code}/conversions`, {
-        method: "POST",
-        headers: { Accept: "application/vnd.github+json", "User-Agent": "erga-setup" },
-      });
-      const app = (await r.json().catch(() => null)) as { client_id?: string; client_secret?: string; message?: string } | null;
-      if (!r.ok || !app?.client_id || !app.client_secret) {
-        const why = `GitHub didn't give the app's values: ${app?.message ?? r.status}.`;
-        return { res: html(esc(why), 502), end: why };
-      }
-      putSecret(a.host, "GITHUB_CLIENT_SECRET", app.client_secret, dir);
-      putSecret(a.host, "GITHUB_CLIENT_ID", app.client_id, dir);
-      return { res: doneHtml("GitHub made the app."), end: "" };
-    },
-    ms,
-    open
-  );
 }
 
 /**

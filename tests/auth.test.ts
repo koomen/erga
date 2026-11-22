@@ -398,11 +398,11 @@ test("a GitHub sign-in from start to the gate's cookie, against the pretend GitH
   }
 });
 
-test("a new server's first admin: setup's link, the GitHub sign-in through the gate's callback, a username, then Become the admin", async () => {
+test("a new server's setup page: the link one time, GitHub's app in one click, the deployer's token, then the sign-in makes the admin and closes the page", async () => {
   const { mockGithub } = await import("../dev/github-mock");
   const { Directory } = await import("../server/directory/index.ts");
   const { memory } = await import("./helpers/memory-sql.ts");
-  const { Claim } = await import("../server/identity/claim-link.ts");
+  const { deployerStep, openToken, readStep, setupUrl } = await import("../server/identity/setup-link.ts");
   const { Grants, sessionOf } = await import("../server/identity/index.ts");
   const { app: erga } = await import("../server/app.ts");
   const { browser } = await import("./helpers/gate.ts");
@@ -415,7 +415,7 @@ test("a new server's first admin: setup's link, the GitHub sign-in through the g
     callback: `${ORIGIN}/_edge/callback`,
     user: "ada",
   });
-  // A server as setup leaves it: only invited people may join, and it has no admin and no user.
+  // A server as setup leaves it: no sign-in app, no admin and no user, and only invited people may join.
   const sql = memory();
   const directory = new Directory(sql, { admins: [], providers: ["github", "google"] });
   const platform: Platform = {
@@ -427,8 +427,8 @@ test("a new server's first admin: setup's link, the GitHub sign-in through the g
     sessionOf: (request) => sessionOf(platform, request),
     signIn: {
       mode: "oauth",
-      apps: { github: GOOD, google: { clientId: "", secret: "" } },
-      origins: { github: GH, google: null },
+      apps: { github: { clientId: "", secret: "" }, google: { clientId: "", secret: "" } },
+      origins: { github: GH, google: "https://google.test" },
       devLogin: null,
       encryptionKey: "secrets-key",
     },
@@ -437,39 +437,119 @@ test("a new server's first admin: setup's link, the GitHub sign-in through the g
   const real = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
-    return request.url.startsWith("https://gh.test/")
-      ? ((await gh.fetch(request)) ?? new Response("", { status: 404 }))
-      : real(input, init);
+    if (request.url.startsWith("https://gh.test/")) return (await gh.fetch(request)) ?? new Response("", { status: 404 });
+    // Google knows no client here.
+    if (request.url.startsWith("https://google.test/"))
+      return Response.json({ error: "invalid_client", error_description: "The OAuth client was not found." }, { status: 401 });
+    return real(input, init);
   }) as typeof fetch;
   try {
+    const server = (request: Request) => gated(platform, request, (r) => respond(route, r, platform));
     // Her browser, which sends a cookie only to the paths under the cookie's Path.
     const b = browser(async (request) =>
-      request.url.startsWith("https://gh.test/")
-        ? ((await gh.fetch(request)) ?? new Response("", { status: 404 }))
-        : gated(platform, request, (r) => respond(route, r, platform))
+      request.url.startsWith("https://gh.test/") ? ((await gh.fetch(request)) ?? new Response("", { status: 404 })) : server(request)
     );
     const form = { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" };
-    const t = encodeURIComponent(await Claim.seal(platform.secret, {}));
-    // Setup's link: the sign-in comes first, at GitHub.
-    const atGithub = await b.go(`${ORIGIN}/auth/claim?t=${t}`);
-    expect(b.trail.at(-1)).toBe("gh.test/__github/login/oauth/authorize");
-    const back = /id="authorize" href="([^"]+)"/.exec(await atGithub.text())![1].replace(/&amp;/g, "&");
-    // GitHub comes back to the gate's callback (/_edge/callback): the claim lets her join there, and she chooses a name.
+    const plain = (html: string) => html.replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+    /** Each row of the page, with its state. */
+    const rows = (html: string) =>
+      [...html.matchAll(/data-step="(\w+)" data-state="(\w+)"( open)?/g)].map((m) => `${m[1]} ${m[2]}${m[3] ?? ""}`);
+    const TOKEN = "t".repeat(40);
+    const link = await setupUrl("erga.example", platform.secret, { deployer: { account: "acc-1", worker: "erga-example" } });
+
+    // No link: no page, and nobody may join.
+    expect((await server(new Request(`${ORIGIN}/setup`))).status).toBe(410);
+    // Setup's link: this browser gets the page, with the link off its address. No provider is set up: no way to sign in yet.
+    const first = await b.go(link);
+    expect([first.status, b.trail]).toEqual([200, ["erga.example/setup", "erga.example/setup"]]);
+    let html = await first.text();
+    expect(rows(html)).toEqual(["github next open", "google next", "deployer waiting", "admin waiting"]);
+    expect(html).not.toContain('class="provider');
+    // The link works one time: another browser gets no page with it. Her own browser, which has the page, goes to it.
+    expect((await server(new Request(link))).status).toBe(410);
     b.trail.length = 0;
-    const username = await b.go(back);
+    expect([(await b.go(link)).status, b.trail]).toEqual([200, ["erga.example/setup", "erga.example/setup"]]);
+
+    // Google: values that Google refuses change nothing, and the row says why. The page never has the secret.
+    const refused = await b.go(`${ORIGIN}/setup/google`, {
+      method: "POST",
+      headers: form,
+      body: `clientId=123-abc.apps.googleusercontent.com&secret=${"g".repeat(24)}`,
+    });
+    html = await refused.text();
+    expect([refused.status, rows(html)]).toEqual([400, ["github next", "google next open", "deployer waiting", "admin waiting"]]);
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain("g".repeat(24));
+    // A request from another site is refused.
+    expect(
+      (await server(new Request(`${ORIGIN}/setup/google`, { method: "POST", headers: { origin: "https://evil.example" } }))).status
+    ).toBe(403);
+
+    // GitHub: the page's button posts the app's manifest to GitHub, with this server's addresses.
+    const [, action, manifest] = /<form method="post" action="([^"]+)">\s*<input type="hidden" name="manifest" value="([^"]+)">/.exec(
+      html
+    )!;
+    expect(JSON.parse(plain(manifest))).toMatchObject({
+      name: "Erga erga.example",
+      redirect_url: `${ORIGIN}/setup/github`,
+      callback_urls: [`${ORIGIN}/_edge/callback`],
+      default_permissions: {},
+      public: false,
+    });
+    const atGithub = await b.go(plain(action), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `manifest=${encodeURIComponent(plain(manifest))}`,
+    });
+    const create = plain(/id="create" href="([^"]+)"/.exec(await atGithub.text())![1]);
+    // An answer that is not to this page's form is refused.
+    const forgedAnswer = await b.go(create.replace(/state=[^&]+/, "state=other"));
+    expect([forgedAnswer.status, rows(await forgedAnswer.text())[0]]).toEqual([400, "github next open"]);
+    // Create GitHub App: GitHub comes back with the code, and the server keeps the app. The page never has its secret.
+    b.trail.length = 0;
+    html = await (await b.go(create)).text();
+    expect(b.trail).toEqual(["erga.example/setup/github", "erga.example/setup"]);
+    expect(rows(html)).toEqual(["github done", "google optional", "deployer next open", "admin waiting"]);
+    expect(html).not.toContain(GOOD.secret);
+    // The admin's step waits for the deployer's answer.
+    expect(html).not.toContain('class="provider');
+
+    // The deployer's token: the row keeps it sealed, for the setup command, which holds the server's secret too.
+    html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: form, body: `token=${TOKEN}` })).text();
+    expect(rows(html)).toEqual(["github done", "google optional", "deployer working open", "admin waiting"]);
+    const kept = (await directory.deploys.setupStep())!;
+    const waiting = readStep(kept);
+    expect(kept).not.toContain(TOKEN);
+    expect(waiting.at == "waiting" && (await openToken(platform.secret, waiting))).toBe(TOKEN);
+    // The command refuses the token: the page says why, and takes another one. Or the user skips the step.
+    await directory.deploys.setSetupStep(
+      kept,
+      JSON.stringify(deployerStep(waiting, { kind: "refused", why: "The token can read another Worker (other)." }))
+    );
+    html = await (await b.go(`${ORIGIN}/setup`)).text();
+    expect(rows(html)[2]).toBe("deployer next open");
+    expect(html).toContain("The token can read another Worker (other).");
+    html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: form, body: "skip=1" })).text();
+    expect(rows(html)).toEqual(["github done", "google optional", "deployer skipped", "admin next open"]);
+
+    // The last step: GitHub's button, the sign-in through the gate's callback (the page's pass lets her join), a
+    // username, and she is the admin.
+    const signIn = plain(/class="provider github" href="([^"]+)"/.exec(html)![1]);
+    expect(signIn).toBe("/auth/github?next=%2Fsetup%2Fadmin");
+    const authorize = await b.go(`${ORIGIN}${signIn}`);
+    expect(b.trail.at(-1)).toBe("gh.test/__github/login/oauth/authorize");
+    b.trail.length = 0;
+    const username = await b.go(plain(/id="authorize" href="([^"]+)"/.exec(await authorize.text())![1]));
     expect([username.status, b.trail]).toEqual([200, ["erga.example/_edge/callback", "erga.example/auth/username"]]);
-    // Her account, then the link's page again: she becomes the admin.
-    const asked = await b.go(`${ORIGIN}/auth/username`, { method: "POST", headers: form, body: "username=ada" });
-    expect([b.trail.at(-1), await asked.text()]).toEqual([
-      "erga.example/auth/claim",
-      expect.stringContaining("Become the admin of erga.example"),
-    ]);
-    const done = await b.go(`${ORIGIN}/auth/claim`, { method: "POST", headers: form, body: `t=${t}` });
-    expect(await done.text()).toContain("<b>ada</b> is the admin of erga.example");
+    b.trail.length = 0;
+    await b.go(`${ORIGIN}/auth/username`, { method: "POST", headers: form, body: "username=ada" });
+    expect(b.trail.slice(0, 3)).toEqual(["erga.example/auth/username", "erga.example/setup/admin", "erga.example/"]);
     expect(await directory.users.isAdmin("ada")).toBe(true);
-    // The first admin ends the link: another person's browser goes to the first page, and may not join.
-    const late = await gated(platform, new Request(`${ORIGIN}/auth/claim?t=${t}`), (r) => respond(route, r, platform));
-    expect([late.status, late.headers.get("location")]).toEqual([302, "/"]);
+    // The first admin closes the page for good: for her browser, and for a new link.
+    expect((await b.go(`${ORIGIN}/setup`)).status).toBe(410);
+    const again = await setupUrl("erga.example", platform.secret, { deployer: null });
+    const late = await server(new Request(again));
+    expect([late.status, await late.text()]).toEqual([410, expect.stringContaining("Setup is done")]);
   } finally {
     globalThis.fetch = real;
   }

@@ -86,8 +86,6 @@ const aws = {
   where: "aws" as const,
   profile: "work",
   region: "eu-west-1",
-  signIn: "organization" as const,
-  organization: "it's",
 };
 
 test("on AWS the entry comes from the stack's outputs, and the pages need a domain that fits the edge", () => {
@@ -124,14 +122,9 @@ test("on AWS the entry comes from the stack's outputs, and the pages need a doma
   expect(pagesProblem({ ...aws, signIn: "sso", pages: "pages.other.org" }, zones)).toContain("Route 53");
 });
 
-test("the first rows go only into a database with no admin, and a quote can't leave its string", () => {
-  const sql = firstSql(aws);
-  expect(sql).toMatch(
-    /^INSERT INTO access_rules \(kind, value, access, created\) SELECT 'github_org', 'it''s', 'write', \d+ WHERE NOT EXISTS \(SELECT 1 FROM users WHERE role = 'admin'\) ON CONFLICT/
-  );
-  // Nobody is named an admin: the user who opens setup's one-time link becomes it.
-  expect(sql).not.toContain("INSERT INTO users");
-  expect(firstSql({ ...aws, signIn: "invite" })).toBe("");
+test("a new server gets no first row: nobody is let in, and nobody is named an admin", () => {
+  // Only users that the admin invites sign in, and the user who finishes the setup page becomes the admin.
+  expect(firstSql(aws)).toBe("");
 });
 
 // ------------------------------------------------------------------ the gate in front: the organization's sign-in (SSO)
@@ -377,7 +370,6 @@ const viaGate = {
   host: "erga.example.com",
   region: "us-west-2",
   signIn: "sso" as const,
-  organization: "",
   issuer: "https://idp.example.com/pool",
   client: "client-1",
 };
@@ -426,7 +418,7 @@ test("the sign-in's endpoints come from its issuer; setup's check of the sign-in
   });
   // A release from before the stack had its proxy runs with no proxy at all.
   expect(signInOf(viaGate, undefined, { PROXY_SIGN_IN: "{}" }, signer)).toMatchObject({ bad: expect.stringContaining("deploy again") });
-  // With a GitHub App: its client id.
+  // An instance whose entry names a GitHub app (one from before the setup page): its client id.
   const github = { ...aws, pages: "example-pages.com" };
   expect(signInOf(github, "Iv1.ada", { GITHUB_CLIENT_ID: "Iv1.ada" })).toBe("ok");
   expect(signInOf(github, "Iv1.ada", { GITHUB_CLIENT_ID: "Iv1.other" })).toEqual({

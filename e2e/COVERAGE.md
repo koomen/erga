@@ -71,7 +71,7 @@ The rules:
 | T1 | `e2e/templates/templates.e2e.ts` | A template makes a broken document; a deck does not step or leaves full screen in a bad state; an image dropped on a deck or a canvas lands away from the pointer, or covers the text. | 11 |
 | D1 | `e2e/documents/list.e2e.ts` | A person cannot make, find, archive or delete a document, or find and save a scratch one; the list shows old rows. | 14 |
 | D2 | `e2e/documents/tree.e2e.ts` | A page or folder cannot be made, renamed, moved or deleted; the tree shows old rows; files dragged onto the tree go nowhere. | 13 |
-| A1 | `e2e/access/sign-in.e2e.ts` | A person cannot sign in, or a person who may not, can. | 10 |
+| A1 | `e2e/access/sign-in.e2e.ts` | A person cannot sign in, or a person who may not, can. A new server's setup page does not open its rows, or does not take its GitHub app. | 10 |
 | A2 | `e2e/access/share.e2e.ts` | A person without access reads or edits; access taken away stays; a share does not arrive. | 9 |
 | A3 | `e2e/access/tokens.e2e.ts` | A token gives more than its scope; an agent cannot sign in; a key shows in a page. | 8 |
 | A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values; a setting is not on the page of what it governs; the Deploy page does not ask the deployer, or does not show its job. | 8 |

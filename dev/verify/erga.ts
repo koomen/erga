@@ -12,8 +12,8 @@
 // The people sign in only at the test issuer, through the gate (idp.ts: ada, bob), and Erga hears them from the gate:
 // no cookie or row of the harness's says who they are. Their accounts come as a new server's do: a first visit makes
 // the account (the setting usernames, "email" by a deploy's default here, names it by the email address: ada, bob), and ada
-// becomes the admin by setup's one-time link (server/identity/claim.ts), which the harness seals with the instance's
-// SESSION_SECRET as `bun erga setup` does.
+// becomes the admin on the server's setup page (server/identity/setup.ts), whose one-time link the harness seals with
+// the instance's SESSION_SECRET as `bun erga setup` does.
 //
 // Each of the gate's own answers has `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff` (gate/core.ts,
 // respond), and Erga's have not both: so a check tells which of the two answered, with no log of Erga's.
@@ -31,7 +31,7 @@ import type { Release } from "../../deploy/deployer/release-format.ts";
 import { writeFirstRows } from "../../deploy/own/first.ts";
 import { noAnswers } from "../../deploy/own/plan.ts";
 import { runPipeline, type Target, targetFacts } from "../../deploy/pipeline/pipeline.ts";
-import { Claim } from "../../server/identity/claim-link.ts";
+import { setupUrl } from "../../server/identity/setup-link.ts";
 import { cloudflare } from "./dedicated.ts";
 import { type Answer, ask, type Jar, routes, signIn } from "./http.ts";
 import { recordChecks } from "./record.ts";
@@ -171,13 +171,14 @@ export async function seed(run: Run): Promise<void> {
     await writeFirstRows(cf, acc, ergaName(run), { ...noAnswers(run.shell), where: "cloudflare", signIn: "sso" }, console.log);
   }
   const ada = await person(run, "ada");
-  const t = await Claim.seal(run.erga!.session, {});
-  const asked = await page(run, ada, `/auth/claim?t=${encodeURIComponent(t)}`);
-  const claimed = await ask(`${shell}/auth/claim`, { jar: ada, body: new URLSearchParams({ t }).toString(), headers: { origin: shell } });
+  // The setup page's link, as setup opens it, and its last step: ada, whom the gate signed in, becomes the admin.
+  const link = new URL(await setupUrl(run.shell, run.erga!.session, { deployer: null }));
+  const asked = await page(run, ada, link.pathname + link.search);
+  const claimed = await ask(`${shell}/setup/admin`, { jar: ada, body: "", headers: { origin: shell } });
   const me = await tool<{ login: string; adminPower: boolean }>(run, ada, "whoami");
   if (me.login != "ada" || !me.adminPower)
     throw new Error(
-      `ada is not the admin: the claim's page ${asked.status}, its POST ${claimed.status}; whoami: ${JSON.stringify(me).slice(0, 200)}`
+      `ada is not the admin: the setup page ${asked.status}, its last step ${claimed.status}; whoami: ${JSON.stringify(me).slice(0, 200)}`
     );
   await person(run, "bob");
   run.erga!.docs = [];

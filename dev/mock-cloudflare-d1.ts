@@ -14,7 +14,7 @@ function recordOf(db: object): Database {
   let record = records.get(db);
   if (!record) {
     record = new Database(":memory:");
-    for (const name of ["0470_deploys.sql", "0480_deploy_control.sql", "0500_removed_domains.sql"])
+    for (const name of ["0470_deploys.sql", "0480_deploy_control.sql", "0500_removed_domains.sql", "0530_setup.sql"])
       record.exec(readFileSync(new URL(`../server/migrations/${name}`, import.meta.url), "utf8"));
     records.set(db, record);
   }
@@ -30,10 +30,11 @@ export function d1Query(
   { sql, params }: { sql: string; params?: unknown[] }
 ): Record<string, unknown>[] {
   db.statements.push(sql.slice(0, 200));
-  // (And the domains that a deploy removed, deploy/cli/remove-domain.ts: the same real SQLite.)
-  const real = /CREATE TABLE/i.test(sql) ? null : /\b(deploy_(?:spec|jobs|control)|removed_domains)\b/.exec(sql);
+  // (And the domains that a deploy removed, deploy/cli/remove-domain.ts, and the setup page's row,
+  // server/identity/setup-link.ts: the same real SQLite.)
+  const real = /CREATE TABLE/i.test(sql) ? null : /\b(deploy_(?:spec|jobs|control)|removed_domains|(?:FROM|INTO|UPDATE) setup)\b/.exec(sql);
   if (real) {
-    const table = real[1] == "removed_domains" ? real[1] : "deploy_jobs";
+    const table = real[1] == "removed_domains" ? real[1] : real[1].endsWith(" setup") ? "setup" : "deploy_jobs";
     if (!db.tables.includes(table)) throw new D1Error(`no such table: ${table}: SQLITE_ERROR`);
     return recordOf(db)
       .query(sql)

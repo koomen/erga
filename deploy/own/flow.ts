@@ -1,18 +1,26 @@
-// The setup of a new instance, as one state machine (`bun erga setup <host> --host ... --sign-in ...`). Pure: no
+// The setup of a new instance, as one state machine (`bun erga setup <host> --host ... --deploys ...`). Pure: no
 // network, no files.
 //
-//   login > (adopt) > (stop) > app > build > (update) > (deployer) > admin > done
+//   login > (adopt) > (stop) > (app) > build > (update) > (deployer) > page > done
+//
+// page: the server runs, with no sign-in and no admin. The command opens the server's setup page in the user's browser
+// (/setup, server/identity/setup.ts), and the user finishes there: GitHub or Google sign-in, the deployer's token (cloud
+// deploys on Cloudflare), and their own sign-in, which makes them the admin. The command asks the user nothing itself.
+//
+// app: single sign-on on AWS only: the client secret of the organization's sign-in, before the build.
 //
 // adopt: an Erga runs at the address already, and this clone has no entry for it: another clone, or another machine,
 // set it up. The command takes it over: it writes the entry from what Cloudflare holds of the instance, and goes on
 // from where that instance is. It changes nothing of the instance.
 //
 // deployer: the answer --deploys and what the account has differ. cloud with no deployer: the command installs it.
-// On Cloudflare the user first makes the deployer's token and gives it to the command; on AWS there is no token (the
-// deployer's role is its credential), so the step is the command's own. local with a deployer: the command removes
-// it. This step is open on an instance that is done too: a run again with the other answer changes it.
+// On AWS there is no token (the deployer's role is its credential), so the step is the command's own. On Cloudflare
+// the user makes the deployer's token: on a new server they paste it on the setup page (the page step), and the
+// command installs the deployer with it; on a server that has its admin, on a page that the command opens. local with
+// a deployer: the command removes it. This step is open on an instance that is done too: a run again with the other
+// answer changes it.
 //
-// With --remote (answers.remote) the user is at another computer: their steps (login, app, admin) go through their terminal,
+// With --remote (answers.remote) the user is at another computer: their steps (login, app, page) go through their terminal,
 // never a browser on this machine. A command with no terminal (an agent's shell) stops there: "terminal".
 //
 // The answers are the command's options (plan.ts): the agent asked the user every question first (README, Setup),
@@ -42,7 +50,7 @@ export interface Seen {
   adopt: string | null;
   /** AWS: the stack's status and outputs, and each resource of the template on disk ("Name (Type)"). */
   stack: { status: string | null; outputs: Record<string, string>; resources: string[] } | null;
-  /** The app step's secret is there: the GitHub App's, or (single sign-on on AWS) the client's in Parameter Store. */
+  /** The app step's secret is there: (single sign-on on AWS) the client's, in Parameter Store. */
   app: boolean;
   /** The server as its platform shows it: the release that serves, its health, and whether its settings are the answers' sign-in. */
   live: { version: string | null; healthy: boolean; signIn: "ok" | { bad: string } | null } | null;
@@ -52,7 +60,7 @@ export interface Seen {
   admin: boolean;
   /** The plain settings of the instance's entry in .erga/config.json, or null: no entry yet. */
   vars: Record<string, string> | null;
-  /** The GitHub App's client id that setup holds for the host, or "". */
+  /** The client id of the GitHub app that the instance's entry names (an instance from before the setup page), or "". */
   github: string;
   /** The account has the instance's deployer, which deploys each new release by itself: on Cloudflare a Worker, on AWS a Lambda function. */
   deployer: boolean;
@@ -87,8 +95,8 @@ export type State =
   | { at: "stop"; why: string }
   /** The command writes the entry of the Erga that runs at the address, as `bun erga register` does: the instance stays as it is. */
   | { at: "adopt"; worker: string }
-  /** The user's step in the browser: the GitHub App, or (single sign-on on AWS) the client's secret. */
-  | { at: "app"; kind: "github" | "oidc" }
+  /** The user's step before the build, with single sign-on on AWS: the client's secret. */
+  | { at: "app"; kind: "oidc" }
   | { at: "build" }
   /**
    * The instance runs with no admin yet, but the answers give other settings than its entry's (a run again): setup
@@ -96,12 +104,16 @@ export type State =
    */
   | { at: "update"; vars: string[] }
   /**
-   * The instance runs, and who deploys it is not what --deploys says. install: the user's step, the deployer's token.
-   * remove: the command removes the deployer.
+   * The instance runs, and who deploys it is not what --deploys says. install: on Cloudflare the user's step, the
+   * deployer's token (the instance has its admin: a new one takes the token on its setup page). remove: the command
+   * removes the deployer.
    */
   | { at: "deployer"; do: "install" | "remove" }
-  /** The user signs in to the new server with a one-time link: they become its admin. */
-  | { at: "admin" }
+  /**
+   * The server runs with no admin: the user finishes on its setup page, which the command opens with a one-time link.
+   * `token`: the page takes the deployer's token (cloud deploys on Cloudflare), and the command waits for it.
+   */
+  | { at: "page"; token: boolean }
   /** --remote: the next step is the user's, in their terminal, and this command has none. The user runs it in theirs. */
   | { at: "terminal" }
   | { at: "done" };
@@ -111,9 +123,6 @@ export function missing(a: Answers): string[] {
   const aws = a.where == "aws";
   const need: string[] = [];
   if (!a.where) need.push("--host cloudflare or --host aws: where Erga runs.");
-  if (!a.signIn) need.push("--sign-in invite, organization or sso: who may sign in.");
-  if (a.signIn == "organization" && !a.organization)
-    need.push("--organization <GitHub organization or email domain>: whose users may sign in.");
   if (sso(a) && !aws && !a.team) need.push("--team <name>: the Cloudflare Zero Trust team, the part before .cloudflareaccess.com.");
   if (sso(a) && !aws && !a.aud) need.push("--aud <tag>: the Access application's Audience tag.");
   if (sso(a) && aws && !a.issuer) need.push("--issuer <URL>: the issuer URL of the organization's sign-in (OpenID Connect).");
@@ -175,12 +184,13 @@ export function stateOf(a: Answers, s: Seen): State {
   if (s.taken) return { at: "stop", why: `${a.host} is in use: ${s.taken}. Free it, ${another}.` };
   const pages = pagesProblem(a, s.zones);
   if (pages) return { at: "stop", why: `${pages} Give another --pages.` };
-  const kind = !sso(a) ? "github" : aws ? "oidc" : null;
-  if (kind && !s.app) return { at: "app", kind };
+  if (sso(a) && aws && !s.app) return { at: "app", kind: "oidc" };
   if (!(s.live?.healthy && s.live.version && s.live.signIn == "ok")) return { at: "build" };
   const changed = changedVars(a, s);
   if (changed.length) return { at: "update", vars: changed };
-  return deployer ?? { at: "admin" };
+  // A new server on Cloudflare takes the deployer's token on its setup page: the install is a part of that step.
+  const token = !aws && deployer?.do == "install";
+  return deployer && !token ? deployer : { at: "page", token };
 }
 
 /**
@@ -201,10 +211,7 @@ export function step(a: Answers, s: Seen): { answers: Answers; state: State; loo
   const state = stateOf(answers, s);
   // (The deployer's install is the user's step only where it has a token: on Cloudflare.)
   const theirs =
-    state.at == "login" ||
-    state.at == "app" ||
-    state.at == "admin" ||
-    (state.at == "deployer" && state.do == "install" && a.where != "aws");
+    state.at == "login" || state.at == "app" || state.at == "page" || (state.at == "deployer" && state.do == "install" && a.where != "aws");
   return {
     answers,
     state: theirs && answers.remote && !s.terminal ? { at: "terminal" } : state,
@@ -230,13 +237,14 @@ export function checksOf(a: Answers, s: Seen): string[] {
 
 /**
  * Who deploys each new release, as the plan says it. `worker`: the instance's Worker, when it is not a new instance's
- * (an instance that runs has its entry's name: store.ts, namesAt). The user makes the token for that name.
+ * (an instance that runs has its entry's name: store.ts, namesAt). The user makes the token for that name. `where`:
+ * where the user pastes it, when not on a new server's setup page.
  */
-export const deploysText = (a: Answers, worker = namesOf(a.host).worker) =>
+export const deploysText = (a: Answers, worker = namesOf(a.host).worker, where = "on the server's setup page") =>
   a.deploys == "cloud" && a.where == "aws"
     ? `• a deployer (the Lambda function ${stackOf(a)}-deployer, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`
     : a.deploys == "cloud"
-      ? `• a deployer (the Worker ${worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${worker}, which you make on Cloudflare and paste ${a.remote ? "in your terminal" : "on a page that opens"}`
+      ? `• a deployer (the Worker ${worker}-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker ${worker}, which you make on Cloudflare and paste ${where}`
       : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
 /** The plan, as the agent says it before the user's yes. */
@@ -246,7 +254,7 @@ export function planText(a: Answers, s: Seen): string[] {
     ? a.where == "aws"
       ? `• your organization's sign-in, at the gate in front of Erga (you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"})${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}${a.signInDays ? `; a sign-in lasts ${a.signInDays} days` : ""}`
       : "• your organization's sign-in, with Cloudflare Access"
-    : "• a GitHub App, for sign-in (you click one button)";
+    : `• no sign-in yet: when the server runs, its setup page opens ${a.remote ? "from a link on your terminal" : "in your browser"}. You set up GitHub or Google sign-in there, and you sign in: you become the admin`;
   const tracks = `• it tracks ${a.branch} of ${a.repo}: a deploy gives it that branch's newest commit`;
   if (a.where == "aws")
     return [
@@ -268,6 +276,9 @@ export function planText(a: Answers, s: Seen): string[] {
   return [
     `I will make Erga at ${a.host}, in the Cloudflare account ${accountName(a, s)}:`,
     `• a Worker (${n.worker}), a D1 database, an R2 bucket and a DNS record`,
+    pagesOf(a) == "shared"
+      ? "• the documents' pages on one shared workers.dev address: safe for one author"
+      : `• the documents' pages on ${pagesOf(a)}: each document on a subdomain of its own`,
     signIn,
     tracks,
     deploysText(a),

@@ -1,0 +1,31 @@
+/* The setup page of a new server (/setup, server/identity/setup.ts): a title, and a row for each step. A row opens
+   on a click (a details element); its chip says where the step is. */
+
+main.setup { max-width: 640px; padding: max(12vh, 96px) 24px 96px; }
+main.setup h1 { font-size: 24px; margin-bottom: 8px; }
+main.setup .lede { margin: 0 0 22px; font-size: 14.5px; color: var(--soft); }
+main.setup code { padding: 1px 5px; border-radius: 5px; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: color-mix(in srgb, var(--chrome) 12%, transparent); color: var(--fg-strong); overflow-wrap: anywhere; }
+ol.steps { margin: 0; padding: 0; list-style: none; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
+ol.steps > li + li { border-top: 1px solid var(--rule); }
+ol.steps summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; cursor: pointer; list-style: none; }
+ol.steps summary::-webkit-details-marker { display: none; }
+ol.steps summary:hover { background: color-mix(in srgb, var(--chrome) 7%, transparent); }
+ol.steps summary:focus-visible { outline: 2px solid var(--caret); outline-offset: -2px; }
+ol.steps h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; color: var(--fg-strong); }
+.chip { flex: none; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+.chip:is(.next, .working) { color: var(--caret); background: color-mix(in srgb, var(--caret) 13%, transparent); }
+.chip.done { color: #15803d; background: color-mix(in srgb, #15803d 13%, transparent); }
+.step { padding: 2px 16px 16px; font-size: 14px; color: var(--fg); }
+.step p { margin: 0 0 12px; }
+.step :is(p, ul, ol, form):last-child { margin-bottom: 0; }
+.step b { color: var(--fg-strong); }
+.step a:not(.provider) { color: var(--fg-strong); text-underline-offset: 0.2em; }
+.step .how { margin: 0 0 12px; padding-left: 1.3em; }
+.step .how li { margin-bottom: 5px; }
+.step .problem { padding: 9px 12px; border-radius: 8px; color: var(--fg-strong); background: color-mix(in srgb, #c2410c 12%, transparent); }
+.step .later { margin-top: 14px; font-size: 13px; color: var(--soft); }
+.step .fields { display: grid; gap: 12px; }
+.step .fields label { display: grid; gap: 5px; font-size: 13px; font-weight: 500; color: var(--soft); }
+.step .buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.step .providers { margin: 4px 0 0; }
+@media (max-width: 520px) { main.setup { padding: 72px 16px 64px; } main.setup h1 { font-size: 22px; } }

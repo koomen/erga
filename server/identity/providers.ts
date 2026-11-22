@@ -59,6 +59,16 @@ export interface OAuthProvider {
   noSecret: string;
   /** The steps to make its app for a server: `name` (the app's), `origin` (the server's), `pagePlace` (where its values go). */
   setup(o: { name: string; origin: string; pagePlace: string }): string[];
+  /**
+   * A provider that makes an app from a manifest, in one click (a new server's setup page: setup.ts): where the browser
+   * posts the manifest, the manifest of `origin`'s server, which the provider sends the person back from to `back`, and
+   * the app's values for the code that it comes back with (or why there are none).
+   */
+  manifest?: {
+    action(origin: string | null): string;
+    of(server: string, back: string): Record<string, unknown>;
+    values(origin: string | null, code: string): Promise<AppValues | string>;
+  };
   /** Whether an app's values work, without signing anyone in: a token exchange with a code that can't be real. */
   check(v: AppValues, o?: Ask & { origin?: string | null }): Promise<AppCheck>;
   /** Where a browser goes to sign in. */
@@ -133,6 +143,31 @@ const github: OAuthProvider = {
     `Copy the Client ID. Click Generate a new client secret, and copy the secret.`,
     `Paste both ${o.pagePlace}. They save by themselves: Erga checks them with GitHub before it uses them.`,
   ],
+  // A GitHub App, for sign-in only: no permissions, no webhook, and not public.
+  manifest: {
+    action: (origin) => `${githubWww(origin)}/settings/apps/new`,
+    of: (server, back) => ({
+      name: `Erga ${new URL(server).host}`.slice(0, 34),
+      url: server,
+      redirect_url: back,
+      callback_urls: [`${server}${CALLBACK_PATH}`],
+      description: `Sign-in for the Erga at ${server}`,
+      public: false,
+      request_oauth_on_install: false,
+      hook_attributes: { url: `${server}/`, active: false },
+      default_permissions: {},
+    }),
+    async values(origin, code) {
+      if (!/^[0-9a-z_-]{8,80}$/i.test(code)) return "GitHub's answer has no code for the app.";
+      const r = await fetch(`${githubApi(origin)}/app-manifests/${code}/conversions`, { method: "POST", headers: GITHUB_HEADERS }).catch(
+        () => null
+      );
+      const app = (await r?.json().catch(() => null)) as { client_id?: string; client_secret?: string; message?: string } | null;
+      return r?.ok && app?.client_id && app.client_secret
+        ? { clientId: app.client_id, secret: app.client_secret }
+        : `GitHub did not give the app's values (${app?.message ?? r?.status ?? "no answer"}).`;
+    },
+  },
   // GitHub answers 404 for a client ID it doesn't know, incorrect_client_credentials for a wrong (or no) secret, and
   // bad_verification_code when the client ID and secret are right. The callback URL is checked only during a real sign-in.
   async check(v, o = {}) {

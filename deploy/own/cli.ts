@@ -1,32 +1,36 @@
 // A new Erga instance, set up by a user with their coding agent: `bun erga setup <host>` (deploy/cli/main.ts). The
 // agent asks the user every question first (README.md, Setup), then runs this command with each answer as an option:
 // first with --dry-run (the checks and the plan; nothing is made), then, after the user's yes, without it. The
-// command does all the work: it signs in, makes the GitHub App, builds, and makes the user the admin. It opens the
-// browser only for the user's own steps, and waits for each. The agent never makes a resource, sees a secret or
-// makes a token.
+// command does all the work in the account: it signs in, builds and deploys. Then it opens the new server's setup page
+// in the user's browser (/setup, server/identity/setup.ts), with a link that works one time. The user finishes there:
+// GitHub or Google sign-in, the deployer's token, and their own sign-in, which makes them the admin. The agent never
+// makes a token, and never sees a secret or the link.
 //
-//   bun erga setup <host> --host cloudflare|aws --sign-in invite|organization|sso [<options>] [--dry-run]
+//   bun erga setup <host> --host cloudflare|aws --deploys cloud|local [<options>] [--dry-run]
 //       --repo <repo>          the repository that the instance tracks (default: github.com/koomen/erga)
 //       --branch <branch>      the branch of it that the instance tracks (default: main): its first deploy, and each
 //                              deploy after, takes that branch's head. bun erga track <host> changes both later.
 //       --account <name|id>    Cloudflare: the account, when two hold the domain
 //       --profile <name>       AWS: the AWS CLI's profile, when there are several (the region is the profile's)
-//       --organization <org|domain>      --sign-in organization: a GitHub organization, or an email domain
-//       --team <name> --aud <tag>        --sign-in sso on Cloudflare: Cloudflare Access
-//       --issuer <URL> --client <ID>     --sign-in sso on AWS: the organization's sign-in (OpenID Connect)
-//       --email-claim <claim>:<prefix>   --sign-in sso on AWS, when the sign-in gives no email claim: where the
-//                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
-//       --sign-in-days <days>            --sign-in sso on AWS: how long a sign-in lasts, from 1 to 90 (default: 30)
-//       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
+//       --pages <domain>       a second domain of the account, for the documents' pages: each document gets a
+//                              subdomain of its own there. AWS needs it (a Route 53 domain). Cloudflare without it:
+//                              one shared workers.dev address, which is safe for one author.
 //       --deploys cloud|local  who deploys each new release. cloud: a deployer in the user's account, by itself. On
-//                              Cloudflare the user makes its token (for the instance's Worker only) and pastes it on a
-//                              page that opens; on AWS it is a Lambda function whose role is its credential: no token.
+//                              Cloudflare the user makes its token (for the instance's Worker only) and pastes it on
+//                              the setup page; on AWS it is a Lambda function whose role is its credential: no token.
 //                              local: the user, with bun erga deploy; no credential in the cloud. A run again with
 //                              the other answer installs the deployer, or removes it.
+//       --sign-in sso          the organization's single sign-on, at a gate in front of the server, in the place of
+//                              GitHub and Google sign-in:
+//         --team <name> --aud <tag>        on Cloudflare: Cloudflare Access
+//         --issuer <URL> --client <ID>     on AWS: the organization's sign-in (OpenID Connect)
+//         --email-claim <claim>:<prefix>   on AWS, when the sign-in gives no email claim: where the address is,
+//                                          e.g. preferred_username:corp| for "corp|ada@example.com"
+//         --sign-in-days <days>            on AWS: how long a sign-in lasts, from 1 to 90 (default: 30)
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
 //       --no-tests             the build runs no tests
 //       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
-//                              user types the client secret in their terminal, and the admin's link shows there.
+//                              setup page's link shows on the user's terminal, and they open it in their own browser.
 //   bun erga setup <host> remove --yes       deletes the server: its Workers, database, bucket and the pages' DNS record (AWS: its stacks
 //                                            and secrets; the bucket stays, with the data)
 //
@@ -36,19 +40,20 @@
 // writes the entry, as bun erga register does, and goes on from where that instance is. On
 // AWS, a run on an instance that is done updates its stacks to this code's template (a deploy changes only the code).
 //
-// Trap: nothing here prints a secret, or a link that signs someone in: the agent reads this command's output. The
-// admin's link goes to the browser only, or with --remote to the user's terminal (/dev/tty), never to stdout.
+// Trap: nothing here prints a secret, or the setup page's link: the agent reads this command's output, and whoever
+// opens the link can become the server's admin. The link goes to the browser only, or with --remote to the user's
+// terminal (/dev/tty), never to stdout.
 
 import { closeSync, readFileSync } from "node:fs";
-import { Claim } from "../../server/identity/claim-link";
+import { setupUrl } from "../../server/identity/setup-link";
 import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "../cli/config";
 import { fail, pass, ROOT, say } from "../root";
-import { askSecret, deployerToken, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
+import { askSecret, deployerToken, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { cloudflare, type Connection, observe } from "./facts";
-import { adminOn, adoptEntry, firstDeploy, secretsFor } from "./first";
+import { adoptEntry, deployerFromPage, firstDeploy, secretsFor } from "./first";
 import { accountName, checksOf, deploysText, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
-import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
+import { DIR, loadSecrets, namesAt, saveSecrets } from "./store";
 
 /** How long one run waits for the user: under the ten minutes that an agent's command may take. */
 const WAIT_MS = 8 * 60_000;
@@ -61,7 +66,6 @@ const OPTIONS: Record<string, TextAnswer> = {
   "--branch": "branch",
   "--account": "account",
   "--profile": "profile",
-  "--organization": "organization",
   "--team": "team",
   "--aud": "aud",
   "--issuer": "issuer",
@@ -80,12 +84,6 @@ interface Run {
   /** The command again, for the lines that say to run it. */
   again: string;
 }
-
-/** --remote: the loopback page's address, on the user's terminal, with the port forward that brings it to their computer. */
-const forwarded = (url: string) => {
-  const port = new URL(url).port;
-  tellUser(`Open ${url} in your browser. At another computer, first forward its port: ssh -L ${port}:127.0.0.1:${port} <this machine>`);
-};
 
 /** Observes, and folds what was seen in, until the code finds nothing more to fill. */
 async function look(a: Answers): Promise<{ answers: Answers; seen: Seen; state: State }> {
@@ -116,9 +114,10 @@ async function oidcInTerminal(a: Answers): Promise<string> {
 }
 
 /**
- * Cloud deploys on Cloudflare: the user gives the deployer's token (on a page; --remote: in their terminal), the
- * command checks it and installs the deployer with it, and turns auto-deploy on. The result: "" (done), a failure, or
- * null (the wait ended). The token goes to Cloudflare only: this command prints none of it.
+ * Cloud deploys on Cloudflare, for an instance that has its admin (a new one takes the token on its setup page:
+ * `page`): the user gives the deployer's token (on a page; --remote: in their terminal), the command checks it and
+ * installs the deployer with it, and turns auto-deploy on. The result: "" (done), a failure, or null (the wait ended).
+ * The token goes to Cloudflare only: this command prints none of it.
  */
 async function installWithToken(a: Answers): Promise<string | null> {
   const c = await connect();
@@ -150,7 +149,7 @@ async function installWithToken(a: Answers): Promise<string | null> {
 async function awsEntryOf(a: Answers, seen: Seen) {
   const { awsEntry } = await import("../aws/setup");
   if (!seen.stack?.outputs.Machine) return fail(`The stack of ${a.host} has no machine: setup has not made the instance yet.`);
-  return awsEntry(a, seen.account, seen.stack.outputs, githubIdOf(a.host, DIR) || undefined);
+  return awsEntry(a, seen.account, seen.stack.outputs, seen.github || undefined);
 }
 
 /** The Cloudflare API and the servers, or a FAIL. */
@@ -183,7 +182,7 @@ function login(a: Answers) {
 /** The build: the stack (AWS), the first deploy with its secrets, and the first rows. The next look sees its health and its sign-in settings. */
 async function build(a: Answers, seen: Seen, o: Run) {
   const print = (line: string) => say(`  ${line.slice(0, 200)}`);
-  const github = githubIdOf(a.host) || undefined;
+  const github = seen.github || undefined;
   const started = Date.now();
   try {
     if (a.where == "aws") {
@@ -213,46 +212,48 @@ async function build(a: Answers, seen: Seen, o: Run) {
   }
 }
 
+/** How the page step ended: the page is open, and what became of the deployer's token (null: the page takes none). */
+type Paged = { deployer: "installed" | "skipped" | null };
+
 /**
- * The admin's step: the browser opens the one-time link, and the user signs in there: they become the server's admin
- * (server/identity/claim.ts). Setup then sees the admin in the database, which it reads through the platform (the
- * Cloudflare D1 API; on AWS, the machine): it asks the server nothing. The result: the admin's login, or "" when the
- * wait ended first.
+ * The page step: the command opens the new server's setup page in the user's browser, with a link that works one time
+ * (server/identity/setup.ts), and the user finishes there: sign-in, and their own sign-in as the admin. With `token`
+ * (cloud deploys on Cloudflare) the page also takes the deployer's token, sealed, into the instance's database: the
+ * command waits for it there (the Cloudflare D1 API: it asks the server nothing), installs the deployer with it, and
+ * writes how that ended, for the page to show. The result: how the step ended, or null when the wait ended first.
  */
-async function admin(a: Answers, o: Run): Promise<string> {
+async function page(a: Answers, o: Run, token: boolean, worker: string): Promise<Paged | null> {
   const secret = loadSecrets(DIR)[a.host]?.SESSION_SECRET;
   if (!secret)
     return fail(
-      `This machine does not hold the SESSION_SECRET of ${a.host} (.erga/secrets.json), so it can't make the admin's link.`,
+      `This machine does not hold the SESSION_SECRET of ${a.host} (.erga/secrets.json), so it can't make the setup page's link.`,
       `Run the command on the machine that set ${a.host} up: ${o.again}`
     );
-  const entry = entryOf(readConfig(DIR), a.host);
-  if (!entry) return fail(`${a.host} has no entry in .erga/config.json yet: its first deploy writes it.`, o.again);
-  let found: () => Promise<string | null>;
-  if (isAws(entry)) {
-    const { awsCli } = await import("../aws/cli");
-    const { adminOnAws } = await import("../aws/setup");
-    const aws = awsCli({ profile: entry.profile, region: entry.aws.region });
-    found = () => adminOnAws(aws, entry.aws);
-  } else {
-    const { cf } = await connect();
-    found = () => adminOn(cf, `/accounts/${entry.account}`, entry.worker);
-  }
-  const to = `https://${a.host}/auth/claim?t=${encodeURIComponent(await Claim.seal(secret, {}))}`;
-  if (a.remote) tellUser(`Open this link in your browser. It works one time; never give it to your agent.\n${to}`);
+  const to = await setupUrl(a.host, secret, { deployer: token ? { account: a.account, worker } : null });
+  if (a.remote) tellUser(`Open this link in your browser. It works one time, for 30 minutes; never give it to your agent.\n${to}`);
   else openBrowser(to);
-  say(
+  pass(
     a.remote
-      ? `WAIT  The user's terminal shows a link to ${a.host}. The user opens it in their browser, and signs in there: they become the admin.`
-      : `WAIT  A tab opens on ${a.host}, with a link that works one time. The user signs in there, and becomes the admin.`
+      ? `The user's terminal shows the link to the setup page of ${a.host}. The user opens it in their browser.`
+      : `The command opened the setup page of ${a.host} in the user's browser.`
   );
+  if (!token) return { deployer: null };
+  say("WAIT  The user makes a token for the deployer on Cloudflare, and pastes it on the setup page. It goes to Cloudflare, never to you.");
+  const c = await connect();
   const until = Date.now() + WAIT_MS;
-  while (Date.now() < until) {
-    await Bun.sleep(isAws(entry) ? 10_000 : 3000);
-    const who = await found().catch((e: Error) => fail(e.message, o.again));
-    if (who) return who;
+  const ended = await deployerFromPage({
+    cf: c.cf,
+    net: c.net,
+    target: { account: a.account, worker },
+    secret,
+    again: async () => (await Bun.sleep(3000), Date.now() < until),
+  }).catch((e: Error) => fail(e.message, o.again));
+  if (!ended) return null;
+  if (ended.deployer == "installed") {
+    for (const u of ended.unconfirmed) say(`NOTE  Erga could not confirm about the token: ${u}`);
+    pass(`The deployer of ${a.host} is installed: it deploys each new release of ${a.branch} by itself (auto-deploy is on).`);
   }
-  return "";
+  return { deployer: ended.deployer };
 }
 
 /** Prints what the dry run found: the checks, and the plan. */
@@ -266,7 +267,7 @@ function printPlan(a: Answers, seen: Seen, resources: string[]) {
  * One instance, from where its setup is: each step, until it is done, the user's step is still open (the wait
  * ended), or (a dry run) the first step that would make something.
  */
-async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
+async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | Paged> {
   const did = new Set<string>();
   for (;;) {
     const r = await look(a);
@@ -306,12 +307,12 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       }
       say(
         state.do == "install"
-          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a, worker)}`
+          ? `PLAN  ${a.host} runs. I will install its deployer:\nPLAN  ${deploysText(a, worker, a.remote ? "in your terminal" : "on a page that opens")}`
           : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${worker}-deployer, with the token that it holds):\nPLAN  ${deploysText(a)}`
       );
       return "dry";
     }
-    if (o.dryRun && (state.at == "app" || state.at == "build" || state.at == "admin" || state.at == "terminal")) {
+    if (o.dryRun && (state.at == "app" || state.at == "build" || state.at == "page" || state.at == "terminal")) {
       let resources: string[] = [];
       if (a.where == "aws") {
         await (await import("../aws/setup")).writePlan(DIR, a);
@@ -344,24 +345,18 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         break;
       }
       case "app": {
-        if (again) return fail("The app step did not finish.", o.again);
-        const ended =
-          state.kind == "github"
-            ? a.remote
-              ? (say("WAIT  The user's terminal shows a page's address. The user opens it, and clicks Create GitHub App on GitHub."),
-                await githubApp(a, WAIT_MS, { open: forwarded }))
-              : (say("WAIT  A GitHub tab opens. The user clicks Create GitHub App there. Its secret goes to this command, never to you."),
-                await githubApp(a, WAIT_MS))
-            : a.remote
-              ? (say(
-                  "WAIT  The user types the client secret of the organization's sign-in in their terminal. It goes to AWS, never to you."
-                ),
-                await oidcInTerminal(a))
-              : (say("WAIT  A page opens. The user types the client secret of the organization's sign-in there, and clicks Save."),
-                await oidcSecret(a, async (v) => (await import("../aws/setup")).putOidcSecret(a, v), WAIT_MS));
+        if (again) return fail("The client secret's step did not finish.", o.again);
+        say(
+          a.remote
+            ? "WAIT  The user types the client secret of the organization's sign-in in their terminal. It goes to AWS, never to you."
+            : "WAIT  A page opens. The user types the client secret of the organization's sign-in there, and clicks Save."
+        );
+        const ended = a.remote
+          ? await oidcInTerminal(a)
+          : await oidcSecret(a, async (v) => (await import("../aws/setup")).putOidcSecret(a, v), WAIT_MS);
         if (ended == null) return "wait";
         if (ended) return fail(ended, o.again);
-        pass(state.kind == "github" ? "GitHub made the app." : "AWS has the client secret.");
+        pass("AWS has the client secret.");
         break;
       }
       case "build":
@@ -420,13 +415,9 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         pass(`The deployer of ${a.host} is installed: it deploys each new release of ${a.branch} by itself (auto-deploy is on).`);
         break;
       }
-      case "admin": {
-        if (again) return fail(`${a.host} has no admin yet.`, o.again);
-        const who = await admin(a, o);
-        if (!who) return "wait";
-        pass(`${who} is the admin of https://${a.host}.`);
-        break;
-      }
+      case "page":
+        // The user's own step, and the run's last: the command asks the user nothing more.
+        return (await page(a, o, state.token, worker)) ?? "wait";
       case "done":
         if (o.dryRun) pass(`${a.host} runs already, with an admin.`);
         if (a.where == "aws") {
@@ -461,7 +452,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
   }
 }
 
-/** `bun erga setup <host> --host ... --sign-in ...`: the instance. */
+/** `bun erga setup <host> --host ... --deploys ...`: the instance. */
 async function run(a: Answers, o: Run) {
   const need = missing(a);
   if (need.length)
@@ -474,8 +465,17 @@ async function run(a: Answers, o: Run) {
     );
   // What it tracks is its entry's: a run on an instance that is there already does not change that (bun erga track does).
   const { repo, branch } = entryOf(readConfig(DIR), a.host) ?? a;
+  const deployed =
+    a.deploys != "cloud"
+      ? `bun erga deploy ${a.host} gives it that branch's newest commit`
+      : typeof end == "object" && end.deployer == "skipped"
+        ? `no deployer is installed yet (the user skipped its token): bun erga deploy ${a.host} gives it that branch's newest commit. To install the deployer when the user is the admin: ${o.again}`
+        : "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's Deploy page)";
+  const rest = `It tracks ${branch} of ${repo}: ${deployed}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page).`;
   say(
-    `DONE  Tell the user: Erga is live at https://${a.host}, and they are the admin. It tracks ${branch} of ${repo}: ${a.deploys == "cloud" ? "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's ops page)" : `bun erga deploy ${a.host} gives it that branch's newest commit`}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
+    end == "done"
+      ? `DONE  Tell the user: Erga is live at https://${a.host}, and it has its admin. ${rest}`
+      : `DONE  Tell the user: Erga runs at https://${a.host}. Its setup page is ${a.remote ? "behind the link on their terminal" : "open in their browser"}: they finish there. They set up GitHub or Google sign-in, then they sign in, and become the admin. The link works one time, for 30 minutes: when the page says that it works no more, run the same command again. Never open the page yourself. ${rest}`
   );
   // A repository of the user's own (a fork): Erga's main is the upstream to compare it with. Setup sets none itself.
   if (repoName(repo) != DEFAULT_REPO)
@@ -604,7 +604,7 @@ export async function setupMain(argv: string[]) {
     if (answers.signIn == "sso")
       return fail(
         "Single sign-on is not available in this version: the gate in front of the server is not verified on a real account yet.",
-        "Choose --sign-in invite or --sign-in organization."
+        "Leave --sign-in out: the user sets up GitHub or Google sign-in on the server's setup page."
       );
     const again = ["bun erga setup", host, ...args, ...(remote && !flag("--remote") ? ["--remote"] : [])].join(" ");
     await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), again });

@@ -82,8 +82,9 @@ yes. Then the build writes the templates again, makes AWS's change sets, shows t
     it. It is in no file and no command.
   - A sign-in lasts 30 days, or `--sign-in-days <1 to 90>`: it is in the functions' code, and a change applies to new
     sign-ins. Erga's own setting (`sign_in_days`, on the Settings page) does not reach the gate.
-  - The setup reads the sign-in's endpoints from its issuer. The first admin is the user who opens setup's one-time
-    link and signs in (`server/identity/claim.ts`). Everybody who passes the sign-in may make an account.
+  - The setup reads the sign-in's endpoints from its issuer. The first admin is the user who finishes the server's
+    setup page, which setup opens with a one-time link (`server/identity/setup.ts`). Everybody who passes the sign-in
+    may make an account.
   - It needs domains: the functions hold the app's host. The pages' name may be under the app's
     (`pages.erga.example.com`): the gate then needs no hand-off, and a page's script can set a cookie for the app's
     domain, so the user decides.

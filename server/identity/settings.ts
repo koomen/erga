@@ -15,6 +15,7 @@ import {
   AuthApps,
   AuthError,
   cachedCheck,
+  checkValues,
   clearApp,
   discardApp,
   inUse,
@@ -206,6 +207,36 @@ async function setProvider(platform: SignInPlatform, by: Act, provider: Provider
   await platform.own.put(ON_KEY, next);
   await contextOf(platform, provider).log(by, { provider, event: on ? "on" : "off" });
   return next;
+}
+
+/**
+ * A new server's setup page sets a provider's app (setup.ts): the values are checked with the provider, and in use at
+ * once (a server with no admin has nobody to lock out). Then the providers that are on are those with an app, so the
+ * sign-in page offers no provider that has none.
+ */
+export async function setUpApp(
+  platform: SignInPlatform,
+  provider: Provider,
+  input: { clientId?: unknown; secret?: unknown }
+): Promise<void> {
+  const c = contextOf(platform, provider);
+  const v = checkValues(input, provider);
+  const fresh = await c.check(v);
+  if (fresh.state != "working")
+    throw new AuthError({ message: `${fresh.summary}${fresh.reasons.length ? ` ${fresh.reasons.join(" ")}` : ""}` });
+  await c.apps.keep(provider, "active", v, { login: "setup" });
+  await c.log({ login: "setup" }, { provider, event: "set", clientId: v.clientId });
+  const has = await appsSet(platform);
+  await platform.own.put(ON_KEY, has);
+}
+
+/** Which providers have an app that sign-in uses: set on a page, or the deploy's. No check with the provider. */
+export async function appsSet(platform: SignInPlatform): Promise<ProvidersOn> {
+  const apps = appsOf(platform);
+  const set = await Promise.all(
+    IDS.map(async (id) => !!(await inUse({ apps, provider: id, deploy: oauthOf(platform).apps[id] })).clientId)
+  );
+  return Object.fromEntries(IDS.map((id, i) => [id, set[i]])) as ProvidersOn;
 }
 
 /** This server's own status. `origin`: where it's reached (the callback URL is under it). */

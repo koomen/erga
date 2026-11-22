@@ -17,7 +17,7 @@ import type { Fetch } from "../deployer/cloudflare-api";
 import type { Seen } from "../own/flow";
 import type { Answers } from "../own/plan";
 import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";
-import { DIR, githubIdOf, loadSecrets } from "../own/store";
+import { DIR } from "../own/store";
 import { type Aws, awsCli, awsNow, whoAmI, type Where } from "./cli";
 import { factsOnAws, healthOnAws, liveOnAws } from "./deploy";
 import { hasDeployer } from "./deployer";
@@ -151,9 +151,7 @@ export async function observeAws(dir: string, a: Answers, seen: Seen): Promise<S
     () => null
   );
   seen.held = (params?.Parameters ?? []).map((p) => p.Name.split("/").at(-1)!);
-  seen.app = sso(a)
-    ? await idpSecretThere(a)
-    : !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
+  seen.app = sso(a) && (await idpSecretThere(a));
   if (!st.outputs.Machine) return seen;
   seen.deployer = await hasDeployer(aws, name).catch(() => false);
   // The server as AWS shows it: the release on record, the machine's own health check, and the release's settings.
@@ -169,7 +167,7 @@ export async function observeAws(dir: string, a: Answers, seen: Seen): Promise<S
   seen.live = {
     version,
     healthy: !!h?.ok && h.version == version,
-    signIn: vars ? signInOf(a, githubIdOf(a.host, dir) || undefined, vars) : null,
+    signIn: vars ? signInOf(a, seen.github || undefined, vars) : null,
   };
   if (seen.live.healthy) seen.admin = !!(await adminOnAws(aws, machine).catch(() => null));
   return seen;

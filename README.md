@@ -23,78 +23,77 @@ git. Give your coding agent this prompt:
 
 ### For the agent
 
-1. `git clone https://github.com/koomen/erga && cd erga && bun install`
-   (Bun is in `~/.bun/bin`).
-2. Ask the user these questions, one at a time. Ask nothing else, and
-   decide nothing for them.
-   1. Are you at this computer, with a browser on its screen, or connected
-      from another one (SSH, a remote shell)? If remote: `--remote`.
-   2. Erga's address, for example erga.example.com: on a domain they own,
-      and not in use.
-   3. Cloudflare ($5 a month, recommended) or AWS (billed by use)? On AWS:
-      which profile, if `aws configure list-profiles` shows several.
-   4. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
-      your organization: which GitHub organization or email domain?
-      3. Your organization's single sign-on (not available in this
-      version: setup refuses it, and says so):
-      - Cloudflare: the Zero Trust team name, and the Application Audience
-        (AUD) tag of a self-hosted Access application that the user adds
-        for the address, with a Bypass policy for the
-        paths that need no sign-in.
-      - AWS: the OpenID Connect issuer URL, and Erga's client ID there
-        (its callback: `https://<address>/oauth2/idpresponse`). Which claim
-        gives the email address, after what prefix? Not the `email` claim:
-        `--email-claim <claim>:<prefix>` (`preferred_username:corp|`).
-        If the user doesn't know, find it without a change: the user pool's
-        identity provider attribute mapping, or how their other apps behind
-        the same sign-in read `x-amzn-oidc-data`. Never guess.
-   5. AWS without single sign-on: a second Route 53 domain, not the
-      address's, for the documents' pages.
-   6. Who deploys each new release of Erga? 1. A deployer in your own
-      account, by itself (`--deploys cloud`). On Cloudflare you make one
-      token for it, for the one Worker, and paste it on a page that opens.
-      On AWS it has no token: it is a Lambda function with a role of its
-      own. 2. You, from this clone, with `bun erga deploy`
-      (`--deploys local`): no credential stays in the cloud.
-3. Run this with the answers. It makes nothing and prints the plan:
+Ask the user these questions, one at a time. Do not guess an answer, and
+do not choose for the user.
 
-       bun erga setup <address> --host cloudflare|aws --sign-in invite|organization|sso \
-         [--profile <name>] [--organization <org or domain>] \
-         [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] \
-         --deploys cloud|local [--remote] --dry-run
+1. **Which repository and branch does this Erga deploy from?** The default
+   is `koomen/erga` (`main`); a fork of the user's own is the other answer.
+   Then clone it, and run `bun install` (Bun is in `~/.bun/bin`).
+2. **Where does Erga run: Cloudflare or AWS?** Sign in if the CLI is not
+   signed in (`bunx cf auth login`, or `aws sso login`). With several
+   Cloudflare accounts or AWS profiles, ask which one.
+3. **At which domain or subdomain does Erga live?** For example
+   `erga.example.com`.
+   - The domain is not in Cloudflare or Route 53 yet: offer to add it with
+     the CLI. If the user must buy a domain first, wait for them.
+   - An Erga runs at the address already: setup takes it over as it is,
+     with its database and its documents. Offer to deploy it again (`bun
+     erga deploy <address>`, after setup), or to replace it with a new one
+     (`bun erga setup <address> remove --yes` after setup, then setup
+     again). Ask which one. Remove nothing without the user's yes in those
+     words.
+   - Another Worker has the address: offer to take the address off that
+     Worker with the CLI, or ask for another address.
+4. **Which domain holds the documents' pages?** A second domain, not the
+   app's domain and not a subdomain of it: a document's scripts must not
+   share the app's site or its cookies. Each document gets a subdomain of
+   its own there (`--pages <domain>`). AWS needs it. On Cloudflare, a user
+   who is the only author can leave it out: the pages then share one
+   `workers.dev` address.
+5. **Does Erga update by itself when a new release comes out?**
+   - Yes (`--deploys cloud`): a small deployer in the user's own account
+     deploys each new release. On AWS it is a Lambda function with a role of
+     its own. On Cloudflare it is a Worker with a token for the one Worker,
+     which the user makes and pastes on the setup page. An admin turns the
+     updates off and on later, on the server's Deploy page.
+   - No (`--deploys local`): no deploy credential stays in the cloud. The
+     user runs `bun erga deploy <address>` for each update.
 
-   Show the user the plan. On their yes, run it again without `--dry-run`,
-   in the background: the first build takes 10 to 20 minutes, a redeploy
-   about 2.
-4. The last line of each run (DRY RUN, DONE, WAIT or FAIL) says what to
-   do next. Do it. When it needs a choice, ask the user. When it ends in
-   WAIT, don't run it again yourself: give the user the exact command to
-   run in their own terminal session, not through you, and ask them to
-   tell you only the last line.
+Then run the dry run. It makes nothing, and prints the plan:
 
-You make nothing yourself: no resource, file or token. A secret goes only
-into the browser, where the user types it: never into the chat, a command
-or a file. Never open, read or repeat a link that the command opens. Run
-`bun erga setup <address> remove --yes` only when the user asks for it in
-those words.
+    bun erga setup <address> --host cloudflare|aws [--repo <repo>] [--branch <branch>] \
+      [--account <name>] [--profile <name>] [--pages <domain>] --deploys cloud|local --dry-run
 
-A server tracks one branch of one repository: Erga's `main`, unless
-`--repo <repo>` and `--branch <branch>` say another (`bun erga track
-<address>` changes them later). A server that tracks your own fork can
-name Erga's `main` as its upstream: `bun erga track <address> --upstream
-main --upstream-repo github.com/koomen/erga`. `bun erga status` then
-says how many of Erga's commits your fork lacks. Take them with a merge
-commit or a rebase, not as one squashed commit: git can then tell which
-ones you have. With `--deploys local`, later deploys run from your clone:
-`git pull`, then `bun erga deploy <address>`, which gives the server that
-branch's newest commit. With `--deploys cloud`, the deployer in your
-account deploys each new release of that branch by itself. Run setup
-again with the other answer to change who deploys.
+Show the user the plan, and ask if you may go on. On their yes, run the
+same command without `--dry-run`, in the background: the first build takes
+10 to 20 minutes. The last line of each run (DRY RUN, DONE, WAIT or FAIL)
+says what to do next. Do it. When it needs a choice, ask the user.
 
-Setup in a new clone, for an address where an Erga of yours runs
-already, takes that server over as it is: it adds the server to the
-clone's `.erga/config.json`, and makes no second one. An address of a
-Worker that isn't Erga stays refused.
+Rules:
+
+- **Do for the user what you can do.** When you can solve a problem, offer
+  to solve it. Ask the user only for a decision, a sign-in, or a secret
+  that they type on a page.
+- **The user finishes on one page.** When the server runs, the command
+  opens its setup page (`https://<address>/setup`) in the user's browser,
+  with a link that works one time. There the user sets up GitHub or Google
+  sign-in, pastes the deployer's token if the page asks for it, and signs
+  in: they become the admin. Tell the user to finish there.
+- **No secret goes through you.** A secret goes only into the page, where
+  the user types it: never into the chat, a command or a file. You make no
+  token. Never open, read or repeat the setup page or its link.
+- **A remote shell.** When the user is at another computer (SSH), or no
+  browser can open on this machine, add `--remote`: no browser opens here.
+  A run that ends in WAIT or FAIL then names a command for the user to run
+  in their own terminal session, not through you: the link shows there.
+
+A server tracks one branch of one repository (`bun erga track <address>`
+changes them later). A server that tracks the user's own fork can name
+Erga's `main` as its upstream: `bun erga track <address> --upstream main
+--upstream-repo github.com/koomen/erga`. `bun erga status` then says how
+many of Erga's commits the fork lacks. Take them with a merge commit or a
+rebase, not as one squashed commit: git can then tell which ones you have.
+Run setup again with the other `--deploys` answer to change who deploys.
 
 ## Develop
 

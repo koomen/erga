@@ -3,10 +3,13 @@
 //
 //   GET  /login/oauth/authorize              GitHub's sign-in page: Authorize goes back to the app's callback with a code
 //   POST /login/oauth/access_token           the code for the person's token (the app's client id and secret checked)
+//   POST /settings/apps/new                  a new GitHub App from a manifest (a new server's setup page): Create goes
+//                                            back to the manifest's redirect_url with a code
 //   GET  /<owner>/<name>.git/info/refs       git's list of a repository's refs, for the About page's release
 //                                            (server/admin/about.ts): the same for each repository, REFS below
 //   /api/...                                 api.github.com: a person's profile (/users/<login>), the person (/user),
-//                                            their organizations (/user/memberships/orgs)
+//                                            their organizations (/user/memberships/orgs), and the values of the app
+//                                            that a manifest made (/app-manifests/<code>/conversions): the one app's
 //
 // Everything it was asked is in `state`, which the tests read.
 
@@ -125,6 +128,19 @@ export function mockGithub(opts: MockGithubOptions) {
       return json({ access_token: token, token_type: "bearer", scope: "", expires_in: 28800 });
     }
 
+    // ---- github.com: a new GitHub App from a manifest
+    if (path == "/settings/apps/new" && request.method == "POST") {
+      const manifest = JSON.parse(String((await request.formData()).get("manifest") ?? "{}")) as { name?: string; redirect_url?: string };
+      const code = `manifest-${crypto.randomUUID().slice(0, 8)}`;
+      codes.set(code, "manifest");
+      const yes = new URL(manifest.redirect_url ?? "", url);
+      yes.searchParams.set("code", code);
+      yes.searchParams.set("state", url.searchParams.get("state") ?? "");
+      return html(
+        `<h1>Pretend GitHub</h1><p>Create the GitHub App <b>${esc(manifest.name ?? "")}</b>?</p><p><a class="btn" id="create" href="${esc(yes.toString())}">Create GitHub App</a></p>`
+      );
+    }
+
     // ---- github.com: a repository's refs, as git reads them
     if (/^\/[^/]+\/[^/]+\.git\/info\/refs$/.test(path) && request.method == "GET") return new Response(REFS);
 
@@ -144,6 +160,12 @@ export function mockGithub(opts: MockGithubOptions) {
           { status: 403, headers: { "x-ratelimit-limit": "60", "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(RESET) } }
         );
       return json({ login, id: mockGithubId(login), type: "User" });
+    }
+    // The app that a manifest made: the one app that this GitHub knows, for a code that it gave, one time.
+    if ((m = /^\/app-manifests\/([^/]+)\/conversions$/.exec(p)) && request.method == "POST") {
+      if (codes.get(m[1]) != "manifest") return json({ message: "Not Found" }, 404);
+      codes.delete(m[1]);
+      return json({ slug: opts.app.slug, client_id: opts.app.clientId, client_secret: opts.app.clientSecret }, 201);
     }
     const me = userToken(request);
     if (!me) return json({ message: "Bad credentials" }, 401);

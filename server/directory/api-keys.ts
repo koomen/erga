@@ -202,7 +202,7 @@ export const keyCheck =
  */
 export class KeyBox {
   private key: Promise<CryptoKey>;
-  constructor(secret: string, purpose: "erga-credentials" | "erga-auth-apps") {
+  constructor(secret: string, purpose: "erga-credentials" | "erga-auth-apps" | "erga-setup") {
     this.key = (async () =>
       crypto.subtle.importKey("raw", await sha256(`${purpose}:${secret}`), "AES-GCM", false, ["encrypt", "decrypt"]))();
   }

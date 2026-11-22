@@ -9,6 +9,9 @@ import { Cloudflare, type Fetch } from "../deploy/deployer/cloudflare-api";
 import { readControl } from "../deploy/deployer/control";
 import { keptLogin } from "../deploy/local-credential";
 import { deployerToken } from "../deploy/own/browser";
+import { deployerFromPage, stepOn } from "../deploy/own/first";
+import { boundDatabase } from "../deploy/deployer/cloudflare";
+import { type DeployerStep, deployerStep, sealToken } from "../server/identity/setup-link";
 import { checkToken, hasDeployer, installDeployer, installWithToken, removeDeployer } from "../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { bootstrap, prepareRelease } from "./helpers/deploys.ts";
@@ -171,6 +174,75 @@ describe("cloud deploys, from a person's token", () => {
     expect(await hasDeployer(own, TARGET)).toBe(false);
     expect(await removeDeployer(own, TARGET)).toBe(false);
     expect(mock.state.scripts["erga-next"]).toBeDefined();
+  });
+});
+
+describe("the deployer's token from a new server's setup page", () => {
+  test("the command installs the deployer with the token that the page sealed; a token that is refused goes back to the page; a skip ends the wait", async () => {
+    const { mock, own } = await account();
+    const acc = `/accounts/${FLEET_ACCOUNT}`;
+    const db = (await boundDatabase(own, acc, "erga-next"))!;
+    const SECRET = "the-servers-session-secret";
+    /** The page's write (server/identity/setup.ts), as the server makes it: the step after the user's answer. */
+    const page = async (answer: { token: string } | "skip") => {
+      const { step } = await stepOn(own, acc, db);
+      const next: DeployerStep = deployerStep(
+        step,
+        answer == "skip" ? { kind: "skipped" } : { kind: "pasted", ...(await sealToken(SECRET, answer.token)) }
+      );
+      await own.call("POST", `${acc}/d1/database/${db}/query`, "the server's own write", {
+        sql: "INSERT INTO setup (id, deployer) VALUES (1, ?1) ON CONFLICT (id) DO UPDATE SET deployer = excluded.deployer",
+        params: [JSON.stringify(next)],
+      });
+    };
+    /** The command's wait: `looks` looks, and before each one after the first, what the user does on the page then. */
+    const wait = (...then: (() => Promise<void>)[]) =>
+      deployerFromPage({
+        cf: own,
+        net: mock.fetch,
+        target: TARGET,
+        secret: SECRET,
+        again: async () => {
+          const next = then.shift();
+          await next?.();
+          return !!next;
+        },
+      });
+    // Nothing pasted, and the time is over: nothing is made.
+    expect(await wait()).toBeNull();
+    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
+    // A token that can do more: refused, with the reason on the row for the page. Then the user pastes a token for
+    // the one Worker: the deployer is installed with it, and auto-deploy is on.
+    await page({ token: "mock-setup-token" });
+    const ended = await wait(async () => {
+      const refused = (await stepOn(own, acc, db)).step;
+      expect(refused).toMatchObject({ at: "refused", why: expect.stringContaining("The token can read the account's D1 databases.") });
+      expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
+      await page({ token: "mock-only-erga-next" });
+    });
+    expect(ended).toEqual({ deployer: "installed", unconfirmed: NEVER_SHOWN });
+    expect(mock.state.secrets["erga-next-deployer"]).toEqual({ CLOUDFLARE_API_TOKEN: "mock-only-erga-next" });
+    expect((await Effect.runPromise(readControl(d1Sql(own, TARGET))))?.auto).toBe(true);
+    // The row holds the end, and no token: not sealed either.
+    const row = await stepOn(own, acc, db);
+    expect(row.step).toEqual({ at: "installed", unconfirmed: NEVER_SHOWN });
+    expect(row.text).not.toMatch(/"(iv|data)"/);
+    // A run again: the deployer is there, so the wait ends at once.
+    expect(await wait()).toMatchObject({ deployer: "installed" });
+  });
+
+  test("the user skips the step on the page: no deployer, and the wait ends", async () => {
+    const { mock, own } = await account();
+    const acc = `/accounts/${FLEET_ACCOUNT}`;
+    const db = (await boundDatabase(own, acc, "erga-next"))!;
+    await own.call("POST", `${acc}/d1/database/${db}/query`, "the server's own write", {
+      sql: "INSERT INTO setup (id, deployer) VALUES (1, ?1)",
+      params: [JSON.stringify(deployerStep({ at: "open" }, { kind: "skipped" }))],
+    });
+    expect(await deployerFromPage({ cf: own, net: mock.fetch, target: TARGET, secret: "s", again: async () => false })).toEqual({
+      deployer: "skipped",
+    });
+    expect(mock.state.scripts["erga-next-deployer"]).toBeUndefined();
   });
 });
 

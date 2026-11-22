@@ -181,7 +181,7 @@ export class Users {
   }
 
   /**
-   * A server with no admin takes `login`, an account, as its first one (server/identity/claim.ts). In one statement, so
+   * A server with no admin takes `login`, an account, as its first one (server/identity/setup.ts). In one statement, so
    * of two claims at once only the first makes an admin. The result: whether `login` is the admin now.
    */
   async claim(login: string): Promise<boolean> {

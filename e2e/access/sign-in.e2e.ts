@@ -2,7 +2,8 @@
 //
 // Two journeys. The first is on a server of this file's own, because its checks change who may use the whole server:
 // the sign-in page with one provider and with two, people that an admin adds before their first sign-in, and the
-// access rules (a Google Workspace, a GitHub organization, Anyone's level), and how a new account gets its username. The
+// access rules (a Google Workspace, a GitHub organization, Anyone's level), how a new account gets its username, and a
+// new server's setup page. The
 // second is one new person on the shared server: the username step, the account corner, the editor's Share card and pencil, sign out and sign in.
 // Sign-ins go through local development's pretend provider (/auth/dev), which takes the same steps as GitHub's and
 // Google's answers. The admin is DEV_LOGIN ("tester").
@@ -328,6 +329,28 @@ journey("who may sign in, on a server of its own", () => {
     });
     await page.click(`${CARD} button.clear`);
     await soon(card).toEqual({ ...before, hint: "Cleared: sign-in uses the deploy's values.", stayed: true });
+  });
+
+  test("a new server's setup page (local development shows it with no link): one row is open at a time; GitHub's button makes the app at GitHub, and the row is done", async () => {
+    const rows = () =>
+      page.$$eval("ol.steps details", (ds) =>
+        ds.map(
+          (d) => `${(d as HTMLElement).dataset.step} ${(d as HTMLElement).dataset.state}${(d as HTMLDetailsElement).open ? " open" : ""}`
+        )
+      );
+    await page.goto(`${root}/setup`);
+    expect(await rows()).toEqual(["github next open", "google next", "admin waiting"]);
+    // A click on a row's title opens it, and closes the row that was open.
+    await page.click("details[data-step=google] summary");
+    expect(await rows()).toEqual(["github next", "google next open", "admin waiting"]);
+    await page.click("details[data-step=github] summary");
+    // The button posts the app's manifest to GitHub (the pretend one); Create comes back here, and the server keeps the app.
+    await page.click("details[data-step=github] button");
+    expect(new URL(page.url()).pathname).toBe("/__github/settings/apps/new");
+    await page.click("#create");
+    await until(() => new URL(page.url()).pathname == "/setup", 10_000, "back on the setup page");
+    expect(await rows()).toEqual(["github done", "google optional", "admin next open"]);
+    expect(await page.content()).not.toContain("mock-github-client-secret");
   });
 });
 

@@ -25,6 +25,7 @@
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   /auth/domain-pass          a custom domain's sign-in, through here (server/identity/domain-pass.ts)
+//   /setup                     a new server's setup page: sign-in, updates, the first admin (server/identity/setup.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /oauth/authorize           MCP's sign-in: the person lets an agent's app act for them (server/identity/authorize.ts)
 //   /tokens/new                making a token to paste (the Settings dialog)
@@ -66,13 +67,13 @@ import { domainOf, ERGA, LIVE_FILES, liveDoc, nothing, serveDomain, serveLiveFil
 import {
   authorize,
   chooseSignIn,
-  claimRoute,
   DOMAIN_ERGA,
   DOMAIN_SIGN_OUT,
   domainPass,
   domainSignIn,
   devSignIn,
   refusedAgent,
+  setupRoute,
   signedOut,
   signOut,
   ssoSignIn,
@@ -194,15 +195,34 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     domain: "none",
     exempt: DEV,
   },
-  // A new server's first admin: setup's one-time link (server/identity/claim.ts).
-  { method: "GET", path: "/auth/claim", run: claimRoute, action: "A new server's first user signs in, to become its admin", ...SIGN },
+  // A new server's setup page (server/identity/setup.ts): its person finishes the setup there, and becomes the admin.
+  { method: "GET", path: "/setup", run: setupRoute, action: "Open a new server's setup page, with the setup command's link", ...SIGN },
+  {
+    method: "GET",
+    path: "/setup/github",
+    run: setupRoute,
+    action: "Set up GitHub sign-in on a new server: GitHub's answer, with the new app's code",
+    domain: "none",
+    exempt: SECRET,
+  },
   {
     method: "POST",
-    path: "/auth/claim",
-    run: claimRoute,
-    action: "Become a new server's first admin",
-    ...SIGN,
+    path: "/setup/google",
+    run: setupRoute,
+    action: "Set up Google sign-in on a new server: the OAuth client's ID and secret",
+    domain: "none",
+    exempt: SECRET,
   },
+  {
+    method: "POST",
+    path: "/setup/deployer",
+    run: setupRoute,
+    action: "Give a new server's deployer its token, or skip it",
+    domain: "none",
+    exempt: SECRET,
+  },
+  { method: "GET", path: "/setup/admin", run: setupRoute, action: "A new server's first user signs in, and becomes its admin", ...SIGN },
+  { method: "POST", path: "/setup/admin", run: setupRoute, action: "Become a new server's first admin", ...SIGN },
   { method: "GET", path: "/auth/domain-pass", run: domainPass, action: "Sign in on a custom domain, through this one", ...SIGN },
   // MCP's sign-in (server/identity/authorize.ts): the gate is the authorization server; the person decides here.
   {

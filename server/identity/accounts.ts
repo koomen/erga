@@ -38,7 +38,7 @@ import { cookies, setCookie, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { signed } from "../signed.ts";
 import { assigned, usernameFacts } from "./usernames.ts";
-import { claims } from "./claim.ts";
+import { settingUp } from "./setup.ts";
 import type { TestEnd } from "./app-test.ts";
 
 const JOIN = "erga_join";
@@ -124,8 +124,8 @@ export const vouchedSignIn = Effect.fnUntraced(function* (
   const url = new URL(request.url);
   const dev = platform.dev(url);
   const identity = identityOf(v);
-  // A new server's first person comes by setup's one-time link (claim.ts): they may join, to become its admin.
-  const join = !o.onlyAdmins && ((yield* call(() => mayJoin(platform, url, v))) || (yield* call(() => claims(platform, request))));
+  // A new server's first person comes from its setup page (setup.ts): they may join, to become its admin.
+  const join = !o.onlyAdmins && ((yield* call(() => mayJoin(platform, url, v))) || (yield* call(() => settingUp(platform, request))));
   const outcome = yield* call(() => resolve(platform.directory, v, { join, create: dev, onlyAdmins: o.onlyAdmins }));
   if (outcome.kind == "refused") {
     yield* tested({ kind: "refused", who: outcome.login ?? v.handle });
@@ -267,7 +267,7 @@ export const usernameStep: Route = Effect.gen(function* () {
   const { v } = pending;
   if (request.method == "GET") {
     // Who may join is asked again: a rule could have changed while they chose.
-    if (!(yield* call(() => mayJoin(platform, url, v))) && !(yield* call(() => claims(platform, request)))) return refusedPage(v);
+    if (!(yield* call(() => mayJoin(platform, url, v))) && !(yield* call(() => settingUp(platform, request)))) return refusedPage(v);
     // A POST that didn't make the account came back here (flash.ts): its name, and why not.
     const note = yield* call(() => noteOf(platform, request));
     const shown = note?.error
@@ -280,7 +280,7 @@ export const usernameStep: Route = Effect.gen(function* () {
   const { username } = yield* form(UsernameForm).pipe(Effect.orElseSucceed(() => ({ username: "" })));
   const wanted = username.trim().toLowerCase();
   // Never a page in answer to the form (flash.ts): the GET above shows the refusal, or the error.
-  if (!(yield* call(() => mayJoin(platform, url, v))) && !(yield* call(() => claims(platform, request))))
+  if (!(yield* call(() => mayJoin(platform, url, v))) && !(yield* call(() => settingUp(platform, request))))
     return redirect("/auth/username", 303);
   const login = yield* makeAccount(platform, wanted, v);
   if (login instanceof NotAllowed) return yield* seeOther(platform, request, "/auth/username", { error: login.message, value: wanted });

@@ -12,7 +12,7 @@ import { DEPLOYER_TAG, deployerName } from "../pipeline/deployer";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, varsOf, zoneOf } from "./plan";
 import { adminOn } from "./first";
-import { DIR, githubIdOf, loadSecrets, namesAt } from "./store";
+import { DIR, namesAt } from "./store";
 
 export interface Connection {
   /** The API with the login as it is at each call: a login that ends during a wait for the user is read again. */
@@ -40,9 +40,9 @@ export async function cloudflare(): Promise<Connection | { why: string }> {
 type SignIn = NonNullable<Seen["live"]>["signIn"];
 
 /**
- * Whether the settings that a release runs with are the sign-in that the answers name: the GitHub App's client id, or
- * with single sign-on the proxy (`signer`: AWS's proxy, from the stack). A person's own sign-in, in the admin's step,
- * proves the rest: setup asks the server nothing.
+ * Whether the settings that a release runs with are the sign-in that the answers name: with single sign-on the proxy
+ * (`signer`: AWS's proxy, from the stack), and the GitHub app that the instance's entry names, if it names one
+ * (`githubId`). A person's own sign-in, on the setup page, proves the rest: setup asks the server nothing.
  */
 export function signInOf(a: Answers, githubId: string | undefined, vars: Record<string, string>, signer?: string): SignIn {
   const want: Record<string, string> = varsOf(a, githubId, signer);
@@ -76,7 +76,7 @@ export async function liveOf(
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
 export async function observe(a: Answers, dir = DIR, connect = cloudflare): Promise<Seen> {
   const entry = entryOf(readConfig(dir), a.host);
-  const seen: Seen = { ...nothingSeen, vars: entry ? { ...entry.vars } : null, github: githubIdOf(a.host, dir) };
+  const seen: Seen = { ...nothingSeen, vars: entry ? { ...entry.vars } : null, github: entry?.vars.GITHUB_CLIENT_ID ?? "" };
   if (!a.where) return seen;
   if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, a, seen);
   const c = await connect();
@@ -156,10 +156,9 @@ export async function observe(a: Answers, dir = DIR, connect = cloudflare): Prom
       )
       .catch(() => null);
     seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
-    seen.live = await liveOf(cf, account.id, worker, a, githubIdOf(a.host, dir) || undefined);
+    seen.live = await liveOf(cf, account.id, worker, a, seen.github || undefined);
     seen.admin = !!(await adminOn(cf, acc, worker).catch(() => null));
     seen.deployer = !!scripts.find((x) => x.id == deployerName(worker))?.tags?.includes(DEPLOYER_TAG);
   }
-  seen.app = !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
   return seen;
 }

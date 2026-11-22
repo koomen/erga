@@ -1,17 +1,16 @@
 // bun erga setup: the options (deploy/own/cli.ts, readOptions), the flow (flow.ts), the answers and what follows from
-// them (plan.ts), and the GitHub App's page on the loopback (browser.ts). The flow is pure: each test gives it the
+// them (plan.ts), and the user's terminal (browser.ts). The flow is pure: each test gives it the
 // answers and what the command saw, as the command does. The last tests run the command itself, with a pretend AWS.
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { githubApp, openTerminal } from "../deploy/own/browser";
+import { openTerminal } from "../deploy/own/browser";
 import { readOptions } from "../deploy/own/cli";
 import { checksOf, deploysText, missing, nothingSeen, planText, type Seen, step } from "../deploy/own/flow";
 import {
   type Answers,
   firstRows,
-  githubManifest,
   namesOf,
   noAnswers,
   parseAnswer,
@@ -19,7 +18,6 @@ import {
   setupEntry,
   varsOf,
 } from "../deploy/own/plan";
-import { loadSecrets } from "../deploy/own/store";
 import { MARK } from "./helpers/aws-setup";
 
 const HOST = "erga.example.com";
@@ -45,16 +43,14 @@ function run(a: Answers, ...looks: Partial<Seen>[]) {
 }
 
 test("each answer is an option of the command; a bad one, or an unknown one, says why", () => {
-  const { answers, problems, rest } = options(
-    "--host",
-    "Cloudflare",
-    "--sign-in",
-    "organization",
-    "--organization",
-    "Acme.com",
-    "--dry-run"
-  );
-  expect([answers.where, answers.signIn, answers.organization, problems, rest]).toEqual(["cloudflare", "organization", "acme.com", [], []]);
+  const { answers, problems, rest } = options("--host", "Cloudflare", "--pages", "Example-Pages.com", "--dry-run");
+  expect([answers.where, answers.pages, problems, rest]).toEqual(["cloudflare", "example-pages.com", [], []]);
+  // Who may sign in is no option: the user sets up sign-in on the server's setup page. Single sign-on alone is the deploy's.
+  expect(options("--sign-in", "invite", "--organization", "acme-inc").problems).toEqual([
+    "--sign-in: --sign-in takes sso only. Without it, you set up GitHub or Google sign-in on the server's setup page.",
+    "--organization isn't an option of bun erga setup.",
+  ]);
+  expect(options("--sign-in", "sso").answers.signIn).toBe("sso");
   // What the instance tracks: the default repository's main, or the options'.
   expect([answers.repo, answers.branch]).toEqual(["github.com/koomen/erga", "main"]);
   const tracked = options("--repo", "https://example.com/team/erga.git", "--branch", "staging");
@@ -86,19 +82,15 @@ test("each answer is an option of the command; a bad one, or an unknown one, say
 });
 
 test("the command says each option it still needs, before it looks at anything", () => {
-  expect(missing(noAnswers(HOST))).toEqual([
-    "--host cloudflare or --host aws: where Erga runs.",
-    "--sign-in invite, organization or sso: who may sign in.",
-  ]);
-  expect(missing(options("--host", "cloudflare", "--sign-in", "organization").answers)).toEqual([
-    "--organization <GitHub organization or email domain>: whose users may sign in.",
+  expect(missing(noAnswers(HOST))).toEqual(["--host cloudflare or --host aws: where Erga runs."]);
+  expect(missing(options("--host", "cloudflare").answers)).toEqual([
     "--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.",
   ]);
   expect(missing(options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--deploys", "cloud").answers)).toEqual([
     "--aud <tag>: the Access application's Audience tag.",
   ]);
   // AWS: without single sign-on the pages need a domain of their own.
-  expect(missing(options("--host", "aws", "--sign-in", "invite").answers)).toEqual([
+  expect(missing(options("--host", "aws").answers)).toEqual([
     "--pages <domain>: a second Route 53 domain of the account, for the documents' pages.",
     "--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.",
   ]);
@@ -112,8 +104,8 @@ test("the command says each option it still needs, before it looks at anything",
   ).toEqual([]);
 });
 
-test("the main path: the login, the one account that holds the domain, the GitHub App, the build, the admin", () => {
-  const a = options("--host", "cloudflare", "--sign-in", "invite", "--deploys", "local").answers;
+test("the main path: the login, the one account that holds the domain, the build, the setup page, the admin", () => {
+  const a = options("--host", "cloudflare", "--deploys", "local").answers;
   // Not signed in: the command runs the login, and the user finishes it in the browser.
   expect(run(a, { login: { ok: false, why: "Not logged in to Cloudflare." } }).state).toEqual({
     at: "login",
@@ -122,10 +114,10 @@ test("the main path: the login, the one account that holds the domain, the GitHu
   // One account holds the domain: the flow takes it, and looks again at that account.
   const found = run(a, { ...CF, zones: [], account: "" });
   expect([found.answers.account, found.look]).toEqual([ADA, true]);
-  expect(run(a, CF, CF).state).toEqual({ at: "app", kind: "github" });
-  expect(run(a, CF, { ...CF, app: true }).state).toEqual({ at: "build" });
-  expect(run(a, CF, { ...CF, app: true, ...LIVE }).state).toEqual({ at: "admin" });
-  expect(run(a, CF, { ...CF, app: true, ...LIVE, admin: true }).state).toEqual({ at: "done" });
+  // No step of the user's before the build: the sign-in is the setup page's, on the server that runs.
+  expect(run(a, CF, CF).state).toEqual({ at: "build" });
+  expect(run(a, CF, { ...CF, ...LIVE }).state).toEqual({ at: "page", token: false });
+  expect(run(a, CF, { ...CF, ...LIVE, admin: true }).state).toEqual({ at: "done" });
   // The dry run's checks and plan.
   const f = run(a, CF, CF).answers;
   expect(checksOf(f, seen(CF))).toEqual(["Signed in to Cloudflare", "The account Ada Lovelace holds example.com", `${HOST} is free`]);
@@ -134,37 +126,43 @@ test("the main path: the login, the one account that holds the domain, the GitHu
   expect(planText(f, seen(CF))).toEqual([
     `I will make Erga at ${HOST}, in the Cloudflare account Ada Lovelace:`,
     "• a Worker (erga-example-com), a D1 database, an R2 bucket and a DNS record",
-    "• a GitHub App, for sign-in (you click one button)",
+    "• the documents' pages on one shared workers.dev address: safe for one author",
+    "• no sign-in yet: when the server runs, its setup page opens in your browser. You set up GitHub or Google sign-in there, and you sign in: you become the admin",
     "• it tracks main of github.com/koomen/erga: a deploy gives it that branch's newest commit",
     `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${HOST}`,
     "It costs $5 a month: the Workers Paid plan.",
   ]);
+  // A second domain for the pages, and the user at another computer: the plan says both.
+  const pages = planText({ ...f, pages: "example-pages.com", remote: true }, seen(CF));
+  expect(pages[2]).toBe("• the documents' pages on example-pages.com: each document on a subdomain of its own");
+  expect(pages[3]).toContain("its setup page opens from a link on your terminal");
 });
 
-test("--deploys: cloud opens the deployer's step on an instance that runs, the user's own; local removes a deployer", () => {
-  const cloud = options("--host", "cloudflare", "--sign-in", "invite", "--deploys", "cloud").answers;
+test("--deploys: cloud takes the deployer's token on a new server's setup page, on a page of its own after that; local removes a deployer", () => {
+  const cloud = options("--host", "cloudflare", "--deploys", "cloud").answers;
   const local = { ...cloud, deploys: "local" as const };
-  const runs = { ...CF, app: true, ...LIVE };
-  // Not before the instance runs: the deployer binds its database.
-  expect(run(cloud, CF, { ...CF, app: true }).state).toEqual({ at: "build" });
-  expect(run(cloud, CF, runs).state).toEqual({ at: "deployer", do: "install" });
-  expect(run(cloud, CF, { ...runs, deployer: true }).state).toEqual({ at: "admin" });
+  const runs = { ...CF, ...LIVE };
+  // Not before the instance runs: the deployer binds its database. Then the setup page takes the token.
+  expect(run(cloud, CF, CF).state).toEqual({ at: "build" });
+  expect(run(cloud, CF, runs).state).toEqual({ at: "page", token: true });
+  expect(run(cloud, CF, { ...runs, deployer: true }).state).toEqual({ at: "page", token: false });
   expect(run(cloud, CF, { ...runs, deployer: true, admin: true }).state).toEqual({ at: "done" });
   // An instance that is done: a run again with the other answer changes who deploys.
   expect(run(cloud, CF, { ...runs, admin: true }).state).toEqual({ at: "deployer", do: "install" });
   expect(run(local, CF, { ...runs, admin: true, deployer: true }).state).toEqual({ at: "deployer", do: "remove" });
   expect(run(local, CF, { ...runs, admin: true }).state).toEqual({ at: "done" });
-  // The token is the user's step: with --remote it needs their terminal. The removal is the command's own.
+  // The page is the user's step: with --remote its link needs their terminal. The removal is the command's own.
   const remote = { ...cloud, remote: true };
   expect(run(remote, CF, runs).state).toEqual({ at: "terminal" });
-  expect(run(remote, CF, { ...runs, terminal: true }).state).toEqual({ at: "deployer", do: "install" });
+  expect(run(remote, CF, { ...runs, terminal: true }).state).toEqual({ at: "page", token: true });
+  expect(run(remote, CF, { ...runs, admin: true }).state).toEqual({ at: "terminal" });
   expect(run({ ...local, remote: true }, CF, { ...runs, admin: true, deployer: true }).state).toEqual({ at: "deployer", do: "remove" });
   // The plan says who deploys, and where the user pastes the token.
   const f = run(cloud, CF, CF).answers;
-  expect(planText(f, seen(CF))[4]).toBe(
-    "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-example-com, which you make on Cloudflare and paste on a page that opens"
+  expect(planText(f, seen(CF))[5]).toBe(
+    "• a deployer (the Worker erga-example-com-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-example-com, which you make on Cloudflare and paste on the server's setup page"
   );
-  expect(planText({ ...f, remote: true }, seen(CF))[4]).toContain("and paste in your terminal");
+  expect(deploysText(f, "erga-staging", "in your terminal")).toContain("and paste in your terminal");
   // An instance that runs has its own Worker's name (its entry's): the user makes the token for that name.
   expect(deploysText(f, "erga-staging")).toContain(
     "(the Worker erga-staging-deployer) in your account: it deploys each new release by itself. It holds a token for the one Worker erga-staging,"
@@ -173,15 +171,15 @@ test("--deploys: cloud opens the deployer's step on an instance that runs, the u
 });
 
 test("--deploys on AWS: the deployer has no token, so its install is the command's own step; local removes it", () => {
-  const cloud = { ...options("--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com", "--deploys", "cloud").answers };
+  const cloud = { ...options("--host", "aws", "--pages", "example-pages.com", "--deploys", "cloud").answers };
   const local = { ...cloud, deploys: "local" as const };
   expect([missing(cloud), missing(local)]).toEqual([[], []]);
   const there = { ...AWS, zones: ["example.com", "example-pages.com"] };
-  const runs = { ...there, app: true, ...LIVE };
+  const runs = { ...there, ...LIVE };
   // Not before the instance runs: the deployer's role names the instance's machine and bucket.
-  expect(run(cloud, there, { ...there, app: true }).state).toEqual({ at: "build" });
+  expect(run(cloud, there, there).state).toEqual({ at: "build" });
   expect(run(cloud, there, runs).state).toEqual({ at: "deployer", do: "install" });
-  expect(run(cloud, there, { ...runs, deployer: true }).state).toEqual({ at: "admin" });
+  expect(run(cloud, there, { ...runs, deployer: true }).state).toEqual({ at: "page", token: false });
   expect(run(cloud, there, { ...runs, deployer: true, admin: true }).state).toEqual({ at: "done" });
   // An instance that is done: a run again with the other answer changes who deploys.
   expect(run(cloud, there, { ...runs, admin: true }).state).toEqual({ at: "deployer", do: "install" });
@@ -200,7 +198,7 @@ test("--deploys on AWS: the deployer has no token, so its install is the command
 });
 
 test("the command stops where only the user can go on: two accounts, no domain, an address in use", () => {
-  const a = options("--host", "cloudflare", "--sign-in", "invite").answers;
+  const a = options("--host", "cloudflare").answers;
   const two = { login: { ok: true as const }, choices: [{ id: "b".repeat(32), name: "Acme Inc" }, CF.choices![0]] };
   expect(run(a, two).state).toEqual({
     at: "stop",
@@ -217,6 +215,18 @@ test("the command stops where only the user can go on: two accounts, no domain, 
     at: "stop",
     why: `${HOST} is in use: DNS has A 192.0.2.1 for it. Free it, or choose another address.`,
   });
+  // The pages' domain is a whole domain of the account, and not the app's.
+  expect(run({ ...a, pages: "example.com" }, CF, CF).state).toMatchObject({
+    at: "stop",
+    why: expect.stringContaining("another domain than the app's"),
+  });
+  expect(run({ ...a, pages: "example-pages.com" }, CF, CF).state).toEqual({
+    at: "stop",
+    why: "example-pages.com isn't a domain of this Cloudflare account: the pages need a whole domain of their own. Give another --pages.",
+  });
+  expect(run({ ...a, pages: "example-pages.com" }, CF, { ...CF, zones: ["example.com", "example-pages.com"] }).state).toEqual({
+    at: "build",
+  });
   // An Erga that another clone set up runs at the address: no stop. The command takes it over first, with no step of
   // the user's (--remote needs no terminal for it), whatever the instance has.
   for (const more of [{}, { ...LIVE, app: true, admin: true, deployer: true }])
@@ -226,29 +236,21 @@ test("the command stops where only the user can go on: two accounts, no domain, 
     });
 });
 
-test("who may sign in decides the settings, the access rule and the app step", () => {
-  const a = (signIn: string, more = {}) => ({ ...noAnswers(HOST), where: "cloudflare" as const, signIn: signIn as "invite", ...more });
-  expect(JSON.parse(varsOf(a("invite"), "Iv1.x").SERVER_DEFAULTS)).toEqual({
+test("a new server's settings and first rows: invited users only; single sign-on lets its people write", () => {
+  const a = { ...noAnswers(HOST), where: "cloudflare" as const };
+  expect(JSON.parse(varsOf(a, undefined).SERVER_DEFAULTS)).toEqual({
     anyone_access: "public",
     public_sharing: true,
     delete_docs_after_hours: null,
   });
-  expect(firstRows(a("invite"))).toEqual([]);
-  expect(JSON.parse(varsOf(a("organization"), "Iv1.x").SERVER_DEFAULTS)).toMatchObject({ anyone_access: "none", public_sharing: false });
-  expect(firstRows(a("organization", { organization: "acme-inc" }), 5)).toEqual([
-    {
-      who: "github_org acme-inc",
-      table: "access_rules",
-      row: { kind: "github_org", value: "acme-inc", access: "write", created: 5 },
-      onConflict: "(kind, value) DO UPDATE SET access = 'write'",
-    },
-  ]);
-  expect(firstRows(a("organization", { organization: "acme.com" }))[0].row).toMatchObject({ kind: "workspace", value: "acme.com" });
-  // No row names an admin: the user who opens the one-time link becomes it.
-  expect(JSON.stringify([firstRows(a("organization", { organization: "acme-inc" })), firstRows(a("sso"))])).not.toContain("admin");
-  // Single sign-on on Cloudflare: the team and the Audience tag are options; no GitHub App, no app step.
+  // No row names an admin, or lets anyone in: the user who finishes the setup page becomes the admin, and invites the others.
+  expect(firstRows(a)).toEqual([]);
+  // Setup gives the server no GitHub app: only a deploy that has one of its own names it.
+  expect([varsOf(a, undefined).GITHUB_CLIENT_ID, varsOf(a, "Iv1.x").GITHUB_CLIENT_ID]).toEqual(["", "Iv1.x"]);
+  // Single sign-on on Cloudflare: the team and the Audience tag are options; no app step.
   const sso = options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--aud", "f".repeat(64)).answers;
   expect(run(sso, CF, CF).state).toEqual({ at: "build" });
+  expect(JSON.parse(varsOf(sso, undefined).SERVER_DEFAULTS)).toMatchObject({ anyone_access: "none", public_sharing: false });
   expect(varsOf(run(sso, CF).answers, "Iv1.unused")).toMatchObject({
     GITHUB_CLIENT_ID: "",
     PROXY_SIGN_IN: JSON.stringify({ kind: "cloudflare-access", team: "acme", aud: "f".repeat(64) }),
@@ -262,7 +264,7 @@ test("who may sign in decides the settings, the access rule and the app step", (
       onConflict: "(key) DO UPDATE SET value = excluded.value",
     },
   ]);
-  expect(proxySetting(a("invite"))).toBeNull();
+  expect(proxySetting(a)).toBeNull();
 });
 
 test("AWS: the profile, the region from it, the stack as the plan, and the organization's sign-in on a page of its own", () => {
@@ -322,10 +324,10 @@ test("AWS: the profile, the region from it, the stack as the plan, and the organ
     `I will make Erga at ${HOST}, in your AWS account 444455556666 (profile work, region us-west-2), as one CloudFormation stack:`
   );
   // Without single sign-on, the pages need a whole zone of their own: the app's own zone is refused.
-  const cdn = options("--host", "aws", "--sign-in", "invite", "--profile", "work", "--pages", "example.com").answers;
+  const cdn = options("--host", "aws", "--profile", "work", "--pages", "example.com").answers;
   expect(run(cdn, AWS, AWS).state).toMatchObject({ at: "stop", why: expect.stringContaining("another domain than the app's") });
   const other = { ...cdn, pages: "example-pages.com" };
-  expect(run(other, { ...AWS, zones: ["example.com", "example-pages.com"] }).state).toEqual({ at: "app", kind: "github" });
+  expect(run(other, { ...AWS, zones: ["example.com", "example-pages.com"] }).state).toEqual({ at: "build" });
 });
 
 test("--remote: the user's steps need their terminal; an agent's shell, with none, stops there and never opens a browser", () => {
@@ -344,7 +346,7 @@ test("--remote: the user's steps need their terminal; an agent's shell, with non
   const a = { ...sso.answers, region: "us-west-2", remote: true };
   expect(sso.problems).toEqual([]);
   expect(options("--remote").problems).toEqual([]);
-  // No terminal: the login, the client secret and the admin's link each stop the command.
+  // No terminal: the login, the client secret and the setup page's link each stop the command.
   expect(run(a, { ...AWS, login: { ok: false, why: "expired" } }).state).toEqual({ at: "terminal" });
   expect(run(a, AWS).state).toEqual({ at: "terminal" });
   expect(run(a, { ...AWS, ...LIVE, app: true }).state).toEqual({ at: "terminal" });
@@ -352,7 +354,7 @@ test("--remote: the user's steps need their terminal; an agent's shell, with non
   expect(run(a, { ...AWS, app: true }).state).toEqual({ at: "build" });
   // In the user's own terminal: the same steps as at the computer.
   expect(run(a, { ...AWS, terminal: true }).state).toEqual({ at: "app", kind: "oidc" });
-  expect(run(a, { ...AWS, ...LIVE, app: true, terminal: true }).state).toEqual({ at: "admin" });
+  expect(run(a, { ...AWS, ...LIVE, app: true, terminal: true }).state).toEqual({ at: "page", token: false });
   expect(run({ ...a, remote: false }, AWS).state).toEqual({ at: "app", kind: "oidc" });
   expect(planText(a, seen(AWS))).toContain(
     "• your organization's sign-in, at the gate in front of Erga (you type its client secret in your terminal)"
@@ -372,8 +374,6 @@ test("--repo and --branch: the instance's entry tracks them, and the plan says s
   const forked = readOptions(HOST, [
     "--host",
     "cloudflare",
-    "--sign-in",
-    "invite",
     "--repo",
     "example.com/team/erga",
     "--branch",
@@ -382,14 +382,6 @@ test("--repo and --branch: the instance's entry tracks them, and the plan says s
   const a = { ...forked.answers, account: ADA };
   expect(setupEntry(a, { zones: ["example.com"], subdomain: "ada" })).toMatchObject({ repo: "example.com/team/erga", branch: "stable" });
   expect(planText(a, seen(CF))).toContain("• it tracks stable of example.com/team/erga: a deploy gives it that branch's newest commit");
-  // Its GitHub App is its own: one callback, its address.
-  expect(githubManifest(a, "http://127.0.0.1:5000/created")).toMatchObject({
-    name: `Erga ${HOST}`,
-    redirect_url: "http://127.0.0.1:5000/created",
-    callback_urls: [`https://${HOST}/_edge/callback`],
-    default_permissions: {},
-    public: false,
-  });
 });
 
 test("an instance's names come from its entry, or from its address; its entry from the answers alone", () => {
@@ -400,7 +392,7 @@ test("an instance's names come from its entry, or from its address; its entry fr
     pagesWorker: "erga-example-com-pages",
   });
   expect(namesOf("erga.dev", { worker: "erga", database: "erga" }).pagesWorker).toBe("erga-pages");
-  const answers = { ...noAnswers(HOST), where: "cloudflare" as const, account: ADA, signIn: "invite" as const };
+  const answers = { ...noAnswers(HOST), where: "cloudflare" as const, account: ADA };
   expect(setupEntry(answers, { zones: ["example.com"], subdomain: null, github: "Iv1.ada" })).toEqual({
     host: HOST,
     repo: "github.com/koomen/erga",
@@ -418,35 +410,7 @@ test("an instance's names come from its entry, or from its address; its entry fr
   });
 });
 
-test("the GitHub App's page: it posts the manifest to GitHub, and GitHub's code becomes the app's id and secret, under its host", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "erga-own-"));
-  const a = { ...options("--host", "cloudflare", "--sign-in", "invite").answers };
-  // GitHub's API, faked: the code becomes the app's values.
-  const api = (async (url: string) =>
-    url.endsWith("/app-manifests/c0de1234/conversions")
-      ? Response.json({ client_id: "Iv1.both", client_secret: "app-secret" })
-      : new Response("no", { status: 404 })) as unknown as typeof fetch;
-  // The browser is this test: it gets the address that the command opens.
-  const opened: string[] = [];
-  try {
-    const ended = githubApp(a, 10_000, { dir, api, open: (url) => opened.push(url) });
-    while (!opened.length) await Bun.sleep(5);
-    const at = opened[0];
-    const form = await (await fetch(at)).text();
-    const state = /apps\/new\?state=([0-9a-f]+)/.exec(form)![1];
-    expect(form).toContain(`&quot;redirect_url&quot;:&quot;${at}created&quot;`);
-    // An answer for another request is refused, and the step goes on.
-    expect((await fetch(`${at}created?code=c0de1234&state=other`)).status).toBe(400);
-    const done = await fetch(`${at}created?code=c0de1234&state=${state}`);
-    expect([done.status, await ended]).toEqual([200, ""]);
-    expect(await done.text()).not.toContain("app-secret");
-    expect(loadSecrets(dir)).toEqual({ [HOST]: { GITHUB_CLIENT_SECRET: "app-secret", GITHUB_CLIENT_ID: "Iv1.both" } });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("a run again with other sign-in answers writes the entry again and deploys, before the admin step", () => {
+test("a run again with other sign-in answers writes the entry again and deploys, before the setup page", () => {
   const sso = options(
     "--host",
     "aws",
@@ -464,14 +428,14 @@ test("a run again with other sign-in answers writes the entry again and deploys,
   const built = { ...AWS, ...LIVE, app: true, stack: { status: "CREATE_COMPLETE", outputs: { Proxy: "arn:p" }, resources: [] } };
   // The first build wrote the entry without the email claim.
   const vars = varsOf(a, undefined, "arn:p");
-  expect(run(a, { ...built, vars }).state).toEqual({ at: "admin" });
+  expect(run(a, { ...built, vars }).state).toEqual({ at: "page", token: false });
   // The user runs setup again with --email-claim: the server's setting changes, so setup deploys again.
   expect(run(corp, { ...built, vars }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
-  expect(run(corp, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "admin" });
+  expect(run(corp, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "page", token: false });
   // A run again that leaves out --email-claim means no email claim: the options are the whole answer.
   expect(run(a, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
   // Other settings of the entry are not the answers'. A registered instance is what its entry says (bun erga deploy).
-  expect(run(a, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "admin" });
+  expect(run(a, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "page", token: false });
   expect(run(corp, { ...built, vars, admin: true }).state).toEqual({ at: "done" });
 });
 
@@ -487,7 +451,7 @@ async function awsSetups(...runs: string[][]): Promise<{ out: string[]; calls: s
     Bun.spawnSync(["git", "init", "-q", tmp]);
     // No SSH_CONNECTION: over SSH the command takes --remote by itself.
     const env = { ...process.env, GIT_DIR: join(tmp, ".git"), SSH_CONNECTION: undefined };
-    const all = runs.map((more) => [HOST, "--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com", ...more]);
+    const all = runs.map((more) => [HOST, "--host", "aws", "--pages", "example-pages.com", ...more]);
     const p = Bun.spawn([process.execPath, AWS_SETUP, JSON.stringify(all)], { env, stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     // A run that failed says why in its lines.

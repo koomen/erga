@@ -101,6 +101,7 @@ export const RESERVED = new Set([
   "new",
   "scratch",
   "auth",
+  "setup",
   "tokens",
   "api",
   "fonts",

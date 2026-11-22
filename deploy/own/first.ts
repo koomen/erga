@@ -2,13 +2,14 @@
 // `bun erga deploy`'s code (deploy/cli/deploy.ts, deployInstance):
 //
 // 1. The entry in .erga/config.json, from the answers alone. An entry with other names is not this setup's: it stops.
-// 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and SECRETS_KEY, and
-//    the GitHub App's secret. Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
-//    it, and no later deploy sends one.
-// 3. After the deploy, healthy: the access rule that the answers name (plan.ts, firstRows), written into the new
+// 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and SECRETS_KEY.
+//    Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps it, and
+//    no later deploy sends one. No sign-in app goes with it: the user makes it on the server's setup page.
+// 3. After the deploy, healthy: the first rows that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
-// 4. The first admin: the user signs in from the one-time link that setup opens (server/identity/claim.ts). Setup
-//    sees the admin in the database (adminOn), with the Cloudflare D1 API: it asks the server nothing.
+// 4. The first admin: the user finishes on the server's setup page, which setup opens with a one-time link
+//    (server/identity/setup.ts). Setup sees the admin in the database (adminOn), and the deployer's step of the page
+//    (stepOn), with the Cloudflare D1 API: it asks the server nothing.
 
 import { randomBytes } from "node:crypto";
 import { type CloudflareEntry, type Config, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
@@ -17,6 +18,8 @@ import { entryAt } from "../cli/running";
 import { d1 } from "../deployer/cloudflare";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { movedNames, OLD_SECRETS_KEY, SECRETS_KEY } from "../deployer/secrets-key";
+import { type DeployerEvent, type DeployerStep, deployerStep, openToken, readStep } from "../../server/identity/setup-link";
+import { installWithToken } from "../pipeline/deployer";
 import type { Seen } from "./flow";
 import { type Answers, firstRows, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets } from "./store";
@@ -26,7 +29,7 @@ export interface First {
   dir: string;
   answers: Answers;
   seen: Pick<Seen, "zones" | "subdomain" | "held">;
-  /** The GitHub App's client id. */
+  /** The client id of a GitHub app that the deploy itself gives the server (plan.ts, varsOf): setup gives none. */
   github?: string;
   /** The Cloudflare API and the servers, and the credential. */
   net: Fetch;
@@ -85,11 +88,7 @@ export function secretsFor(dir: string, a: Answers, held: string[]): Record<stri
   // unreadable: a server that has them keeps them.
   for (const k of ["SESSION_SECRET", SECRETS_KEY]) if (!own[k] && !has.includes(k)) own[k] = random();
   saveSecrets(file, dir);
-  const want = {
-    SESSION_SECRET: own.SESSION_SECRET,
-    [SECRETS_KEY]: own[SECRETS_KEY],
-    GITHUB_CLIENT_SECRET: own.GITHUB_CLIENT_SECRET,
-  };
+  const want = { SESSION_SECRET: own.SESSION_SECRET, [SECRETS_KEY]: own[SECRETS_KEY] };
   return Object.fromEntries(Object.entries(want).filter((e): e is [string, string] => !!e[1] && !has.includes(e[0])));
 }
 
@@ -137,6 +136,67 @@ export async function adminOn(cf: Cloudflare, acc: string, worker: string): Prom
   if (!db) return null;
   const [admin] = (await d1(cf, acc, db, "SELECT login FROM users WHERE role = 'admin' LIMIT 1", [], "look for an admin")) ?? [];
   return admin ? String(admin.login) : null;
+}
+
+/**
+ * The deployer's step of the new server's setup page (server/identity/setup-link.ts), in the database `db`, read with
+ * the Cloudflare D1 API: the row's text (null: no row), and the step.
+ */
+export async function stepOn(cf: Cloudflare, acc: string, db: string): Promise<{ text: string | null; step: DeployerStep }> {
+  const [row] = (await d1(cf, acc, db, "SELECT deployer FROM setup WHERE id = 1", [], "read the setup page's step")) ?? [];
+  const text = row ? String(row.deployer) : null;
+  return { text, step: readStep(text) };
+}
+
+/** Writes how the deployer's install ended onto the step, while the row is still `from` (the page writes it too). */
+export const endStep = (cf: Cloudflare, acc: string, db: string, from: { text: string | null; step: DeployerStep }, e: DeployerEvent) =>
+  d1(
+    cf,
+    acc,
+    db,
+    "UPDATE setup SET deployer = ?1 WHERE id = 1 AND deployer = ?2",
+    [JSON.stringify(deployerStep(from.step, e)), from.text ?? ""],
+    "write the setup page's step"
+  );
+
+/**
+ * The deployer's step of a new server's setup page, from the command's side. It waits for the token that the user
+ * pastes there (stepOn), opens it with the server's SESSION_SECRET (`secret`), installs the deployer with it
+ * (deploy/pipeline/deployer.ts, installWithToken: checked first, and auto-deploy on), and writes how that ended, for
+ * the page to show. A token that is refused is the page's to say: the user pastes another one there, and the wait
+ * goes on. `again`: waits until the next look; false: the time is over. The result: `installed`, with what the check
+ * could not confirm about the token; `skipped`, the user's answer on the page; or null: the time is over.
+ */
+export async function deployerFromPage(o: {
+  cf: Cloudflare;
+  net: Fetch;
+  target: { account: string; worker: string };
+  secret: string;
+  again: () => Promise<boolean>;
+}): Promise<{ deployer: "installed"; unconfirmed: readonly string[] } | { deployer: "skipped" } | null> {
+  const acc = `/accounts/${o.target.account}`;
+  const db = await databaseOf(o.cf, acc, o.target.worker);
+  if (!db) throw new Error(`The Worker ${o.target.worker} binds no database (DB).`);
+  do {
+    const at = await stepOn(o.cf, acc, db);
+    if (at.step.at == "installed") return { deployer: "installed", unconfirmed: at.step.unconfirmed };
+    if (at.step.at == "skipped") return { deployer: "skipped" };
+    if (at.step.at != "waiting") continue;
+    const token = await openToken(o.secret, at.step);
+    // Not always the token's fault (the user's own login, or Cloudflare): the reason says which.
+    const end: DeployerEvent = token
+      ? await installWithToken(o.net, o.cf, o.target, token).then(
+          (unconfirmed) => ({ kind: "installed" as const, unconfirmed }),
+          (e: Error) => ({ kind: "refused" as const, why: e.message })
+        )
+      : {
+          kind: "refused",
+          why: "The setup command could not open the token: its machine does not hold this server's secret. Paste the token again.",
+        };
+    await endStep(o.cf, acc, db, at, end);
+    if (end.kind == "installed") return { deployer: "installed", unconfirmed: end.unconfirmed };
+  } while (await o.again());
+  return null;
 }
 
 /**
