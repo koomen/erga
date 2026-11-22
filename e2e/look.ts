@@ -139,7 +139,7 @@ if (unknown) {
 }
 
 // The ops page of this checkout (deploy/cli/ops-page.ts), on a small clone of its own with three made-up instances:
-// example.net and notes.example.org track main, staging.example.net tracks staging. No instance is asked, and nothing
+// example.net (each release) and staging.example.net (each commit) track main, notes.example.org tracks notes. No instance is asked, and nothing
 // deploys. The page is whole in this file: a proof runs this file in the folder of "before" too (deploy/cli/proof.ts).
 if (opsArg != undefined) {
   const top = mkdtempSync(join(tmpdir(), "erga-look-ops-"));
@@ -169,10 +169,11 @@ if (opsArg != undefined) {
       return git("rev-parse", "HEAD");
     };
     const shas = [...subjects.map((x, i) => commit(x, 3000 - i * 300)), ...more.map((x, i) => commit(x, 200 - i * 80))];
-    const main = shas[3],
-      staging = shas[6];
+    const main = shas[6],
+      release = shas[3],
+      notes = shas[2];
     git("update-ref", "refs/remotes/origin/main", main);
-    git("update-ref", "refs/remotes/origin/staging", staging);
+    git("update-ref", "refs/remotes/origin/notes", notes);
     const feature = commit("A table sorts by a click on its head", 12);
     git("update-ref", "refs/remotes/origin/sort-tables", feature);
     const entry = (host: string, branch: string, upstream?: object) => ({
@@ -192,13 +193,13 @@ if (opsArg != undefined) {
       join(erga, "config.json"),
       JSON.stringify({
         instances: [
-          entry("example.net", "main", { repo: "example.net/team/erga", branch: "staging" }),
-          entry("staging.example.net", "staging", { repo: "example.net/team/erga", branch: "main" }),
-          entry("notes.example.org", "main"),
+          entry("example.net", "main"),
+          entry("staging.example.net", "main"),
+          entry("notes.example.org", "notes", { repo: "example.net/team/erga", branch: "main" }),
         ],
       })
     );
-    const runs: Record<string, string> = { "example.net": main, "staging.example.net": shas[5], "notes.example.org": shas[2] };
+    const runs: Record<string, string> = { "example.net": release, "staging.example.net": shas[5], "notes.example.org": shas[1] };
     /** A job of an instance's own record: a deploy of `sha` (a rollback with no commit), which ended well, or with `error`. */
     const jobs: import("../deploy/cli/ops-view").JobRecord[] = [];
     const job = (host: string, sha: string | null, ago: number, from: string, error?: string) =>
@@ -216,13 +217,13 @@ if (opsArg != undefined) {
         ...(error ? { error } : {}),
         out: [error ? `FAIL  ${error}` : `PASS  ${host} runs ${sha ? sha.slice(0, 12) : "the version from before"}.`],
       });
-    // Each head has a job, so auto-deploy starts nothing and the buttons are on. staging.example.net's deploy of
-    // its head failed; notes.example.org took its head, and then a rollback.
-    job("example.net", main, 290, "auto-deploy");
+    // Each head has a job, so auto-deploy starts nothing and the buttons are on. example.net runs the last release.
+    // staging.example.net's deploy of main's head failed; notes.example.org took its head, and then a rollback.
+    job("example.net", release, 290, "auto-deploy");
     job("staging.example.net", shas[5], 110, "auto-deploy");
-    job("staging.example.net", staging, 38, "auto-deploy", `1 test failed on ${staging.slice(0, 12)}.`);
-    job("notes.example.org", shas[2], 2300, "terminal");
-    job("notes.example.org", main, 250, "auto-deploy");
+    job("staging.example.net", main, 38, "auto-deploy", `1 test failed on ${main.slice(0, 12)}.`);
+    job("notes.example.org", shas[1], 2300, "terminal");
+    job("notes.example.org", notes, 250, "auto-deploy");
     job("notes.example.org", null, 240, "terminal");
     const { serveOpsPage } = (await import(join(ROOT, "deploy/cli/ops-page.ts"))) as typeof import("../deploy/cli/ops-page");
     const served = serveOpsPage({
@@ -238,9 +239,9 @@ if (opsArg != undefined) {
       }),
       fetch: async () => null,
       heads: async (_cwd, _repo, branches) => ({
-        heads: Object.fromEntries(branches.map((b) => [b, b == "staging" ? staging : main])),
+        heads: Object.fromEntries(branches.map((b) => [b, b == "notes" ? notes : main])),
         tags: [
-          { tag: "v0.4.0", sha: shas[2] },
+          { tag: "v0.4.0", sha: release },
           { tag: "v0.3.0", sha: shas[1] },
         ],
         error: null,

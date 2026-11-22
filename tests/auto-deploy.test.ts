@@ -188,15 +188,15 @@ test("a repository's heads: the clone keeps each tracked head under its own ref,
     const other = join(top, "other");
     sh(top, "git", "clone", "--quiet", origin, other);
     const next = commit(other, "b.txt", "two");
-    sh(other, "git", "push", "--quiet", "origin", "staging");
-    const ref = trackedRef(origin, "staging");
-    expect(ref).toMatch(/^refs\/erga\/[\w.-]+\/staging$/);
-    expect(await repoHeads(clone, origin, ["staging", "nope"])).toEqual({ heads: { staging: next }, error: null });
+    sh(other, "git", "push", "--quiet", "origin", "main");
+    const ref = trackedRef(origin, "main");
+    expect(ref).toMatch(/^refs\/erga\/[\w.-]+\/main$/);
+    expect(await repoHeads(clone, origin, ["main", "nope"])).toEqual({ heads: { main: next }, error: null });
     // Tagged releases are returned in the same ls-remote call, newest semver first.
     sh(other, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "tag", "-a", "v0.1.0", "-m", "v0.1.0", next);
     sh(other, "git", "push", "--quiet", "origin", "v0.1.0");
-    expect(await repoHeads(clone, origin, ["staging"])).toEqual({
-      heads: { staging: next },
+    expect(await repoHeads(clone, origin, ["main"])).toEqual({
+      heads: { main: next },
       tags: [{ tag: "v0.1.0", sha: next }],
       error: null,
     });
@@ -205,7 +205,7 @@ test("a repository's heads: the clone keeps each tracked head under its own ref,
     expect(sh(clone, "git", "rev-parse", "HEAD")).toBe(base);
     expect(sh(clone, "git", "log", "--format=%s", "-n", "2", next)).toBe("two\none");
     // A repository that this machine can't read: git's own words.
-    const none = await repoHeads(clone, join(top, "nowhere.git"), ["staging"]);
+    const none = await repoHeads(clone, join(top, "nowhere.git"), ["main"]);
     expect(none.heads).toEqual({});
     expect(none.error).toContain("nowhere.git");
   } finally {

@@ -8,8 +8,8 @@ cannot tell you. Pete (`koomen`) owns Erga.
 Run `bun erga skill` before you start, and do what it says. In short: one
 feature branch for each project, in a work folder of its own
 (`bun erga start <branch>`); `bun erga push` formats, tests and pushes it;
-only `bun erga` moves `staging` and `main`, when Pete asks. There are no
-pull requests.
+only `bun erga` moves `main`, when Pete asks. There are no pull
+requests.
 
 Pete works with [herdr-core](https://github.com/herdrdev/herdr-core):
 
@@ -19,19 +19,21 @@ Pete works with [herdr-core](https://github.com/herdrdev/herdr-core):
    terminal: `hc run --bg --name <project> --cwd worktrees/<project> claude
    "<brief>"`. Never a subagent of the manager's own session: Pete must see
    each agent and talk to it. A project is one whole feature, never split:
-   one branch, one folder, one agent, and one commit on staging.
+   one branch, one folder, one agent, and one commit on main.
 3. The project's agent pushes its branch and makes its proof
    (`bun erga proof`). The ops page tests the branch's merge: the agent
    watches (`bun erga status`) and repairs each failure. It does not merge.
 4. When Pete says to merge, the manager starts one agent for the merges. It
-   merges the green branches in one run (`bun erga merge a -m "..." b
-   -m "..."`), in the order with the fewest conflicts, and fixes each
-   conflict.
-5. Each merge is one squashed commit. Every commit message is one line of
-   ten words at most, with no body: what the whole project does.
-6. When a project's commit is on production (`bun erga promote`), the
-   manager retires the project's agent, and `bun erga clean` removes its
-   folder. Until then the agent stays: it knows its project.
+   merges the green branches in one run (`bun erga merge a b`), in the
+   order with the fewest conflicts, and fixes each conflict.
+5. Each merge is one squashed commit on main, which the staging instance
+   deploys by itself. Every commit message is one line of ten words at
+   most, with no body: what the whole project does.
+6. When staging runs a project's commit (`bun erga status`), the manager
+   retires its agent, and `bun erga clean` removes its folder. Until then
+   the agent stays: it knows its project.
+7. When Pete calls staging stable, an agent releases main to production
+   (`bun erga release`).
 
 ## Testing as the user
 

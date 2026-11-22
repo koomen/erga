@@ -137,7 +137,7 @@ test("track's options set the upstream: a branch of the same repository, or of a
 test("status says each instance's upstream, and how far the branch is ahead of it and behind it", () => {
   const state = (upstream: Instance["upstream"]) =>
     stateOf({
-      heads: { main: null, staging: null },
+      main: null,
       instances: [
         {
           host: "example.net",

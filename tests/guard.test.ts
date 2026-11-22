@@ -19,7 +19,6 @@ test("the known mistakes are refused, each with what to do", () => {
     ["git push origin :refs/erga/verify-lock", "bun erga try"],
     ["git push origin --delete refs/erga/verify-lock", "bun erga try"],
     ["git push origin --delete verify", "bun erga try"],
-    ["git push origin --delete staging", "bun erga push"],
     ["git push -d origin main", "bun erga push"],
     ["gh pr create --fill", "no pull requests"],
     ["pkill -f dev/start.ts", "by its PID"],

@@ -2,8 +2,8 @@
 // release's version and notes, a rollback's version, and `bun erga status`'s text. Pure: no network, no git, no files
 // (deploy/cli/observe.ts reads git and the instances; deploy/cli/main.ts acts).
 
-/** The branches that `bun erga` moves: staging (merge), main (promote) and verify (try). */
-export const PROTECTED = ["staging", "main", "verify"] as const;
+/** The branches that `bun erga` moves: main (merge) and verify (try). */
+export const PROTECTED = ["main", "verify"] as const;
 
 // A commit, a branch and an instance's answer, for `bun erga status` and for the ops page (ops-view.ts). git gives every
 // field (observe.ts); the ones that status does not read are optional here, and the page asks for them (ops-view.ts).
@@ -52,7 +52,7 @@ export interface Branch {
   ahead: number;
   behind: number;
   conflicts: string[];
-  /** The tree that its merge onto staging makes (observe.ts, mergeTree): the key of its tests' record. Null: it has no merge (a conflict, or nothing ahead). */
+  /** The tree that its merge onto main makes (observe.ts, mergeTree): the key of its tests' record. Null: it has no merge (a conflict, or nothing ahead). */
   tree?: string | null;
   /** Its tests (gate.ts), in words: the state, then each failed test of a failed run, for its agent to repair. */
   tests?: string[];
@@ -61,7 +61,7 @@ export interface Branch {
   author?: string;
 }
 
-/** A branch that `bun erga merge` takes, and the message of its commit on staging (default: its first commit's subject). */
+/** A branch that `bun erga merge` takes, and the message of its commit on main (default: its first commit's subject). */
 export interface Merge {
   branch: string;
   message?: string;
@@ -85,15 +85,15 @@ export function mergeArgs(args: string[]): Merge[] {
 export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number; conflicts: string[] }): string | null {
   if (!o.branch) return "Name the branch: bun erga merge <branch>.";
   if ((PROTECTED as readonly string[]).includes(o.branch))
-    return `${o.branch} is not a feature branch. bun erga promote moves main to staging's head.`;
+    return `${o.branch} is not a feature branch: bun erga merge puts a feature branch on main.`;
   if (!o.exists) return `There is no branch ${o.branch} on GitHub. Push it first, from its checkout: bun erga push`;
-  if (o.ahead == 0) return `${o.branch} has no commits that staging does not have. Nothing to merge.`;
+  if (o.ahead == 0) return `${o.branch} has no commits that main does not have. Nothing to merge.`;
   if (o.conflicts.length)
-    return `${o.branch} conflicts with staging in ${o.conflicts.join(", ")}. Rebase it on origin/staging, fix the conflicts, push it, and merge again.`;
+    return `${o.branch} conflicts with main in ${o.conflicts.join(", ")}. Rebase it on origin/main, fix the conflicts, push it, and merge again.`;
   return null;
 }
 
-/** The message of the one commit a merge puts on staging: `-m`, else the first commit's subject; the co-authors once, at the end. */
+/** The message of the one commit a merge puts on main: `-m`, else the first commit's subject; the co-authors once, at the end. */
 export function squashMessage(commits: Commit[], given?: string): string {
   const trailers = new Set<string>();
   for (const c of commits) for (const l of (c.body ?? "").split("\n")) if (/^Co-Authored-By:/i.test(l.trim())) trailers.add(l.trim());
@@ -146,13 +146,14 @@ export function releaseNotes(last: string | null, commits: Commit[]): string {
  */
 /** `bun erga status`'s picture: the clone as it is (no fetch), and each registered instance's answer. */
 export interface State {
-  heads: { main: string | null; staging: string | null };
+  /** main's head, as the clone knows it. */
+  main: string | null;
   /** In the file's order. */
   instances: Instance[];
   branches: Branch[];
   /** GitHub answered with its branches (git ls-remote); false: `branches` is as the clone last saw them. */
   github: boolean;
-  /** Commits on staging that main does not have (bun erga promote moves main to them). */
+  /** Commits on main that the latest release does not have (bun erga release tags them). */
   waiting: Commit[];
   /** main's recent commits, and the release tag of each that has one. */
   log: (Commit & { tag?: string })[];
@@ -161,7 +162,7 @@ export interface State {
 
 /** The state from what was read: the branches newest first, and main's log with its tags. */
 export function stateOf(o: {
-  heads: State["heads"];
+  main: string | null;
   instances: Instance[];
   branches: Branch[];
   github: boolean;
@@ -171,7 +172,7 @@ export function stateOf(o: {
 }): State {
   const tagOf = new Map(o.tags.map((t) => [t.sha, t.name]));
   return {
-    heads: o.heads,
+    main: o.main,
     instances: o.instances,
     branches: [...o.branches].sort((a, b) => b.at - a.at),
     github: o.github,
@@ -198,10 +199,7 @@ const upstreamText = (i: Instance) => {
 
 /** `bun erga status` as text. `has`: whether the clone has a commit. */
 export function statusText(s: State, has: (sha: string) => boolean = () => true): string {
-  const out: string[] = [
-    `main ${s.heads.main?.slice(0, 12) ?? "?"}, staging ${s.heads.staging?.slice(0, 12) ?? "?"} (as this clone knows them)`,
-    "",
-  ];
+  const out: string[] = [`main ${s.main?.slice(0, 12) ?? "?"} (as this clone knows it)`, ""];
   out.push("Instances (.erga/config.json):");
   if (!s.instances.length) out.push("- none: bun erga register <host>");
   for (const i of s.instances)
@@ -214,11 +212,11 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
   for (const b of s.branches) {
     const test = b.tests?.length ? ` ${b.tests[0]}.` : "";
     out.push(
-      `- ${b.name}: ${b.ahead} ahead, ${b.behind} behind staging; ${b.ahead == 0 ? "nothing to merge" : b.conflicts.length ? `conflicts in ${b.conflicts.join(", ")}` : "merges cleanly"}.${test} ${b.subject}`
+      `- ${b.name}: ${b.ahead} ahead, ${b.behind} behind main; ${b.ahead == 0 ? "nothing to merge" : b.conflicts.length ? `conflicts in ${b.conflicts.join(", ")}` : "merges cleanly"}.${test} ${b.subject}`
     );
     out.push(...(b.tests ?? []).slice(1).map((l) => `    ${l}`));
   }
-  out.push("", `On staging, not on main (${s.waiting.length}):`);
+  out.push("", `On main, not in a release (${s.waiting.length}):`);
   if (!s.waiting.length) out.push("- none");
   for (const c of s.waiting) out.push(`- ${c.sha.slice(0, 7)} ${c.subject}`);
   out.push("", `main (latest release ${s.latestRelease ?? "none"}):`);
@@ -233,18 +231,16 @@ export function pushRefusal(ref: string, cli: boolean): string | null {
   if (ref.startsWith("refs/erga/")) return "Don't push to refs/erga/ directly: bun erga try keeps verify's lock there.";
   const name = ref.replace(/^refs\/heads\//, "");
   if (!(PROTECTED as readonly string[]).includes(name)) return null;
-  if (name == "staging")
-    return "Don't push to staging directly. Push your branch (bun erga push), then: bun erga merge <branch>. bun erga skill tells the rest.";
   if (name == "verify")
-    return "Don't push to verify directly. bun erga try <branch> puts a branch's merge with staging there. bun erga skill tells the rest.";
-  return "Don't push to main directly. bun erga promote moves main to staging's head. bun erga skill tells the rest.";
+    return "Don't push to verify directly. bun erga try <branch> puts a branch's merge with main there. bun erga skill tells the rest.";
+  return "Don't push to main directly. Push your branch (bun erga push), then: bun erga merge <branch>. bun erga skill tells the rest.";
 }
 
 /** Why `bun erga push` must stop before its first step, or null. `branch`: the checkout's branch, null when it has none. */
 export function branchRefusal(branch: string | null): string | null {
   if (!branch) return "This checkout is on no branch. Start one: bun erga start <branch>.";
   if ((PROTECTED as readonly string[]).includes(branch))
-    return `${branch} is not a feature branch: only bun erga moves it (merge, promote, try). Start one: bun erga start <branch>.`;
+    return `${branch} is not a feature branch: only bun erga moves it (merge, try). Start one: bun erga start <branch>.`;
   return null;
 }
 

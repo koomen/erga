@@ -28,10 +28,7 @@ function parts(command: string): string[] {
 export function verdict(command: string): Verdict | null {
   for (const p of parts(command)) {
     // The one push by hand: a feature branch's removal. Not of a branch that only `bun erga` moves, or of verify's lock.
-    if (
-      /^git\s+(-C\s+\S+\s+)?push\b/.test(p) &&
-      (!/\s(--delete|-d)\s/.test(p) || /(^|[\s:/])(staging|main|verify|refs\/erga\/\S*)(\s|$)/.test(p))
-    )
+    if (/^git\s+(-C\s+\S+\s+)?push\b/.test(p) && (!/\s(--delete|-d)\s/.test(p) || /(^|[\s:/])(main|verify|refs\/erga\/\S*)(\s|$)/.test(p)))
       return {
         why: "Push with `bun erga push`: it formats, builds, tests, and pushes only when the tests pass. (To remove a feature branch on GitHub: git push origin --delete <branch>. `bun erga try <branch>` pushes verify and its lock itself.)",
       };

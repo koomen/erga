@@ -8,11 +8,11 @@ import { serveOpsPage } from "../deploy/cli/ops-page";
 import { type Look, lookArgs, makeProof, proofDir, proofRefusal } from "../deploy/cli/proof";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
-/** A clone on the branch `task`, one commit ahead of origin/staging, pushed or not. */
+/** A clone on the branch `task`, one commit ahead of origin/main, pushed or not. */
 function world(pushed = true) {
   const root = gitWorld("erga-proof-test-").clone;
   const base = commit(root, "page.txt", "old page");
-  sh(root, "git", "push", "--quiet", "origin", "staging");
+  sh(root, "git", "push", "--quiet", "origin", "main");
   sh(root, "git", "switch", "--quiet", "-c", "task");
   const head = commit(root, "page.txt", "new page");
   if (pushed) sh(root, "git", "push", "--quiet", "origin", "task");
@@ -29,7 +29,7 @@ const look: Look = (cwd, args, size, out) => {
 };
 
 test("the refusals, and a look's arguments from one text", () => {
-  expect(proofRefusal({ branch: "staging", sentence: "x", looks: 1, noPicture: undefined })).toContain("not a feature branch");
+  expect(proofRefusal({ branch: "main", sentence: "x", looks: 1, noPicture: undefined })).toContain("not a feature branch");
   expect(proofRefusal({ branch: "task", sentence: " ", looks: 1, noPicture: undefined })).toContain("one sentence");
   expect(proofRefusal({ branch: "task", sentence: "x", looks: 0, noPicture: undefined })).toContain("--no-picture");
   expect(proofRefusal({ branch: "task", sentence: "x", looks: 0, noPicture: "tests/a.test.ts" })).toBeNull();

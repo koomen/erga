@@ -7,7 +7,7 @@
 //                  install, its look each minute, the deploy of a new commit of verify by itself, a deploy of one
 //                  more commit with a setting that stops the server (the machine loads the release before again),
 //                  the same for the same commit with other settings (the machine's kept release runs again), and
-//                  the refusal of verify's commit when the spec's branch is staging.
+//                  the refusal of verify's commit when the spec's branch is main.
 //
 // The instance's entry here has this checkout's repository and the branch verify (the unit's own entry has setup's
 // defaults): it is written to a folder of the suite's, where `bun erga deploy` reads it, and it becomes the
@@ -227,15 +227,15 @@ export async function awsDeployChecks(report: Report, deployed: AwsRun): Promise
       last = same?.id ?? last;
     }
 
-    // A deployer whose spec's branch is staging refuses verify's commit, for the branch.
-    await run(writeSpec(sql, { ...good, branch: "staging" }));
+    // A deployer whose spec's branch is main refuses verify's commit, for the branch.
+    await run(writeSpec(sql, { ...good, branch: "main" }));
     await ask(sql, `deploy ${other}`, "verify");
     const refused = await jobThat(jobs, (j) => j.source == "app, by verify" && j.id > last, 6 * MINUTE);
     await run(writeSpec(sql, good));
     await run(sql("UPDATE deploy_control SET auto = 1 WHERE id = 1", []));
     report.add(
-      `${C}: with the branch staging in its spec, the deployer refuses verify's commit`,
-      refused?.state.at == "failed" && refused.state.why.includes(`is not a commit of staging on ${repo()}`),
+      `${C}: with the branch main in its spec, the deployer refuses verify's commit`,
+      refused?.state.at == "failed" && refused.state.why.includes(`is not a commit of main on ${repo()}`),
       refused ? (refused.state.at == "failed" ? refused.state.why.slice(0, 200) : refused.state.at) : "no job of the ask in 6 minutes"
     );
   } finally {

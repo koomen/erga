@@ -1,5 +1,5 @@
 // The flags that each command of `bun erga` takes. A command refuses any other before it does anything, and --help only
-// prints the manual: `bun erga promote --help` ran a promote (2026-11-21), because promote read no flag at all.
+// prints the manual: on 2026-11-21, --help ran a command that moved a branch, because that command read no flag at all.
 
 /** For each command ("": the ops page): its flags, and its options, which take one value each. `setup` reads its own (deploy/own/cli.ts). */
 export const TAKES: Record<string, { flags?: string[]; options?: string[] }> = {
@@ -11,7 +11,6 @@ export const TAKES: Record<string, { flags?: string[]; options?: string[] }> = {
   push: {},
   status: { flags: ["--json"] },
   merge: { options: ["-m"] },
-  promote: {},
   try: {},
   test: {},
   release: { flags: ["--dry-run"] },

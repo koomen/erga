@@ -71,7 +71,7 @@ const suite: Suite = (dir, log) => {
 
 /**
  * The run of the tests on `tree`: its ended record, if it has one, else a new run in a scratch worktree of `clone`.
- * `commit`: a commit with that tree; without one, it makes a commit of the tree on origin/staging (a branch's merge).
+ * `commit`: a commit with that tree; without one, it makes a commit of the tree on origin/main (a branch's merge).
  * `suite` and `waitMs` are for the tests.
  */
 export async function testRun(o: {
@@ -131,7 +131,7 @@ export async function testRun(o: {
     set({});
     const made = o.commit
       ? { ok: true, out: o.commit, err: "" }
-      : git("-c", "user.name=erga", "-c", "user.email=erga@localhost", "commit-tree", o.tree, "-p", "origin/staging", "-m", o.what);
+      : git("-c", "user.name=erga", "-c", "user.email=erga@localhost", "commit-tree", o.tree, "-p", "origin/main", "-m", o.what);
     const add = made.ok ? git("worktree", "add", "--quiet", "--detach", dir, made.out) : made;
     if (!add.ok) return end({ state: "failed", note: `git could not make the folder for the tests: ${add.err}` });
     o.log(`      bun run test on ${o.what} ... (the log: ${logFile})`);

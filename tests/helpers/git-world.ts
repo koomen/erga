@@ -1,4 +1,4 @@
-// A git world for the tests of `bun erga`: a bare origin with a `staging` branch, a clone of it, and commits.
+// A git world for the tests of `bun erga`: a bare origin with a `main` branch, a clone of it, and commits.
 
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,14 +19,14 @@ export const commit = (at: string, file: string, text: string) => {
   return sh(at, "git", "rev-parse", "HEAD");
 };
 
-/** A bare origin and a clone of it on `staging`, with one commit (a.txt), `base`, that the origin has. `name` starts the folder's name. */
+/** A bare origin and a clone of it on `main`, with one commit (a.txt), `base`, that the origin has. `name` starts the folder's name. */
 export function gitWorld(name: string) {
   const top = realpathSync(mkdtempSync(join(tmpdir(), name)));
   const [origin, clone] = [join(top, "origin.git"), join(top, "clone")];
-  sh(top, "git", "init", "--quiet", "--bare", "-b", "staging", origin);
+  sh(top, "git", "init", "--quiet", "--bare", "-b", "main", origin);
   sh(top, "git", "clone", "--quiet", origin, clone);
-  sh(clone, "git", "switch", "--quiet", "-c", "staging");
+  sh(clone, "git", "switch", "--quiet", "-c", "main");
   const base = commit(clone, "a.txt", "one");
-  sh(clone, "git", "push", "--quiet", "origin", "staging");
+  sh(clone, "git", "push", "--quiet", "origin", "main");
   return { top, origin, clone, base };
 }

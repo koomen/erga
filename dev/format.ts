@@ -4,7 +4,7 @@
 //   bun dev/format.ts            check: lists each changed line that Biome would format, and fails
 //   bun dev/format.ts --write    formats those lines in place (bun run format)
 //
-// A change is everything since the base: the merge base with origin/staging, else with origin/main. Uncommitted edits and new files count; a moved file
+// A change is everything since the base: the merge base with origin/main. Uncommitted edits and new files count; a moved file
 // counts only for the lines the move changed. Biome formats
 // each changed file; only the parts of its result that meet a changed line are kept, so the rest of
 // a file stays as it is and a branch's diff stays its own. A line that Biome would only indent again
@@ -24,11 +24,8 @@ const CODE = /\.(ts|js)$/;
 
 /** The commit a change is measured from (for the quick check too, dev/check.ts), or undefined when there's none to measure from. */
 export function changeBase(): string | undefined {
-  for (const ref of ["origin/staging", "origin/main"]) {
-    const mb = git("merge-base", "HEAD", ref);
-    if (mb.ok) return mb.out;
-  }
-  return undefined;
+  const mb = git("merge-base", "HEAD", "origin/main");
+  return mb.ok ? mb.out : undefined;
 }
 
 // Git marks the lines a change only moved (from one file to another, or within one) in a color of their own:
@@ -225,7 +222,7 @@ if (import.meta.main) main();
 function main() {
   const from = changeBase();
   if (!from) {
-    console.log("format: no origin/staging or origin/main to compare with, so nothing to check");
+    console.log("format: no origin/main to compare with, so nothing to check");
     process.exit(0);
   }
   let found = 0;

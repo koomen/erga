@@ -1,6 +1,6 @@
 // A commit's release, as GitHub built it one time (.github/workflows/release.yml) and keeps it in its registry:
 //
-//   ghcr.io/<owner>/<repository>:<the commit's full SHA>            each commit of staging and main
+//   ghcr.io/<owner>/<repository>:<the commit's full SHA>            each commit of main
 //   ghcr.io/<owner>/<repository>-verify:<the commit's full SHA>     each commit of verify
 //
 // An OCI image manifest with one layer, the release's bundle (release-format.ts, unpackRelease). The package is

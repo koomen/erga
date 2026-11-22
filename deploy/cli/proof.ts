@@ -138,8 +138,8 @@ export function makeProof(o: {
   const no = proofRefusal({ branch, sentence: o.sentence, looks: o.looks.length, noPicture: o.noPicture });
   if (no) throw new Error(no);
   const sha = at("rev-parse", "HEAD").out;
-  const base = at("merge-base", "HEAD", "origin/staging").out;
-  if (!base) throw new Error("This branch has no commit in common with origin/staging. git fetch origin staging");
+  const base = at("merge-base", "HEAD", "origin/main").out;
+  if (!base) throw new Error("This branch has no commit in common with origin/main. git fetch origin main");
   // bun erga push pushes only a commit whose tests passed: a pushed head is a tested one.
   const pushed = at("rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`).out == sha;
   const dirty = at("status", "--porcelain").out != "";

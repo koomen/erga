@@ -2,8 +2,8 @@
 // Cloudflare's example account (ERGA_DEPLOY_MOCK=1): every entry takes the same path (entryTarget); the upload has the
 // entry's vars, no secret goes out, the lock and the job log on the instance, its spec there, and the tests' gate. A Worker keeps its database:
 // its entry takes the name of the database that it is bound to. And the branches (a clone of its own): an instance
-// deploys the head of the branch it tracks, and only a commit of that branch; no deploy moves a branch;
-// `bun erga promote` moves main to staging's head. And --remove-domain (deploy/cli/remove-domain.ts).
+// deploys the head of the branch it tracks, and only a commit of that branch; no deploy moves a branch.
+// And --remove-domain (deploy/cli/remove-domain.ts).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -12,7 +12,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type CloudflareEntry, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
 import { commitOf, deployInstance, entryTarget, rollbackInstance, trackedHead } from "../deploy/cli/deploy";
-import { promote, promoteRefusal } from "../deploy/cli/promote";
 import { entryFrom, specOn, sqlOf, startInstanceJob, trackOn } from "../deploy/cli/instance";
 import { removalPlan } from "../deploy/cli/remove-domain";
 import { findInstance, instanceReader, jobsReader } from "../deploy/cli/running";
@@ -46,7 +45,7 @@ const nextFacts = targetFacts(nextTarget());
 const next: Entry = {
   host: "next.example.com",
   repo: REPO,
-  branch: "staging",
+  branch: "next",
   ...nextFacts,
   // A plain setting that only the entry has: the upload must carry it.
   vars: { ...nextFacts.vars, GITHUB_CLIENT_ID: "Ov23-from-the-entry" },
@@ -137,7 +136,7 @@ describe("bun erga deploy", () => {
     expect(lines.at(-1)).toBe("The instance has its spec now: the entry's values.");
     expect(await specOn(await sqlOn(mock, next))).toMatchObject({
       repo: REPO,
-      branch: "staging",
+      branch: "next",
       target: { kind: "cloudflare", worker: "erga-next", database: "erga-next" },
       settings: { GITHUB_CLIENT_ID: "Ov23-from-the-entry" },
       secrets: Object.keys(secrets).sort(),
@@ -467,7 +466,7 @@ describe("the instance holds its spec, and the entry must agree with it", () => 
     const sql = await sqlOn(mock, next);
     const first = (await specOn(sql))!;
     expect(first).toMatchObject({
-      branch: "staging",
+      branch: "next",
       settings: next.vars,
       secrets: ["GITHUB_CLIENT_SECRET", "SECRETS_KEY", "SESSION_SECRET"],
     });
@@ -479,7 +478,7 @@ describe("the instance holds its spec, and the entry must agree with it", () => 
     await expect(deploy()).rejects.toThrow(
       [
         "next.example.com's entry in .erga/config.json and the spec on the instance differ:",
-        '  branch: the entry has "main", the instance has "staging"',
+        '  branch: the entry has "main", the instance has "next"',
         '  settings.GITHUB_CLIENT_ID: the entry has "Ov23-edited", the instance has "Ov23-from-the-entry"',
         '  settings.SERVER_CONFIG: the entry has "{}", the instance has nothing',
         "It does not deploy. To deploy with the entry's values (they become the instance's spec): bun erga deploy next.example.com --write-spec",
@@ -497,7 +496,7 @@ describe("the instance holds its spec, and the entry must agree with it", () => 
     expect(lines[0]).toBe(
       [
         "The instance's spec has the entry's values now:",
-        '  branch: the entry has "main", the instance has "staging"',
+        '  branch: the entry has "main", the instance has "next"',
         '  settings.GITHUB_CLIENT_ID: the entry has "Ov23-edited", the instance has "Ov23-from-the-entry"',
         '  settings.SERVER_CONFIG: the entry has "{}", the instance has nothing',
       ].join("\n")
@@ -510,7 +509,7 @@ describe("the instance holds its spec, and the entry must agree with it", () => 
     expect(lines.some((l) => l.includes("spec"))).toBe(false);
 
     // bun erga register: the entry takes what the spec says; the host, the upstream and nothing else are the entry's own.
-    const upstream = { repo: REPO, branch: "staging" };
+    const upstream = { repo: REPO, branch: "next" };
     expect(entryFrom((await specOn(sql))!, { ...next, upstream })).toEqual({ ...edited, upstream });
     // bun erga track: the spec takes the new repository and branch, and only a repository on GitHub.
     expect(await trackOn(sql, "github.com/example/erga-fork", "release")).toBe(true);
@@ -590,19 +589,7 @@ describe("bun erga deploy --domain", () => {
 });
 
 describe("the branches", () => {
-  test("promote refuses unless each instance that tracks staging runs the commit, healthy", () => {
-    const sha = "abc".repeat(14).slice(0, 40);
-    const ok = (host: string, version = sha.slice(0, 12)) => ({ host, version, healthy: true });
-    expect(promoteRefusal(sha, [])).toBeNull();
-    expect(promoteRefusal(sha, [ok("s.a.com"), ok("t.a.com")])).toBeNull();
-    expect(promoteRefusal(sha, [ok("s.a.com"), ok("t.a.com", "def000000000")])).toContain(
-      `t.a.com (runs def000000000) tracks staging, and does not run ${sha.slice(0, 12)}, healthy`
-    );
-    expect(promoteRefusal(sha, [{ ...ok("s.a.com"), healthy: false }])).toContain("s.a.com (not healthy)");
-    expect(promoteRefusal(sha, [{ host: "s.a.com", version: null, healthy: null, error: "no answer" }])).toContain("s.a.com (no answer)");
-  });
-
-  test("an instance deploys its branch's head, and only a commit of its branch; no deploy moves a branch; promote moves main", async () => {
+  test("an instance deploys its branch's head, and only a commit of its branch; no deploy moves a branch", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "erga-branches-"));
     const env = { ...process.env, ERGA_CLI_PUSH: "", PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
     const clone = join(tmp, "clone");
@@ -616,7 +603,7 @@ describe("the branches", () => {
     const remote = (b: string) => run("git", "ls-remote", "origin", `refs/heads/${b}`).out.split(/\s/)[0];
     const PATH = process.env.PATH;
     try {
-      // origin with main and staging at C1; the clone has the pre-push hook on, as bun install sets it.
+      // origin with main and next at C1; the clone has the pre-push hook on, as bun install sets it.
       mkdirSync(join(clone, "deploy/cli/hooks"), { recursive: true });
       for (const f of ["deploy/cli/hooks/pre-push", "deploy/cli/pre-push.ts", "deploy/cli/flow.ts"])
         copyFileSync(join(ROOT, f), join(clone, f));
@@ -627,14 +614,14 @@ describe("the branches", () => {
       // The origin has GitHub's name for the repository, as the entries do: in this clone, that name is a folder.
       Bun.spawnSync(["git", "init", "-q", "--bare", join(clone, REPO)]);
       run("git", "remote", "add", "origin", REPO);
-      run("git", "push", "-q", "origin", `${c1}:refs/heads/main`, `${c1}:refs/heads/staging`);
+      run("git", "push", "-q", "origin", `${c1}:refs/heads/main`, `${c1}:refs/heads/next`);
       run("git", "config", "core.hooksPath", "deploy/cli/hooks");
-      // C2 is on staging, as a merge pushes it: a clone that is not this one has it, so this one must fetch it.
+      // C2 is on next, as another clone pushed it: a clone that is not this one has it, so this one must fetch it.
       const c2 = commit("C2: the merged commit");
-      Bun.spawnSync(["git", "push", "-q", "origin", `${c2}:refs/heads/staging`], { cwd: clone, env: { ...env, ERGA_CLI_PUSH: "1" } });
+      Bun.spawnSync(["git", "push", "-q", "origin", `${c2}:refs/heads/next`], { cwd: clone, env: { ...env, ERGA_CLI_PUSH: "1" } });
       run("git", "checkout", "-q", "--detach", c1);
 
-      // Each entry tracks a branch of the origin: example.com main, next.example.com staging.
+      // Each entry tracks a branch of the origin: example.com main, next.example.com next.
       fresh(fleet, next);
       writePass(dir, c1, clone);
       writePass(dir, c2, clone);
@@ -650,10 +637,10 @@ describe("the branches", () => {
 
       // With no commit named: the head of the branch it tracks, as the repository has it now. No branch moves.
       expect(await deployInstance({ dir, host: "next.example.com", clone, net: mock.fetch, print })).toBe(c2);
-      expect(lines).toContain(`staging on ${REPO} is at ${c2.slice(0, 12)}: that commit deploys.`);
+      expect(lines).toContain(`next on ${REPO} is at ${c2.slice(0, 12)}: that commit deploys.`);
       expect(await deployInstance({ dir, host: "example.com", clone, net: mock.fetch, print })).toBe(c1);
       expect([versionOf("erga-next"), versionOf("erga")]).toEqual([c2.slice(0, 12), c1.slice(0, 12)]);
-      expect([remote("staging"), remote("main")]).toEqual([c2, c1]);
+      expect([remote("next"), remote("main")]).toEqual([c2, c1]);
 
       // A commit that its branch does not have does not deploy: nothing is built or uploaded.
       const calls = changes(mock).length;
@@ -671,43 +658,13 @@ describe("the branches", () => {
       expect(plain.code).not.toBe(0);
       expect(plain.err).toContain("erga: Don't push to main directly");
 
-      // promote: main moves to staging's head when the instance that tracks staging runs it, healthy. It deploys nothing.
-      // What the instance runs, and its health, come from Cloudflare: the Worker's deployment, and the server's row in D1.
-      const ask = instanceReader({ net: mock.fetch });
-      await expect(promote({ dir, clone, ask, print })).rejects.toThrow(
-        `next.example.com (runs ${c1.slice(0, 12)}) tracks staging, and does not run ${c2.slice(0, 12)}, healthy.`
-      );
-      expect(remote("main")).toBe(c1);
-      expect(await deployInstance({ dir, host: "next.example.com", clone, net: mock.fetch, print })).toBe(c2);
-      const uploads = changes(mock).length;
-      expect(await promote({ dir, clone, ask, print })).toBe(c2);
-      expect([remote("staging"), remote("main")]).toEqual([c2, c2]);
-      expect(lines).toContain(`main is at ${c2.slice(0, 12)} on origin.`);
-      expect(lines).toContain("NEXT  example.com tracks main. Deploy the commit to it: bun erga deploy example.com");
-      expect(changes(mock).length).toBe(uploads);
-      expect(versionOf("erga")).toBe(c1.slice(0, 12));
-      // A promote is a job of this machine: its record is in .erga/jobs/.
-      const [record] = readdirSync(join(dir, "jobs")).filter((f) => f.endsWith(".jsonl"));
-      expect(JSON.parse(readFileSync(join(dir, "jobs", record), "utf8").split("\n")[0])).toMatchObject({
-        command: "bun erga promote",
-        host: "main",
-      });
-      // Again: main has it.
-      expect(await promote({ dir, clone, ask, print })).toBeNull();
+      // `main` names origin's branch: the clone's own main, which nothing moves, is still at C1.
+      Bun.spawnSync(["git", "push", "-q", "origin", `${c2}:refs/heads/main`], { cwd: clone, env: { ...env, ERGA_CLI_PUSH: "1" } });
+      run("git", "branch", "main", c1);
+      expect(commitOf("main", clone)).toBe(c2);
       // The instance that tracks main gets the commit with its own deploy.
       expect(await deployInstance({ dir, host: "example.com", clone, net: mock.fetch, print })).toBe(c2);
       expect(versionOf("erga")).toBe(c2.slice(0, 12));
-
-      // A commit whose tests did not pass does not reach main.
-      const c3 = (run("git", "checkout", "-q", "--detach", c2), commit("C3: its tests fail"));
-      Bun.spawnSync(["git", "push", "-q", "origin", `${c3}:refs/heads/staging`], { cwd: clone, env: { ...env, ERGA_CLI_PUSH: "1" } });
-      const failing: Suite = (_, log) => (writeFileSync(log, "FAILED (1 s)\n"), null);
-      await expect(promote({ dir, clone, ask, print, suite: failing })).rejects.toThrow("main stays.");
-      expect(remote("main")).toBe(c2);
-
-      // `main` and `staging` name origin's branches: the clone's own main, which nothing moves, is still at C1.
-      run("git", "branch", "main", c1);
-      expect([commitOf("main", clone), commitOf("staging", clone)]).toEqual([c2, c3]);
 
       // An instance that tracks a branch that its repository does not have: the error says how to change it.
       expect(() => trackedHead(clone, { host: "example.com", repo: REPO, branch: "gone" })).toThrow(

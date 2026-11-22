@@ -22,7 +22,7 @@ import { type VerifyFacts, verifyHtml, verifySide } from "./verify-view";
 
 /**
  * A job, as the page shows it: its state, and what it says. A deploy or a rollback comes from its instance's own
- * record (running.ts, recordOf); a merge or a promote from this machine's .erga/jobs/ (jobs.ts, startJob).
+ * record (running.ts, recordOf); a merge from this machine's .erga/jobs/ (jobs.ts, startJob).
  */
 export interface JobRecord extends JobState {
   /** Its id on its instance; a record's file name, without .jsonl. */
@@ -175,7 +175,7 @@ function side(config: Config, chosen: Entry | null, f: Facts, now: number, verif
     .join("")}</ul>${auto}${verifySide(f.verify, verify)}`;
 }
 
-/** An instance's own jobs, its deploys and its rollbacks, newest first: no merge, no promote, no job of another instance. */
+/** An instance's own jobs, its deploys and its rollbacks, newest first: no merge, and no job of another instance. */
 const jobsOf = (g: Entry, jobs: JobRecord[]) =>
   jobs.filter((j) => j.host == g.host && (j.kind == "deploy" || j.kind == "rollback")).sort((a, b) => b.started.localeCompare(a.started));
 

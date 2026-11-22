@@ -8,10 +8,10 @@ import { failureOf } from "../deploy/cli/flow";
 import { pushBranch, type Run } from "../deploy/cli/push";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
-/** A clone on the branch `task`, one commit ahead of its origin's staging. */
+/** A clone on the branch `task`, one commit ahead of its origin's main. */
 function clone(branch = "task") {
   const { origin, clone: root } = gitWorld("erga-push-");
-  if (branch != "staging") {
+  if (branch != "main") {
     sh(root, "git", "switch", "--quiet", "-c", branch);
     commit(root, "a.ts", "two");
   }
@@ -95,10 +95,10 @@ test("a commit with a link to the installed packages stops it before the tests",
   expect(said).toContain("a link to the installed packages (node_modules)");
 });
 
-test("staging and main are not pushed, and no step runs", () => {
-  const c = clone("staging");
+test("main is not pushed, and no step runs", () => {
+  const c = clone("main");
   const s = steps(PASSING);
-  expect(push(c.root, s.run)).toContain("staging is not a feature branch");
+  expect(push(c.root, s.run)).toContain("main is not a feature branch");
   expect(s.ran).toEqual([]);
 });
 

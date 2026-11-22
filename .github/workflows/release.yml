@@ -1,10 +1,10 @@
-# The release: each commit of staging and main, tested and built one time on GitHub, then published on GitHub's
+# The release: each commit of main, tested and built one time on GitHub, then published on GitHub's
 # registry as one file, which every instance's deploy fetches.
 #
 #   ghcr.io/<owner>/<repository>:<the commit's full SHA>
 #
-# And each commit of verify, where `bun erga try <branch>` puts a branch's merge with staging before the merge
-# (deploy/cli/try.ts). Its release goes to a package of its own, which no instance of staging or main reads, and
+# And each commit of verify, where `bun erga try <branch>` puts a branch's merge with main before the merge
+# (deploy/cli/try.ts). Its release goes to a package of its own, which no instance of main reads, and
 # which keeps 7 days of releases:
 #
 #   ghcr.io/<owner>/<repository>-verify:<the commit's full SHA>
@@ -14,7 +14,8 @@
 # checks the layer's bytes against that digest. The release holds no instance's name, setting or secret
 # (tests/deploy.test.ts). No pass of the tests, no release.
 #
-# A commit's release is made one time: publish leaves a tag that exists as it is (main gets staging's commits).
+# A commit's release is made one time: publish leaves a tag that exists as it is (a release's tag, vX.Y.Z, names a
+# commit of main, which has its release already).
 #
 # The only secret is GITHUB_TOKEN. The test and build jobs may only read the repository. Only the publish job may
 # write packages: it runs on a machine of its own, with the bundle and oras, and with no code or package of the
@@ -27,12 +28,12 @@ name: release
 
 on:
   push:
-    branches: [staging, main, verify]
+    branches: [main, verify]
     tags: ["v*.*.*"]
 
 permissions: {}
 
-# One run for each commit: main's run of a commit waits for staging's.
+# One run for each commit: the run of a release's tag waits for main's run of that commit.
 concurrency: release-${{ github.sha }}
 
 defaults:

@@ -11,13 +11,13 @@ import { scratchRoot } from "../deploy/root";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 import { runOf } from "./helpers/pass.ts";
 
-/** A clone whose origin has staging (a.txt) and a branch `feature` with one more file. */
+/** A clone whose origin has main (a.txt) and a branch `feature` with one more file. */
 function world() {
-  const { clone, base: staging } = gitWorld("erga-testrun-");
+  const { clone, base: main } = gitWorld("erga-testrun-");
   sh(clone, "git", "switch", "--quiet", "-c", "feature");
   commit(clone, "b.txt", "two");
   sh(clone, "git", "push", "--quiet", "origin", "feature");
-  return { clone, dir: join(clone, ".erga"), staging, tree: mergeTree("origin/staging", "origin/feature", clone).tree! };
+  return { clone, dir: join(clone, ".erga"), main, tree: mergeTree("origin/main", "origin/feature", clone).tree! };
 }
 
 const result = (status: string, title: string, selected = true) => ({
@@ -44,25 +44,25 @@ test("a branch's merge runs in a folder of its own, under its tree; the same tre
   const s = passing();
   let during = "";
   const suite: Suite = (at, log) => {
-    // The folder has the merge's files, on staging's head; the record says running, with the branch.
+    // The folder has the merge's files, on main's head; the record says running, with the branch.
     const r = readRuns(w.dir)[0];
-    during = `${r.state} ${r.branch} ${readFileSync(join(at, "b.txt"), "utf8")} ${sh(at, "git", "rev-parse", "HEAD^") == w.staging}`;
+    during = `${r.state} ${r.branch} ${readFileSync(join(at, "b.txt"), "utf8")} ${sh(at, "git", "rev-parse", "HEAD^") == w.main}`;
     // Not in a Mac's own temp folder, where each bun process of the suite is slow (deploy/root.ts).
     expect(dirname(at)).toBe(scratchRoot());
     return s(at, log);
   };
   const said: string[] = [];
-  const o = { dir: w.dir, clone: w.clone, tree: w.tree, what: "feature on staging", branch: "feature", log: (l: string) => said.push(l) };
+  const o = { dir: w.dir, clone: w.clone, tree: w.tree, what: "feature on main", branch: "feature", log: (l: string) => said.push(l) };
   const r = await testRun({ ...o, suite });
   expect(during).toBe("running feature two true");
   expect([r.state, r.failed]).toEqual(["passed", []]);
   expect(JSON.parse(readFileSync(runPath(w.dir, w.tree), "utf8"))).toEqual(r);
-  expect(said.at(-1)).toBe("PASS  The tests passed on feature on staging.");
+  expect(said.at(-1)).toBe("PASS  The tests passed on feature on main.");
   // The scratch folder is gone, and the lock is free.
   expect(sh(w.clone, "git", "worktree", "list").split("\n").length).toBe(1);
   expect(existsSync(join(w.dir, "jobs", "tests.lock"))).toBe(false);
   // The merge's commit has the same tree: its run is this record, and the suite does not run.
-  sh(w.clone, "git", "switch", "--quiet", "--detach", "origin/staging");
+  sh(w.clone, "git", "switch", "--quiet", "--detach", "origin/main");
   sh(w.clone, "git", "merge", "--quiet", "--squash", "origin/feature");
   sh(w.clone, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "feature");
   expect(treeOf(w.clone, "HEAD")).toBe(w.tree);
@@ -96,9 +96,9 @@ test("one run at a time: a second run waits for the lock, and takes the record t
   expect((await waits).state).toBe("passed");
   expect(s.count.runs).toBe(1);
   // The other run was this tree's: the one that waited runs nothing.
-  const tree = treeOf(w.clone, w.staging)!;
+  const tree = treeOf(w.clone, w.main)!;
   const again = takeLock(w.dir, "tests", "bun erga test: other");
-  const second = testRun({ ...o, tree, commit: w.staging });
+  const second = testRun({ ...o, tree, commit: w.main });
   await Bun.sleep(0);
   writeFileSync(runPath(w.dir, tree), JSON.stringify(runOf(tree)));
   expect((await second).state).toBe("passed");

@@ -14,7 +14,6 @@ import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 test("a branch that GitHub deleted after the last fetch is in neither status nor the ops page's queue", async () => {
   const { top: root, origin, clone } = gitWorld("erga-gone-");
   try {
-    sh(clone, "git", "push", "--quiet", "origin", "staging:main");
     for (const b of ["waits", "merged"]) {
       commit(clone, `${b}.txt`, `Work on ${b}`);
       sh(clone, "git", "push", "--quiet", "origin", `HEAD:${b}`);
@@ -26,10 +25,10 @@ test("a branch that GitHub deleted after the last fetch is in neither status nor
 
     // Status asks GitHub for its list (git ls-remote), which changes nothing in the clone.
     const live = await githubHeads(clone);
-    expect([...(live ?? [])].sort()).toEqual(["main", "staging", "waits"]);
+    expect([...(live ?? [])].sort()).toEqual(["main", "waits"]);
     const state = (l: Set<string> | null) =>
       stateOf({
-        heads: { main: null, staging: null },
+        main: null,
         instances: [],
         branches: branchesOf(l, clone),
         github: l != null,

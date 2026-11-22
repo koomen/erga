@@ -1,6 +1,6 @@
 // A project's work folder: a git worktree of the main clone, at worktrees/<branch>, on a feature branch of that name.
-// `bun erga start <branch>` makes one from GitHub's newest staging, with its packages installed. `bun erga clean` lists
-// the folders and the local branches whose project is merged and on production, by the merge records (.erga/jobs/), and
+// `bun erga start <branch>` makes one from GitHub's newest main, with its packages installed. `bun erga clean` lists
+// the folders and the local branches whose project is merged into main, by the merge records (.erga/jobs/), and
 // removes them after a yes. cleanPlan decides, with no IO.
 
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -24,7 +24,7 @@ export function startRefusal(o: { name: string | undefined; valid: boolean; bran
 }
 
 /**
- * Makes the branch `name` at GitHub's newest staging, in a folder of its own, and installs its packages. The result:
+ * Makes the branch `name` at GitHub's newest main, in a folder of its own, and installs its packages. The result:
  * the folder. An error says what stopped it. `install` is for the tests.
  */
 export function startFolder(o: {
@@ -43,12 +43,12 @@ export function startFolder(o: {
     folderExists: !!name && existsSync(dir),
   });
   if (no) throw new Error(no);
-  const f = git("fetch", "--quiet", "origin", "staging");
+  const f = git("fetch", "--quiet", "origin", "main");
   if (!f.ok) throw new Error(`git fetch failed: ${f.err}`);
-  const head = git("rev-parse", "origin/staging").out;
-  const add = git("worktree", "add", "--quiet", "--no-track", "-b", name, dir, "origin/staging");
+  const head = git("rev-parse", "origin/main").out;
+  const add = git("worktree", "add", "--quiet", "--no-track", "-b", name, dir, "origin/main");
   if (!add.ok) throw new Error(`git worktree add failed: ${add.err}`);
-  o.log(`PASS  ${name} starts at staging's head ${head.slice(0, 12)}, as GitHub has it now.`);
+  o.log(`PASS  ${name} starts at main's head ${head.slice(0, 12)}, as GitHub has it now.`);
   const install =
     o.install ??
     ((at: string) => {
@@ -63,14 +63,14 @@ export function startFolder(o: {
 
 // ------------------------------------------------------------------ clean
 
-/** A branch that a merge put on staging: the commit it became, and when (a job record's "Merged" line). */
+/** A branch that a merge put on main: the commit it became, and when (a job record's "Merged" line). */
 export interface MergedBranch {
   branch: string;
   sha: string;
   at: number;
 }
 
-/** The branches that the merges of the job records put on staging (.erga/jobs/*.jsonl: merge.ts writes a "Merged" line for each). */
+/** The branches that the merges of the job records put on main (.erga/jobs/*.jsonl: merge.ts writes a "Merged" line for each). */
 export function readMerges(dir: string): MergedBranch[] {
   const jobs = join(dir, "jobs");
   if (!existsSync(jobs)) return [];
@@ -114,7 +114,7 @@ export interface CleanPlan {
   keep: { what: string; why: string }[];
 }
 
-/** What `bun erga clean` removes. `onMain`: production has the commit (origin/main contains it). */
+/** What `bun erga clean` removes. `onMain`: origin/main contains the commit. */
 export function cleanPlan(o: {
   folders: Folder[];
   branches: LocalBranch[];
@@ -136,8 +136,8 @@ export function cleanPlan(o: {
     if (b.at > m.at) plan.keep.push({ what, why: `${merged}, but it has a commit from after that merge` });
     else if (folder?.dirty) plan.keep.push({ what, why: `${merged}, but the folder has changes that no commit has` });
     else if (folder?.inUse) plan.keep.push({ what, why: `${merged}, but this command runs in it` });
-    else if (!o.onMain(m.sha)) plan.keep.push({ what, why: `${merged}, not on production yet: its agent stays until then` });
-    else plan.remove.push({ ...(folder ? { folder: folder.path } : {}), branch: b.name, why: `${merged}, on production` });
+    else if (!o.onMain(m.sha)) plan.keep.push({ what, why: `${merged}, but main does not have that commit` });
+    else plan.remove.push({ ...(folder ? { folder: folder.path } : {}), branch: b.name, why: `${merged}, on main` });
   }
   return plan;
 }
@@ -199,7 +199,7 @@ export function cleanFolders(o: {
   });
   for (const k of plan.keep) o.log(`KEEP  ${k.what}: ${k.why}.`);
   if (!plan.remove.length) {
-    o.log("NOTE  Nothing to remove: no folder or branch is merged and on production.");
+    o.log("NOTE  Nothing to remove: no folder or branch is merged into main.");
     return 0;
   }
   o.log("Remove:");

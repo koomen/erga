@@ -14,7 +14,7 @@
 //   check    the token as Cloudflare answers it (each try's own status), the install with no token, the token as
 //            the server's Deploy page hands it to the deployer, the deployer's look; a new
 //            commit on `verify` deploys by itself; a setting that stops the server makes a deploy unhealthy, and the
-//            deployer puts the version before back; a spec whose branch is `staging` refuses verify's commit.
+//            deployer puts the version before back; a spec whose branch is `main` refuses verify's commit.
 //
 // The token is a person's own: Cloudflare gives a token for one Worker only when the Worker is there, so the instance
 // is kept between runs (`bun erga verify deploys --keep`), and the token is made one time. It is in a file that only
@@ -509,18 +509,18 @@ export async function deployChecks(report: Report): Promise<void> {
     `release ${restored?.version}`
   );
 
-  // A deployer whose spec's branch is staging refuses verify's commit, for the branch.
+  // A deployer whose spec's branch is main refuses verify's commit, for the branch.
   await run(r.sql("UPDATE deploy_control SET auto = 0 WHERE id = 1", []));
-  await run(writeSpec(r.sql, { ...good, branch: "staging" }));
+  await run(writeSpec(r.sql, { ...good, branch: "main" }));
   await ask(r.sql, `deploy ${next}`, "verify");
   const refusedJob = await jobThat(r.jobs, (j) => j.source == "app, by verify" && j.id > (failed?.id ?? auto.id), 5 * MINUTE);
   await run(writeSpec(r.sql, good));
   await run(r.sql("UPDATE deploy_control SET auto = 1 WHERE id = 1", []));
   report.add(
-    `${C}: with the branch staging in its spec, the deployer refuses verify's commit`,
+    `${C}: with the branch main in its spec, the deployer refuses verify's commit`,
     refusedJob?.state.at == "failed" &&
-      // The registry says it first: staging's releases have no release of verify's commit.
-      refusedJob.state.why.includes(`among the releases of staging on ${repo()}: the instance deploys only a commit of that branch`) &&
+      // The branch says it first (deploy/deployer/look.ts): verify's commit is not on main, whatever the registry has.
+      refusedJob.state.why.includes(`is not a commit of main on ${repo()}: the instance deploys only a commit of that branch`) &&
       (await r.live())?.versionId == runs.versionId,
     refusedJob
       ? refusedJob.state.at == "failed"

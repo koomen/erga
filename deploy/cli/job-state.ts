@@ -1,17 +1,17 @@
-// A job's state, from its record's own fields (.erga/jobs/<id>.jsonl, jobs.ts startJob: a merge, a promote; a deploy's
+// A job's state, from its record's own fields (.erga/jobs/<id>.jsonl, jobs.ts startJob: a merge; a deploy's
 // and a rollback's state comes from the instance's own record, running.ts recordOf), and the ops page's own run:
 // the command it started, until that command ends. Pure: the page's server (ops-page.ts) does the IO, and its view
 // (ops-view.ts) draws the buttons from these states, never from a command's text.
 
 /** What a job does: the verb of its command (`bun erga <verb> ...`), which the CLI always writes first. */
-export type Kind = "deploy" | "merge" | "promote" | "rollback";
+export type Kind = "deploy" | "merge" | "rollback";
 
 /** starting: the page started it, and it has no record yet. stopped: its process ended with no result. */
 export type Phase = "starting" | "running" | "ok" | "failed" | "stopped";
 
 export interface JobState {
   kind: Kind;
-  /** The instance whose lock it holds; the branch that a merge ("staging") or a promote ("main") moves. */
+  /** The instance whose lock it holds; the branch that a merge moves ("main"). */
   host: string;
   /** The commit it deploys or moves the branch to, from its record's `{commit}` line: null before the job knows it. */
   commit: string | null;
@@ -28,7 +28,7 @@ export type Alive = (pid: number, start: unknown) => boolean;
 
 /** The state of a record's first line, or null: it is not a job's start. */
 export function jobStart(head: Line | undefined): JobState | null {
-  const m = typeof head?.command == "string" ? /^bun erga (deploy|merge|promote|rollback|setup)\b(?: (\S+))?/.exec(head.command) : null;
+  const m = typeof head?.command == "string" ? /^bun erga (deploy|merge|rollback|setup)\b(?: (\S+))?/.exec(head.command) : null;
   if (!m || typeof head?.host != "string") return null;
   // A setup's job is its first deploy.
   const kind = (m[1] == "setup" ? "deploy" : m[1]) as Kind;

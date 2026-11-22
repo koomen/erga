@@ -32,9 +32,9 @@ const S = "5".repeat(40),
   M = "4".repeat(40);
 
 describe("merge", () => {
-  test("refuses staging and main, a branch GitHub lacks, an empty branch and a conflict", () => {
-    expect(mergeRefusal({ branch: "main", exists: true, ahead: 1, conflicts: [] })).toContain("bun erga promote");
-    expect(mergeRefusal({ branch: "staging", exists: true, ahead: 1, conflicts: [] })).toContain("not a feature branch");
+  test("refuses main and verify, a branch GitHub lacks, an empty branch and a conflict", () => {
+    expect(mergeRefusal({ branch: "main", exists: true, ahead: 1, conflicts: [] })).toContain("not a feature branch");
+    expect(mergeRefusal({ branch: "verify", exists: true, ahead: 1, conflicts: [] })).toContain("not a feature branch");
     expect(mergeRefusal({ branch: "x", exists: false, ahead: 0, conflicts: [] })).toContain("bun erga push");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 0, conflicts: [] })).toContain("Nothing to merge");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 2, conflicts: ["a.ts", "b.ts"] })).toContain("a.ts, b.ts");
@@ -89,10 +89,10 @@ test("rollback goes to the version before the one that serves now", () => {
   expect(previousVersion([d("c")])).toBeNull();
 });
 
-test("the pre-push hook stops a plain push to staging or main, and lets bun erga and feature branches through", () => {
-  expect(pushRefusal("refs/heads/staging", false)).toContain("bun erga merge");
-  expect(pushRefusal("refs/heads/main", false)).toContain("bun erga promote");
-  expect(pushRefusal("refs/heads/staging", true)).toBeNull();
+test("the pre-push hook stops a plain push to main or verify, and lets bun erga and feature branches through", () => {
+  expect(pushRefusal("refs/heads/main", false)).toContain("bun erga merge");
+  expect(pushRefusal("refs/heads/verify", false)).toContain("bun erga try");
+  expect(pushRefusal("refs/heads/main", true)).toBeNull();
   expect(pushRefusal("refs/heads/my-feature", false)).toBeNull();
   expect(pushRefusal("refs/tags/v0.1.0", false)).toBeNull();
 });
@@ -101,9 +101,9 @@ const tracks = (branch: string) => ({ repo: "github.com/koomen/erga", branch });
 
 test("bun erga status: each instance with what it tracks and where its commit is on that branch, and the branches", () => {
   const s = stateOf({
-    heads: { main: M, staging: S },
+    main: M,
     instances: [
-      { host: "next.example.com", ...tracks("staging"), version: S.slice(0, 12), healthy: true, behind: 0 },
+      { host: "next.example.com", ...tracks("next"), version: S.slice(0, 12), healthy: true, behind: 0 },
       {
         host: "other.example.org",
         ...tracks("main"),
@@ -113,7 +113,7 @@ test("bun erga status: each instance with what it tracks and where its commit is
         behind: null,
       },
       { host: "example.com", ...tracks("main"), version: M.slice(0, 12), healthy: true, behind: 2 },
-      { host: "old.example.com", ...tracks("staging"), version: "111111111111", healthy: false, behind: null },
+      { host: "old.example.com", ...tracks("next"), version: "111111111111", healthy: false, behind: null },
       { host: "side.example.com", ...tracks("main"), version: "222222222222", healthy: true, behind: null },
     ],
     branches: [
@@ -121,7 +121,7 @@ test("bun erga status: each instance with what it tracks and where its commit is
       { name: "new", sha: "2", ahead: 2, behind: 0, conflicts: ["x.ts"], at: 2, subject: "New" },
     ],
     github: true,
-    waiting: [{ sha: S, subject: "On staging" }],
+    waiting: [{ sha: S, subject: "Not in a release" }],
     log: [{ sha: M, subject: "On main" }],
     tags: [{ name: "v0.1.0", sha: M }],
   });
@@ -140,19 +140,20 @@ test("bun erga status: each instance with what it tracks and where its commit is
     "- other.example.org: tracks github.com/koomen/erga main; Cloudflare has no deployment of the Worker other: bun erga deploy other.example.org; health unknown"
   );
   expect(text).toContain(`- example.com: tracks github.com/koomen/erga main; runs ${M.slice(0, 12)}, 2 commits behind main; health ok`);
-  expect(text).toContain(`- next.example.com: tracks github.com/koomen/erga staging; runs ${S.slice(0, 12)}, staging's head; health ok`);
+  expect(text).toContain(`- next.example.com: tracks github.com/koomen/erga next; runs ${S.slice(0, 12)}, next's head; health ok`);
   expect(text).toContain(
-    "- old.example.com: tracks github.com/koomen/erga staging; runs 111111111111, a commit this clone does not have (git fetch); health FAIL"
+    "- old.example.com: tracks github.com/koomen/erga next; runs 111111111111, a commit this clone does not have (git fetch); health FAIL"
   );
   expect(text).toContain(
     "- side.example.com: tracks github.com/koomen/erga main; runs 222222222222, not on main as this clone knows it; health ok"
   );
-  expect(text).not.toContain("staging of");
-  expect(text).toContain("new: 2 ahead, 0 behind staging; conflicts in x.ts");
+  expect(text.split("\n")[0]).toBe(`main ${M.slice(0, 12)} (as this clone knows it)`);
+  expect(text).toContain("new: 2 ahead, 0 behind main; conflicts in x.ts");
+  expect(text).toContain("On main, not in a release (1):\n- 5555555 Not in a release");
   expect(text).toContain("- 4444444 [v0.1.0] On main");
 });
 
-test("GitHub runs one workflow, the release: staging, main and verify only, no secret but its own token, each action at a commit", () => {
+test("GitHub runs one workflow, the release: main and verify only, no secret but its own token, each action at a commit", () => {
   const dir = new URL("../.github/workflows/", import.meta.url);
   // (Not the Finder's .DS_Store.)
   const names = (folder: URL) => readdirSync(folder).filter((name) => !name.startsWith("."));
@@ -160,7 +161,7 @@ test("GitHub runs one workflow, the release: staging, main and verify only, no s
   expect(names(dir)).toEqual(["release.yml"]);
   const text = readFileSync(new URL("release.yml", dir), "utf8");
   const flow = Bun.YAML.parse(text) as Flow;
-  expect(flow.on).toEqual({ push: { branches: ["staging", "main", "verify"], tags: ["v*.*.*"] } });
+  expect(flow.on).toEqual({ push: { branches: ["main", "verify"], tags: ["v*.*.*"] } });
   // Only publish may write, and only packages: it waits for the tests, and runs nothing of the repository's.
   expect(flow.permissions).toEqual({});
   expect(Object.fromEntries(Object.entries(flow.jobs).map(([name, job]) => [name, job.permissions]))).toEqual({
@@ -179,7 +180,7 @@ test("GitHub runs one workflow, the release: staging, main and verify only, no s
   for (const step of steps) if (step.uses?.startsWith("actions/checkout@")) expect(step.with).toEqual({ "persist-credentials": false });
   // Every expression: no secret but GitHub's own token, and no input of a person's in a script.
   expect([...new Set([...text.matchAll(/\$\{\{\s*(.*?)\s*\}\}/g)].map((m) => m[1]))]).toEqual(["github.sha", "secrets.GITHUB_TOKEN"]);
-  // verify's commits (bun erga try) go to a package of their own: no instance of staging or main reads it.
+  // verify's commits (bun erga try) go to a package of their own: no instance of main reads it.
   const publishRun = flow.jobs.publish.steps.find((step) => step.name == "publish")!.run!;
   expect(publishRun).toContain(
     'package="${GITHUB_REPOSITORY,,}"\nif [ "$GITHUB_REF_NAME" = verify ]; then package="$package-verify"; fi\nrelease="ghcr.io/$package:$GITHUB_SHA"\n'
@@ -236,7 +237,6 @@ test("bun erga release refuses untested origin/main and allows tested --dry-run"
   const { commit, gitWorld, sh } = await import("./helpers/git-world.ts");
   const { top, origin, clone } = gitWorld("erga-release-");
   try {
-    sh(clone, "git", "checkout", "--quiet", "-b", "main");
     const sha = commit(clone, "a.txt", "Add feature");
     sh(clone, "git", "push", "--quiet", "origin", "main");
     const dir = join(clone, ".erga");
@@ -301,7 +301,6 @@ test("the workflow deletes the versions older than 7 days of verify's package, a
     expect([branch, r.exitCode, r.stderr.toString()]).toEqual([branch, 0, ""]);
     return existsSync(join(bin, "calls")) ? readFileSync(join(bin, "calls"), "utf8").trim().split("\n") : [];
   };
-  expect(calls("staging")).toEqual([]);
   expect(calls("main")).toEqual([]);
   const AGE = "--jq .[] | select((.created_at | fromdate) < now - 7 * 86400) | .id";
   for (const kind of ["users", "orgs"]) {

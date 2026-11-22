@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-// Erga's command line: `bun erga <command>`. Development happens on feature branches; `merge` puts a branch on staging
-// as one commit, `promote` moves main to staging's head, `release` tags main. An instance tracks one branch of one
-// repository: `deploy` gives it that branch's head. Every deploy runs on this machine: a push deploys nothing.
+// Erga's command line: `bun erga <command>`. Development happens on feature branches; `merge` puts a branch on main
+// as one commit, and `release` tags main. An instance tracks one branch of one repository: `deploy` gives it that
+// branch's head, from this machine. A deployer in the instance's own account deploys by itself, by the instance's
+// auto-deploy mode (`track --auto-deploy`): each commit, or each release.
 // `bun erga skill` is the agents' manual.
 //
 //   bun erga [--auto-deploy] [--port N] [--no-open]
@@ -9,10 +10,10 @@
 //                                       --auto-deploy: it checks the branch of each instance once a minute, and
 //                                       deploys a new commit to the instance (bun erga deploy), one job at a time
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
-//   bun erga start <branch>             a new feature branch from GitHub's newest staging, in a work folder of its
+//   bun erga start <branch>             a new feature branch from GitHub's newest main, in a work folder of its
 //                                       own (worktrees/<branch> in the main clone), with its packages installed
-//   bun erga clean [--yes]              lists the work folders and local branches whose project is merged and on
-//                                       production, and removes them after a yes
+//   bun erga clean [--yes]              lists the work folders and local branches whose project is merged into
+//                                       main, and removes them after a yes
 //   bun erga push                       before each push: formats the changed lines, builds the inline code's file, runs
 //                                       the tests, and pushes this branch only when they end with "all passing"
 //   bun erga proof "<sentence>" [--look "<bun run look arguments>"]... [--no-picture "<the tests that prove it>"]
@@ -22,23 +23,21 @@
 //                                       with its tests' state (in the queue, running, passed, failed with the tests'
 //                                       names), and the commits, as text; it only reads (no fetch)
 //   bun erga merge <branch>... [-m text]
-//                                       each branch onto staging as one commit, then the gate (the tests, bun run
+//                                       each branch onto main as one commit, then the gate (the tests, bun run
 //                                       test, passed on the result: it runs them if no run has), and the push of
-//                                       staging; it deploys nothing; -m is for the branch before it
-//   bun erga promote                    moves main forward to staging's head, when the tests passed on it and each
-//                                       instance that tracks staging runs it, healthy; it deploys nothing
-//   bun erga try <branch>               the branch's merge with staging onto the branch verify on GitHub, one try at a
+//                                       main; it deploys nothing; -m is for the branch before it
+//   bun erga try <branch>               the branch's merge with main onto the branch verify on GitHub, one try at a
 //                                       time (a lock on GitHub, free after 30 minutes): GitHub's workflow tests it,
 //                                       builds it and publishes its release to the package <repository>-verify; it
 //                                       waits for that run and says its result; it merges and deploys nothing
-//   bun erga test [<branch>|<commit>]   the gate's run: bun run test on a branch's merge onto staging, or on a commit
-//                                       (default: staging's head), in a scratch folder; a tree that ran before runs
+//   bun erga test [<branch>|<commit>]   the gate's run: bun run test on a branch's merge onto main, or on a commit
+//                                       (default: main's head), in a scratch folder; a tree that ran before runs
 //                                       no more; the ops page runs it for each pushed branch
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine: the head
 //                                       of the branch it tracks, or a commit of that branch; no branch moves;
 //                                       the release is GitHub's (its registry), built here only when it has none;
-//                                       the commits main and staging are origin's branches, never the clone's own;
+//                                       the commit main is origin's branch, never the clone's own;
 //                                       --domain <domain> (it can repeat): the instance takes a custom domain, which
 //                                       a document can be published to from now on; --remove-domain <domain> (it
 //                                       can repeat) takes one away: it deletes the domain on Cloudflare, takes it
@@ -178,14 +177,6 @@ async function merge(args: string[]) {
   if (r.left.length) process.exit(1);
 }
 
-async function promote() {
-  needRepo();
-  const { ergaDir } = await import("./config");
-  const { promote: run } = await import("./promote");
-  const sha = await run({ dir: ergaDir(), from: fromOf() }).catch((e: Error) => fail(e.message));
-  if (sha) pass(`main is at ${sha.slice(0, 12)}.`);
-}
-
 // ------------------------------------------------------------------ test
 
 async function test(name: string | undefined) {
@@ -197,18 +188,18 @@ async function test(name: string | undefined) {
   const clone = dirname(dir);
   const has = (ref: string) => sh(["git", "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { cwd: process.cwd() });
   const log = (line: string) => say(line);
-  // A feature branch: the tree of its merge onto staging, as the ops page's row and `bun erga merge` test it.
+  // A feature branch: the tree of its merge onto main, as the ops page's queue and `bun erga merge` test it.
   if (name && !(PROTECTED as readonly string[]).includes(name) && has(`origin/${name}`).ok) {
-    const m = mergeTree("origin/staging", `origin/${name}`, clone);
-    if (!m.tree) fail(`${name} conflicts with staging in ${m.conflicts.join(", ")}.`, "Rebase it on origin/staging, and push it.");
-    const what = `${name} on staging ${has("origin/staging").out.slice(0, 7)}`;
+    const m = mergeTree("origin/main", `origin/${name}`, clone);
+    if (!m.tree) fail(`${name} conflicts with main in ${m.conflicts.join(", ")}.`, "Rebase it on origin/main, and push it.");
+    const what = `${name} on main ${has("origin/main").out.slice(0, 7)}`;
     const r = await testRun({ dir, clone, tree: m.tree!, what, branch: name, log }).catch((e: Error) => fail(e.message));
     if (r.state != "passed") fail(gateRefusal(r, what)!);
     return;
   }
   // A commit: the name is read where the command is typed (HEAD is this folder's commit).
-  const sha = has(name ?? "origin/staging").out;
-  if (!sha) fail(`This clone has no branch origin/${name} and no commit ${name ?? "origin/staging"}.`, "git fetch");
+  const sha = has(name ?? "origin/main").out;
+  if (!sha) fail(`This clone has no branch origin/${name} and no commit ${name ?? "origin/main"}.`, "git fetch");
   const r = await testRun({ dir, clone, tree: treeOf(clone, sha)!, commit: sha, what: sha.slice(0, 12), log }).catch((e: Error) =>
     fail(e.message)
   );
@@ -487,8 +478,6 @@ export async function main(argv: string[]) {
     }
     case "merge":
       return merge(rest);
-    case "promote":
-      return promote();
     case "try": {
       const { tryBranch } = await import("./try");
       return void (await tryBranch({ branch: plain[0], log: say }).catch((e: Error) => fail(e.message)));

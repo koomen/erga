@@ -1,5 +1,5 @@
 // `bun erga merge a b c` (deploy/cli/merge.ts), on a real origin and clone, with a fake suite: one commit for each
-// branch, one run of the tests and one push of staging for all, and no deploy; a branch that conflicts stays out; when the
+// branch, one run of the tests and one push of main for all, and no deploy; a branch that conflicts stays out; when the
 // tests fail, the branches go one by one and the one that fails stays out; a tree that the tests ran on before (the
 // ops page's run for the branch's row) runs no test, and a failed run refuses the merge with the tests' names.
 
@@ -20,7 +20,7 @@ let clone = "";
 let dir = "";
 let base = "";
 const run = (...cmd: string[]) => sh(clone, ...cmd);
-/** A branch from staging's first commit with one commit that writes `files`, pushed to origin. */
+/** A branch from main's first commit with one commit that writes `files`, pushed to origin. */
 const branch = (name: string, files: Record<string, string>) => {
   run("git", "checkout", "-q", "--detach", base);
   for (const [f, text] of Object.entries(files)) writeFileSync(join(clone, f), text);
@@ -33,14 +33,14 @@ const onOrigin = () =>
     .split("\n")
     .map((l) => l.split("refs/heads/")[1])
     .sort();
-/** The subjects of the commits from staging's first commit to `sha`, oldest first. */
+/** The subjects of the commits from main's first commit to `sha`, oldest first. */
 const subjects = (sha: string) => run("git", "log", "--reverse", "--format=%s", `${base}..${sha}`).split("\n");
 
 // The fake suite: a test fails where a file bad.txt is.
 let tests = 0;
 let lines: string[] = [];
-/** staging on origin now. */
-const pushed = () => run("git", "ls-remote", "origin", "refs/heads/staging").split(/\s/)[0];
+/** main on origin now. */
+const pushed = () => run("git", "ls-remote", "origin", "refs/heads/main").split(/\s/)[0];
 const BROKEN = { run: { results: [{ file: "e2e/full/bad.e2e.ts", titlePath: ["bad.txt breaks it"], status: "failed" }] } };
 const suite: Suite = (at, log) => {
   tests++;
@@ -59,7 +59,7 @@ beforeEach(() => {
       {
         host: "staging.example.com",
         repo: "example.com/team/erga",
-        branch: "staging",
+        branch: "main",
         account: "acc",
         worker: "erga-staging",
         database: "erga-staging",
@@ -76,7 +76,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
-test("many branches: one commit for each, one test run, one push of staging, and no deploy", async () => {
+test("many branches: one commit for each, one test run, one push of main, and no deploy", async () => {
   branch("a", { "a.txt": "a\n" });
   branch("b", { "b.txt": "b\n" });
   branch("c", { "c.txt": "c\n" });
@@ -92,15 +92,17 @@ test("many branches: one commit for each, one test run, one push of staging, and
   const tip = r.merged[2].sha;
   expect(subjects(tip)).toEqual(["a: its first commit", "B does its task", "c: its first commit"]);
   expect([tests, pushed()]).toEqual([1, tip]);
-  // staging takes only a commit whose tree has a passed run, and the merged branches leave GitHub. The merge deploys
-  // nothing: it names the instance that tracks staging, and its job is staging's.
-  expect(lines).toContain("NEXT  staging.example.com tracks staging. Deploy the commit to it: bun erga deploy staging.example.com");
+  // main takes only a commit whose tree has a passed run, and the merged branches leave GitHub. The merge deploys
+  // nothing: it names the instance that tracks main, and its job is main's.
+  expect(lines).toContain(
+    "NOTE  staging.example.com tracks main. Its auto-deploy mode says when it gets the commit: at once, or with the next release."
+  );
   expect(lines.some((l) => l.startsWith("Deploy"))).toBe(false);
-  expect(readdirSync(join(dir, "jobs")).filter((f) => f.endsWith(".jsonl") && f.includes("-staging-")).length).toBe(1);
+  expect(readdirSync(join(dir, "jobs")).filter((f) => f.endsWith(".jsonl") && f.includes("-main-")).length).toBe(1);
   expect(readRuns(dir).map((x) => [x.tree, x.state, x.what])).toEqual([
-    [treeOf(clone, tip)!, "passed", `a, b, c on staging ${base.slice(0, 7)}`],
+    [treeOf(clone, tip)!, "passed", `a, b, c on main ${base.slice(0, 7)}`],
   ]);
-  expect(onOrigin()).toEqual(["staging"]);
+  expect(onOrigin()).toEqual(["main"]);
 });
 
 test("a branch that conflicts stays out, and the run names it", async () => {
@@ -110,10 +112,10 @@ test("a branch that conflicts stays out, and the run names it", async () => {
   const r = await merge("a", "clash", "c");
   expect(r.merged.map((m) => m.branch)).toEqual(["a", "c"]);
   expect(r.left.map((l) => l.branch)).toEqual(["clash"]);
-  expect(r.left[0].why).toContain("clash conflicts with staging in shared.txt");
+  expect(r.left[0].why).toContain("clash conflicts with main in shared.txt");
   expect(subjects(pushed())).toEqual(["a: its first commit", "c: its first commit"]);
   expect([tests, pushed()]).toEqual([1, r.merged[1].sha]);
-  expect(onOrigin()).toEqual(["clash", "staging"]);
+  expect(onOrigin()).toEqual(["clash", "main"]);
 });
 
 test("the tests fail: the branches go one by one, and the one that fails stays out", async () => {
@@ -123,32 +125,32 @@ test("the tests fail: the branches go one by one, and the one that fails stays o
   const r = await merge("a", "bad", "c");
   expect(r.merged.map((m) => m.branch)).toEqual(["a", "c"]);
   expect(r.left.map((l) => l.branch)).toEqual(["bad"]);
-  expect(r.left[0].why).toContain("1 test failed on bad on staging");
+  expect(r.left[0].why).toContain("1 test failed on bad on main");
   expect(r.left[0].why).toContain("\n  e2e/full/bad.e2e.ts: bad.txt breaks it");
   // One run for the batch, then one for each branch; still one push, of a commit without the bad branch.
   expect([tests, pushed()]).toEqual([4, r.merged[1].sha]);
   expect(subjects(pushed())).toEqual(["a: its first commit", "c: its first commit"]);
   expect(run("git", "ls-tree", "--name-only", pushed())).not.toContain("bad.txt");
-  expect(onOrigin()).toEqual(["bad", "staging"]);
+  expect(onOrigin()).toEqual(["bad", "main"]);
 });
 
-test("no branch merges: staging stays, and the error says why", async () => {
+test("no branch merges: main stays, and the error says why", async () => {
   branch("bad", { "bad.txt": "bad\n" });
   await expect(merge("bad")).rejects.toThrow("Fix it on bad, push it, and merge again.");
   await expect(merge("nope")).rejects.toThrow("There is no branch nope on GitHub");
   expect(pushed()).toBe(base);
-  expect(onOrigin()).toEqual(["bad", "staging"]);
+  expect(onOrigin()).toEqual(["bad", "main"]);
 });
 
 test("the gate before the merge: a branch whose merge passed before merges with no test run, and a failed one is refused", async () => {
   branch("a", { "a.txt": "a\n" });
   branch("bad", { "bad.txt": "bad\n" });
-  // The ops page's runs, for each branch's row: the tree of its merge onto staging.
+  // The ops page's runs, for each branch's row: the tree of its merge onto main.
   const row = (name: string) =>
     testRun({
       dir,
       clone,
-      tree: mergeTree("origin/staging", `origin/${name}`, clone).tree!,
+      tree: mergeTree("origin/main", `origin/${name}`, clone).tree!,
       what: name,
       branch: name,
       log: () => {},
@@ -156,12 +158,12 @@ test("the gate before the merge: a branch whose merge passed before merges with 
     });
   expect([(await row("a")).state, (await row("bad")).state, tests]).toEqual(["passed", "failed", 2]);
   // The failed branch: the merge names its failed test, and runs nothing.
-  await expect(merge("bad")).rejects.toThrow("1 test failed on bad on staging");
+  await expect(merge("bad")).rejects.toThrow("1 test failed on bad on main");
   await expect(merge("bad")).rejects.toThrow("e2e/full/bad.e2e.ts: bad.txt breaks it");
   // The passed branch: the merge's commit has the tree of its row's run.
   const r = await merge("a");
   expect([r.merged.map((m) => m.branch), tests, pushed()]).toEqual([["a"], 2, r.merged[0].sha]);
-  // Staging moved: the other branch's merge is a new tree, with no record. Its merge runs the tests itself.
+  // Main moved: the other branch's merge is a new tree, with no record. Its merge runs the tests itself.
   branch("c", { "c.txt": "c\n" });
   expect((await merge("c")).merged.length).toBe(1);
   expect(tests).toBe(3);

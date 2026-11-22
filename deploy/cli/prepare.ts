@@ -1,5 +1,5 @@
 // `bun install` runs this (package.json, prepare): it points git at deploy/cli/hooks, whose pre-push stops a plain push
-// to staging or main. It never fails the install: anything unexpected leaves git as it is.
+// to main or verify. It never fails the install: anything unexpected leaves git as it is.
 
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";

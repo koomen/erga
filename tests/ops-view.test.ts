@@ -103,7 +103,7 @@ const starts = (n: string, host = "staging.example.net"): Run =>
     }
   );
 /** A merge that runs, from a terminal: its job record. */
-const merging = () => jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }), () => true, "merge-1")!;
+const merging = () => jobOf(line({ ...start, command: "bun erga merge clean", host: "main" }), () => true, "merge-1")!;
 /** The right side of the page, and the list on the left. */
 const right = (html: string) => html.slice(html.indexOf('<section class="main"'));
 const left = (html: string) => html.slice(0, html.indexOf('<section class="main"'));
@@ -123,7 +123,7 @@ const words = (html: string) =>
   );
 
 test("the right side is about the chosen instance only: it names no other instance, in text or in a tooltip", () => {
-  // Every other instance has a job: one that ended, one that runs, one that the page starts; a merge and a promote too.
+  // Every other instance has a job: one that ended, one that runs, one that the page starts; a merge too.
   const busy = facts({
     jobs: [
       job("d1", "example.net", "3"),
@@ -131,7 +131,6 @@ test("the right side is about the chosen instance only: it names no other instan
       job("d3", "notes.example.org", "2"),
       job("runs", "notes.example.org", "3", { ends: null, from: "auto-deploy" }),
       merging(),
-      job("p1", "main", "", { command: "bun erga promote" }),
     ],
     auto: {
       "example.net": { at: "idle", done: null },
@@ -150,7 +149,7 @@ test("the right side is about the chosen instance only: it names no other instan
         const html = right(viewHtml(f, host + tab, NOW));
         // erga.example.net would hold example.net: a name counts only when it stands alone.
         for (const other of HOSTS.filter((h) => h != host)) expect(names(html, other), `${host}${tab} names ${other}`).toBe(false);
-        expect(html, `${host}${tab}`).not.toMatch(/bun erga (merge|promote)/);
+        expect(html, `${host}${tab}`).not.toMatch(/bun erga merge/);
       }
   // A button that is off for another instance's job says only that a job runs.
   const off = right(viewHtml(busy, "staging.example.net", NOW));
@@ -779,10 +778,10 @@ test("the page's server works the tests' queue: each branch's merge runs one tim
   };
   git("init", "--quiet", "-b", "work");
   commit("base.txt");
-  git("update-ref", "refs/remotes/origin/staging", "HEAD");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
   const trees = { old: commit("old.txt") };
   git("update-ref", "refs/remotes/origin/old", "HEAD");
-  git("reset", "--quiet", "--hard", "origin/staging");
+  git("reset", "--quiet", "--hard", "origin/main");
   const newer = commit("new.txt");
   git("update-ref", "refs/remotes/origin/new", "HEAD");
   mkdirSync(join(dir, ".erga/tests"), { recursive: true });

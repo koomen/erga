@@ -29,7 +29,7 @@ asked for its build less than 3 s before: client/live/release-state.ts, MIN_GAP_
 3. Each unit file built the inline code again, 0.17 s for each of the 233. Now only the run does (ERGA_BUILT).
 4. The gate's install ran the packages' scripts, 3 s (workerd's check of its binary). Now it runs none.
 
-GitHub runs the same suite for each commit of staging and main (.github/workflows/release.yml), on Linux with 4 cores.
+GitHub runs the same suite for each commit of main (.github/workflows/release.yml), on Linux with 4 cores.
 There the suite must pass, and that is all: the 60 seconds and the budgets are the Mac Studio's. A machine with fewer
 than 16 cores has no time limit (e2e/run.ts), and a journey over its budget is named, never failed. A journey holds on
 Linux too: it presses the system's own keys (Control where a Mac has ⌘ or Option), and it waits for the state its

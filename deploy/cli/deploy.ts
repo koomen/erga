@@ -1,8 +1,8 @@
 // `bun erga deploy [<commit>] <host>` and `bun erga rollback <host>`: an instance of .erga/config.json, deployed
 // or rolled back from this machine. Every deploy runs on a machine: a push deploys nothing. An instance tracks one
 // branch of one repository (its entry's repo and branch): with no commit named, it gets that branch's head, and it
-// never gets a commit that the branch does not have. No deploy moves a branch: `bun erga merge` moves staging, and
-// `bun erga promote` moves main (merge.ts, promote.ts). The release is the one that GitHub built of the commit
+// never gets a commit that the branch does not have. No deploy moves a branch: `bun erga merge` moves main
+// (merge.ts). The release is the one that GitHub built of the commit
 // (deploy/deployer/registry.ts: fetched from its registry with no login, and checked against its digest); this
 // machine builds the commit (buildHere) only when GitHub has no release of it. A deploy runs the deployer's own code
 // steps (deploy/deployer/deploy.ts), with this machine's login, on Cloudflare and on AWS: it changes the code only.
@@ -90,12 +90,12 @@ export const entryTarget = (entry: CloudflareEntry): Target => ({
 // ------------------------------------------------------------------ the commit
 
 /**
- * The full commit of a name or a short sha, in the clone, or an error that says to fetch. `main` and `staging` name
- * origin's branches: `bun erga` moves them there only, so the clone's own branch of that name stays where it was made
+ * The full commit of a name or a short sha, in the clone, or an error that says to fetch. `main` names
+ * origin's branch: `bun erga` moves it there only, so the clone's own branch of that name stays where it was made
  * (on 2026-11-13 a deploy of `main` took a commit of 18 commits before the instance's release).
  */
 export function commitOf(name: string, clone = ROOT): string {
-  if (name == "main" || name == "staging") {
+  if (name == "main") {
     const head = originHead(clone, name);
     if (!head) throw new Error(`origin has no branch ${name}. Name a commit.`);
     return head;

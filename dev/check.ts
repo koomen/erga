@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // The quick check: a loose check of a change while you work, in under 5 seconds. Not a gate: `bun run test` is.
 //
-//   bun run check             the change since the merge base with origin/staging, with the files no commit has
+//   bun run check             the change since the merge base with origin/main, with the files no commit has
 //   bun run check a.ts b.ts   as if only these files changed
 //
 // All at once: the formatter on the changed lines (dev/format.ts), the linter on the changed files, the typecheck of

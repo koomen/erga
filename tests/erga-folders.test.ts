@@ -1,5 +1,5 @@
 // `bun erga start` and `bun erga clean` (deploy/cli/folders.ts), on a real origin and clone: a project's folder starts
-// at GitHub's newest staging, and clean removes only what the merge records say is merged, and production has.
+// at GitHub's newest main, and clean removes only what the merge records say is merged, and main has.
 
 import { expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -7,18 +7,17 @@ import { join } from "node:path";
 import { cleanFolders, cleanPlan, folderOf, startFolder } from "../deploy/cli/folders";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
-/** A clone of a bare origin with one commit on staging and main, and another clone that moves the origin. */
+/** A clone of a bare origin with one commit on main, and another clone that moves the origin. */
 function world() {
   const { top, origin, clone } = gitWorld("erga-folders-");
   const [other, dir] = [join(top, "other"), join(clone, ".erga")];
-  sh(clone, "git", "push", "--quiet", "origin", "staging:main");
   sh(top, "git", "clone", "--quiet", origin, other);
   mkdirSync(join(dir, "jobs"), { recursive: true });
-  /** A merge record: `branch` is on staging as `sha`, since `at`. */
+  /** A merge record: `branch` is on main as `sha`, since `at`. */
   const record = (branch: string, sha: string, at: number) => {
-    const file = join(dir, "jobs", `${at}-staging-1.jsonl`);
+    const file = join(dir, "jobs", `${at}-main-1.jsonl`);
     for (const l of [
-      { command: `bun erga merge ${branch}`, host: "staging", started: new Date(at).toISOString() },
+      { command: `bun erga merge ${branch}`, host: "main", started: new Date(at).toISOString() },
       { out: `PASS  Merged ${branch} as ${sha.slice(0, 12)}: text` },
       { result: "ok" },
     ])
@@ -29,11 +28,11 @@ function world() {
   return { clone, other, dir, record, log, start };
 }
 
-test("start makes the project's folder at the staging that GitHub has now, and installs", () => {
+test("start makes the project's folder at the main that GitHub has now, and installs", () => {
   const w = world();
-  // GitHub's staging moves after the clone last saw it.
+  // GitHub's main moves after the clone last saw it.
   const newest = commit(w.other, "b.txt", "two");
-  sh(w.other, "git", "push", "--quiet", "origin", "staging");
+  sh(w.other, "git", "push", "--quiet", "origin", "main");
   const installed: string[] = [];
   const dir = startFolder({ clone: w.clone, name: "task", log: () => {}, install: (at) => (installed.push(at), null) });
   expect(dir).toBe(folderOf(w.clone, "task"));
@@ -41,26 +40,25 @@ test("start makes the project's folder at the staging that GitHub has now, and i
   expect(sh(dir, "git", "symbolic-ref", "--short", "HEAD")).toBe("task");
   expect(installed).toEqual([dir]);
   expect(() => w.start("task")).toThrow("local branch task already");
-  expect(() => w.start("staging")).toThrow("not a feature branch name");
+  expect(() => w.start("main")).toThrow("not a feature branch name");
   expect(() => startFolder({ clone: w.clone, name: "x", log: () => {}, install: () => "no network" })).toThrow(
     "bun install --frozen-lockfile failed"
   );
 });
 
-test("clean removes a merged project's folder and branch only when production has its commit", () => {
+test("clean removes a merged project's folder and branch only when main has its commit", () => {
   const w = world();
   const [done, waits, later, dirty, open] = ["done", "waits", "later", "dirty", "open"].map((n) => w.start(n));
   for (const d of [done, waits, later, dirty, open]) commit(d, "t.txt", d);
-  // Two commits on staging stand for the merged projects; main has the first only.
+  // A commit on main stands for the merged projects; another one never reached main (its push failed).
   const onMain = commit(w.other, "m.txt", "merged one");
-  sh(w.other, "git", "push", "--quiet", "origin", "staging", "staging:main");
-  const onStaging = commit(w.other, "s.txt", "merged two");
-  sh(w.other, "git", "push", "--quiet", "origin", "staging");
+  sh(w.other, "git", "push", "--quiet", "origin", "main");
+  const notOnMain = commit(w.other, "s.txt", "merged two");
   sh(w.clone, "git", "fetch", "--quiet", "origin");
   const soon = Date.now() + 60_000;
   w.record("done", onMain, soon);
   w.record("dirty", onMain, soon);
-  w.record("waits", onStaging, soon);
+  w.record("waits", notOnMain, soon);
   // This branch got a commit after its merge.
   w.record("later", onMain, Date.now() - 3_600_000);
   writeFileSync(join(dirty, "loose.txt"), "x");
@@ -71,16 +69,10 @@ test("clean removes a merged project's folder and branch only when production ha
   const said: string[] = [];
   expect(cleanFolders({ dir: w.dir, clone: w.clone, cwd: w.clone, log: (l) => said.push(l), ask: () => true })).toBe(1);
   expect([done, waits, later, dirty, open].map((d) => existsSync(d))).toEqual([false, true, true, true, true]);
-  expect(sh(w.clone, "git", "branch", "--format=%(refname:short)").split("\n").sort()).toEqual([
-    "dirty",
-    "later",
-    "open",
-    "staging",
-    "waits",
-  ]);
+  expect(sh(w.clone, "git", "branch", "--format=%(refname:short)").split("\n").sort()).toEqual(["dirty", "later", "main", "open", "waits"]);
   const kept = said.filter((l) => l.startsWith("KEEP")).join("\n");
   expect(kept).toContain("(waits): merged as");
-  expect(kept).toContain("not on production yet");
+  expect(kept).toContain("but main does not have that commit");
   expect(kept).toContain("a commit from after that merge");
   expect(kept).toContain("changes that no commit has");
   expect(kept).not.toContain("open");
@@ -105,7 +97,7 @@ test("the plan: a crashed job's scratch folder goes, and the folder the command 
   });
   expect(plan.remove).toEqual([
     { folder: "/tmp/erga-merge-x", why: "a scratch folder that a merge or a test run left" },
-    { branch: "bare", why: "merged as cccccccccccc, on production" },
+    { branch: "bare", why: "merged as cccccccccccc, on main" },
   ]);
   expect(plan.keep.map((k) => k.why)).toEqual(["merged as aaaaaaaaaaaa, but this command runs in it"]);
 });

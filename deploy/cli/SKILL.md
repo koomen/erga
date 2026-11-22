@@ -1,8 +1,9 @@
 # How to work in Erga's repository
 
 Pete (`koomen`) owns Erga. `origin` is GitHub (`koomen/erga`). Every change
-goes through a feature branch. `bun erga` is the only way onto `staging`
-and `main`. There are no pull requests.
+goes through a feature branch. `bun erga` is the only way onto `main`.
+There are no pull requests. There is no `staging` branch: `main` is what
+the staging instance runs, and a release of `main` is what production runs.
 
 ## The workflow
 
@@ -10,11 +11,11 @@ and `main`. There are no pull requests.
 
        bun erga start <branch>
 
-   Any name but `staging` and `main`. It gets the newest staging from
+   Any name but `main` and `verify`. It gets the newest main from
    GitHub, makes the branch there, in the folder `worktrees/<branch>` of
    the main clone, and installs the packages. Work in that folder. A
    project is one whole feature: one branch, one folder, one agent, and
-   one commit on staging. Never split a project into many branches.
+   one commit on main. Never split a project into many branches.
 2. Commit. A commit message is one line of ten words at most, with no
    body. Then push with the one command, never with `git push`:
 
@@ -59,7 +60,7 @@ and `main`. There are no pull requests.
    The command prints its address on the ops page: give it to Pete.
 4. Your branch must be green before Pete merges it. The ops page runs
    the tests (`bun run test`, about a minute) on the commit that the merge
-   of your branch would make: your branch as one commit on staging's
+   of your branch would make: your branch as one commit on main's
    head. The runs go one at a time, in a queue. Watch your branch's row:
 
        bun erga status
@@ -68,11 +69,11 @@ and `main`. There are no pull requests.
    passed, or they failed, with each failed test's name, the end of the
    step that failed and the log's path. No retry makes the row green.
    Repair each failure on your branch and push again. A new commit on
-   your branch, or on staging, makes the old result stale: the branch
+   your branch, or on main, makes the old result stale: the branch
    goes back in the queue. When the row says that the tests passed,
    tell Pete the branch name, what it changes, and the proof's address.
    Then stop: you do not merge.
-5. When Pete asks, merge the branch into staging, or many branches in
+5. When Pete asks, merge the branch into main, or many branches in
    one run:
 
        bun erga merge <branch> [-m "message"]
@@ -85,50 +86,52 @@ and `main`. There are no pull requests.
    It squashes each branch into one commit, in the order given. Then the
    gate: the tests (`bun run test`) must have passed on the last commit.
    A merge of one green branch runs no test: the row's run was on the
-   same code. With no result for that code (many branches, or staging
+   same code. With no result for that code (many branches, or main
    moved), it runs the tests itself, one time. It refuses a branch whose tests failed, and
    names the failed tests. No flag skips the gate. Then it pushes
-   staging and deletes the merged branches on GitHub. It deploys nothing.
+   main and deletes the merged branches on GitHub. It deploys nothing.
    A branch that
-   conflicts stays out: rebase it on `origin/staging`, push it again, and
+   conflicts stays out: rebase it on `origin/main`, push it again, and
    merge it again. When the tests fail on many branches, it merges them
    one by one, each with its own gate, and a branch that fails stays out.
    It names each branch that stays out, and then ends with exit code 1.
-   It stops when no branch merges: staging stays where it was.
+   It stops when no branch merges: main stays where it was.
 6. An instance tracks one branch of one repository (its entry in
-   `.erga/config.json`: `repo` and `branch`). `merge` names each instance
-   that tracks `staging`. With auto-deploy on (`bun erga --auto-deploy`, below),
-   the ops page deploys the commit to each of them within about a minute:
-   watch `bun erga status`. Without it, a merge that Pete asked for
-   includes the deploy of its commit to each of them:
+   `.erga/config.json`: `repo` and `branch`), with an auto-deploy mode
+   (`bun erga track`, below). Erga's own instances track `main`. The staging
+   instance takes every commit: its deployer deploys a merge's commit by
+   itself, some minutes after the merge (GitHub builds the commit's
+   release first). Production takes only the releases (step 7). `merge`
+   names each instance that tracks `main`. Watch `bun erga status`: it
+   says what each instance runs, and how far it is behind `main`. Check
+   your change on the staging instance before you say that it works.
+   For an instance with auto-deploy off, a merge that Pete asked for
+   includes the deploy of its commit:
 
        bun erga deploy <host>
 
    With no commit, an instance gets the head of the branch that it tracks.
-   Check the change there (`bun erga status` has its address, and how far
-   it is behind its branch) before you say that it works.
-7. Only when Pete asks: `bun erga promote` moves `main` forward to the
-   head of `staging`, and pushes it. It refuses when the tests did not pass
-   on that commit, or when an instance that tracks `staging` does not run
-   it, healthy. It deploys nothing. Then auto-deploy deploys each instance
-   that tracks `main`; without it, when Pete asks, `bun erga deploy
-   <host>` does. `main` and `staging` are the branches
-   on GitHub, never this clone's own branch of that name.
-8. Only when Pete asks: `bun erga release [vX.Y.Z|major|minor|patch]`
-   tags `main` and makes a GitHub release with notes from the commits,
-   after checking that the tests passed on `origin/main`.
-   `--dry-run` shows the version and the notes first.
+   `main` is the branch on GitHub, never this clone's own branch of that
+   name.
+7. Only when Pete says that staging is stable:
+   `bun erga release [vX.Y.Z|major|minor|patch]` tags `main` and makes a
+   GitHub release with notes from the commits, after checking that the
+   tests passed on `origin/main`. `--dry-run` shows the version and the
+   notes first. Production's deployer then deploys the release by itself.
+   The command does not ask the staging instance: look at
+   `bun erga status` first. The staging instance must run `main`'s head,
+   healthy.
 
 ## The other commands
 
 - `bun erga test [<branch>|<commit>]`: the gate's run. `bun run test` on
-  a branch's merge onto staging, or on a commit (default: staging's
+  a branch's merge onto main, or on a commit (default: main's
   head), in a scratch folder: what the ops page runs for each branch. Its
   record is `.erga/tests/<tree>.json`, under the git tree it tested: code
   that ran before runs no more. One run at a time on this machine: a
   second run waits.
 - `bun erga try <branch>`: GitHub's own check of a pushed branch, before
-  the merge. It puts the branch's merge with staging, as one commit, on
+  the merge. It puts the branch's merge with main, as one commit, on
   the branch `verify` on GitHub, and waits for GitHub's workflow there:
   the tests, the build and the release, in the package
   `<repository>-verify`. It says the run's result and address. One try at
@@ -137,16 +140,17 @@ and `main`. There are no pull requests.
   lock is free after 30 minutes in any case. It merges and deploys
   nothing. Only `bun erga try` pushes `verify` and that ref.
 - `bun erga clean [--yes]`: lists the work folders and the local branches
-  whose project is merged (the merge records in `.erga/jobs/`) and on
-  production, and removes them after a yes. One with a later commit, or
-  with a change that no commit has, stays. It also removes a scratch
-  folder that a crashed merge left.
+  whose project is merged into main (the merge records in `.erga/jobs/`),
+  and removes them after a yes. One with a later commit, or
+  with a change that no commit has, stays. It does not ask the staging
+  instance: run it after the project's agent is retired. It also removes
+  a scratch folder that a crashed merge left.
 - `bun erga status`: each instance in `.erga/config.json` with the
   repository and branch that it tracks, its upstream with how far its
   branch is ahead of it and behind it, its commit, how many commits it is
   behind that branch, and its health, the feature branches (ahead, behind, conflicts, and the
   state of the tests on its merge, with each failed test) and the
-  commits on staging that are not on main. It only reads: no fetch. An
+  commits on main that are in no release yet. It only reads: no fetch. An
   instance's commit comes from its platform, with this machine's login: on
   Cloudflare, the Worker's deployment (its API); on AWS, a parameter that
   each deploy and rollback writes. Its health is the row that the server
@@ -294,10 +298,10 @@ and `main`. There are no pull requests.
 
 ## The rules
 
-- Never push to `staging` or `main` with git. The pre-push hook stops it
+- Never push to `main` or `verify` with git. The pre-push hook stops it
   (`bun install` turns the hook on, in a clone).
 - Never open a pull request. Pull requests are off on GitHub.
-- `merge`, `promote`, `deploy`, `track`, `release` and `rollback` run only
+- `merge`, `deploy`, `track`, `release` and `rollback` run only
   when Pete asks.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
@@ -312,7 +316,7 @@ and `main`. There are no pull requests.
 - Every deploy runs on a machine, with its Cloudflare credential:
   `CLOUDFLARE_API_TOKEN`, else the cf CLI's login (`bunx cf auth login`).
   GitHub has no cloud credential and deploys nothing. It runs one workflow
-  (`.github/workflows/release.yml`): on a push to `staging`, `main` or
+  (`.github/workflows/release.yml`): on a push to `main` or
   `verify`, it tests and builds the commit, and publishes its release on
   GitHub's registry (`ghcr.io/<owner>/<repository>:<commit>`; `verify`'s
   in `<repository>-verify`, which keeps 7 days of them).

@@ -2,7 +2,7 @@
 // platform (running.ts). Each call says what it saw; nothing here decides (flow.ts).
 
 import { type Config, type Entry, remoteOf, repoName } from "./config";
-import { type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
+import { type Commit, type Instance, latestTag, PROTECTED, type State, stateOf } from "./flow";
 import type { Ask } from "./running";
 import { parseRefs, type ReleaseTag } from "../deployer/tags";
 import { git, ROOT, sh } from "../root";
@@ -183,8 +183,8 @@ function rememberedBranches(cwd: string, live: Set<string> | null) {
     .filter((b) => !live || live.has(b.name));
 }
 
-/** The feature branches on GitHub: each with its place against `base` (staging), and every field of a branch. */
-export function branchesOf(live: Set<string> | null, cwd = ROOT, base = "origin/staging") {
+/** The feature branches on GitHub: each with its place against `base` (main), and every field of a branch. */
+export function branchesOf(live: Set<string> | null, cwd = ROOT, base = "origin/main") {
   return rememberedBranches(cwd, live).map((b) => {
     const [behind, ahead] = sh(["git", "rev-list", "--left-right", "--count", `${base}...origin/${b.name}`], { cwd })
       .out.split(/\s+/)
@@ -278,13 +278,15 @@ const instancesOf = (config: Config, ask: Ask): Promise<Instance[]> =>
 /** Everything `bun erga status` shows. It only reads: no fetch; GitHub's branch list leaves out the ones it deleted. */
 export async function readState(config: Config, ask: Ask): Promise<State> {
   const live = await githubHeads();
+  const tags = tagsOf();
+  const last = latestTag(tags.map((t) => t.name));
   return stateOf({
     github: live != null,
-    heads: { main: headOf("origin/main"), staging: headOf("origin/staging") },
+    main: headOf("origin/main"),
     instances: await instancesOf(config, ask),
     branches: branchesOf(live),
-    waiting: commitsOf("origin/main..origin/staging"),
+    waiting: commitsOf(...(last ? [`${last}..origin/main`] : ["-n", "50", "origin/main"])),
     log: commitsOf("-n", "20", "origin/main"),
-    tags: tagsOf(),
+    tags,
   });
 }

@@ -1,5 +1,5 @@
 // The pre-push hook: `bun install` (deploy/cli/prepare.ts) turns it on in a clone only, and then a plain git push to
-// staging stops while a feature branch goes through.
+// main stops while a feature branch goes through.
 
 import { expect, test } from "bun:test";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -20,7 +20,7 @@ test("prepare sets core.hooksPath only in a clone's top folder, with the hook, w
   expect(setsHooksPath({ ...clone, hooksPath: "deploy/cli/hooks" })).toBe(false); // on already
 });
 
-test("after prepare, a plain git push to staging stops and a feature branch goes through", () => {
+test("after prepare, a plain git push to main stops and a feature branch goes through", () => {
   const tmp = mkdtempSync(join(tmpdir(), "erga-hooks-"));
   try {
     const env = { ...process.env, ERGA_CLI_PUSH: "", PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
@@ -45,9 +45,9 @@ test("after prepare, a plain git push to staging stops and a feature branch goes
     expect(run(repo, "bun", "deploy/cli/prepare.ts").code).toBe(0);
     expect(run(repo, "git", "config", "--get", "core.hooksPath").out).toBe("deploy/cli/hooks");
 
-    const staging = run(repo, "git", "push", join(tmp, "remote.git"), "HEAD:staging");
-    expect(staging.code).not.toBe(0);
-    expect(staging.err).toContain("erga: Don't push to staging directly");
+    const main = run(repo, "git", "push", join(tmp, "remote.git"), "HEAD:main");
+    expect(main.code).not.toBe(0);
+    expect(main.err).toContain("erga: Don't push to main directly");
     expect(run(repo, "git", "push", join(tmp, "remote.git"), "HEAD:my-feature").code).toBe(0);
 
     // Outside a git checkout, prepare does nothing and does not fail.

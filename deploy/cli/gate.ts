@@ -1,4 +1,4 @@
-// The gate before staging and production: the tests (bun run test: the one suite, about a minute) must pass on the tree
+// The gate before main and each instance: the tests (bun run test: the one suite, about a minute) must pass on the tree
 // that a merge would make, before the merge. Pure: test-run.ts runs the suite and keeps each run's record,
 // .erga/tests/<tree>.json, under the git tree it tested, so the same code never runs twice (a branch's row, its merge
 // and the deploy of its commit share one run). A test's state is one value, and "waiting" is the queue: a tree with no
@@ -11,7 +11,7 @@ import { plural } from "../../shared/time";
 export interface TestRun {
   /** The git tree it tested: the record's key. */
   tree: string;
-  /** What the tree is, in words: "merge-gate on staging a3fe9b2", or a commit. */
+  /** What the tree is, in words: "merge-gate on main a3fe9b2", or a commit. */
   what: string;
   /** The feature branch whose merge it is, when it is one's. */
   branch?: string;
@@ -31,7 +31,7 @@ export interface TestRun {
 /** A branch's test: none (nothing to merge, or a conflict), in the queue, or its tree's run. */
 export type Test =
   | { at: "none" }
-  /** `before`: the branch's last run, on a tree that is no longer its merge: the branch or staging changed since. */
+  /** `before`: the branch's last run, on a tree that is no longer its merge: the branch or main changed since. */
   | { at: "waiting"; before: "passed" | "failed" | null }
   | { at: "running" | "passed" | "failed"; run: TestRun };
 

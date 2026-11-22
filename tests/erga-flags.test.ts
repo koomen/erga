@@ -1,5 +1,5 @@
 // `bun erga <command>` refuses a flag that the command does not take, and --help only prints the manual
-// (deploy/cli/flags.ts). `bun erga promote --help` ran a promote on 2026-11-21.
+// (deploy/cli/flags.ts). On 2026-11-21, --help ran a command that moved a branch.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -10,10 +10,10 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const MAIN = join(ROOT, "deploy/cli/main.ts");
 
 test("--help asks for the manual, and a flag that the command does not take is named", () => {
-  expect(flagsOf("promote", ["--help"])).toEqual({ help: true, unknown: [] });
-  expect(flagsOf("promote", ["-h"])).toEqual({ help: true, unknown: [] });
-  expect(flagsOf("promote", ["--yes"])).toEqual({ help: false, unknown: ["--yes"] });
-  expect(flagsOf("promote", [])).toEqual({ help: false, unknown: [] });
+  expect(flagsOf("push", ["--help"])).toEqual({ help: true, unknown: [] });
+  expect(flagsOf("push", ["-h"])).toEqual({ help: true, unknown: [] });
+  expect(flagsOf("push", ["--yes"])).toEqual({ help: false, unknown: ["--yes"] });
+  expect(flagsOf("push", [])).toEqual({ help: false, unknown: [] });
   expect(flagsOf("deploy", ["staging.example.com", "--no-tests", "--domain", "a.example.com", "--dry-run"])).toEqual({
     help: false,
     unknown: [],

@@ -1,6 +1,6 @@
-// `bun erga try <branch>`: the branch's merge with staging, as one commit, onto the branch `verify` on GitHub. So
+// `bun erga try <branch>`: the branch's merge with main, as one commit, onto the branch `verify` on GitHub. So
 // GitHub's workflow (.github/workflows/release.yml) tests that commit, builds it and publishes its release, before
-// the merge: to the package <repository>-verify, which no instance of staging or main reads. It merges nothing and
+// the merge: to the package <repository>-verify, which no instance of main reads. It merges nothing and
 // deploys nothing.
 //
 // One try at a time, on every machine: the lock is the ref refs/erga/verify-lock on GitHub, a commit with no file whose
@@ -61,7 +61,7 @@ const ghRun = (repo: string) => async (sha: string) => {
 };
 
 /**
- * Puts the branch's merge with staging on `verify`, and waits for GitHub's run of it. The result: the commit and its
+ * Puts the branch's merge with main on `verify`, and waits for GitHub's run of it. The result: the commit and its
  * release. An error says what stopped it. `clone`, `repo`, `runOf`, `now` and `pause` are for the tests. With `keep`,
  * a try that ends well keeps the lock, made new: no other try moves verify until the caller calls `free`.
  */
@@ -87,23 +87,23 @@ export async function tryBranch(o: {
   const repo = o.repo ?? repoOf();
   if (!repo) throw new Error("This checkout's origin is not a GitHub repository.");
 
-  // The commit that `bun erga merge` would make: the branch as GitHub has it, as one commit on staging's head.
-  const f = git("fetch", "--quiet", "origin", "staging");
-  if (!f.ok) throw new Error(`git fetch origin staging failed: ${f.err}`);
+  // The commit that `bun erga merge` would make: the branch as GitHub has it, as one commit on main's head.
+  const f = git("fetch", "--quiet", "origin", "main");
+  if (!f.ok) throw new Error(`git fetch origin main failed: ${f.err}`);
   // (GitHub says whether it has the branch: a fetch fails for other reasons too, as when another fetch holds the ref.)
   const exists = !!remoteHead(clone, "origin", name);
   const b = exists ? git("fetch", "--quiet", "origin", name) : null;
   if (b && !b.ok) throw new Error(`git fetch origin ${name} failed: ${b.err}`);
-  const base = git("rev-parse", "origin/staging").out;
-  const ahead = exists ? Number(git("rev-list", "--count", `origin/staging..origin/${name}`).out) : 0;
+  const base = git("rev-parse", "origin/main").out;
+  const ahead = exists ? Number(git("rev-list", "--count", `origin/main..origin/${name}`).out) : 0;
   const no = mergeRefusal({ branch: name, exists, ahead, conflicts: [] });
   if (no) throw new Error(no);
   const merged = mergeTree(base, `origin/${name}`, clone);
   if (!merged.tree)
     throw new Error(
-      `${name} conflicts with staging in ${merged.conflicts.join(", ")}. Rebase it on origin/staging, fix the conflicts, push it, and try again.`
+      `${name} conflicts with main in ${merged.conflicts.join(", ")}. Rebase it on origin/main, fix the conflicts, push it, and try again.`
     );
-  const text = squashMessage(commitsIn(clone, "--no-merges", `origin/staging..origin/${name}`));
+  const text = squashMessage(commitsIn(clone, "--no-merges", `origin/main..origin/${name}`));
   const made = sh(["git", "commit-tree", merged.tree, "-p", base, "-F", "-"], { cwd: clone, input: text });
   if (!made.ok) throw new Error(`git commit-tree failed: ${made.err}`);
   const sha = made.out;
@@ -150,7 +150,7 @@ export async function tryBranch(o: {
   try {
     const p = push("--force", "origin", `${sha}:refs/heads/verify`);
     if (!p.ok) throw new Error(`The push of ${sha.slice(0, 12)} to verify failed: ${p.err}`);
-    o.log(`PASS  verify is at ${sha.slice(0, 12)} on GitHub: ${name} as one commit on staging ${base.slice(0, 12)}.`);
+    o.log(`PASS  verify is at ${sha.slice(0, 12)} on GitHub: ${name} as one commit on main ${base.slice(0, 12)}.`);
 
     // GitHub's run of that commit, until its end, or until this try's lock is no longer its own.
     const runOf = o.runOf ?? ghRun(repo);

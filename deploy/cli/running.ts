@@ -4,7 +4,7 @@
 // upload that the entry's Worker runs. Where something in front answers for the address (a sign-in), the reader takes
 // the health row that the server writes into its database each minute. On AWS: the parameter that each deploy and
 // rollback writes, and the machine's own check of its server on the loopback (the AWS CLI: Systems Manager).
-// `bun erga status`, the ops page, auto-deploy and `bun erga promote` read through one reader (instanceReader);
+// `bun erga status`, the ops page and auto-deploy read through one reader (instanceReader);
 // `bun erga register` finds an instance that has no entry yet from its platform (findInstance). The authority is the
 // platform's login, which a deploy needs already: no sign-in to the instance, and no token. The ops page reads each
 // instance's jobs the same way (jobsReader): its deploys and rollbacks, from the instance's own record of them

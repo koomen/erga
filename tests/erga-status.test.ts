@@ -1,4 +1,4 @@
-// An instance's health, as `bun erga status`, the ops page, auto-deploy and `bun erga promote` read it
+// An instance's health, as `bun erga status`, the ops page and auto-deploy read it
 // (deploy/cli/running.ts, instanceReader): the server's own report at the instance's public address, which must answer
 // as the upload that the entry's Worker runs. On 2026-11-21, status said that staging.erga.dev was healthy while the
 // address was down: it read the Worker's health row only, and another Worker had the address.

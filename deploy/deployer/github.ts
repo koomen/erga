@@ -1,7 +1,7 @@
 // What GitHub says about the branch that the instance's spec names, with no credential (a public repository needs
 // none): its head and its last commits, for the deployer's look each minute (look.ts), and whether a release's commit
 // is on the branch (the deployer in the cloud deploys no other commit: a build of another branch, as `verify`'s, stays
-// off staging and production).
+// off every other instance).
 //
 // The head and the commits come from github.com itself: git's own list of the refs (what `git ls-remote` reads) and
 // the branch's feed. The API (api.github.com) allows 60 calls an hour with no credential, for each address, and

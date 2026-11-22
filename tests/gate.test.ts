@@ -13,7 +13,7 @@ test("a branch's test is its merge's tree's record; with none it waits, and an o
   expect(testOf({ name: "a", tree: "t1" }, [runOf("t1")]).at).toBe("passed");
   expect(testOf({ name: "a", tree: "t1" }, [runOf("t1", { state: "failed" })]).at).toBe("failed");
   expect(testOf({ name: "a", tree: "t1" }, [runOf("t1", { state: "running" })]).at).toBe("running");
-  // The branch got a commit, or staging moved: its merge is a new tree, and the newest old run says what it was.
+  // The branch got a commit, or main moved: its merge is a new tree, and the newest old run says what it was.
   const old = [
     runOf("t0", { branch: "a", started: "2026-11-05T10:00:00.000Z" }),
     runOf("t1", { branch: "a", state: "failed", started: "2026-11-05T11:00:00.000Z" }),
@@ -55,8 +55,8 @@ test("the queue: one run at a time, the oldest branch first, and a tree with a r
 });
 
 test("only a passed run opens the gate; a failed one names its tests, and says what the failed step said", () => {
-  expect(gateRefusal(runOf("t"), "a on staging 1234567")).toBeNull();
-  expect(gateRefusal(null, "a on staging 1234567")).toBe("The tests did not run on a on staging 1234567.");
+  expect(gateRefusal(runOf("t"), "a on main 1234567")).toBeNull();
+  expect(gateRefusal(null, "a on main 1234567")).toBe("The tests did not run on a on main 1234567.");
   expect(gateRefusal(runOf("t", { state: "running" }), "a")).toBe("The tests run on a now. Wait for them to end.");
   const failed = runOf("t", { state: "failed", failed: ["x: races", "y: breaks"], note: "== smoke run: FAILED (9 s)" });
   expect(gateRefusal(failed, "a")).toBe(

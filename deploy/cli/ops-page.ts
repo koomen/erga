@@ -1,5 +1,5 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
-// reads .erga/config.json, .erga/jobs/ (the merges and the promotes) and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
+// reads .erga/config.json, .erga/jobs/ (the merges) and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), and the clone's git. An instance's deploys and rollbacks are in the instance's own database
 // (deploy/deployer/instance.ts): the page reads them with each check of the instance (on AWS, once a minute), and every 5 seconds while one runs there. It checks its sources (poll-state.ts): each repository that an instance
 // tracks or names as its upstream, for its branches' heads (one git ls-remote, at most once a minute: the instance's
@@ -11,7 +11,7 @@
 // With --auto-deploy it is auto-deploy too (auto-state.ts): it starts `bun erga deploy <head> <host>` for an instance
 // that does not run its branch's head, one job at a time, as its buttons do.
 // It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
-// <branch>` (about a minute), one at a time, the oldest first. A branch or a staging head that moves makes a new tree: it waits again.
+// <branch>` (about a minute), one at a time, the oldest first. A branch or a main head that moves makes a new tree: it waits again.
 // The page shows nothing of the queue: `bun erga status` does.
 // The verify suite (#verify, verify-view.ts): the page reads its state and its runs' records in .erga/verify/, and its
 // buttons run `bun erga verify check`, `bun erga verify <setting> --yes`, `bun erga verify update <setting>` (a kept
@@ -48,11 +48,11 @@ export type Branch = StatusBranch & { author: string; tree: string | null };
 
 /** The clone's feature branches, as the last fetch left them, and the branch they are counted against: what the tests' queue reads. */
 export function readGit(cwd: string): { branches: Branch[]; base: string } {
-  const base = git(cwd, "rev-parse", "--verify", "--quiet", "origin/staging^{commit}").ok ? "origin/staging" : "HEAD";
+  const base = git(cwd, "rev-parse", "--verify", "--quiet", "origin/main^{commit}").ok ? "origin/main" : "HEAD";
   return { branches: branchesOf(null, cwd, base), base: base.replace(/^origin\//, "") };
 }
 
-/** Each job record in .erga/jobs/, newest last (the file names start with the time): the merges and the promotes. An instance's jobs are on the instance. */
+/** Each job record in .erga/jobs/, newest last (the file names start with the time): the merges. An instance's jobs are on the instance. */
 function readJobs(dir: string): JobRecord[] {
   const jobs = join(dir, "jobs");
   if (!existsSync(jobs)) return [];
@@ -68,7 +68,7 @@ function readJobs(dir: string): JobRecord[] {
       }
     })
     .filter((j) => j != null)
-    .filter((j) => j.kind == "merge" || j.kind == "promote");
+    .filter((j) => j.kind == "merge");
 }
 
 /** A command that the page started: its process, and its end with its output. */

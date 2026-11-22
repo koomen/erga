@@ -1,5 +1,5 @@
 // `bun erga try <branch>` (deploy/cli/try.ts), in a clone of a bare origin, with GitHub's run faked: the branch's merge
-// with staging goes onto verify as one commit, under a lock that is a ref on the origin, one try at a time; the lock
+// with main goes onto verify as one commit, under a lock that is a ref on the origin, one try at a time; the lock
 // goes at the end, and an old one is taken over.
 
 import { expect, test } from "bun:test";
@@ -19,7 +19,7 @@ Object.assign(process.env, {
 const DONE: Run = { status: "completed", conclusion: "success", url: "https://github.example/run/1" };
 const REPO = "Example/Erga";
 
-/** A clone whose origin has staging and the branch `task`, one commit ahead of it. */
+/** A clone whose origin has main and the branch `task`, one commit ahead of it. */
 function world() {
   const w = gitWorld("erga-try-");
   sh(w.clone, "git", "switch", "--quiet", "-c", "task");
@@ -55,12 +55,12 @@ test("the lock: none is taken, a young one is waited for until it is 30 minutes 
   expect(lockStep({ sha: "abc", at: 1_000_000, by: "x" }, 1_000_000 + LOCK_MS)).toEqual({ take: "abc" });
 });
 
-test("a try puts the branch's merge with staging on verify as one commit, holds the lock while GitHub runs it, and frees it", async () => {
+test("a try puts the branch's merge with main on verify as one commit, holds the lock while GitHub runs it, and frees it", async () => {
   const w = world();
-  // staging moved since the branch started: the commit on verify is the merge, on staging's head.
-  sh(w.clone, "git", "switch", "--quiet", "staging");
-  const staging = commit(w.clone, "c.txt", "another task");
-  sh(w.clone, "git", "push", "--quiet", "origin", "staging");
+  // main moved since the branch started: the commit on verify is the merge, on main's head.
+  sh(w.clone, "git", "switch", "--quiet", "main");
+  const main = commit(w.clone, "c.txt", "another task");
+  sh(w.clone, "git", "push", "--quiet", "origin", "main");
   const seen: { lock: string; verify: string }[] = [];
   // No run yet, then a run that goes on, then its end.
   const answers: (Run | null)[] = [null, { ...DONE, status: "in_progress", conclusion: null }, DONE];
@@ -79,7 +79,7 @@ test("a try puts the branch's merge with staging on verify as one commit, holds 
   expect(new Set(seen.map((s) => s.verify))).toEqual(new Set(["the try's commit"]));
   expect(seen[0].lock).toBe("bun erga try task");
   expect(w.at("refs/heads/verify")).toBe(r.sha);
-  expect(w.of("%P", "refs/heads/verify")).toBe(staging);
+  expect(w.of("%P", "refs/heads/verify")).toBe(main);
   expect(w.of("%s", "refs/heads/verify")).toBe("the task's change");
   expect(sh(w.origin, "git", "ls-tree", "--name-only", "refs/heads/verify").split("\n")).toEqual(["a.txt", "b.txt", "c.txt"]);
   // The package is verify's own, in small letters, at the commit.
@@ -88,7 +88,7 @@ test("a try puts the branch's merge with staging on verify as one commit, holds 
   expect(r.said).toContain(DONE.url);
   expect(w.at(LOCK)).toBe("");
   // The branches stay where they were.
-  expect([w.at("refs/heads/staging"), w.at("refs/heads/task")]).toEqual([staging, w.task]);
+  expect([w.at("refs/heads/main"), w.at("refs/heads/task")]).toEqual([main, w.task]);
 });
 
 test("a caller that keeps the lock: verify stays its own after the try, until it frees the lock; a failed try keeps nothing", async () => {
@@ -209,7 +209,7 @@ test("what a try refuses: no name, a branch that only bun erga moves, one that G
     return r.error;
   };
   expect(await refused(undefined)).toBe("Name the branch: bun erga try <branch>.");
-  expect(await refused("staging")).toContain("staging is not a feature branch");
+  expect(await refused("main")).toContain("main is not a feature branch");
   expect(await refused("nowhere")).toContain("There is no branch nowhere on GitHub");
   // A fetch that fails is not "no branch": it says git's own words. (GitHub has a newer commit of the branch, and
   // another fetch holds the branch's ref in this clone.)
@@ -220,13 +220,13 @@ test("what a try refuses: no name, a branch that only bun erga moves, one that G
   writeFileSync(held, "");
   expect(await refused("task")).toMatch(/^git fetch origin task failed: .*task/s);
   rmSync(held);
-  sh(w.clone, "git", "push", "--quiet", "origin", "origin/staging:refs/heads/same");
-  expect(await refused("same")).toContain("has no commits that staging does not have");
-  // staging and the branch change the same line.
-  sh(w.clone, "git", "switch", "--quiet", "staging");
-  commit(w.clone, "b.txt", "staging's own line");
-  sh(w.clone, "git", "push", "--quiet", "origin", "staging");
+  sh(w.clone, "git", "push", "--quiet", "origin", "origin/main:refs/heads/same");
+  expect(await refused("same")).toContain("has no commits that main does not have");
+  // main and the branch change the same line.
+  sh(w.clone, "git", "switch", "--quiet", "main");
+  commit(w.clone, "b.txt", "main's own line");
+  sh(w.clone, "git", "push", "--quiet", "origin", "main");
   expect(await refused("task")).toBe(
-    "task conflicts with staging in b.txt. Rebase it on origin/staging, fix the conflicts, push it, and try again."
+    "task conflicts with main in b.txt. Rebase it on origin/main, fix the conflicts, push it, and try again."
   );
 });
