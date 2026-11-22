@@ -193,7 +193,7 @@ test("a repository's heads: the clone keeps each tracked head under its own ref,
     expect(ref).toMatch(/^refs\/erga\/[\w.-]+\/staging$/);
     expect(await repoHeads(clone, origin, ["staging", "nope"])).toEqual({ heads: { staging: next }, error: null });
     // Tagged releases are returned in the same ls-remote call, newest semver first.
-    sh(other, "git", "tag", "-a", "v0.1.0", "-m", "v0.1.0", next);
+    sh(other, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "tag", "-a", "v0.1.0", "-m", "v0.1.0", next);
     sh(other, "git", "push", "--quiet", "origin", "v0.1.0");
     expect(await repoHeads(clone, origin, ["staging"])).toEqual({
       heads: { staging: next },
