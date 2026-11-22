@@ -95,7 +95,7 @@ test("a message sent while the agent resumes runs, and the resume never says the
       { kind: "user", text: "Hi" },
       { kind: "assistant", text: "Hello." },
     ],
-    state: { running: true, queued: [], calls: {}, model: null, stable: 2, meta: {}, at: 1 },
+    state: { running: true, queued: [], calls: {}, model: null, bound: null, stable: 2, meta: {}, at: 1 },
   };
   const a = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [], store: tableStore(t, "you:ada"), stored });
   const busy = busyOf(a);
@@ -124,6 +124,7 @@ test("Stop with no live agent (the object restarted) ends the run kept: the alar
       queued: [{ role: "user", content: "And this." }],
       calls: {},
       model: null,
+      bound: null,
       stable: 2,
       meta: { origin: "http://x" },
       at: 1,

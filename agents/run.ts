@@ -41,6 +41,7 @@ import {
   cutShort,
   fit,
   fitPictures,
+  thinkingFrom,
   isModelChoice,
   languageModel,
   messagesFor,
@@ -53,6 +54,7 @@ import {
   type ModelChoice,
 } from "./models";
 import type { Usable } from "../shared/models";
+import { hex, sha256 } from "../shared/bytes";
 
 /** What a tool answers: content for the model (and the panel). */
 export interface ToolOutput {
@@ -238,11 +240,21 @@ function toolkitOf(tools: AgentTool[]): Toolkit.WithHandler<Record<string, Tool.
 const CACHED = { anthropic: { cacheControl: { type: "ephemeral" } } } as const;
 
 /**
- * The prompt for a turn, as the model of `choice` takes it: the system prompt, then the messages, each picture inside
- * the model's limits (fitPictures); both ends marked for the prompt cache.
+ * What Claude's thinking holds for, beside the messages before it: the system prompt and the tools, as a digest. A
+ * deploy that changes either changes it.
  */
-function promptOf(side: ModelSide, messages: readonly ChatMessage[], choice: ModelChoice | null): Prompt.RawInput {
-  const fitted = messagesFor(choice, fitPictures(messages));
+const sideDigest = async (s: ModelSide) => {
+  const tools = s.tools.map((t) => [t.name, t.description, argumentsSchema(t.parameters)] as const);
+  return hex((await sha256(JSON.stringify([s.systemPrompt, tools.sort(([a], [b]) => (a < b ? -1 : 1))]))).slice(0, 8));
+};
+
+/**
+ * The prompt for a turn, as the model of `choice` takes it: the system prompt, then the messages, with Claude's
+ * thinking only from the message `from` on (thinkingFrom) and each picture inside the model's limits (fitPictures);
+ * both ends marked for the prompt cache.
+ */
+function promptOf(side: ModelSide, messages: readonly ChatMessage[], choice: ModelChoice | null, from: number): Prompt.RawInput {
+  const fitted = messagesFor(choice, fitPictures(thinkingFrom(messages, from)));
   const last = fitted.length - 1;
   return [
     { role: "system", content: side.systemPrompt, options: CACHED },
@@ -262,6 +274,8 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   let choice: ModelChoice | null = cfg ? fit(cfg, kept) : null;
   let side: ModelSide | null = null;
   let messages: ChatMessage[] = stored?.messages ?? [];
+  /** The side that Claude's thinking holds for, and the first message made under it (ChatState.bound). */
+  let bound = stored?.state.bound ?? null;
   /** The turn's state (agents/turn.ts). */
   let now: Turn = IDLE;
   /** Messages sent while a run goes on: the model has them at its next turn. */
@@ -292,6 +306,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     messages: () => messages,
     busy: () => run != null,
     model: () => choice,
+    bound: () => bound,
   });
 
   /** A call begins: the panel names the operation that a tool of several runs (its `op`). */
@@ -382,7 +397,10 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       /** Text or thinking of this turn is in the transcript: the model is not asked for it again. */
       let shown = false;
       let asked = 0;
-      const prompt = promptOf(s, messages, choice);
+      // Another prompt or tool list than the thinking so far was made under (a deploy): that thinking stays out from here on.
+      const digest = yield* Effect.promise(() => sideDigest(s));
+      if (bound?.side != digest) bound = { side: digest, from: messages.length };
+      const prompt = promptOf(s, messages, choice, bound.from);
       const stream = s.tools.length
         ? LanguageModel.streamText({ prompt, toolkit: toolkitOf(s.tools), disableToolCallResolution: true, toolCallValidation: "deferred" })
         : LanguageModel.streamText({ prompt });
@@ -579,6 +597,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         held.length = 0;
         paths.clear();
         messages = [];
+        bound = null;
         const cleared = checkpoints.clear();
         emit({ t: "reset" });
         void cleared.then(() => {

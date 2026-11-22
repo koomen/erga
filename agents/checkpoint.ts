@@ -35,6 +35,12 @@ export interface ChatState {
   calls: Record<string, { result?: ToolResultMessage }>;
   /** The model the person chose (of MODELS), if any. */
   model: string | null;
+  /**
+   * The model's side that Claude's thinking holds for (a digest of the system prompt and the tools), and the first
+   * message made under it: the thinking in the messages before it stays out of each request (agents/models.ts,
+   * thinkingFrom). Null before the first model turn.
+   */
+  bound: { side: string; from: number } | null;
   /** The transcript's items before this index were whole at the last checkpoint; text after it streamed since. */
   stable: number;
   /** Who and where, for whoever wakes the run again (the person, the document, the server's origin). */
@@ -73,7 +79,16 @@ export const ASK_LOST = "Not run: the server restarted before you answered. Ask 
 /** A run that could not go on after a restart (the agent is off now). */
 export const CUT = "The server restarted before the agent finished, and the agent is off now. What arrived is kept.";
 
-const emptyState = (meta: Record<string, string>): ChatState => ({ running: false, queued: [], calls: {}, model: null, stable: 0, meta, at: 0 });
+const emptyState = (meta: Record<string, string>): ChatState => ({
+  running: false,
+  queued: [],
+  calls: {},
+  model: null,
+  bound: null,
+  stable: 0,
+  meta,
+  at: 0,
+});
 /** A copy that later changes to the original don't touch (what a save sends). */
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
@@ -118,6 +133,7 @@ export class Checkpoints {
     /** Whether a run is going now (its own checkpoints then save the transcript too). */
     busy: () => boolean;
     model: () => string | null;
+    bound: () => ChatState["bound"];
     meta: Record<string, string>;
     stored?: StoredChat | null;
   }) {
@@ -232,6 +248,7 @@ export class Checkpoints {
     const mFrom = Math.min(this.savedMessages, msgs.length);
     const lFrom = Math.min(this.logFrom, this.savedLog, items.length);
     this.state.model = this.o.model();
+    this.state.bound = this.o.bound();
     this.state.stable = this.o.busy() ? this.state.stable : items.length;
     const state = JSON.stringify({ ...this.state, at: 0 });
     if (mFrom == msgs.length && mFrom == this.savedMessages && lFrom == items.length && lFrom == this.savedLog && state == this.lastState) return null;
@@ -250,6 +267,7 @@ export class Checkpoints {
     this.logFrom = Infinity;
     // As `change` would see the empty conversation: nothing to save until something changes.
     this.state.model = this.o.model();
+    this.state.bound = this.o.bound();
     this.lastState = JSON.stringify({ ...this.state, at: 0 });
     const store = this.store;
     if (!store) return;

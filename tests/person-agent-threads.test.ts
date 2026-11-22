@@ -57,7 +57,16 @@ test("a run that a restart cut off goes on in its own thread", async () => {
   new ChatTables(sql).save("thread:doc-a:ada", {
     messages: { from: 0, items: [{ role: "user", content: `Hi @script [{"text":"Woke."}]` }] },
     log: { from: 0, items: [{ kind: "user", text: "Hi" }] },
-    state: { running: true, queued: [], calls: {}, model: null, stable: 1, meta: { origin: "http://x" }, at: Date.now() - 21_000 },
+    state: {
+      running: true,
+      queued: [],
+      calls: {},
+      model: null,
+      bound: null,
+      stable: 1,
+      meta: { origin: "http://x" },
+      at: Date.now() - 21_000,
+    },
   });
   const a = new PersonAgents({ sql, platform });
   await a.wake();

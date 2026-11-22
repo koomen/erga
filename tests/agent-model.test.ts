@@ -6,7 +6,7 @@
 import { afterAll, expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import type { ChatMessage, StoredChat } from "../agents/checkpoint";
+import type { ChatMessage, ChatStore, StoredChat } from "../agents/checkpoint";
 import { startLoop, toolMessage, type AgentTool } from "../agents/run";
 import type { LogEvent } from "../shared/agent-log";
 import { fromBase64 } from "../shared/bytes";
@@ -202,19 +202,22 @@ test("Opus 5.5 at normal speed has no fast mode; an API error shows in the trans
   expect(loop.log.busy).toBe(false);
 });
 
-/** A loop on Opus with the server's key, and its events; `turn` sends a message and waits for the run's end. */
-function opus(stored: StoredChat | null = null) {
+/**
+ * A loop on Opus with the server's key, and its events; `turn` sends a message and waits for the run's end. `side`: its
+ * system prompt, tools and store, when the test is about them.
+ */
+function opus(stored: StoredChat | null = null, side: { prompt?: string; tools?: AgentTool[]; store?: ChatStore } = {}) {
   requests.length = 0;
   const events: LogEvent[] = [];
   const loop = startLoop({
     cfg: { own: {}, server: { anthropic: Redacted.make("sk-test") }, mode: "server", off: [], model: "opus", effort: "medium" },
     stored,
-    store: null,
+    store: side.store ?? null,
     meta: {},
     tag: "page",
     hooks: { about: () => null },
   });
-  loop.start(loop.cfg!, "You help.", []);
+  loop.start(loop.cfg!, side.prompt ?? "You help.", side.tools ?? []);
   loop.subscribe((ev) => void events.push(ev));
   const turn = async (text: string) => {
     const from = events.length;
@@ -262,7 +265,7 @@ function looked(pictures: string[]): StoredChat {
     messages.push(toolMessage(`toolu_${i}`, "page", { content: [{ type: "image", data, mimeType: "image/png" }] }, false));
   });
   messages.push({ role: "assistant", content: [{ type: "text", text: "I looked." }] });
-  return { messages, log: [], state: { running: false, queued: [], calls: {}, model: "opus", stable: 0, meta: {}, at: 0 } };
+  return { messages, log: [], state: { running: false, queued: [], calls: {}, model: "opus", bound: null, stable: 0, meta: {}, at: 0 } };
 }
 
 test("a long conversation with a whole page's picture from before the rule: the request stays inside the API's limits", async () => {
@@ -342,4 +345,149 @@ test("an answer that stops in the middle ends the turn with a reason, never in s
     "The model declined to answer this. Ask in another way, or start a new conversation (the + above).",
   ]);
   expect(loop.log.busy).toBe(false);
+});
+
+type Sent = { system: { text: string }[]; tools?: { name: string; description: string }[]; thinking?: { block_binding?: object } };
+/** What the API binds a thinking block to, beside the messages before it: the system prompt and the tools. */
+const sideOf = (body: Record<string, unknown>) => {
+  const b = body as Sent;
+  return JSON.stringify([b.system.map((s) => s.text), (b.tools ?? []).map((t) => [t.name, t.description]).sort()]);
+};
+/** The side each signature was made under. */
+const made = new Map<string, string>();
+/** The thinking blocks a request carries, by signature. */
+const thinkingIn = (body: Record<string, unknown>) =>
+  (body.messages as { content: { type: string; signature?: string }[] | string }[]).flatMap((m) =>
+    Array.isArray(m.content) ? m.content.flatMap((b) => (b.type == "thinking" ? [b.signature!] : [])) : []
+  );
+/**
+ * The API's check of preserved thinking, with production's own refusal (the report): a thinking block made under
+ * another system prompt or tool list fails the request, unless the request asks the API to drop such a block.
+ */
+function refusedThinking({ headers, body }: (typeof requests)[number]): Response | null {
+  const drops =
+    (headers.get("anthropic-beta") ?? "").includes("thinking-binding-controls-2026-08-01") &&
+    JSON.stringify((body as Sent).thinking?.block_binding) == '{"prefix_mismatch_behavior":"drop_block"}';
+  if (drops || thinkingIn(body).every((sig) => made.get(sig) == sideOf(body))) return null;
+  const message =
+    'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to "drop_block". That setting requires the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header. The `system` prompt and the `tools` list both differ from when this block was created.';
+  return Response.json(
+    { type: "error", error: { type: "invalid_request_error", message } },
+    { status: 400, headers: { "request-id": "req_test" } }
+  );
+}
+/** The API with that check: each answer of `answers` in turn, its thinking bound to the request's side. */
+function bindingApi(answers: Parameters<typeof sse>[]) {
+  answer = () => {
+    const req = requests.at(-1)!;
+    const refused = refusedThinking(req);
+    if (refused) return refused;
+    const [blocks, stop] = answers.shift()!;
+    for (const b of blocks) if (b.type == "thinking") made.set(b.signature, sideOf(req.body));
+    return sse(blocks, stop);
+  };
+}
+/** A store in memory, and the conversation it holds once a run's last save is in. */
+function memory() {
+  let chat: StoredChat | null = null;
+  const store: ChatStore = {
+    load: async () => chat,
+    save: async (c) => {
+      chat = {
+        messages: [...(chat?.messages ?? []).slice(0, c.messages.from), ...c.messages.items],
+        log: [...(chat?.log ?? []).slice(0, c.log.from), ...c.log.items],
+        state: c.state,
+      };
+    },
+    clear: async () => void (chat = null),
+  };
+  return {
+    store,
+    settled: (messages: number) => until(() => (chat && !chat.state.running && chat.messages.length == messages ? chat : null)),
+  };
+}
+const READ: AgentTool = {
+  name: "read",
+  description: "Reads a file.",
+  parameters: Schema.Struct({ path: Schema.String }),
+  execute: async () => ({ content: [{ type: "text", text: "A file." }] }),
+};
+
+test("a conversation from before a deploy that changed the prompt and the tools goes on, with no error (the report)", async () => {
+  // The conversation as production's store had it: thinking made under the old prompt and tools, and a state that
+  // does not say which (it is from before `bound`).
+  made.set("sig-old", "the side before the deploy");
+  const stored: StoredChat = {
+    messages: [
+      { role: "user", content: "Hi" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Greet them.", options: { anthropic: { info: { type: "thinking", signature: "sig-old" } } } },
+          { type: "text", text: "Hello." },
+        ],
+      },
+    ],
+    log: [],
+    state: { running: false, queued: [], calls: {}, model: "opus", stable: 0, meta: {}, at: 0 } as never,
+  };
+  const { loop, turn, errors } = opus(stored, { prompt: "You help, in the new way.", tools: [READ] });
+  bindingApi([[[{ type: "text", text: "Here." }], "end_turn"]]);
+  expect(errors(await turn("And now?"))).toEqual([]);
+  expect(loop.log.items.at(-1)).toEqual({ kind: "assistant", text: "Here." });
+  // The old thinking stayed out of the request; the words of that turn went.
+  expect(thinkingIn(requests[0].body)).toEqual([]);
+  expect(JSON.stringify(requests[0].body.messages)).toContain("Hello.");
+});
+
+test("thinking goes back to the model while the prompt and tools stay; after they change, only the thinking made since", async () => {
+  const { store, settled } = memory();
+  // The first server: a turn with thinking and a tool call. The thinking goes back with the tool's result.
+  let agent = opus(null, { store, tools: [READ] });
+  bindingApi([
+    [
+      [
+        { type: "thinking", thinking: "Read it.", signature: "sig-1" },
+        { type: "tool_use", id: "toolu_1", name: "read", input: { path: "a" } },
+      ],
+      "tool_use",
+    ],
+    [[{ type: "text", text: "Read." }], "end_turn"],
+  ]);
+  expect(agent.errors(await agent.turn("Read a."))).toEqual([]);
+  expect(thinkingIn(requests[1].body)).toEqual(["sig-1"]);
+
+  // A restart with the same prompt and tools: the thinking still goes back.
+  agent = opus(await settled(4), { store, tools: [READ] });
+  bindingApi([
+    [
+      [
+        { type: "thinking", thinking: "Answer.", signature: "sig-2" },
+        { type: "text", text: "Yes." },
+      ],
+      "end_turn",
+    ],
+  ]);
+  expect(agent.errors(await agent.turn("Sure?"))).toEqual([]);
+  expect(thinkingIn(requests[0].body)).toEqual(["sig-1"]);
+
+  // A deploy changed the prompt: the old thinking stays out, and the thinking made since goes back.
+  agent = opus(await settled(6), { store, prompt: "You help, in the new way.", tools: [READ] });
+  bindingApi([
+    [
+      [
+        { type: "thinking", thinking: "Read b.", signature: "sig-3" },
+        { type: "tool_use", id: "toolu_2", name: "read", input: { path: "b" } },
+      ],
+      "tool_use",
+    ],
+    [[{ type: "text", text: "Read b." }], "end_turn"],
+  ]);
+  expect(agent.errors(await agent.turn("Read b."))).toEqual([]);
+  expect(requests.map((r) => thinkingIn(r.body))).toEqual([[], ["sig-3"]]);
+  // The same after one more restart: the store knows where the new thinking starts.
+  agent = opus(await settled(10), { store, prompt: "You help, in the new way.", tools: [READ] });
+  bindingApi([[[{ type: "text", text: "Done." }], "end_turn"]]);
+  expect(agent.errors(await agent.turn("Thanks."))).toEqual([]);
+  expect(thinkingIn(requests[0].body)).toEqual(["sig-3"]);
 });

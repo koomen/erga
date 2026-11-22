@@ -349,14 +349,15 @@ test("a turn on Fable 5.2, and in its fast mode: Anthropic gets its id, adaptive
     expect(sent).toEqual({
       model: "claude-fable-5-2",
       max_tokens: 64000,
-      thinking: { type: "adaptive", display: "summarized" },
+      // A thinking block that fails the API's check of its conversation is dropped, and never fails the request.
+      thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } },
       tool_choice: { type: "auto" },
       output_config: { effort: "medium" },
       stream: true,
       ...(choice == "fable-fast" ? { speed: "fast" } : {}),
     });
-    // Fast mode needs no beta header on Fable 5.2 (nor on Opus 5.5).
-    expect(requests[0].headers.get("anthropic-beta") ?? "").not.toContain("fast-mode");
+    // Fast mode needs no beta header on Fable 5.2 (nor on Opus 5.5); `block_binding` needs this one.
+    expect(requests[0].headers.get("anthropic-beta")).toBe("thinking-binding-controls-2026-08-01");
   }
 });
 

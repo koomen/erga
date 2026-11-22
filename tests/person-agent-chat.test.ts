@@ -99,7 +99,7 @@ test("a stored transcript shows text that streamed after the last checkpoint as 
       { kind: "tool", id: "t1", name: "list_tasks", path: null, status: "running" },
       { kind: "assistant", text: "I'll look at" },
     ],
-    state: { running: true, queued: [], calls: { t1: {} }, model: null, stable: 2, meta: {}, at: 1 },
+    state: { running: true, queued: [], calls: { t1: {} }, model: null, bound: null, stable: 2, meta: {}, at: 1 },
   };
   const back = restoredLog(stored);
   expect(back.busy).toBe(true);

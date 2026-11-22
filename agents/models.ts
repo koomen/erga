@@ -11,7 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AiError, LanguageModel, type Prompt, type Response } from "effect/ai";
-import { FetchHttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import type { AnthropicLanguageModel } from "@effect/ai-anthropic";
 import { CREDENTIALS, type Credentials, type PersonKeys } from "../server/directory/index.ts";
 import {
@@ -179,6 +179,10 @@ const failing = (why: string): Layer.Layer<LanguageModel.LanguageModel> => {
  * Claude runs on Effect AI's Anthropic provider: adaptive thinking with summaries (so the panel can show them), the
  * effort, and fast mode (`speed: "fast"`: Opus 5.5 and Fable 5.2 take it with no beta header); tools go as plain JSON
  * Schema, not strict. The other providers' models run through the Pi router (agents/pi-model.ts).
+ *
+ * Anthropic refuses a request for a thinking block made under another system prompt, tool list or earlier messages
+ * ("bound to a different conversation"). The loop sends no such block that it knows of (thinkingFrom, fitPictures);
+ * for one it doesn't know of, each request asks the API to drop the block and answer (`drop_block`, with BINDING).
  */
 export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Layer.Layer<LanguageModel.LanguageModel> {
   if (isScript(cfg) || choice == null) return scriptModel(choice ? MODELS[choice].label : "script");
@@ -188,24 +192,41 @@ export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Lay
   if (m.provider != "anthropic") return pi({ provider: m.provider, id: m.id, apiKey, effort: cfg.effort, fast: m.fast });
   const config = {
     max_tokens: 64_000,
-    thinking: { type: "adaptive", display: "summarized" },
+    thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } },
     output_config: { effort: cfg.effort },
     structuredOutputs: false,
     ...(m.fast ? { speed: "fast" } : {}),
   } as unknown as AnthropicConfig;
-  return anthropic(m.id, config, apiKey);
+  return anthropic(m.id, config, apiKey, BINDING);
 }
+
+/** The value of the anthropic-beta header that lets a request set `thinking.block_binding`. */
+const BINDING = "thinking-binding-controls-2026-08-01";
 
 // The providers' code is large (the Anthropic API's schemas, Pi's catalog of models), and only a turn needs it: each
 // loads at its first use, in a module of its own, so the Worker starts without it (tests/worker-start.test.ts).
 
-/** Claude on Effect AI's Anthropic provider. */
-const anthropic = (model: string, config: AnthropicConfig, apiKey: Redacted.Redacted<string>): Layer.Layer<LanguageModel.LanguageModel> =>
+/** Claude on Effect AI's Anthropic provider; `beta`: one more value of each request's anthropic-beta header. */
+const anthropic = (
+  model: string,
+  config: AnthropicConfig,
+  apiKey: Redacted.Redacted<string>,
+  beta?: string
+): Layer.Layer<LanguageModel.LanguageModel> =>
   Layer.unwrap(
     Effect.promise(() => import("@effect/ai-anthropic")).pipe(
       Effect.map(({ AnthropicClient, AnthropicLanguageModel }) =>
         AnthropicLanguageModel.layer({ model, config }).pipe(
-          Layer.provide(AnthropicClient.layer({ apiKey })),
+          Layer.provide(
+            AnthropicClient.layer({
+              apiKey,
+              transformClient: HttpClient.mapRequest((req) =>
+                beta
+                  ? HttpClientRequest.setHeader(req, "anthropic-beta", [req.headers["anthropic-beta"], beta].filter(Boolean).join(","))
+                  : req
+              ),
+            })
+          ),
           Layer.provide(FetchHttpClient.layer),
           // The fetch of the moment: Effect's default is the first one it saw (a test's stub, say).
           Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))
@@ -280,6 +301,18 @@ export function messagesFor<M extends { role: string; content: unknown }>(
     return content.length ? [{ ...m, content }] : [];
   });
 }
+
+/**
+ * The messages without Claude's thinking in those before `from`: that thinking was made under another system prompt
+ * or tool list (a deploy changed them), and Anthropic refuses it then. The thinking made since stays: the API takes a
+ * conversation whose oldest thinking is gone.
+ */
+export const thinkingFrom = <M extends { role: string; content: unknown }>(messages: readonly M[], from: number): readonly M[] =>
+  messages.map((m, i) =>
+    i < from && m.role == "assistant" && Array.isArray(m.content)
+      ? { ...m, content: (m.content as Sent[]).filter((p) => !(p.type == "reasoning" && p.options?.anthropic?.info != null)) }
+      : m
+  );
 
 type AnthropicConfig = NonNullable<Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]>;
 type Piece = { type?: string; mediaType?: string; data?: unknown; modelOutput?: readonly Piece[] };
