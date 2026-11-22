@@ -1,4 +1,4 @@
-// `bun erga start` and `bun erga clean` (deploy/cli/folders.ts), on a real origin and clone: a task's folder starts
+// `bun erga start` and `bun erga clean` (deploy/cli/folders.ts), on a real origin and clone: a project's folder starts
 // at GitHub's newest staging, and clean removes only what the merge records say is merged, and production has.
 
 import { expect, test } from "bun:test";
@@ -29,7 +29,7 @@ function world() {
   return { clone, other, dir, record, log, start };
 }
 
-test("start makes the task's folder at the staging that GitHub has now, and installs", () => {
+test("start makes the project's folder at the staging that GitHub has now, and installs", () => {
   const w = world();
   // GitHub's staging moves after the clone last saw it.
   const newest = commit(w.other, "b.txt", "two");
@@ -47,11 +47,11 @@ test("start makes the task's folder at the staging that GitHub has now, and inst
   );
 });
 
-test("clean removes a merged task's folder and branch only when production has its commit", () => {
+test("clean removes a merged project's folder and branch only when production has its commit", () => {
   const w = world();
   const [done, waits, later, dirty, open] = ["done", "waits", "later", "dirty", "open"].map((n) => w.start(n));
   for (const d of [done, waits, later, dirty, open]) commit(d, "t.txt", d);
-  // Two commits on staging stand for the merged tasks; main has the first only.
+  // Two commits on staging stand for the merged projects; main has the first only.
   const onMain = commit(w.other, "m.txt", "merged one");
   sh(w.other, "git", "push", "--quiet", "origin", "staging", "staging:main");
   const onStaging = commit(w.other, "s.txt", "merged two");

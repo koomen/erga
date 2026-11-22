@@ -6,13 +6,15 @@ and `main`. There are no pull requests.
 
 ## The workflow
 
-1. Start a feature branch for each task, in a work folder of its own:
+1. Start a feature branch for each project, in a work folder of its own:
 
        bun erga start <branch>
 
    Any name but `staging` and `main`. It gets the newest staging from
    GitHub, makes the branch there, in the folder `worktrees/<branch>` of
-   the main clone, and installs the packages. Work in that folder.
+   the main clone, and installs the packages. Work in that folder. A
+   project is one whole feature: one branch, one folder, one agent, and
+   one commit on staging. Never split a project into many branches.
 2. Commit. A commit message is one line of ten words at most, with no
    body. Then push with the one command, never with `git push`:
 
@@ -76,7 +78,7 @@ and `main`. There are no pull requests.
        bun erga merge <branch> [-m "message"]
        bun erga merge a -m "message of a" b c
 
-   The message tells what the whole task does, in one line of ten words
+   The message tells what the whole project does, in one line of ten words
    at most. A `-m` is for the branch before it. Without `-m`, the message
    is the subject of the branch's first commit.
 
@@ -134,7 +136,7 @@ and `main`. There are no pull requests.
   lock is free after 30 minutes in any case. It merges and deploys
   nothing. Only `bun erga try` pushes `verify` and that ref.
 - `bun erga clean [--yes]`: lists the work folders and the local branches
-  whose task is merged (the merge records in `.erga/jobs/`) and on
+  whose project is merged (the merge records in `.erga/jobs/`) and on
   production, and removes them after a yes. One with a later commit, or
   with a change that no commit has, stays. It also removes a scratch
   folder that a crashed merge left.

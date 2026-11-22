@@ -98,7 +98,7 @@ Run setup again with the other `--deploys` answer to change who deploys.
 ## Develop
 
 `bun erga skill` tells how to work in this repository: a feature branch for
-each change, the tests, and how a change reaches staging and production.
+each project, the tests, and how a change reaches staging and production.
 `bun erga --help` lists the commands. The code is the source of truth.
 
 ## License

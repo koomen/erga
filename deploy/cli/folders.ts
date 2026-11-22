@@ -1,6 +1,6 @@
-// A task's work folder: a git worktree of the main clone, at worktrees/<branch>, on a feature branch of that name.
+// A project's work folder: a git worktree of the main clone, at worktrees/<branch>, on a feature branch of that name.
 // `bun erga start <branch>` makes one from GitHub's newest staging, with its packages installed. `bun erga clean` lists
-// the folders and the local branches whose task is merged and on production, by the merge records (.erga/jobs/), and
+// the folders and the local branches whose project is merged and on production, by the merge records (.erga/jobs/), and
 // removes them after a yes. cleanPlan decides, with no IO.
 
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -10,7 +10,7 @@ import { PROTECTED } from "./flow";
 import { sh } from "../root";
 import { proofDir } from "./proof";
 
-/** Where a task's folder is: worktrees/<branch> in the main clone (git ignores /worktrees/). */
+/** Where a project's folder is: worktrees/<branch> in the main clone (git ignores /worktrees/). */
 export const folderOf = (clone: string, branch: string) => join(clone, "worktrees", branch);
 
 /** Why `bun erga start <branch>` must not go on, or null. */

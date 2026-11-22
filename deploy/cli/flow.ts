@@ -54,7 +54,7 @@ export interface Branch {
   conflicts: string[];
   /** The tree that its merge onto staging makes (observe.ts, mergeTree): the key of its tests' record. Null: it has no merge (a conflict, or nothing ahead). */
   tree?: string | null;
-  /** Its tests (gate.ts), in words: the state, then each failed test of a failed run, for the task's agent to repair. */
+  /** Its tests (gate.ts), in words: the state, then each failed test of a failed run, for its agent to repair. */
   tests?: string[];
   at: number;
   subject: string;
@@ -97,7 +97,7 @@ export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number
 export function squashMessage(commits: Commit[], given?: string): string {
   const trailers = new Set<string>();
   for (const c of commits) for (const l of (c.body ?? "").split("\n")) if (/^Co-Authored-By:/i.test(l.trim())) trailers.add(l.trim());
-  // Newest first: the oldest commit usually names the task.
+  // Newest first: the oldest commit usually names the project.
   const text = given?.trim() || (commits.at(-1)?.subject ?? "");
   return trailers.size ? `${text}\n\n${[...trailers].join("\n")}` : text;
 }

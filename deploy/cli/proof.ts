@@ -1,9 +1,9 @@
-// `bun erga proof`: a branch's proof page, which Pete looks at before he merges. The task's agent makes it as its last
+// `bun erga proof`: a branch's proof page, which Pete looks at before he merges. Its agent makes it as its last
 // step, after `bun erga push`: one sentence that says what changed, a picture of the screen before and after the
 // change at desktop width and at phone width, the result of the tests, and the changed files. The pictures come from
 // `bun run look` (e2e/look.ts): the same arguments run in this folder (after) and in a scratch folder at the commit
 // the branch started from (before). Both sides run this folder's e2e/look.ts, so a new step of look works before too.
-// A task with nothing to show says which tests prove it (--no-picture).
+// A project with nothing to show says which tests prove it (--no-picture).
 //
 // The page is a folder in the main clone, .erga/proofs/<branch>/ (index.html, the pictures, proof.json). The ops page
 // serves it at /proof/<branch>/ (ops-page.ts), and `bun erga proof` prints that address. It is not an
