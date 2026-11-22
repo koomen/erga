@@ -21,6 +21,7 @@ import {
   threadsOf,
   unique,
 } from "./comments";
+import { zoom } from "../editor/caret-helpers";
 
 const s = await servers.main();
 
@@ -232,6 +233,8 @@ journey("comments in the editor", () => {
     await ed.press("ControlOrMeta+0");
     for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+Equal");
     await expect.poll(zoomLabel).toBe("150%");
+    // (The page's window has its new height: its text is where the click below goes.)
+    await expect.poll(() => zoom(ed)).toBe(1.5);
     await expect.poll(() => cards(ed)).toEqual([]);
     const word = async () => {
       const t = (await onScreen(ed, thread)).text;

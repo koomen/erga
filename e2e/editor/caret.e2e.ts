@@ -365,28 +365,28 @@ journey("the caret and a selection on a board that pans", () => {
     await clickEnd(".card p.note");
     await pans();
 
+    // Was a failure on GitHub's machine: after two zoom keys the browser gave the page no pointer, for good (the click
+    // below). The viewer changed the frame's scale and its size in the same screen frame, which it never does now
+    // (client/inline/viewer-zoom.ts, the trap): each change of the two here is of one alone.
+    const changes = ed.page.evaluate(
+      () =>
+        new Promise<string[]>((done) => {
+          const style = document.documentElement.style,
+            now = () => `${style.getPropertyValue("--erga-zoom") || 1} ${style.getPropertyValue("--erga-lay-h") || 1}`,
+            seen = [now()];
+          new MutationObserver(() => {
+            if (now() != seen.at(-1)) seen.push(now());
+            if (now() == "1.25 1.25") done(seen);
+          }).observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+        })
+    );
     await ed.press("ControlOrMeta+Equal");
     await ed.press("ControlOrMeta+Equal");
     await expect.poll(() => zoom(ed)).toBeCloseTo(1.25, 2);
+    const both = (await changes).filter((c, i, all) => i && c.split(" ").every((v, k) => v != all[i - 1].split(" ")[k]));
+    expect(both).toEqual([]);
     await clickEnd(".card h2");
     await pans();
-    // Was a failure on GitHub's machine: after the zoom the browser gave the page no pointer, for good
-    // (client/inline/viewer-frames.ts, the trap). The viewer hears the pointer on its frame's element then, and moves
-    // the frame by a hair, and back: the browser finds the page again (the click below), and the frame is at its place
-    // (a hair that stayed failed full screen's journey there: the frame's top was not the window's).
-    const hairs = await ed.page.evaluate(
-      () =>
-        new Promise<string[]>((done) => {
-          const f = document.getElementById("frame")!,
-            seen = [f.style.translate];
-          new MutationObserver(() => {
-            if (f.style.translate != seen.at(-1)) seen.push(f.style.translate);
-            if (seen.length == 3) done(seen);
-          }).observe(f, { attributes: true, attributeFilter: ["style"] });
-          f.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
-        })
-    );
-    expect(hairs).toEqual(["", "0px 0.0001px", ""]);
 
     // The side column scrolls (an element's scroll, not the window's). At 100%: zoomed in, the column at the window's
     // right is out of sight until the page moves sideways.
