@@ -23,8 +23,15 @@ import { clickOn } from "../helpers/press";
 import { markCard, markOf, marksSeen, markThere, watchMark } from "../helpers/save-mark";
 
 // (The scripted model: the agent's pane is on the pages.)
-// (It runs the release 222222222222: the Deploy page's live commit.)
-const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script", ERGA_VERSION: "2".repeat(12) } });
+// (It runs the release 222222222222: the Deploy page's live commit. Its deploy facts name a Worker, so it has a
+// deployer to give a token: the dev server's pretend one, dev/vite-plugin.ts.)
+const own = await servers.of("admin", {
+  env: {
+    ERGA_AGENT_MODEL: "script",
+    ERGA_VERSION: "2".repeat(12),
+    ERGA_DEPLOY: JSON.stringify({ account: "0123456789abcdef0123456789abcdef", worker: "erga" }),
+  },
+});
 
 /** Each bar's and the agent's glass, and their boxes, by the selectors in the page (the editor's, or an app page's). */
 const looks = (page: Page, sel: { left: string; right: string }) =>
@@ -441,7 +448,7 @@ journey("an admin on the admin pages", () => {
     expect(await stayed()).toBe(true);
   });
 
-  test("Deploy: Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch turns auto-deploy on; About has the repository, the branch, the commit and its release", async () => {
+  test("Deploy: with no token the row waits for one and each control is off; with one, Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch sets auto-deploy, and the row and the token's section say the same; About has the repository, the branch, the commit and its release", async () => {
     const sql = deployerSql(own!);
     const run = Effect.runPromise;
     const sha = (n: number) => String(n).repeat(40);
@@ -470,8 +477,41 @@ journey("an admin on the admin pages", () => {
       release: "released" as const,
     }));
     await run(writeLook(sql, { head: sha(3), error: null, commits }));
+    // (Auto-deploy for every commit, as a machine sets it: bun erga track --auto-deploy commits.)
+    await run(sql("UPDATE deploy_control SET auto = 1, auto_mode = 'commits' WHERE id = 1", []));
     await go("/admin/deploy", `.ops-view .row[data-sha="${sha(3)}"]`);
     const text = (selector: string) => page.evaluate((s) => document.querySelector<HTMLElement>(s)?.innerText ?? "", selector);
+    // The deployer holds no token yet. The page says one thing: the row waits for a token, with the saved mode still
+    // marked, and its control, Deploy and Roll back are off. The token's section says what a token starts.
+    const row = () =>
+      page.evaluate(() => ({
+        says: document.querySelector<HTMLElement>('[data-control="auto-mode"] .desc')!.innerText,
+        saved: document.querySelector<HTMLElement>('#auto-deploy [aria-checked="true"]')!.innerText,
+        off: document.querySelectorAll("#auto-deploy button:disabled, .ops-view :is([data-deploy], [data-rollback]):disabled").length,
+        token: document.querySelector<HTMLElement>("#token-live")!.innerText,
+      }));
+    expect(await row()).toEqual({
+      says: "Waits for a token: the deployer has none. Give it one below. Then it deploys each new commit on main by itself.",
+      saved: "Every commit",
+      // (The three modes, Deploy on two rows, and Roll back.)
+      off: 6,
+      token:
+        "The deployer has no token: it deploys nothing. Give it one below. With a token, it deploys each new commit on main by itself.",
+    });
+    // A person pastes a token, with real keys. The deployer takes it: the page comes back with each control on, and
+    // the row and the section say what the saved mode does.
+    await clickOn(page, '.deployer-token input[name="token"]');
+    await page.keyboard.type("a-token-for-the-worker");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector('#token-live [data-deployer="ready"]');
+    expect(await row()).toEqual({
+      says: "Deploys each new commit on main by itself.",
+      saved: "Every commit",
+      off: 0,
+      token: "The deployer holds a token. It deploys each new commit on main by itself.",
+    });
+    // (The token's form loaded the page: the window's mark goes on it again.)
+    await page.evaluate(() => void ((window as unknown as { stayed: boolean }).stayed = true));
     expect(await text(`.row[data-sha="${sha(2)}"] .dep.live`)).toContain("live");
     // The head's Deploy asks first; its answer goes to the deployer, which has no address: the page says that it waits.
     await clickOn(page, `.row[data-sha="${sha(3)}"] [data-deploy]`);
@@ -494,8 +534,15 @@ journey("an admin on the admin pages", () => {
     await page.waitForSelector("#auto-deploy");
     await clickOn(page, '#auto-deploy [data-auto-mode="releases"]');
     await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("releases");
-    await clickOn(page, '#auto-deploy [data-auto-mode="commits"]');
-    await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("commits");
+    // The row and the token's section follow the mode, at the click and after the page draws itself again.
+    const each = "eploys each new tagged release (vX.Y.Z) on main by itself.";
+    await soon(row).toMatchObject({ says: `D${each}`, saved: "Releases only", token: `The deployer holds a token. It d${each}` });
+    await clickOn(page, '#auto-deploy [data-auto-mode="off"]');
+    await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("off");
+    await soon(row).toMatchObject({
+      says: "Auto-deploy is off. Use Deploy on a row below to deploy by hand.",
+      token: "The deployer holds a token. It deploys only when you use Deploy on a row above: auto-deploy is off.",
+    });
     // About, the last link of the sidebar: the spec's repository and branch, the commit that the server runs (as the
     // deployer's look saw it), and the release tag that GitHub (the pretend one) has at that commit.
     await go("/admin/about", ".server dl");

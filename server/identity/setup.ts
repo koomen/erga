@@ -295,7 +295,7 @@ function rowsOf(o: RowsOf): { id: Row; title: string; state: State; body: string
 export const tokenSteps = (
   account: string,
   worker: string
-) => `<p>A deployer in your Cloudflare account deploys each new release of Erga by itself. It needs a token that can change the Worker <code>${esc(worker)}</code>, and nothing else.</p>
+) => `<p>A deployer in your Cloudflare account deploys this server. It needs a token that can change the Worker <code>${esc(worker)}</code>, and nothing else.</p>
 <ol class="how">
   <li>Open <a href="https://dash.cloudflare.com/${esc(account)}/api-tokens" target="_blank" rel="noopener">Account API tokens</a> on Cloudflare, and choose Create Token.</li>
   <li>Give it one permission: Workers, for the Worker <code>${esc(worker)}</code> only, with the role Editor. No other permission, and no other Worker: the database needs none.</li>

@@ -32,6 +32,7 @@ async function server() {
     signIn: { mode: "oauth" },
     sessionOf: (request: Request) => sessionOf(platform, request),
     dev: () => false,
+    deploy: { version: null, domains: [], app: null, deployer: null },
   } as unknown as Platform;
   const ada = { login: "ada", provider: "github", subject: "1001" };
   const grant = await grants.make(ada, "Ada's", { scope: "admin" });

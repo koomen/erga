@@ -3,10 +3,13 @@
 // or off. The server deploys nothing itself. A deployer in the instance's own cloud account does (deploy/deployer/),
 // and it has no address: an ask goes into the instance's database (server/directory/deploys.ts), and the deployer
 // starts it at its next look, within a minute. An instance with no deployer deploys from a machine (`bun erga
-// deploy`): then nobody has the ask, and the read says so.
+// deploy`): then nobody has the ask, and the read says so. A deployer that can't deploy now (it holds no token, or it
+// does not look) takes no ask either: the operation refuses as the page's controls are off, with the same words
+// (shared/deployer.ts).
 
 import * as Schema from "effect/Schema";
-import { machineAuto, noDeployer } from "../admin/index.ts";
+import { blocked, deployerOf } from "../../shared/deployer.ts";
+import { deployerNow, machineAuto } from "../admin/index.ts";
 import type { DeployJob, DeployState } from "../directory/index.ts";
 import { type Caller, iso, type Operation, OperationError, said } from "./operation.ts";
 
@@ -51,14 +54,21 @@ export const DEPLOY_OPERATIONS: Operation[] = [
         return { job: jobOf(job), log };
       }
       const runs = caller.platform?.deploy.version ?? null;
+      const { at } = await deployerNow(caller.platform, !!state.look);
+      const why = blocked(at, hostOf(caller));
       return {
         runs,
         tracks: state.tracks,
         deployer: state.look
-          ? { looked: iso(state.look.at), head: state.look.head, ...(state.look.error ? { error: state.look.error } : {}) }
-          : noDeployer(hostOf(caller)),
+          ? {
+              looked: iso(state.look.at),
+              head: state.look.head,
+              ...(state.look.error ? { error: state.look.error } : {}),
+              ...(why ? { blocked: why } : {}),
+            }
+          : why,
         // With no deployer the switch is nobody's: auto-deploy is a machine's, and the read says what the server knows of it.
-        autoDeploy: state.look ? state.auto : machineAuto(state.jobs, Date.now()),
+        autoDeploy: at == "none" ? machineAuto(state.jobs, Date.now()) : state.auto,
         ...(state.latestRelease ? { latestRelease: state.latestRelease } : {}),
         ...(state.ask
           ? {
@@ -79,7 +89,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
           ...(runs && c.sha.startsWith(runs) ? { live: true } : {}),
         })),
         jobs: state.jobs.map(jobOf),
-        note: "commits: the last ones of the branch, newest first, as the deployer saw them at its last look. release: released (deploy takes it), none (GitHub has no release of it yet) or refused. autoDeploy: off, releases (tagged vX.Y.Z releases only) or commits (every commit). An ask starts within a minute, as a job.",
+        note: "commits: the last ones of the branch, newest first, as the deployer saw them at its last look. release: released (deploy takes it), none (GitHub has no release of it yet) or refused. autoDeploy: off, releases (tagged vX.Y.Z releases only) or commits (every commit): the saved mode. deployer.blocked: why the deployer deploys nothing now, and takes no ask. An ask starts within a minute, as a job.",
       };
     },
   },
@@ -89,7 +99,11 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     label: "Deploy the server",
     activity: "asking the deployer",
     admin: true,
-    off: async (caller) => ((await caller.dir.deploys.hasDeployer()) ? null : noDeployer(hostOf(caller))),
+    // (Whether the deployer holds its token is asked when an ask runs, not for each list of the tools.)
+    off: async (caller) =>
+      (await caller.dir.deploys.hasDeployer())
+        ? null
+        : blocked(deployerOf(false, caller.platform?.deploy.deployer ? { ok: true, ready: true, head: null } : null).at, hostOf(caller)),
     description: "Asks this server's deployer to deploy a commit or to roll back, or sets auto-deploy (off, releases, commits).",
     asks: (args) =>
       args.action == "auto"
@@ -119,6 +133,8 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     }),
     run: async (args, caller) => {
       const { dir, who } = caller;
+      const why = blocked((await deployerNow(caller.platform, true)).at, hostOf(caller));
+      if (why) throw new OperationError({ message: why, status: 409 });
       if (args.action == "auto") {
         const mode = args.mode;
         if (mode !== "off" && mode !== "releases" && mode !== "commits")

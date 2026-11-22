@@ -9,6 +9,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { openEditor } from "./helpers/editor";
 import { ROOT } from "./helpers/env";
+import * as Effect from "effect/Effect";
+import { writeLook } from "../deploy/deployer/control";
+import { writeSpec } from "../deploy/deployer/instance";
+import { deployerSql } from "./helpers/deployer";
 import { copyFixture, descendants, startServer, type Server } from "./helpers/server";
 
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
@@ -16,6 +20,8 @@ bun run look --view [--doc ...] [--out <file.png>] [tap:<selector> | type:<text>
                                                             the document as a reader sees it, with no editor
 bun run look --path /documents [--out <file.png>] [tap:<selector> | type:<text> | <key> | shows:<selector>]...
                                                             a page of the server by its path, signed in
+                                                            (/admin/deploy: a made-up instance, whose deployer holds
+                                                            no token until a step pastes one)
 bun run look --ops <host>[/<tab>] [--out <file.png>] [hover:<selector> | tap:<selector>]...
                                                             the ops page (bun erga) of an instance, with made-up facts
 
@@ -77,7 +83,7 @@ if (flag("--help") || flag("-h")) {
 
 /** The kept server's record, one for each checkout. */
 const KEPT = join(tmpdir(), `erga-look-${Bun.hash(ROOT).toString(36)}.json`);
-type Kept = { pid: number; root: string; scratch: string };
+type Kept = { pid: number; root: string; scratch: string; secret: string };
 /** The kept server, if it still answers. */
 const kept = async (): Promise<Kept | null> => {
   if (!existsSync(KEPT)) return null;
@@ -289,9 +295,11 @@ const built = spawnSync("bun", [join(ROOT, "client/build.ts")], { cwd: ROOT, std
 if (built.status != 0) process.exit(built.status ?? 1);
 
 /** The server: the kept one, or a new one (kept, or stopped at the end, by its PID). */
-let root: string, scratch: string, stop: (() => void) | undefined;
+let root: string, scratch: string, secret: string, stop: (() => void) | undefined;
+/** The Deploy page (/admin/deploy), which shows a server's own deploys: the look gives the server made-up ones. */
+const deployPage = !!pathArg?.startsWith("/admin/deploy");
 const k = await kept();
-if (k) ({ root, scratch } = k);
+if (k) ({ root, scratch, secret } = k);
 else {
   // (With a say: step, or a step that types "@script" (a comment to the agent), the agent is on, on the scripted model.)
   const s = await startServer({
@@ -299,12 +307,52 @@ else {
     latency,
     env: {
       ...(args.some((a) => /^(say|ask):/.test(a) || a.includes("@script")) ? { ERGA_AGENT_MODEL: "script" } : {}),
+      // The Deploy page: the server runs the release 222222222222, and its deploy facts name a Worker, so it has a
+      // deployer to ask: the dev server's pretend one (dev/vite-plugin.ts, /__deployer).
+      ...(deployPage
+        ? { ERGA_VERSION: "2".repeat(12), ERGA_DEPLOY: JSON.stringify({ account: "0123456789abcdef0123456789abcdef", worker: "erga" }) }
+        : {}),
     },
   });
-  ({ root, scratch } = s);
+  ({ root, scratch, secret } = s);
   if (keep) {
-    writeFileSync(KEPT, JSON.stringify({ pid: s.pid()!, root, scratch } satisfies Kept));
+    writeFileSync(KEPT, JSON.stringify({ pid: s.pid()!, root, scratch, secret } satisfies Kept));
   } else stop = () => s.dispose();
+}
+// The Deploy page's instance: its spec, and its deployer's look at GitHub just now. It tracks main, with auto-deploy
+// for every commit, and runs the commit before the head. Its deployer holds no token: a step pastes one in the page.
+// (A server that --keep left running before a look of another page has no deployer: --stop it first.)
+if (deployPage) {
+  const sql = deployerSql({ root, secret });
+  const sha = (n: number) => String(n).repeat(40);
+  const subjects = ["Search finds a document by its title", "Sign-in says why it refused", "A page keeps its place after a reload"];
+  await fetch(`${root}/__deployer`, { method: "DELETE" });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* writeSpec(sql, {
+        repo: "github.com/example/erga",
+        branch: "main",
+        target: {
+          kind: "cloudflare",
+          account: "0123456789abcdef0123456789abcdef",
+          worker: "erga",
+          database: "erga",
+          app: { kind: "domain", zoneName: "example.com", hostname: "example.com" },
+          pages: { kind: "zone", zoneName: "example-pages.com" },
+        },
+        settings: {},
+        secrets: [],
+      });
+      const commits = subjects.map((title, i) => ({
+        sha: sha(3 - i),
+        title,
+        at: Date.now() - (i + 1) * 3_600_000,
+        release: "released" as const,
+      }));
+      yield* writeLook(sql, { head: sha(3), error: null, commits });
+      yield* sql("UPDATE deploy_control SET auto = 1, auto_mode = 'commits' WHERE id = 1", []);
+    })
+  );
 }
 /** The documents open so far, by name: the first one (--doc), and each fixture of an open: step. */
 const opened = new Map<string, { dir: string; address: string }>();

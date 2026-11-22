@@ -117,7 +117,9 @@ const Says = Schema.Union([
  */
 const deployerOf = (env: Env, facts: unknown): Platform["deploy"]["deployer"] => {
   const f = facts as { account?: unknown; worker?: unknown } | null;
-  const binding = env.DEPLOYER;
+  // Local development has no binding: there the dev server's pretend deployer answers (dev/vite-plugin.ts, /__deployer).
+  const dev = env.DEV_LOGIN?.trim() && env.ERGA_DEV_ORIGIN ? `${env.ERGA_DEV_ORIGIN}/__deployer` : null;
+  const binding = env.DEPLOYER ?? (dev ? { fetch: (_: string, init: RequestInit) => fetch(dev, init) } : null);
   if (!binding || typeof f?.account != "string" || typeof f.worker != "string") return null;
   const none: DeployerSays = {
     ok: false,

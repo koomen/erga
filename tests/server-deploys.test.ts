@@ -12,6 +12,8 @@ import { type Commit, readControl, startOf, takeAsk, writeLook } from "../deploy
 import { LEASE_MS, NoTable, openJob, readJobs, type Sql, writeSpec } from "../deploy/deployer/instance";
 import type { Spec } from "../deploy/deployer/spec";
 import { DEPLOYER_MS } from "../server/directory/index.ts";
+import { autoText, blocked, deployerOf, deploys, tokenText } from "../shared/deployer.ts";
+import { esc } from "../shared/html.ts";
 import { OPERATIONS } from "../server/operations/index.ts";
 import { runTool, server } from "./helpers/app";
 
@@ -266,11 +268,14 @@ test("what an ask refuses, a rollback, an ask in the place of one that waits, an
   expect(asks({ action: "auto", mode: "commits" })).toBe("Set auto-deploy to every commit for this server");
 });
 
-test("the deployer's token: the Deploy page says whether the deployer holds one, and hands it a pasted one; only an admin, and only where there is a deployer", async () => {
-  const { s } = await world();
+test("the deployer's token: the Deploy page says whether the deployer holds one, and hands it a pasted one; with none, the row waits for a token and each control is off; only an admin, and only where there is a deployer", async () => {
+  const { s, page } = await world();
   const TOKEN = "t".repeat(40);
-  const held = { yes: false, asked: [] as string[] };
-  const says = () => ({ ok: true as const, ready: held.yes, head: held.yes ? sha(4) : null });
+  const held = { yes: false, silent: false, asked: [] as string[] };
+  const says = () =>
+    held.silent
+      ? { ok: false as const, why: "The deployer gave no answer." }
+      : { ok: true as const, ready: held.yes, head: held.yes ? sha(4) : null };
   const post = (token: string, user = "") =>
     s.fetch(`/admin/deploy/token${user}`, {
       method: "POST",
@@ -278,9 +283,20 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
       headers: { origin: "http://localhost", "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token }).toString(),
     });
-  // A server with no deployer in the cloud has no such section, and takes no token.
+  /** The view's answer: the live part, and the token section's words. */
+  const view = async () => (await (await s.fetch("/admin/deploy/view")).json()) as { html: string; token: string | null };
+  /** The Auto-deploy row's words, and its buttons. */
+  const row = (html: string) => ({
+    says: /data-auto-desc [^>]*>([^<]*)</.exec(html)![1].replaceAll("&#39;", "'"),
+    off: (html.match(/data-auto-mode="\w+" disabled>/g) ?? []).length,
+    saved: /aria-checked="true" data-auto-mode="(\w+)"/.exec(html)![1],
+  });
+  const auto = (mode: string) => runTool(s, "deploy", { action: "auto", mode });
+  // A server with no deployer to give a token (its deployer needs none) has no such section, and takes no token.
   expect(await (await s.fetch("/admin/deploy")).text()).not.toContain("deployer-token");
+  expect((await view()).token).toBeNull();
   expect((await post(TOKEN)).status).toBe(404);
+  expect((await auto("commits")).status).toBe(200);
 
   s.platform.deploy.deployer = {
     account: "acc-1",
@@ -295,9 +311,30 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
   };
   // No token yet: the section says that the deployer deploys nothing, and how to make the token for this Worker.
   let html = await (await s.fetch("/admin/deploy")).text();
-  expect(html).toContain('data-ready="false"');
-  expect(html).toContain("<b>The deployer has no token: it deploys nothing.</b>");
+  expect(html).toContain(
+    '<div id="token-live"><p class="lede" data-deployer="waits" data-give="Give the deployer a token"><b>The deployer has no token: it deploys nothing.</b> Give it one below. <span data-token-does>With a token, it deploys each new commit on main by itself.</span></p></div>'
+  );
+  expect(html).toContain("<summary>Give the deployer a token</summary>");
   expect(html).toContain("for the Worker <code>erga</code> only, with the role Editor");
+  // The Auto-deploy row says the same, and not that it deploys: the saved mode stays marked, and its control is off.
+  expect(row(html)).toEqual({
+    says: "Waits for a token: the deployer has none. Give it one below. Then it deploys each new commit on main by itself.",
+    off: 3,
+    saved: "commits",
+  });
+  expect(html).toContain('data-control="auto-mode" data-deployer="waits"');
+  // Deploy and Roll back are off too, and say why. The operations refuse with the same words, and the read has them.
+  const NO =
+    'The deployer has no token: it deploys nothing. Give it one on the Deploy page (/admin/deploy), under "The deployer\'s token".';
+  const tip = esc(NO);
+  expect(html).toContain(
+    `<span class="tip" title="${tip}"><button class="btn" type="button" data-deploy data-host="localhost" data-sha="${sha(3)}"`
+  );
+  expect(html).toMatch(new RegExp(`data-sha="${sha(3)}"[^>]* disabled>Deploy</button>`));
+  expect(html).toMatch(/data-rollback [^>]* disabled>Roll back<\/button>/);
+  for (const args of [{ action: "deploy", commit: sha(3) }, { action: "rollback" }, { action: "auto", mode: "off" }])
+    expect(await runTool(s, "deploy", args)).toMatchObject({ status: 409, error: NO });
+  expect((await runTool(s, "deploys")).result).toMatchObject({ autoDeploy: "commits", deployer: { head: sha(4), blocked: NO } });
   // A token that the deployer refuses: the page again, with the deployer's reason at the field, and never the token.
   const refused = await post("w".repeat(40));
   html = await refused.text();
@@ -308,13 +345,68 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
   const taken = await post(` ${TOKEN} `);
   expect([taken.status, taken.headers.get("location")]).toEqual([303, "/admin/deploy"]);
   html = await (await s.fetch("/admin/deploy")).text();
-  expect(html).toContain('data-ready="true"');
-  expect(html).toContain(`The deployer holds a token, and is at <code>${sha(4).slice(0, 12)}</code>.`);
-  expect(html).toContain("Give the deployer another token");
+  const holds = `The deployer holds a token, and is at <code>${sha(4).slice(0, 12)}</code>.`;
+  expect(html).toContain(
+    `<p class="lede" data-deployer="ready" data-give="Give the deployer another token">${holds} <span data-token-does>It deploys each new commit on main by itself.</span></p>`
+  );
+  expect(html).toContain("<summary>Give the deployer another token</summary>");
   expect(html).not.toContain(TOKEN);
+  // With a token the controls are on, and the row and the section say what the saved mode does: each mode, in both.
+  expect(row(html)).toEqual({ says: "Deploys each new commit on main by itself.", off: 0, saved: "commits" });
+  expect(html).not.toMatch(/disabled>(Deploy|Roll back)</);
+  expect((await runTool(s, "deploys")).result.deployer).toEqual({ looked: expect.any(String), head: sha(4) });
+  expect((await auto("releases")).status).toBe(200);
+  let now = await view();
+  expect(row(now.html).says).toBe("Deploys each new tagged release (vX.Y.Z) on main by itself.");
+  expect(now.token).toContain(`${holds} <span data-token-does>It deploys each new tagged release (vX.Y.Z) on main by itself.</span>`);
+  expect((await auto("off")).status).toBe(200);
+  now = await view();
+  expect(row(now.html)).toEqual({ says: "Auto-deploy is off. Use Deploy on a row below to deploy by hand.", off: 0, saved: "off" });
+  expect(now.token).toContain(
+    `${holds} <span data-token-does>It deploys only when you use Deploy on a row above: auto-deploy is off.</span>`
+  );
+  // A deployer that gives no answer about its token: the section says so, and nothing says that it can't deploy.
+  held.silent = true;
+  now = await view();
+  expect(now.token).toBe('<p class="lede" data-deployer="silent" data-give="Give the deployer a token">The deployer gave no answer.</p>');
+  expect(row(now.html).off).toBe(0);
+  held.silent = false;
+  // A deployer that stopped: its last look is old. The row says so, with its control off, and nothing names a machine.
+  s.sql.db.run("UPDATE deploy_control SET looked = looked - ?", [DEPLOYER_MS + 1000]);
+  const AWAY = "The deployer does not look at GitHub now: it deploys nothing.";
+  now = await view();
+  expect(row(now.html)).toEqual({ says: `${AWAY} Auto-deploy is off.`, off: 3, saved: "off" });
+  expect(now.html).toContain(`<div class="none">${AWAY}</div>`);
+  expect(now.html).not.toContain("machine");
+  expect(now.token).toBe(`<p class="lede" data-deployer="away" data-give="Give the deployer a token">${AWAY}</p>`);
+  expect(await runTool(s, "deploy", { action: "rollback" })).toMatchObject({ status: 403, error: AWAY });
+  expect((await runTool(s, "deploys")).result).toMatchObject({ deployer: AWAY, autoDeploy: "off" });
   // Only an admin, from this site's own page.
   expect((await post(TOKEN, "?user=ada")).status).toBe(403);
   expect(held.asked).toEqual(["w".repeat(40), TOKEN]);
+});
+
+test("the deployer's state is one value, from whether it looked and what it says of its token", () => {
+  const holds = { ok: true as const, ready: true, head: sha(4) };
+  const none = { ok: true as const, ready: false, head: null };
+  const silent = { ok: false as const, why: "No answer." };
+  expect([deployerOf(false, null), deployerOf(true, null)]).toEqual([{ at: "none" }, { at: "ready", head: null }]);
+  expect([deployerOf(true, none), deployerOf(false, none)]).toEqual([{ at: "waits" }, { at: "waits" }]);
+  expect([deployerOf(true, holds), deployerOf(false, holds)]).toEqual([{ at: "ready", head: sha(4) }, { at: "away" }]);
+  expect([deployerOf(true, silent), deployerOf(false, silent)]).toEqual([{ at: "silent", why: "No answer." }, { at: "away" }]);
+  // The controls are on only where an ask reaches a deployer that deploys; elsewhere something says why not.
+  for (const at of ["none", "waits", "away", "silent", "ready"] as const)
+    expect([at, deploys(at), blocked(at, "example.com") == null]).toEqual([
+      at,
+      at == "ready" || at == "silent",
+      at == "ready" || at == "silent",
+    ]);
+  expect(autoText("waits", "off", "main")).toBe("Waits for a token: the deployer has none. Give it one below. Auto-deploy is off.");
+  expect(autoText("away", "releases", "main")).toBe(
+    "The deployer does not look at GitHub now: it deploys nothing. When it looks again, it deploys each new tagged release (vX.Y.Z) on main by itself."
+  );
+  expect(tokenText("waits", "off", "main")).toBe("With a token, it deploys only when you use Deploy on a row above: auto-deploy is off.");
+  expect([tokenText("silent", "commits", "main"), tokenText("away", "commits", "main")]).toEqual(["", ""]);
 });
 
 test("a job's state is the one that the ops page of a machine reads from the same row", async () => {

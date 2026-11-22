@@ -132,8 +132,11 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   {
     method: "GET",
     path: "/admin/deploy/view",
-    // {html}: the page's live part, as it is now. The page's script draws it again.
-    run: async (a) => json({ html: await deployLive(a.platform, a.session, a.url) }),
+    // {html, token}: the page's live part and the token section's words, as they are now. The page's script draws them again.
+    run: async (a) => {
+      const { html, token } = await deployLive(a.platform, a.session, a.url);
+      return json({ html, token });
+    },
     action: "Read the same again, for the open page (Deploy)",
     domain: "admin",
     tool: "deploys",

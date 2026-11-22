@@ -42,6 +42,7 @@ async function server() {
     signIn: { mode: "oauth" },
     sessionOf: (request: Request) => sessionOf(platform, request),
     dev: () => false,
+    deploy: { version: null, domains: [], app: null, deployer: null },
     docs: { list: async (login: string) => (await dir.lists.list(login)).map((d) => ({ ...d, modified: d.created })) },
   } as unknown as Platform;
   /** A request to the server's API as an agent with the grant `g` of `who`. */

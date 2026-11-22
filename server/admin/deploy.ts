@@ -7,20 +7,24 @@
 //
 // The deployer holds a token for this server's Worker only, which a person gives it: on a new server's setup page, and
 // here after that (tokenSection, POST /admin/deploy/token: server/admin/routes.ts). The server hands the token to the
-// deployer and keeps nothing of it; the deployer checks it, and the page shows its answer. With no token the
-// deployer looks at GitHub and deploys nothing, and the section says so.
+// deployer and keeps nothing of it; the deployer checks it, and the page shows its answer.
+//
+// Where the deployer is now is one value (shared/deployer.ts, deployerNow): the Auto-deploy row, each button and the
+// token's section all come from it, so they agree. With no token the deployer looks at GitHub and deploys nothing:
+// the row says that it waits for a token, with the saved mode still shown, and the control and the buttons are off.
 //
 // A server with no deployer deploys from a machine: the page says so, and what it knows of that machine's
-// auto-deploy, and shows its jobs, with no commits and no button. The page's script (client/inline/admin-deploy.ts) draws the live part again (GET /admin/deploy/view) while the
-// page is open.
+// auto-deploy, and shows its jobs, with no commits and no button. The page's script (client/inline/admin-deploy.ts)
+// draws the live part and the token section's words again (GET /admin/deploy/view) while the page is open.
 
+import { autoText, blocked, AWAY, type Deployer, deployerOf, deploys, NO_TOKEN, tokenText } from "../../shared/deployer.ts";
 import { esc } from "../../shared/html.ts";
 import { type InstanceView, instanceHtml } from "../../shared/ops-view.ts";
 import { timeAgo } from "../../shared/time.ts";
 import type { AutoDeployMode, DeployState } from "../directory/index.ts";
 import { TOKEN_FIELD, tokenSteps } from "../identity/index.ts";
 import { inlineCall, link } from "../pages/index.ts";
-import { type DeployerSays, type Platform, type Session, whoOf } from "../platform.ts";
+import { type Platform, type Session, whoOf } from "../platform.ts";
 import { adminPage } from "./layout.ts";
 
 /** How often the page asks again: while a job runs or an ask waits, and else. */
@@ -33,16 +37,12 @@ const AUTO_OPTIONS: readonly { mode: AutoDeployMode; label: string }[] = [
   { mode: "commits", label: "Every commit" },
 ];
 
-const autoDesc = (mode: AutoDeployMode, branch: string) =>
-  mode == "off"
-    ? "Auto-deploy is off. Use Deploy on a row below to deploy by hand."
-    : mode == "releases"
-      ? `Deploys each new tagged release (vX.Y.Z) on ${branch} by itself.`
-      : `Deploys each new commit on ${branch} by itself.`;
-
-/** What a server with no deployer says: here, and in the operations (server/operations/deploys.ts). */
-export const noDeployer = (host: string) =>
-  `No deployer in the cloud deploys ${host}: its deploys come from a machine (bun erga deploy ${host}).`;
+/**
+ * Where the server's deployer is now: the one value that this page and the operations (server/operations/deploys.ts)
+ * decide with. `looked`: a deployer looked at GitHub lately (DeployState, look). It asks the deployer about its token.
+ */
+export const deployerNow = async (platform: Platform | undefined, looked: boolean): Promise<Deployer> =>
+  deployerOf(looked, platform?.deploy.deployer ? await platform.deploy.deployer.ask() : null);
 
 /**
  * Where auto-deploy runs for a server with no deployer, here and in the read (server/operations/deploys.ts). It is
@@ -59,14 +59,17 @@ export function machineAuto(jobs: DeployState["jobs"], now: number): string {
   return `Auto-deploy: not known. It runs on a machine (bun erga --auto-deploy), which this server can't ask: ${seen}. ${how}`;
 }
 
-/** The Auto-deploy setting row: Off, Releases only, or Every commit. */
-const autoRow = (state: DeployState) => {
-  const branch = state.tracks?.branch ?? "the branch";
+/**
+ * The Auto-deploy setting row: Off, Releases only, or Every commit. With a deployer that can't deploy, the control is
+ * off, the saved mode stays marked, and the row says what the deployer waits for.
+ */
+const autoRow = (state: DeployState, at: Deployer["at"], branch: string) => {
+  const off = deploys(at) ? "" : " disabled";
   const buttons = AUTO_OPTIONS.map(
-    (o) => `<button type="button" role="radio" aria-checked="${state.auto == o.mode}" data-auto-mode="${o.mode}">${o.label}</button>`
+    (o) => `<button type="button" role="radio" aria-checked="${state.auto == o.mode}" data-auto-mode="${o.mode}"${off}>${o.label}</button>`
   ).join("");
-  return `<ol class="rows" aria-label="Auto-deploy"><li class="setting" data-control="auto-mode">
-    <div class="about"><div class="head"><span class="key" id="auto-deploy-label">Auto-deploy</span></div><p class="desc" data-auto-desc data-branch="${esc(branch)}">${esc(autoDesc(state.auto, branch))}</p></div>
+  return `<ol class="rows" aria-label="Auto-deploy"><li class="setting" data-control="auto-mode" data-deployer="${at}">
+    <div class="about"><div class="head"><span class="key" id="auto-deploy-label">Auto-deploy</span></div><p class="desc" data-auto-desc data-branch="${esc(branch)}">${esc(autoText(at, state.auto, branch))}</p></div>
     <div class="value"><div class="seg" id="auto-deploy" role="radiogroup" aria-labelledby="auto-deploy-label">${buttons}</div></div>
     <p class="hint" role="status"></p>
   </li></ol>`;
@@ -81,20 +84,50 @@ function looked(look: NonNullable<DeployState["look"]>, now: number): string {
   return `<p class="checked" aria-label="Checks"><span>Checked:</span><span class="check ${cls}"><i class="light ${cls}"></i>${what}</span></p>`;
 }
 
-/** The page's live part: the Auto-deploy switch and the view, as they are now. */
-export async function deployLive(platform: Platform, session: Session, url: URL, now = Date.now()): Promise<string> {
+/** The label of the token's form, which the page's script sets again with the words (data-give). */
+const give = (at: Deployer["at"]) => (at == "ready" ? "Give the deployer another token" : "Give the deployer a token");
+
+/**
+ * The token section's words, for a server that has a deployer to ask: whether it holds a token, and what it does with
+ * the saved mode. The page's script draws them again, and sets the mode's words (data-token-does) at a click.
+ */
+function tokenLede(d: Deployer, mode: AutoDeployMode, branch: string): string {
+  const does = `<span data-token-does>${esc(tokenText(d.at, mode, branch))}</span>`;
+  const says =
+    d.at == "ready"
+      ? `The deployer holds a token${d.head ? `, and is at <code>${esc(d.head.slice(0, 12))}</code>` : ""}. ${does}`
+      : d.at == "waits"
+        ? `<b>${NO_TOKEN}</b> Give it one below. ${does}`
+        : esc(d.at == "silent" ? d.why : AWAY);
+  return `<p class="lede" data-deployer="${d.at}" data-give="${give(d.at)}">${says}</p>`;
+}
+
+/** The page's parts that change by themselves: `html`, the Auto-deploy row and the view; `token`, the token section's words (null: no deployer to give one). */
+export async function deployLive(
+  platform: Platform,
+  session: Session,
+  url: URL,
+  now = Date.now()
+): Promise<{ html: string; token: string | null; deployer: Deployer }> {
   const who = whoOf(session);
-  const deploys = platform.directory.deploys;
-  const state = await deploys.state(who, now);
+  const jobs = platform.directory.deploys;
+  const state = await jobs.state(who, now);
+  const deployer = await deployerNow(platform, !!state.look);
+  const at = deployer.at;
   const host = url.host;
+  const token = platform.deploy.deployer ? tokenLede(deployer, state.auto, state.tracks?.branch ?? "its branch") : null;
   if (!state.tracks)
-    return `<p class="lede">${esc(host)} has no deploy spec yet: its next deploy from a machine writes it (bun erga deploy ${esc(host)}).</p>`;
+    return {
+      html: `<p class="lede">${esc(host)} has no deploy spec yet: its next deploy from a machine writes it (bun erga deploy ${esc(host)}).</p>`,
+      token,
+      deployer,
+    };
   const tab = url.searchParams.get("tab") ?? "";
   const id = url.searchParams.get("job") ?? "";
   // Logs shows one job: the one named, else the one that runs, else the last one (shared/ops-view.ts, logs). Only its log is read.
   const shown =
     tab == "logs" ? (state.jobs.find((j) => String(j.id) == id) ?? state.jobs.find((j) => j.phase == "running") ?? state.jobs[0]) : null;
-  const log = shown ? await deploys.log(who, shown.id) : null;
+  const log = shown ? await jobs.log(who, shown.id) : null;
   const runs = platform.deploy.version;
   const ask = state.ask;
   const running = state.jobs.filter((j) => j.phase == "running");
@@ -111,7 +144,9 @@ export async function deployLive(platform: Platform, session: Session, url: URL,
     commits: state.commits.length
       ? state.commits.map((c) => ({ sha: c.sha, subject: c.title, at: c.at, release: c.release, ...(c.tag ? { tag: c.tag } : {}) }))
       : null,
-    none: state.look ? (state.look.error ?? `The deployer has not seen the commits of ${state.tracks.branch} yet.`) : noDeployer(host),
+    none: state.look
+      ? (state.look.error ?? `The deployer has not seen the commits of ${state.tracks.branch} yet.`)
+      : (blocked(at, host) ?? ""),
     runs,
     lost: runsLatest
       ? `${host} runs ${latest!.tag} (${runs}), which is older than the last ${state.commits.length} commits of ${state.tracks.branch}.`
@@ -135,6 +170,7 @@ export async function deployLive(platform: Platform, session: Session, url: URL,
       : null,
     failed: null,
     busy: running.length > 0 || !!ask,
+    ...(deploys(at) ? {} : { off: blocked(at, host)! }),
     deploying: [...running.flatMap((j) => (j.kind == "deploy" && j.commit ? [j.commit] : [])), ...(ask?.sha ? [ask.sha] : [])],
     rolling: running.some((j) => j.kind == "rollback") || ask?.kind == "rollback",
     rollbackNote: "No branch moves. The next deploy goes forward again.",
@@ -142,28 +178,28 @@ export async function deployLive(platform: Platform, session: Session, url: URL,
     href: (to, job) => `/admin/deploy${to == "deploys" ? "" : `?tab=${to}${job ? `&job=${encodeURIComponent(job)}` : ""}`}`,
   };
   const wait = view.busy ? BUSY_MS : IDLE_MS;
-  const auto = state.look ? autoRow(state) : `<p class="lede">${esc(machineAuto(state.jobs, now))}</p>`;
-  return `${auto}<div class="ops-view" id="ops" data-wait="${wait}">${instanceHtml(view, tab, id, now)}</div>`;
+  const auto = at == "none" ? `<p class="lede">${esc(machineAuto(state.jobs, now))}</p>` : autoRow(state, at, state.tracks.branch);
+  return { html: `${auto}<div class="ops-view" id="ops" data-wait="${wait}">${instanceHtml(view, tab, id, now)}</div>`, token, deployer };
 }
 
 /**
- * The deployer's token: whether the deployer holds one (its own answer), and the form that gives it one, or another
- * one. `refused`: why the deployer took no token just now, shown at the field. Not in the live part: a field that a
- * person types in stays as it is.
+ * The deployer's token: `lede`, whether the deployer holds one and what it does (tokenLede, drawn again by the page's
+ * script), and the form that gives it one, or another one. `refused`: why the deployer took no token just now, shown
+ * at the field. The form is not drawn again: a field that a person types in stays as it is.
  */
-function tokenSection(deployer: NonNullable<Platform["deploy"]["deployer"]>, says: DeployerSays, session: Session, refused?: string) {
-  const ready = says.ok && says.ready;
-  const where = says.ok
-    ? ready
-      ? `The deployer holds a token${says.head ? `, and is at <code>${esc(says.head.slice(0, 12))}</code>` : ""}.`
-      : "<b>The deployer has no token: it deploys nothing.</b> Give it one below."
-    : esc(says.why);
+function tokenSection(
+  deployer: NonNullable<Platform["deploy"]["deployer"]>,
+  at: Deployer["at"],
+  lede: string,
+  session: Session,
+  refused?: string
+) {
   return `
-  <section class="deployer-token" aria-labelledby="token-head" data-ready="${ready}">
+  <section class="deployer-token" aria-labelledby="token-head">
     <h3 class="sub-head" id="token-head">The deployer's token</h3>
-    <p class="lede">${where}</p>
-    <details${!ready || refused ? " open" : ""}>
-      <summary>${ready ? "Give the deployer another token" : "Give the deployer a token"}</summary>
+    <div id="token-live">${lede}</div>
+    <details${at != "ready" || refused ? " open" : ""}>
+      <summary>${give(at)}</summary>
       ${tokenSteps(deployer.account, deployer.worker)}
       ${refused ? `<p class="failed" role="alert">${esc(refused)}</p>` : ""}
       <form method="post" action="${esc(link("/admin/deploy/token", session))}">
@@ -177,7 +213,8 @@ function tokenSection(deployer: NonNullable<Platform["deploy"]["deployer"]>, say
 /** /admin/deploy. `refused`: why the deployer took no token just now (status 400). */
 export async function deployPage(platform: Platform, session: Session, url: URL, refused?: string) {
   const runs = platform.deploy.version;
-  const deployer = platform.deploy.deployer;
+  const bound = platform.deploy.deployer;
+  const { html, token, deployer } = await deployLive(platform, session, url);
   return adminPage(
     {
       session,
@@ -185,7 +222,7 @@ export async function deployPage(platform: Platform, session: Session, url: URL,
       here: "deploy",
       lede: `${url.host} runs ${runs ?? "no release that it knows"}.`,
       body: `
-  <div id="deploy-live">${await deployLive(platform, session, url)}</div>${deployer ? tokenSection(deployer, await deployer.ask(), session, refused) : ""}
+  <div id="deploy-live">${html}</div>${bound && token ? tokenSection(bound, deployer.at, token, session, refused) : ""}
 <script>${inlineCall("admin-deploy")}</script>`,
     },
     refused ? 400 : 200

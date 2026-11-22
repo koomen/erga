@@ -71,6 +71,8 @@ export interface InstanceView {
   failed: string | null;
   /** A job runs (of this instance, or one that keeps it busy): the buttons are off. */
   busy: boolean;
+  /** Why no button starts a job now (the instance's deployer has no token, say): each button is off, with these words as its tip. */
+  off?: string;
   /** The commits that a deploy of this instance, running or starting, deploys. */
   deploying: string[];
   /** A rollback of this instance runs or starts. */
@@ -181,7 +183,7 @@ function deployButton(v: InstanceView, c: ViewCommit, deploying: boolean, show: 
   const note = `${v.host} tracks ${v.branch}. No branch moves.`;
   const data = `data-deploy data-host="${esc(v.host)}" data-sha="${esc(c.sha)}" data-ask="${esc(`Deploy ${sha7(c.sha)} ${c.subject} to ${v.host}?`)}" data-note="${esc(note)}" aria-label="${esc(`Deploy ${sha7(c.sha)} to ${v.host}`)}"`;
   if (deploying) return `<span class="deps here busy">${button(running("Deploying"), `${data} aria-busy="true"`, DEPLOYING)}</span>`;
-  return `<span class="deps here${show ? " show" : ""}">${button("Deploy", data, v.busy ? BUSY : null)}</span>`;
+  return `<span class="deps here${show ? " show" : ""}">${button("Deploy", data, v.off ?? (v.busy ? BUSY : null))}</span>`;
 }
 
 /** The cell of a commit that no deploy takes: GitHub has no release of it yet, or one that the deployer refuses. */
@@ -197,7 +199,8 @@ const noRelease = (c: ViewCommit) =>
 function liveCell(v: InstanceView, at: string): string {
   if (v.rolling) return `<span class="deps here busy">${button(running("Rolling back"), 'aria-busy="true"', ROLLING)}</span>`;
   const ask = `Roll back ${v.host} to the version from before its last deploy?`;
-  const back = `<span class="tip"${v.busy ? ` title="${esc(BUSY)}"` : ""}><button class="btn quiet" type="button" data-rollback data-host="${esc(v.host)}" data-ask="${esc(ask)}" data-note="${esc(v.rollbackNote)}" aria-label="${esc(`Roll back ${v.host}`)}"${v.busy ? " disabled" : ""}>Roll back</button></span>`;
+  const block = v.off ?? (v.busy ? BUSY : null);
+  const back = `<span class="tip"${block ? ` title="${esc(block)}"` : ""}><button class="btn quiet" type="button" data-rollback data-host="${esc(v.host)}" data-ask="${esc(ask)}" data-note="${esc(v.rollbackNote)}" aria-label="${esc(`Roll back ${v.host}`)}"${block ? " disabled" : ""}>Roll back</button></span>`;
   return `<span class="deps here back"><span class="dep live" data-host="${esc(v.host)}" title="${esc(`${v.host} runs this commit`)}"><span class="w">live</span><span class="at">${at}</span></span>${back}</span>`;
 }
 

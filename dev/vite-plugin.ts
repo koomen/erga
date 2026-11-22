@@ -22,6 +22,9 @@
 //   POST /__erga/flush   ?link=<secret>: every linked document writes what it holds to disk now (dev/start.ts, before stopping)
 //   /__github/...        a stand-in for GitHub's sign-in and API (github-mock.ts)
 //   /__providers/<name>  a stand-in for each model provider's answer to an API key's check
+//   /__deployer          a stand-in for the server's deployer (cloudflare/platform.ts, deployerOf), for a server whose
+//                        deploy facts (ERGA_DEPLOY) name an account and a Worker: it holds no token until one is
+//                        pasted; it takes any token but one with "refused" in it; DELETE takes its token away
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -147,6 +150,8 @@ export function ergaDev(opts: DevOptions): Plugin {
         callback: `${devOrigin}/_edge/callback`,
         user: process.env.ERGA_GITHUB_USER || "ada",
       });
+      /** Whether the pretend deployer holds a token. */
+      let deployerHolds = false;
       server.httpServer?.on("close", () => void stopLocalBrowser());
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
@@ -161,6 +166,21 @@ export function ergaDev(opts: DevOptions): Plugin {
           return void res
             .writeHead(refused ? 401 : 200, { "Content-Type": "application/json" })
             .end(JSON.stringify(refused ? { error: { message: refusal } } : { data: [] }));
+        }
+        // The pretend deployer: what a deployer answers its instance (deploy/deployer/token.ts, DeployerAnswer).
+        if (url.pathname == "/__deployer") {
+          return void readBody(req).then((token) => {
+            const refused = token.includes("refused");
+            if (req.method == "DELETE") deployerHolds = false;
+            else if (req.method == "POST" && !refused) deployerHolds = true;
+            res
+              .writeHead(200, { "Content-Type": "application/json" })
+              .end(
+                JSON.stringify(
+                  refused ? { ok: false, why: "The token can read another Worker (other)." } : { ok: true, ready: deployerHolds, head: null }
+                )
+              );
+          }, next);
         }
         // The server's browser, for view_page (dev/browser.ts): the Worker asks for it with the link secret.
         if (req.method == "POST" && url.pathname == "/__erga/browser" && url.searchParams.get("link") == opts.secret) {

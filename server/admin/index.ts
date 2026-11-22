@@ -11,7 +11,7 @@ export { agentsLlmModelsRows, agentsLlmOnRows, agentsLlmRows, agentsRows } from 
 export { authRows, authSettingsRows } from "./auth.ts";
 export { adminDocumentsRows, adminSitesRows } from "./documents.ts";
 export { feedbackRows } from "./feedback.ts";
-export { machineAuto, noDeployer } from "./deploy.ts";
+export { deployerNow, machineAuto } from "./deploy.ts";
 export { changesRows } from "./changes.ts";
 export { pageLlmUsage } from "./page-llm.ts";
 export { usersRows } from "./users.ts";

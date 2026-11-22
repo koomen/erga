@@ -1,21 +1,28 @@
 // The Deploy page's script (server/admin/deploy.ts). It draws the page's live part again (GET /admin/deploy/view) while the page
 // is open and shown: each second while a job runs or an ask waits, else each 10 seconds (the server says which), and
 // only when it changed. So a deploy that the deployer runs shows as it goes. A job's log that was scrolled to its end
-// stays at its end, and an open question stays open.
+// stays at its end, and an open question stays open. The token section's words come with the same answer, and are
+// drawn again too: its form stays as it is.
+//
+// The words of the Auto-deploy row and of the token's section come from one place (shared/deployer.ts), here and on
+// the server: a click on a mode shows both at once, as the server draws them after the save.
 //
 // Deploy on a commit's row and Roll back on the live row ask a question first; then they are the operation deploy
 // (POST /api/tools/deploy), as the Auto-deploy switch is. The deployer in the cloud starts an ask at its next look.
 // (The ops page of a machine has the same view, with its own script: deploy/cli/ops-page.js.)
 
+import { type AutoMode, autoText, type DeployerAt, tokenText } from "../../shared/deployer";
 import { runTool, say } from "../common/admin-post";
 import { saveMark } from "../common/admin-save";
 import { asUser } from "../common/tools";
 
 export default function adminDeploy(): void {
   const live = document.getElementById("deploy-live")!;
+  /** The token section's words, where the server has a deployer to give a token. */
+  const tokenLive = document.getElementById("token-live");
   const view = window.ergaView;
   const mark = saveMark();
-  /** The live part's HTML as the server last gave it. */
+  /** The live part's HTML and the token section's words, as the server last gave them. */
   let last: string | null = null;
   let asked = 0;
 
@@ -43,9 +50,15 @@ export default function adminDeploy(): void {
   }
   async function drawNow(n: number) {
     const r = await fetch(asUser(`/admin/deploy/view${location.search}`), { headers: { Accept: "application/json" } }).catch(() => null);
-    const html = r?.ok ? ((await r.json().catch(() => null)) as { html?: string } | null)?.html : null;
-    if (html == null || view.signal.aborted || n != asked || html == last) return;
-    last = html;
+    const got = r?.ok ? ((await r.json().catch(() => null)) as { html?: string; token?: string | null } | null) : null;
+    const html = got?.html;
+    if (html == null || view.signal.aborted || n != asked || html + got!.token == last) return;
+    last = html + got!.token;
+    if (tokenLive && got!.token) {
+      tokenLive.innerHTML = got!.token;
+      tokenLive.nextElementSibling!.querySelector("summary")!.textContent =
+        tokenLive.querySelector<HTMLElement>("[data-give]")!.dataset.give!;
+    }
     const old = live.querySelector(".log");
     const atEnd = !old || old.scrollTop + old.clientHeight >= old.scrollHeight - 8;
     const job = live.querySelector<HTMLElement>(".logs")?.dataset.job;
@@ -60,27 +73,23 @@ export default function adminDeploy(): void {
     if (log) log.scrollTop = atEnd || live.querySelector<HTMLElement>(".logs")?.dataset.job != job ? log.scrollHeight : old!.scrollTop;
   }
 
-  const autoDesc = (mode: string, branch: string) =>
-    mode == "off"
-      ? "Auto-deploy is off. Use Deploy on a row below to deploy by hand."
-      : mode == "releases"
-        ? `Deploys each new tagged release (vX.Y.Z) on ${branch} by itself.`
-        : `Deploys each new commit on ${branch} by itself.`;
-
   live.addEventListener("click", (e) => {
     const at = e.target as Element;
     const autoBtn = at.closest<HTMLButtonElement>("#auto-deploy [data-auto-mode]");
     if (autoBtn) {
-      const mode = autoBtn.dataset.autoMode!;
+      const mode = autoBtn.dataset.autoMode as AutoMode;
       if (autoBtn.getAttribute("aria-checked") == "true") return;
       const row = autoBtn.closest("li")!;
+      const at = row.dataset.deployer as DeployerAt;
       const buttons = [...row.querySelectorAll<HTMLButtonElement>("[data-auto-mode]")];
-      const prev = buttons.find((b) => b.getAttribute("aria-checked") == "true")?.dataset.autoMode ?? "off";
+      const prev = (buttons.find((b) => b.getAttribute("aria-checked") == "true")?.dataset.autoMode ?? "off") as AutoMode;
       const desc = row.querySelector<HTMLElement>("[data-auto-desc]")!;
       const branch = desc.dataset.branch ?? "the branch";
-      const show = (m: string) => {
+      const show = (m: AutoMode) => {
         for (const b of buttons) b.setAttribute("aria-checked", String(b.dataset.autoMode == m));
-        desc.textContent = autoDesc(m, branch);
+        desc.textContent = autoText(at, m, branch);
+        const does = tokenLive?.querySelector("[data-token-does]");
+        if (does) does.textContent = tokenText(at, m, branch);
       };
       show(mode);
       const save = () => {
