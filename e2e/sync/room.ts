@@ -3,7 +3,8 @@
 //   roomOf(address)   what the server stores and serves for the document's files, and its room's address
 //   Person            a person with no browser (a Replica, e2e/helpers/room.ts), whom the others see in the room
 //   crowd()           the people of one test: join() makes each one, leave() closes them all at the test's end
-//   secondPage        the document in another page of the test's browser, for a second person
+//   secondPage        the document in another page of the test's browser, for a second person (in the editor at once,
+//                     or by the viewer and the pencil)
 //
 // Trap: a Person's edit is on its own replica at once, and in the room a moment later. A check of the room, of a tab
 // or of another Person waits for it (until, converged).
@@ -144,7 +145,7 @@ export const SEED = Number(process.env.ERGA_SEED) || Date.now() % 1_000_000;
  * The document of `first` in another page of the same browser, in the editor, as `user` (none: the same person in a
  * second tab). Its errors count as the test's. The page closes with the test's browser.
  */
-export async function secondPage(tab: Tab, first: Editor, user?: string): Promise<Editor> {
+export async function secondPage(tab: Tab, first: Editor, user?: string, how: "editor" | "pencil" = "editor"): Promise<Editor> {
   const page = await tab.page.context().newPage();
   page.on("pageerror", (e) => tab.errors.push(e.stack ?? e.message));
   page.on("console", (m) => {
@@ -159,9 +160,24 @@ export async function secondPage(tab: Tab, first: Editor, user?: string): Promis
     (window as any).__ergaTimescale = timescale;
     (window as any).__ergaCheck = true;
   }, TIMESCALE);
-  await page.goto(`${first.address}${user ? `?user=${encodeURIComponent(user)}&edit` : "?edit"}`);
+  const who = user ? `?user=${encodeURIComponent(user)}` : "";
+  await page.goto(`${first.address}${how == "pencil" ? who : `${who}${who ? "&" : "?"}edit`}`);
   const ed = editor(page, { address: first.address, dir: first.dir, file: first.file });
-  await ed.loaded();
+  if (how == "pencil") {
+    // In by the viewer and the pencil, as a person: the pointer on the pencil starts the editor, and the click shows it.
+    // The browser's copy of the tab's page is the viewer's then (client/common/offline.ts), and the tab is at ?edit.
+    await page.locator(".erga-edit-button").hover();
+    await until(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready")), 10_000, "the editor, out of sight");
+    const kept = (edit: string) =>
+      page.evaluate(
+        (key) => caches.match(key, { cacheName: "erga-offline-v1" }).then((r) => !!r),
+        `${first.address}${who || "?"}${who ? "&" : ""}${edit}erga-page=`
+      );
+    await until(() => kept(""), 10_000, "the viewer's page in the browser's copy");
+    await page.locator(".erga-edit-button").click();
+    await ed.loaded();
+    if (await kept("edit=&")) throw new Error("the browser's copy has the page at ?edit: the pencil made no such copy before");
+  } else await ed.loaded();
   await ed.frame(`${ed.F}.fonts.ready.then(() => true)`);
   return ed;
 }

@@ -88,6 +88,22 @@ export function callShown(log: Log, i: number): boolean {
   return log.busy && !after.some((x) => x.kind == "tool") && (item.status == "running" || !after.some((x) => x.kind == "user"));
 }
 
+/**
+ * Whether the transcript's last line shows by itself that the agent works: an answer or thinking (they come word by
+ * word), a call that runs, a call that waits for the person. If not, a turn under way has nothing to show for it: the
+ * person's message alone (before the model's first word), a call that ended (before its next), an error that the run
+ * got past. The panel says "Working…" then (client/agent/agent-chat.ts).
+ */
+export function showsWork(log: Log): boolean {
+  let i = log.items.length - 1;
+  while (i >= 0 && !callShown(log, i)) i--;
+  const last = log.items[i];
+  if (!last) return false;
+  return (
+    last.kind == "assistant" || last.kind == "thinking" || (last.kind == "tool" && (last.status == "running" || last.status == "asking"))
+  );
+}
+
 /** An argument's text on the card may be this long, on this many lines: the rest shows on a click. */
 const CUT = { chars: 160, lines: 4 };
 /** Characters that draw nothing, or that change the order of the text around them: the card writes each as its code. */

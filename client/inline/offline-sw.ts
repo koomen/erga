@@ -2,7 +2,8 @@
 // the editor's pages open with no connection. It asks the network first, and keeps each good answer in the browser's
 // copy; when the network fails, the copy answers. So, online, it never gives an old file. It never answers the API,
 // the sign-in or the build check (live.ts). The editor's built files (/_erga/, named by their content's hash) come
-// from the copy first: they never change.
+// from the copy first: they never change. A tab's page that has no copy at its address gets the copy of the same page
+// from before the pencil (or after it: shared/offline.ts, pencilAddress); with none, the request fails as the network did.
 //
 // The pages that register it (client/common/offline.ts) ask it to keep what they loaded before it was theirs, and the
 // page's editor puts the page made from its own text in the copy (libs/text/ui/offline-page.ts): an edit made offline
@@ -16,7 +17,7 @@
 // worker adds `x-erga-page` (shared/offline.ts). e2e/sync/two-people.e2e.ts (the editor in a second tab) loads a frame
 // through the worker.
 
-import { KEPT_AT, keptAddress, OFFLINE_CACHE, PAGE_HEADER } from "../../shared/offline";
+import { KEPT_AT, keptAddress, OFFLINE_CACHE, PAGE_HEADER, pencilAddress } from "../../shared/offline";
 import { keepWrite } from "../common/offline";
 
 /** What this script uses of the worker's scope. */
@@ -83,7 +84,7 @@ export default function offlineWorker(): void {
   async function answer(r: Request, how: "page" | "built" | "file", e: Ev): Promise<Response> {
     const key = how == "page" ? keptAddress(r.url) : r.url;
     // (A read never makes the copy again: caches.open would, after sign-out.)
-    const kept = () => caches.match(key, { cacheName: OFFLINE_CACHE });
+    const kept = (at = key) => caches.match(at, { cacheName: OFFLINE_CACHE });
     if (how == "built" || !navigator.onLine) {
       const hit = await kept();
       if (hit) return hit;
@@ -93,7 +94,8 @@ export default function offlineWorker(): void {
       e.waitUntil(keep(key, res.clone()).catch(() => {}));
       return res;
     } catch (err) {
-      const hit = await kept();
+      // A tab's page with no copy at its address: the copy from before the pencil, or after it, is the same page.
+      const hit = (await kept()) ?? (how == "page" && r.destination == "document" ? await kept(pencilAddress(key)) : undefined);
       if (hit) return hit;
       throw err;
     }

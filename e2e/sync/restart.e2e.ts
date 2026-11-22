@@ -1,6 +1,7 @@
 // A restart or a kill of the server loses nothing. One journey on a server of this file's own, which stops three
 // times: as a deploy stops it (SIGTERM), as a crash does (SIGKILL), and as a crash that also loses the rooms' saved
-// history. Two people have a document open in the editor all along, a third person with no browser edits another
+// history. Two people have a document open in the editor all along (the second came in by the viewer and the pencil,
+// and loads the tab again while the server is down), a third person with no browser edits another
 // document, and a document of several pages has an empty folder. After each start: all that was typed is there one
 // time, also what was typed while the server was down and what was not yet stored, and every page and folder is
 // still there. After the lost history, the rooms start again from the files, and refuse a replica of the old history.
@@ -10,7 +11,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { expect, journey, servers, test, until, withoutOutage, type Tab } from "../helpers/fixtures";
-import { openEditor, type Editor } from "../helpers/editor";
+import { F, openEditor, type Editor } from "../helpers/editor";
 import { runTool, textOf, treeOp } from "../helpers/tools";
 import { converged, crowd, roomOf, secondPage, type Person, type Room } from "./room";
 
@@ -53,7 +54,10 @@ async function site(): Promise<string> {
  */
 const ownErrors = (tab: Tab) =>
   withoutOutage(tab.errors).filter(
-    (e) => !/^console\.error: WebSocket connection to '[^']*' failed: Connection closed before receiving a handshake response/.test(e)
+    (e) =>
+      !/^console\.error: WebSocket connection to '[^']*' failed: Connection closed before receiving a handshake response/.test(e) &&
+      // (A request of a tab that loaded again while the server was down: Erga's worker had no copy to answer it with.)
+      !/^console\.error: Failed to load resource: net::ERR_FAILED\b/.test(e)
   );
 
 /** The document's pages and folders, in short: a folder ends in "/". */
@@ -90,7 +94,7 @@ journey("a restart, a kill, and a kill that loses the history", () => {
     const made = site();
     // (The pages' errors are checked by hand after each start: while the server is down, the browser logs each request that fails.)
     a = await openEditor(tab, s, "page", { query: "?user=Ada", allowErrors: true });
-    b = await secondPage(tab, a, "Bo");
+    b = await secondPage(tab, a, "Bo", "pencil");
     const other = await s.fixture("page");
     room = roomOf(other.address);
     file = join(other.dir, "index.html");
@@ -108,11 +112,22 @@ journey("a restart, a kill, and a kill that loses the history", () => {
     expect(readFileSync(file, "utf8")).toContain("<h1>JUST-IN-TIME ");
   });
 
-  test("while the server is down, a person types on: the page keeps the text", async () => {
+  // Was a bug (erga.dev, 22 November, around a deploy): the tab's page had no copy at ?edit, where the pencil had taken
+  // the tab, and Erga's worker failed the load (the browser's error page).
+  test("while the server is down, a person types on: the page keeps the text; the other person's tab, in by the pencil, loads again and opens the editor from the browser's copy", async () => {
     await until(() => a.eval<boolean>("!ergaPage.collab.connected"), 5000, "Ada's page sees that the server is gone");
     await a.clickEnd("h1");
     await a.type(" offline");
     await expect.poll(() => a.textOf("h1")).toBe("Launch notes offline");
+    await b.page.reload();
+    await until(
+      async () =>
+        (await b.eval<boolean>(`!!window.ergaPage && document.body.classList.contains("erga-editing")`)) &&
+        (await b.frame<boolean>(`!!window.ergaFrame?.page && ${F}.querySelectorAll("[data-erga-text]").length > 0`)),
+      10_000,
+      "Bo's editor on the page, from the browser's copy"
+    );
+    expect(new URL(b.page.url()).search).toBe("?user=Bo&edit");
   });
 
   test("the server starts again: the other person gets what was typed meanwhile, nothing is doubled, and the pages and the empty folder are there", {

@@ -2,7 +2,7 @@
 // calls have a line in the panel (callShown). What the card of a call that waits for Approve shows (asked).
 
 import { expect, test } from "bun:test";
-import { asked, callShown, emptyLog, reduce, turnEnded, type Log, type LogEvent } from "../shared/agent-log.ts";
+import { asked, callShown, emptyLog, reduce, showsWork, turnEnded, type Log, type LogEvent } from "../shared/agent-log.ts";
 
 const log = (...items: Log["items"]): Log => ({ items, busy: false, undoable: 0 });
 
@@ -15,6 +15,34 @@ test("a turn's end says why there's no reply: an error, a call that waits for th
   expect(turnEnded(log(user, { kind: "tool", id: "1", name: "edit", path: null, status: "asking" }))).toBe(
     "It waits for your answer in your agent panel."
   );
+});
+
+test("the log's last line shows the agent at work by itself only as an answer or thinking that comes, or a call that runs or waits", () => {
+  const l = emptyLog();
+  const after = (...evs: LogEvent[]) => {
+    for (const ev of evs) reduce(l, ev);
+    return showsWork(l);
+  };
+  const call = (id: string, status: "running" | "asking" | "done" | "error"): LogEvent => ({
+    t: "tool",
+    id,
+    name: "edit",
+    path: "a.html",
+    status,
+  });
+  expect(after(), "an empty log").toBe(false);
+  // The person's message alone, before the model's first word: nothing shows the work.
+  expect(after({ t: "user", text: "Go" }, { t: "busy", busy: true })).toBe(false);
+  expect(after({ t: "thinking", delta: "Hm" })).toBe(true);
+  expect(after({ t: "text", delta: "First." })).toBe(true);
+  expect(after(call("1", "running"))).toBe(true);
+  // A call that ended, before the model's next word; a call that failed; an error that the run got past.
+  expect(after(call("1", "done"))).toBe(false);
+  expect(after(call("2", "error"))).toBe(false);
+  expect(after({ t: "error", text: "Another model." })).toBe(false);
+  expect(after(call("3", "asking"))).toBe(true);
+  // A message of the person's during the turn is the last line again.
+  expect(after({ t: "text", delta: "Then." }, { t: "user", text: "And" })).toBe(false);
 });
 
 test("the panel has one line for a turn's tool calls: the last call while the turn runs; what the person must see stays", () => {

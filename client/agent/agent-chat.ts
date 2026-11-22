@@ -5,8 +5,12 @@
 // moment it's sent, dimmed until the agent's host echoes it back (or with
 // "Not sent" and a way to try again): sends.ts has each message's states. The
 // styles are style.css's (.agent-log, .msg-*), so both panels look the same.
+//
+// While the agent works and the log's last line does not show it (shared/agent-log.ts, showsWork), the log ends with
+// "Working…": from the moment a message is sent, before the server has it, until the answer's first word, its first
+// call, or its failure. Before, a sent message showed nothing more until the model's first word, however long that took.
 
-import { asked, callShown, emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
+import { asked, callShown, emptyLog, reduce, showsWork, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
 import type { FileRef } from "../../shared/attach";
 import { fileChip } from "./attach-ui";
 import { sendStep, type SendEvent, type SendState } from "./sends";
@@ -152,20 +156,37 @@ export function chat(opts: ChatOptions): Chat {
     opts.answer?.(b.dataset.call ?? "", b.dataset.answer == "approve");
   });
 
+  // "Working…", the log's last line while the agent works with nothing else to show for it.
+  const working = Object.assign(document.createElement("div"), { className: "msg-working", textContent: "Working…" });
+  /**
+   * A message of this tab's is in the transcript, and the agent has not said yet that it works: the server says the
+   * two one after the other, and the line stays between them.
+   */
+  let awaited = false;
+  function mark() {
+    if (sending() || ((log.busy || awaited) && !showsWork(log))) {
+      if (logEl.lastElementChild != working) logEl.append(working);
+    } else working.remove();
+  }
+
   function render() {
     later.clear();
+    // (The conversation as the server has it: it says whether the agent works.)
+    awaited = false;
     const next = log.items.map((it, i) => renderItem(it, i));
-    const now = [...logEl.children] as HTMLElement[];
+    const now = ([...logEl.children] as HTMLElement[]).filter((el) => el != working);
     // A message on its way that the transcript has now (its echo came while the socket was down) is done.
     for (const it of log.items) if (it.kind == "user" && it.id) step(it.id, { t: "echo" });
     if (!sends.size && now.length == next.length && next.every((el, i) => el.isEqualNode(now[i]))) {
       els = now;
+      mark();
       return;
     }
     logEl.textContent = "";
     els = next;
     // Messages on their way (or that weren't sent, with Try again) stay at the end: a reconnect mustn't lose them.
     logEl.append(...els, ...[...sends.values()].map((m) => m.el));
+    mark();
     follow(true);
   }
 
@@ -173,6 +194,7 @@ export function chat(opts: ChatOptions): Chat {
   // echoes it back as the conversation's (which replaces it). Each is in one
   // state (sends.ts), by the tab's id for it; the transcript's copy has the id.
   const sends = new Map<string, { state: SendState; el: HTMLElement; resend: () => void }>();
+  const sending = () => [...sends.values()].some((m) => m.state == "pending");
   function step(id: string, ev: SendEvent) {
     const m = sends.get(id);
     if (!m) return;
@@ -197,6 +219,7 @@ export function chat(opts: ChatOptions): Chat {
       follow(true);
       m.resend();
     }
+    mark();
   }
   /** Draws item `i` again, or for the first time (`fresh`). */
   function draw(i: number, fresh = false) {
@@ -212,7 +235,10 @@ export function chat(opts: ChatOptions): Chat {
   }
   function apply(ev: LogEvent) {
     // The host's copy of a message sent from this tab takes the place of the dimmed one.
-    if (ev.t == "user" && ev.id) step(ev.id, { t: "echo" });
+    if (ev.t == "user" && ev.id) {
+      awaited ||= sends.has(ev.id);
+      step(ev.id, { t: "echo" });
+    } else if (ev.t == "busy" || ev.t == "error" || ev.t == "reset") awaited = false;
     const before = log.items.length;
     const i = reduce(log, ev);
     if (ev.t == "reset") {
@@ -233,6 +259,7 @@ export function chat(opts: ChatOptions): Chat {
     if (ev.t == "tool" || ev.t == "busy" || ev.t == "user") {
       for (let j = 0; j < els.length; j++) if (j != i && els[j].hidden == callShown(log, j)) draw(j);
     }
+    mark();
     pin();
   }
 
@@ -242,6 +269,7 @@ export function chat(opts: ChatOptions): Chat {
     userMessage(el, text, files);
     logEl.append(el);
     sends.set(id, { state: "pending", el, resend });
+    mark();
     // Asking something means you want to see the answer.
     follow(true);
   }
@@ -260,6 +288,6 @@ export function chat(opts: ChatOptions): Chat {
     pin,
     pending,
     failed: (id, reason) => step(id, { t: "fail", reason }),
-    sending: () => [...sends.values()].some((m) => m.state == "pending"),
+    sending,
   };
 }

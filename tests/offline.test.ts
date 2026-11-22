@@ -4,7 +4,7 @@
 
 import { expect, test } from "bun:test";
 import { headIn, pageAgain, sourceDigest } from "../shared/page-html.ts";
-import { keptAddress } from "../shared/offline.ts";
+import { keptAddress, pencilAddress } from "../shared/offline.ts";
 import { readerPage } from "../server/pages/reader.ts";
 import { workerHere } from "../server/documents/index.ts";
 import { runOn } from "../server/http.ts";
@@ -37,6 +37,16 @@ test("a page is kept under its address without the editor's marks or its hash, a
     "https://a-b.erga-pages.test/t/tok/blog/x.html?erga-page="
   );
   expect(keptAddress("https://erga.test/ada/notes?edit")).toBe("https://erga.test/ada/notes?edit=&erga-page=");
+});
+
+// Was a bug (erga.dev, 22 November): a tab opened in the viewer, then the pencil, had no copy at ?edit. A reload with
+// no answer from the server failed.
+test("a page's other address is the same page's with ?edit or without, as the pencil writes it: one copy answers both", () => {
+  const viewer = keptAddress("https://erga.test/ada/notes?user=Ada#3"),
+    editor = keptAddress("https://erga.test/ada/notes?user=Ada&edit#3");
+  expect(pencilAddress(viewer)).toBe(editor);
+  expect(pencilAddress(editor)).toBe(viewer);
+  expect(pencilAddress(keptAddress("https://erga.test/ada/notes"))).toBe(keptAddress("https://erga.test/ada/notes?edit"));
 });
 
 test("Erga's worker is on the app's origin and a document's own pages origin, never on a shared pages host", () => {

@@ -8,7 +8,22 @@ import { agentClosed, expect, goto, journey, servers, settle, test, until, type 
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { hold } from "../helpers/hold";
 import { runTool } from "../helpers/tools";
-import { agentOn, answered, answers, button, calls, edit, paneOpen, say, script, turnEnded, turnLine, watchCalls } from "./panel";
+import {
+  agentOn,
+  answered,
+  answers,
+  button,
+  calls,
+  edit,
+  paneOpen,
+  say,
+  script,
+  tail,
+  turnEnded,
+  turnLine,
+  watchCalls,
+  watchTail,
+} from "./panel";
 
 const s = await servers.main();
 /**
@@ -294,6 +309,8 @@ journey("a turn of the agent in the editor", () => {
     const failed = page.locator("#agent-log .msg-user.failed");
     await expect.poll(() => failed.locator(".send-failed button").count()).toBe(1);
     expect(await failed.textContent()).toMatch(/Not sent/);
+    // The message failed: nothing says that the agent works.
+    expect(await tail(page)).toEqual(["user failed"]);
     await ada.eval(`window.fetch = window.__realFetch`);
     await failed.locator(".send-failed button").click();
     await until(
@@ -309,18 +326,32 @@ journey("a turn of the agent in the editor", () => {
     await turnEnded(page, sent);
   });
 
-  test("a message sent shows the agent at work at once, before the server has it", async () => {
+  // Was a bug (Pete's, erga.dev, 22 November): an open panel showed nothing more of a sent message until the model's
+  // first word. Around a deploy that took a long time, and the agent looked stuck.
+  test("a message sent shows the agent at work at once, before the server has it: the log says Working… until the answer's first word or call, and again after a call until the next word", async () => {
     const before = (await answers(page)).length;
     // The message to the agent waits on its way to the server.
     const sends = await hold(page, { url: /\/api\/agent(\?.*)?$/, method: "POST" });
-    await say(page, script("Hello", [{ text: "Hi." }]));
+    const tails = await watchTail(page);
+    await say(page, script("Hello", [{ tool: "read", args: { path: "index.html" } }, { text: "Hi." }]));
     await expect.poll(() => page.evaluate(() => document.getElementById("agent-fab")!.classList.contains("busy"))).toBe(true);
     await expect.poll(() => sends.waiting()).toBeGreaterThan(0);
-    expect(await page.locator("#agent-log .msg-user.pending").count()).toBe(1);
+    expect(await tail(page)).toEqual(["user pending", "working"]);
+    expect(await page.locator("#agent-log .msg-working").textContent()).toBe("Working…");
     // The server gets it: the answer comes.
     await sends.end();
     await turnEnded(page, before);
     expect((await answers(page)).slice(before)).toEqual(["Hi."]);
+    // The line was the log's last one until the call ran, and from the call's end to the answer's first word.
+    const seen = (await tails()).map((t) => t.join(", ")).filter((t, i, all) => t != all[i - 1]);
+    expect(seen).toEqual([
+      "user pending, working",
+      "user, working",
+      "user, tool running",
+      "user, tool done, working",
+      "user, tool done, assistant",
+      "user, assistant",
+    ]);
   });
 
   test("a new render of the page (its stylesheet changed) leaves the focus in the agent's box", async () => {

@@ -31,14 +31,29 @@ export const answers = (page: Page) =>
 const CALLS = `[...document.querySelectorAll("#agent-log .msg-tool:not([hidden])")].map((e) => e.textContent + (e.querySelector("img.shot")?.naturalWidth > 0 ? " [picture]" : ""))`;
 export const calls = (page: Page) => page.evaluate<string[]>(CALLS);
 
-/** Records the tool calls' lines (calls) each time the panel's log changes, from now on: the answer reads the records. */
-export async function watchCalls(page: Page) {
+/** Records what `read` gives each time the panel's log changes, from now on, under `name`: the answer reads the records. */
+async function watch(page: Page, name: string, read: string) {
   await page.evaluate(`(() => {
-    const seen = (window.__calls = []);
-    new MutationObserver(() => seen.push(${CALLS})).observe(document.getElementById("agent-log"), { childList: true, subtree: true });
+    const seen = (window.${name} = []);
+    new MutationObserver(() => seen.push(${read})).observe(document.getElementById("agent-log"), { childList: true, subtree: true });
   })()`);
-  return () => page.evaluate<string[][]>("window.__calls");
+  return () => page.evaluate<string[][]>(`window.${name}`);
 }
+
+/** Records the tool calls' lines (calls) each time the panel's log changes. */
+export const watchCalls = (page: Page) => watch(page, "__calls", CALLS);
+
+/**
+ * The log's lines from the person's last message on, as the panel shows them: each line's kind and state ("user
+ * pending", "tool done", "assistant"), and "working" for the line that says the agent works.
+ */
+const TAIL = `(() => {
+  const all = [...document.querySelectorAll("#agent-log > :not([hidden])")].map((e) => e.className.replace(/msg-/g, ""));
+  return all.slice(all.findLastIndex((c) => c.startsWith("user")));
+})()`;
+export const tail = (page: Page) => page.evaluate<string[]>(TAIL);
+/** Records the tail each time the panel's log changes. */
+export const watchTail = (page: Page) => watch(page, "__tails", TAIL);
 
 /**
  * The agent's answers, and whether a turn is under way: the agent works, or a message is still on its way.
