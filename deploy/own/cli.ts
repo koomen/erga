@@ -23,6 +23,9 @@
 //                              setup page; later, its Deploy page). On AWS it is a Lambda function whose role is its
 //                              credential: no token. local: the user, with bun erga deploy; no credential in the
 //                              cloud. A run again with the other answer installs the deployer, or removes it.
+//       --auto-deploy <mode>   with --deploys cloud: what the deployer deploys by itself: off, releases (each
+//                              tagged release) or commits (each commit). Without it, an instance that runs keeps the
+//                              mode that it has, and a new one gets releases. Setup changes no mode by itself.
 //       --sign-in sso          the organization's single sign-on, at Erga's gate (gate/), in the place of GitHub
 //                              and Google sign-in. On AWS the gate is in front of the server; on Cloudflare it is
 //                              the first call of Erga's Worker:
@@ -49,17 +52,14 @@
 // terminal (/dev/tty), never to stdout.
 
 import { closeSync, readFileSync } from "node:fs";
-import * as Effect from "effect/Effect";
 import { setupUrl } from "../../server/identity/setup-link";
 import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "../cli/config";
-import { deployInstance } from "../cli/deploy";
-import { d1Sql } from "../deployer/cloudflare";
-import { writeAuto } from "../deployer/control";
+import type { AutoMode } from "../deployer/tags";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { cloudflare, type Connection, observe } from "./facts";
-import { adoptEntry, firstDeploy, secretsFor } from "./first";
-import { accountName, checksOf, deploysText, missing, oldDeployerText, planText, type Seen, type State, step } from "./flow";
+import { adoptEntry, autoOnCloudflare, firstDeploy, secretsFor, setDeployer } from "./first";
+import { accountName, autoText, checksOf, deploysText, missing, oldDeployerText, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, loadSecrets, namesAt, putSecret, saveSecrets, SSO_SECRET } from "./store";
 
@@ -82,6 +82,7 @@ const OPTIONS: Record<string, TextAnswer> = {
   "--pages": "pages",
   "--egress": "egress",
   "--deploys": "deploys",
+  "--auto-deploy": "auto",
 };
 const FLAGS = ["--dry-run", "--no-tests", "--yes", "--remote"];
 
@@ -92,6 +93,8 @@ interface Run {
   again: string;
   /** What the run's last line says too: a step adds to it what the user must not miss. */
   last: string[];
+  /** The instance's auto-deploy mode, when a step of this run set it or read it. */
+  auto?: AutoMode;
 }
 
 /** Observes, and folds what was seen in, until the code finds nothing more to fill. */
@@ -218,39 +221,20 @@ async function page(a: Answers, o: Run) {
   );
 }
 
-/**
- * Cloudflare: the instance's deployer, installed with no token (or removed), and then a deploy of the release that the
- * instance runs, so that its Worker binds the deployer (or binds it no more): the server hands the deployer the token
- * that the user pastes there. A new deployer gets auto-deploy on: it deploys when it has its token. The answer: the
- * deployer that was there is replaced (it was from before the deployer kept its own token), and its token is gone.
- */
+/** Cloudflare: the instance's deployer, installed with no token, or removed (first.ts, setDeployer). */
 async function deployerOnCloudflare(a: Answers, seen: Seen, o: Run, to: "install" | "remove", worker: string) {
   const c = await connect();
-  const deployers = await import("../pipeline/deployer");
-  const target = { account: a.account, worker };
-  const print = (line: string) => say(`  ${line.slice(0, 200)}`);
-  let replaced = false;
-  try {
-    if (to == "remove") await deployers.removeDeployer(c.cf, target);
-    else {
-      replaced = seen.deployer && !(await deployers.installDeployer(c.cf, target)).kept;
-      if (!seen.deployer) await Effect.runPromise(writeAuto(d1Sql(c.cf, target), "releases"));
-    }
-    // The release that runs is the one that deploys: its tests ran before its first deploy.
-    await deployInstance({
-      dir: DIR,
-      host: a.host,
-      commit: seen.live?.version ?? undefined,
-      command: `bun erga setup ${a.host}`,
-      noTests: true,
-      net: c.net,
-      token: c.token,
-      print,
-    });
-  } catch (e) {
-    fail((e as Error).message, `Fix what it names, then: ${o.again}. Every step is safe to run again.`);
-  }
-  return replaced;
+  return setDeployer({
+    dir: DIR,
+    host: a.host,
+    target: { account: a.account, worker },
+    to,
+    auto: a.auto || undefined,
+    commit: seen.live?.version ?? undefined,
+    command: `bun erga setup ${a.host}`,
+    ...c,
+    print: (line) => say(`  ${line.slice(0, 200)}`),
+  }).catch((e: Error) => fail(e.message, `Fix what it names, then: ${o.again}. Every step is safe to run again.`));
 }
 
 /** The server's page where the user pastes the deployer's token. */
@@ -300,14 +284,14 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         const stack = deployerName(worker);
         say(
           state.do == "install"
-            ? `PLAN  ${a.host} runs. I will install its deployer, as the stack ${stack}, and turn auto-deploy on:\nPLAN  ${deploysText(a)}\nPLAN  The stack's resources (${deployerResources().length}): ${deployerResources().join(", ")}`
+            ? `PLAN  ${a.host} runs. I will install its deployer, as the stack ${stack}:\nPLAN  ${deploysText(a, undefined, undefined, true)}\nPLAN  The stack's resources (${deployerResources().length}): ${deployerResources().join(", ")}`
             : `PLAN  ${a.host} runs. I will remove its deployer (the stack ${stack}: the Lambda function, its role, its schedule and the instance's document):\nPLAN  ${deploysText(a)}`
         );
         return "dry";
       }
       say(
         state.do == "install"
-          ? `PLAN  ${a.host} runs. I will install its deployer, with no token, and deploy ${a.host} again, so that its Worker binds the deployer:\nPLAN  ${deploysText(a, worker, seen.admin ? "its Deploy page (/admin/deploy)" : "its setup page")}`
+          ? `PLAN  ${a.host} runs. I will install its deployer, with no token, and deploy ${a.host} again, so that its Worker binds the deployer:\nPLAN  ${deploysText(a, worker, seen.admin ? "its Deploy page (/admin/deploy)" : "its setup page", true)}`
           : `PLAN  ${a.host} runs. I will remove its deployer (the Worker ${worker}-deployer, with the token that it holds), and deploy ${a.host} again without it:\nPLAN  ${deploysText(a)}`
       );
       const { keepsToken } = await import("../pipeline/deployer");
@@ -394,17 +378,22 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
             );
             pass(`The deployer of ${a.host} is removed, with its role: no credential stays in the cloud.`);
           } else {
-            await installWithAuto(DIR, entry, log);
-            pass(`The deployer of ${a.host} is installed: it deploys each new release of ${a.branch} by itself (auto-deploy is on).`);
+            o.auto = await installWithAuto(DIR, entry, log, a.auto || undefined);
+            pass(`The deployer of ${a.host} is installed: it ${autoText(o.auto, a.branch)}.`);
           }
           break;
         }
-        if (await deployerOnCloudflare(a, seen, o, state.do, worker)) o.last.push(oldDeployerText(a.host, tokenPage(a, seen)));
+        const did = await deployerOnCloudflare(a, seen, o, state.do, worker);
+        if (!did) {
+          pass(`The deployer of ${a.host} is removed, with the token that it held: no credential stays in the cloud.`);
+          break;
+        }
+        o.auto = did.auto;
+        if (did.replaced) o.last.push(oldDeployerText(a.host, tokenPage(a, seen)));
         pass(
-          state.do == "remove"
-            ? `The deployer of ${a.host} is removed, with the token that it held: no credential stays in the cloud.`
-            : (o.last.at(-1) ??
-                `The deployer of ${a.host} is installed, with no token yet. The user pastes its token on the server: ${tokenPage(a, seen)}.`)
+          did.replaced
+            ? o.last.at(-1)!
+            : `The deployer of ${a.host} is installed, with no token yet. The user pastes its token on the server: ${tokenPage(a, seen)}. With a token, it ${autoText(did.auto, a.branch)}.`
         );
         break;
       }
@@ -412,8 +401,11 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         // The user's own step, and the run's last: the command asks the user nothing more, and waits for nothing.
         await page(a, o);
         return "page";
-      case "done":
+      case "done": {
         if (o.dryRun) pass(`${a.host} runs already, with an admin.`);
+        /** A deployer that was there before this run: this run brings it to this code. Its mode stays, unless the user chose one now. */
+        const there = seen.deployer && a.deploys == "cloud" && !did.has("deployer");
+        const stays = a.auto ? "" : " Auto-deploy stays as it is.";
         if (a.where == "aws") {
           // Its stacks, to this code's template: a new rule of the proxy reaches AWS only this way (a deploy doesn't).
           const aws = await import("../aws/setup");
@@ -421,9 +413,8 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
           if (o.dryRun) say("PLAN  Its stacks change to this code's template, if it differs (each change shows as it's made).");
           else await aws.applyStacks(DIR, a, (line) => say(`  ${line.slice(0, 200)}`));
           // Its deployer too: only a person's login changes the deployer's stack and code. The switch stays as it is.
-          if (seen.deployer && a.deploys == "cloud" && !did.has("deployer")) {
-            if (o.dryRun)
-              say("PLAN  Its deployer changes to this code's too: its stack, and the function's code. Auto-deploy stays as it is.");
+          if (there) {
+            if (o.dryRun) say(`PLAN  Its deployer changes to this code's too: its stack, and the function's code.${stays}`);
             else
               await (await import("../aws/deployer")).installDeployer(DIR, await awsEntryOf(a, seen), (line) =>
                 say(`  ${line.slice(0, 200)}`)
@@ -432,22 +423,34 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         }
         // On Cloudflare too: only a person's login changes the deployer's code. It keeps the token that it holds, its
         // store and its switch: the user makes no new token for a newer deployer.
-        if (a.where != "aws" && seen.deployer && a.deploys == "cloud" && !did.has("deployer")) {
+        if (a.where != "aws" && there) {
           const c = await connect();
           const { keepsToken, installDeployer } = await import("../pipeline/deployer");
           if (o.dryRun)
             say(
               (await keepsToken(c.cf, { account: a.account, worker }))
-                ? "PLAN  Its deployer's code changes to this code's. It keeps the token that it holds; auto-deploy stays as it is."
-                : `PLAN  ${oldDeployerText(a.host, tokenPage(a, seen), true)}`
+                ? `PLAN  Its deployer's code changes to this code's. It keeps the token that it holds.${stays}`
+                : `PLAN  ${oldDeployerText(a.host, tokenPage(a, seen), true)}${stays}`
             );
           else {
             const { kept } = await installDeployer(c.cf, { account: a.account, worker });
             if (!kept) o.last.push(oldDeployerText(a.host, tokenPage(a, seen)));
-            pass(kept ? `The deployer of ${a.host} has this code now. It holds what it held; auto-deploy is as it was.` : o.last.at(-1)!);
+            pass(kept ? `The deployer of ${a.host} has this code now. It holds what it held.${stays}` : `${o.last.at(-1)!}${stays}`);
+          }
+        }
+        // The mode that the user chose in this run (--auto-deploy): setup changes an instance's mode only so.
+        if (there && a.auto) {
+          if (o.dryRun) say(`PLAN  I will set its auto-deploy to ${a.auto}, as you chose.`);
+          else {
+            o.auto =
+              a.where == "aws"
+                ? await (await import("../aws/deployer")).setAuto(await awsEntryOf(a, seen), a.auto)
+                : await autoOnCloudflare((await connect()).cf, { account: a.account, worker }, a.auto);
+            pass(`Auto-deploy of ${a.host} is set, as the user chose: its deployer ${autoText(o.auto, a.branch)}.`);
           }
         }
         return o.dryRun ? "dry" : "done";
+      }
     }
   }
 }
@@ -465,12 +468,14 @@ async function run(a: Answers, o: Run) {
     );
   // What it tracks is its entry's: a run on an instance that is there already does not change that (bun erga track does).
   const { repo, branch } = entryOf(readConfig(DIR), a.host) ?? a;
+  // The mode, when this run set it or read it: else the run says no mode (it changed none).
+  const does = o.auto ? autoText(o.auto, "that branch") : "deploys that branch by itself, as the server's auto-deploy mode says";
   const deployed =
     a.deploys != "cloud"
       ? `bun erga deploy ${a.host} gives it that branch's newest commit`
       : a.where == "aws"
-        ? "its deployer, in their own account, deploys each new release of that branch by itself (an admin turns that off on the server's Deploy page)"
-        : `its deployer, in their own account, deploys each new release of that branch by itself, while it holds its token: the user pastes it on ${end == "page" ? "the setup page" : `the server's Deploy page (https://${a.host}/admin/deploy), which also says whether the deployer holds one`}`;
+        ? `its deployer, in their own account, ${does} (an admin changes that on the server's Deploy page)`
+        : `its deployer, in their own account, ${does}, while it holds its token: the user pastes it on ${end == "page" ? "the setup page" : `the server's Deploy page (https://${a.host}/admin/deploy), which also says whether the deployer holds one`}`;
   const rest = `${o.last.map((l) => `${l} `).join("")}It tracks ${branch} of ${repo}: ${deployed}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page).`;
   say(
     end == "done"

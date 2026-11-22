@@ -50,13 +50,14 @@ export async function deployerModule(): Promise<string> {
  * Installs the instance's deployer, or brings the one that an earlier install made to this code: its bindings and its
  * schedule too. It keeps its secret and its store, and so the token that it holds. A new deployer gets a new secret,
  * and holds no token. A deployer from before the store held the token (it has no such secret) is replaced by a new
- * one. The result: the deployer's name, and `kept`: it was there, and keeps what it held. The instance must be there:
- * its Worker, bound to its database.
+ * one. The result: the deployer's name; `kept`: it was there, and keeps what it held; `replaced`: it was there, from
+ * before, and the new one holds nothing of it (its token is gone). The instance must be there: its Worker, bound to
+ * its database.
  */
 export async function installDeployer(
   cf: Cloudflare,
   target: Pick<CloudflareTarget, "account" | "worker">
-): Promise<{ name: string; kept: boolean }> {
+): Promise<{ name: string; kept: boolean; replaced: boolean }> {
   const acc = `/accounts/${target.account}`;
   const name = deployerName(target.worker);
   if (name.length > 63)
@@ -109,7 +110,7 @@ export async function installDeployer(
     previews_enabled: false,
   });
   await setSchedule(cf, acc, name);
-  return { name, kept: keeps };
+  return { name, kept: keeps, replaced: !!there && !keeps };
 }
 
 /**

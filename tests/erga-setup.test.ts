@@ -13,7 +13,10 @@ import { type CloudflareEntry, type Entry, readConfig, withEntry, writeConfig } 
 import type { MockState } from "../dev/mock-cloudflare";
 import { writePass } from "./helpers/pass.ts";
 import { Cloudflare } from "../deploy/deployer/cloudflare-api";
-import { adminOn, adoptEntry, type First, firstDeploy, writeEntry } from "../deploy/own/first";
+import * as Effect from "effect/Effect";
+import { d1Sql } from "../deploy/deployer/cloudflare";
+import { readControl, writeAuto } from "../deploy/deployer/control";
+import { adminOn, adoptEntry, type First, firstDeploy, setDeployer, writeEntry } from "../deploy/own/first";
 import { specOn, sqlOf } from "../deploy/cli/instance";
 import { instanceReader, jobsReader } from "../deploy/cli/running";
 import { deployInstance } from "../deploy/cli/deploy";
@@ -24,6 +27,7 @@ import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { installDeployer, removeDeployer } from "../deploy/pipeline/deployer";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
+import { HOST as RUNS, MARK } from "./helpers/cloudflare-setup.ts";
 import { bindingsOf, bootstrap, fleet, next, prepareRelease, ROOT } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -33,6 +37,9 @@ const HEAD = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT }).stdout.t
 const HOST = "erga.ada-example.com",
   SECOND = "erga-next.ada-example.com";
 let dir = "";
+/** The plan's words for an instance that runs: setup changes no auto-deploy mode that the user did not choose. */
+const KEEPS =
+  "it deploys by itself what the server's auto-deploy mode says. I do not change that mode (a server with no mode yet gets releases: each new release); --auto-deploy off|releases|commits sets another";
 
 beforeAll(async () => {
   process.env.ERGA_DEPLOY_MOCK = "1";
@@ -162,7 +169,7 @@ test("the deployer, installed with no token: the instance's next deploy binds it
   expect(bindingsOf(mock.state, target.worker).DEPLOYER).toBeUndefined();
   expect(step(a, await observe(a, dir, connect)).state).toEqual({ at: "deployer", do: "install" });
   // The install alone leaves the instance's Worker as it is: the deployer is not whole yet.
-  expect(await installDeployer(cf, target)).toEqual({ name: "erga-ada-example-com-deployer", kept: false });
+  expect(await installDeployer(cf, target)).toEqual({ name: "erga-ada-example-com-deployer", kept: false, replaced: false });
   expect(await observe(a, dir, connect)).toMatchObject({ deployer: true, bound: false });
   expect(step(a, await observe(a, dir, connect)).state).toEqual({ at: "deployer", do: "install" });
   // A deploy of the release that runs: the Worker binds its deployer, and the flow goes on to the setup page.
@@ -170,6 +177,33 @@ test("the deployer, installed with no token: the instance's next deploy binds it
   expect(bindingsOf(mock.state, target.worker).DEPLOYER).toMatchObject({ type: "service", service: "erga-ada-example-com-deployer" });
   expect(await observe(a, dir, connect)).toMatchObject({ deployer: true, bound: true });
   expect(step(a, await observe(a, dir, connect)).state).toEqual({ at: "page" });
+  // The command's own step does both, for an instance with no deployer too. A new instance has no auto-deploy mode
+  // yet: it gets releases. With a mode, it keeps that one, unless the user chose another.
+  const sql = d1Sql(cf, target);
+  const set = (to: "install" | "remove", auto?: "off" | "releases" | "commits") =>
+    setDeployer({
+      dir,
+      host: HOST,
+      target,
+      to,
+      auto,
+      commit: HEAD.slice(0, 12),
+      command: "bun erga setup",
+      cf,
+      net: mock.fetch,
+      token: "mock-machine-token",
+      print: () => {},
+    });
+  await removeDeployer(cf, target);
+  expect((await Effect.runPromise(readControl(sql)))?.autoMode).toBeUndefined();
+  expect(await set("install")).toEqual({ replaced: false, auto: "releases" });
+  expect(await observe(a, dir, connect)).toMatchObject({ deployer: true, bound: true });
+  await Effect.runPromise(writeAuto(sql, "commits"));
+  expect(await set("remove")).toBeNull();
+  expect(await observe(a, dir, connect)).toMatchObject({ deployer: false, bound: false });
+  expect(await set("install")).toEqual({ replaced: false, auto: "commits" });
+  expect(await set("install", "off")).toEqual({ replaced: false, auto: "off" });
+  expect((await Effect.runPromise(readControl(sql)))?.autoMode).toBe("off");
   // No token went anywhere: the deployer's one secret is its own.
   expect(Object.keys(mock.state.secrets["erga-ada-example-com-deployer"])).toEqual(["KEY"]);
   // The other answer: the deployer goes, and a deploy again binds none.
@@ -380,7 +414,7 @@ test("the dry run in a new clone, as the user's agent runs it: the plan is the t
       "PASS  Signed in to Cloudflare",
       "PASS  The account Erga holds example.com",
       "PLAN  example.com runs. I will install its deployer, with no token, and deploy example.com again, so that its Worker binds the deployer:",
-      "PLAN  • a deployer (the Worker erga-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker erga, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)",
+      `PLAN  • a deployer (the Worker erga-deployer) in your account: ${KEEPS}. It needs a token for the one Worker erga, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)`,
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run.",
     ]);
     expect(existsSync(join(tmp, ".erga"))).toBe(false);
@@ -388,3 +422,87 @@ test("the dry run in a new clone, as the user's agent runs it: the plan is the t
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("the command itself, on an instance that runs with no deployer: it installs the deployer and binds it, and keeps the instance's auto-deploy mode; an old deployer's token is not kept", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "erga-setup-"));
+  try {
+    Bun.spawnSync(["git", "init", "-q", tmp]);
+    const runs = [
+      ["--deploys", "cloud", "--dry-run"],
+      ["--deploys", "cloud"],
+      ["--deploys", "cloud"],
+      ["--deploys", "cloud", "--auto-deploy", "off"],
+      ["--deploys", "local"],
+      ["old-deployer"],
+      ["--deploys", "cloud", "--dry-run"],
+      ["--deploys", "cloud"],
+    ];
+    const p = Bun.spawn([process.execPath, join(ROOT, "tests/helpers/cloudflare-setup.ts"), JSON.stringify(runs)], {
+      env: { ...process.env, GIT_DIR: join(tmp, ".git"), SSH_CONNECTION: undefined },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    // A run that failed says why in its lines.
+    expect([code, err, code ? out : ""]).toEqual([0, "", ""]);
+    /** Each run: its lines (without a deploy's own), and what the account has after it. */
+    const ran: { out: string[]; deployer: boolean; bound: string | null; auto: string | null }[] = [];
+    let lines: string[] = [];
+    for (const line of out.split("\n")) {
+      if (line.startsWith(MARK)) {
+        ran.push({ out: lines, ...JSON.parse(line.slice(MARK.length)) });
+        lines = [];
+      } else if (!line.startsWith("  ")) lines.push(line);
+    }
+    const [dry, install, again, off, local, dryOld, old] = ran;
+    const facts = (r: (typeof ran)[number]) => [r.deployer, r.bound, r.auto];
+    const PAGE = `https://${RUNS}/admin/deploy`;
+
+    // The dry run: the plan says that the mode stays. Nothing is made. (A machine's auto-deploy set the mode: commits.)
+    expect(dry.out.filter((l) => l.startsWith("PLAN"))).toEqual([
+      `PLAN  ${RUNS} runs. I will install its deployer, with no token, and deploy ${RUNS} again, so that its Worker binds the deployer:`,
+      `PLAN  • a deployer (the Worker erga-next-deployer) in your account: ${KEEPS}. It needs a token for the one Worker erga-next, which you make on Cloudflare and paste on the server: on its Deploy page (/admin/deploy)`,
+    ]);
+    expect(facts(dry)).toEqual([false, null, "commits"]);
+
+    // The run: the deployer is there, the instance's Worker binds it, and the mode is the instance's own still.
+    expect(install.out).toEqual([
+      `PASS  The deployer of ${RUNS} is installed, with no token yet. The user pastes its token on the server: ${PAGE}. With a token, it deploys each new commit of main by itself.`,
+      expect.stringContaining(
+        "its deployer, in their own account, deploys each new commit of that branch by itself, while it holds its token"
+      ),
+    ]);
+    expect(install.out.at(-1)).toStartWith(`DONE  Tell the user: Erga is live at https://${RUNS}`);
+    expect(facts(install)).toEqual([true, "erga-next-deployer", "commits"]);
+
+    // Again: the deployer's code follows, and nothing else changes. The last line names no mode: the run read none.
+    expect(again.out[0]).toBe(`PASS  The deployer of ${RUNS} has this code now. It holds what it held. Auto-deploy stays as it is.`);
+    expect(again.out.at(-1)).toContain("deploys that branch by itself, as the server's auto-deploy mode says");
+    expect(facts(again)).toEqual([true, "erga-next-deployer", "commits"]);
+
+    // Only the user's choice changes the mode.
+    expect(off.out.slice(0, 2)).toEqual([
+      `PASS  The deployer of ${RUNS} has this code now. It holds what it held.`,
+      `PASS  Auto-deploy of ${RUNS} is set, as the user chose: its deployer deploys only when an admin asks, on the server's Deploy page (auto-deploy is off).`,
+    ]);
+    expect(facts(off)).toEqual([true, "erga-next-deployer", "off"]);
+    expect(facts(local)).toEqual([false, null, "off"]);
+
+    // A deployer from before the deployer kept its own token: the plan, the step and the last line say that its token goes.
+    const OLD = `The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on ${PAGE}.`;
+    expect(dryOld.out.filter((l) => l.startsWith("PLAN")).at(-1)).toBe(
+      `PLAN  Its deployer is from before the deployer kept its own token: I will replace it with a new one. ${OLD}`
+    );
+    expect(old.out[0]).toBe(
+      `PASS  The deployer of ${RUNS} was from before the deployer kept its own token: it is replaced by a new one. ${OLD}`
+    );
+    expect(old.out.at(-1)).toStartWith(
+      `DONE  Tell the user: Erga is live at https://${RUNS}, and it has its admin. The deployer of ${RUNS} was from before`
+    );
+    expect(old.out.at(-1)).toContain(OLD);
+    expect(facts(old)).toEqual([true, "erga-next-deployer", "off"]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}, 120_000);

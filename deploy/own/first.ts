@@ -13,13 +13,17 @@
 //    the server nothing.
 
 import { randomBytes } from "node:crypto";
+import * as Effect from "effect/Effect";
 import { type CloudflareEntry, type Config, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import { entryAt } from "../cli/running";
-import { d1 } from "../deployer/cloudflare";
+import { d1, d1Sql } from "../deployer/cloudflare";
+import { setUpAuto } from "../deployer/control";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { movedNames, OLD_SECRETS_KEY, SECRETS_KEY } from "../deployer/secrets-key";
+import type { AutoMode } from "../deployer/tags";
 import type { Seen } from "./flow";
+import { installDeployer, removeDeployer } from "../pipeline/deployer";
 import { type Answers, firstRows, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets, SSO_SECRET } from "./store";
 
@@ -161,4 +165,54 @@ export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string
       ...Object.values(row)
     );
   print(`The access rule is in the database of ${worker}: ${rows.map((r) => r.who).join(", ")} may write.`);
+}
+
+/**
+ * Setup's part in the auto-deploy of an instance on Cloudflare: the mode that the user chose, else the mode that the
+ * instance has, else releases (control.ts, setUpAuto). The answer: the mode now.
+ */
+export const autoOnCloudflare = (cf: Cloudflare, target: { account: string; worker: string }, chosen?: AutoMode): Promise<AutoMode> =>
+  Effect.runPromise(setUpAuto(d1Sql(cf, target), chosen));
+
+/**
+ * Cloudflare, for an instance that runs: its deployer, installed with no token (or removed), and then a deploy of the
+ * release that the instance runs (`commit`), so that its Worker binds the deployer (or binds it no more): the server
+ * hands the deployer the token that the user pastes there. Auto-deploy first, before a deployer looks: the mode that
+ * the user chose (`auto`), else the mode that the instance has, else releases (control.ts, setUpAuto).
+ *
+ * The answer, for an install. `replaced`: a deployer was there, from before the deployer kept its own token: a new
+ * one is in its place, and the old one's token is gone. `auto`: the instance's auto-deploy mode now.
+ */
+export async function setDeployer(o: {
+  dir: string;
+  host: string;
+  target: { account: string; worker: string };
+  to: "install" | "remove";
+  auto?: AutoMode;
+  /** The release that the instance runs (none: its branch's head). */
+  commit?: string;
+  command: string;
+  cf: Cloudflare;
+  net: Fetch;
+  token: string;
+  print?: (line: string) => void;
+}): Promise<{ replaced: boolean; auto: AutoMode } | null> {
+  let did: { replaced: boolean; auto: AutoMode } | null = null;
+  if (o.to == "remove") await removeDeployer(o.cf, o.target);
+  else {
+    const auto = await autoOnCloudflare(o.cf, o.target, o.auto);
+    did = { replaced: (await installDeployer(o.cf, o.target)).replaced, auto };
+  }
+  // The release that runs is the one that deploys: its tests ran before its first deploy.
+  await deployInstance({
+    dir: o.dir,
+    host: o.host,
+    commit: o.commit,
+    command: o.command,
+    noTests: true,
+    net: o.net,
+    token: o.token,
+    print: o.print,
+  });
+  return did;
 }

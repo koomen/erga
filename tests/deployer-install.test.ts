@@ -27,7 +27,7 @@ describe("the install", () => {
     await bootstrap(mock);
     const cf = new Cloudflare("mock-setup-token", mock.fetch);
     const from = mock.state.calls.length;
-    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: false });
+    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: false, replaced: false });
     const script = mock.state.scripts["erga-next-deployer"];
     const bindings = bindingsOf(mock.state, "erga-next-deployer");
     expect(Object.keys(bindings).sort()).toEqual(["ACCOUNT", "DATABASE", "DB", "INSTANCE", "KEY", "STATE", "WORKER"]);
@@ -61,7 +61,7 @@ describe("the install", () => {
     // A second install: the deployer gets this code again, and keeps its secret (and so the token in its store).
     const uploads = () => mock.state.calls.filter((c) => c == `PUT ${acc}/workers/scripts/erga-next-deployer`).length;
     const before = uploads();
-    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: true });
+    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: true, replaced: false });
     expect(uploads()).toBe(before + 1);
     expect(mock.state.secrets["erga-next-deployer"]).toEqual({ KEY: key });
     expect(JSON.stringify(mock.state.scripts["erga-next-deployer"].metadata)).not.toContain(key);
@@ -97,7 +97,7 @@ describe("the install", () => {
     // Setup's dry run says so before: this deployer does not keep what it holds.
     expect(await keepsToken(cf, TARGET)).toBe(false);
     const from = mock.state.calls.length;
-    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: false });
+    expect(await installDeployer(cf, TARGET)).toEqual({ name: "erga-next-deployer", kept: false, replaced: true });
     expect(await keepsToken(cf, TARGET)).toBe(true);
     // The old Worker went, with its secret: the new one holds only its own.
     expect(mock.state.calls.slice(from)).toContain(`DELETE ${acc}/workers/scripts/erga-next-deployer?force=true`);

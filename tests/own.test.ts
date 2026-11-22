@@ -168,10 +168,20 @@ test("--deploys: cloud installs the deployer with no token, and binds it on the 
     oldDeployerText("example.com", "https://example.com/admin/deploy", true),
     oldDeployerText("example.com", "its setup page"),
   ]).toEqual([
-    "Its deployer is from before the deployer kept its own token: I will replace it with a new one. The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on https://example.com/admin/deploy. Auto-deploy stays as it is.",
-    "The deployer of example.com was from before the deployer kept its own token: it is replaced by a new one. The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on its setup page. Auto-deploy stays as it is.",
+    "Its deployer is from before the deployer kept its own token: I will replace it with a new one. The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on https://example.com/admin/deploy.",
+    "The deployer of example.com was from before the deployer kept its own token: it is replaced by a new one. The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on its setup page.",
   ]);
   expect(options("--deploys", "sometimes").problems).toEqual(["--deploys: deploys is cloud or local."]);
+  // The mode is an answer only when the user chose one: with none, setup changes no instance's mode. It is the deployer's.
+  expect([cloud.auto, options("--auto-deploy", "Commits").answers.auto]).toEqual(["", "commits"]);
+  expect(options("--auto-deploy", "sometimes").problems).toEqual(["--auto-deploy: auto-deploy is off, releases or commits."]);
+  expect(missing({ ...local, auto: "commits" })).toEqual([
+    "--auto-deploy goes with --deploys cloud only: leave it out. (bun erga track <host> --auto-deploy sets the mode of an instance that deploys from a machine.)",
+  ]);
+  expect(deploysText({ ...f, auto: "commits" })).toContain("in your account: it deploys each new commit by itself. It needs a token");
+  expect(deploysText({ ...f, auto: "off" }, undefined, undefined, true)).toContain(
+    "in your account: it deploys only when an admin asks, on the server's Deploy page (auto-deploy is off, as you chose). It needs a token"
+  );
 });
 
 test("--deploys on AWS: the deployer has no token, so its install is the command's own step; local removes it", () => {
@@ -577,7 +587,8 @@ async function awsSetups(...runs: string[][]): Promise<{ out: string[]; calls: s
         lines = [];
       }
     }
-    expect(ran.length).toBe(runs.length);
+    // (A run "set-auto <mode>" is the helper's own: no run of the command.)
+    expect(ran.length).toBe(runs.filter((r) => r[0] != "set-auto").length);
     return ran;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -617,7 +628,7 @@ test("AWS: setup on an instance that is done updates its stacks to the code's te
 });
 
 test("AWS: --deploys cloud installs the deployer's stack and code and turns auto-deploy on; again, it updates them; local removes it", async () => {
-  const [dry, cloud, again, plan, dryLocal, local, localAgain] = (
+  const [dry, cloud, again, plan, dryLocal, local, localAgain, kept, chosen] = (
     await awsSetups(
       ["--deploys", "cloud", "--dry-run"],
       ["--deploys", "cloud"],
@@ -625,7 +636,10 @@ test("AWS: --deploys cloud installs the deployer's stack and code and turns auto
       ["--deploys", "cloud", "--dry-run"],
       ["--deploys", "local", "--dry-run"],
       ["--deploys", "local"],
-      ["--deploys", "local"]
+      ["--deploys", "local"],
+      ["set-auto", "commits"],
+      ["--deploys", "cloud"],
+      ["--deploys", "cloud", "--auto-deploy", "off"]
     )
   ).map((run) => ({
     ...run,
@@ -634,7 +648,7 @@ test("AWS: --deploys cloud installs the deployer's stack and code and turns auto
       const stack = /^cloudformation (create-change-set|execute-change-set|delete-stack) --stack-name (\S+)/.exec(c);
       if (stack) return [`${stack[1]} ${stack[2]}`];
       if (c.startsWith("lambda update-function-code")) return ["update-function-code erga-example-com-deployer"];
-      return c == "auto-deploy on" ? [c] : [];
+      return c.startsWith("auto-deploy ") ? [c] : [];
     }),
   }));
   const DEPLOYER = "erga-example-com-deployer";
@@ -643,28 +657,29 @@ test("AWS: --deploys cloud installs the deployer's stack and code and turns auto
 
   // The dry run says what the run will make, and makes nothing.
   expect(dry.out.filter((l) => l.startsWith("PLAN"))).toEqual([
-    `PLAN  ${HOST} runs. I will install its deployer, as the stack ${DEPLOYER}, and turn auto-deploy on:`,
-    `PLAN  • a deployer (the Lambda function ${DEPLOYER}, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`,
+    `PLAN  ${HOST} runs. I will install its deployer, as the stack ${DEPLOYER}:`,
+    `PLAN  • a deployer (the Lambda function ${DEPLOYER}, in a stack of its own) in your AWS account: it deploys by itself what the server's auto-deploy mode says. I do not change that mode (a server with no mode yet gets releases: each new release); --auto-deploy off|releases|commits sets another. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`,
     "PLAN  The stack's resources (7): Document (AWS::SSM::Document), Log (AWS::Logs::LogGroup), Role (AWS::IAM::Role), Deployer (AWS::Lambda::Function), Once (AWS::Lambda::EventInvokeConfig), Schedule (AWS::Events::Rule), Start (AWS::Lambda::Permission)",
   ]);
   expect(dry.out.at(-1)).toStartWith("DRY RUN  Nothing is made.");
   expect(dry.calls).toEqual([]);
 
-  // The run: the deployer's stack (its change set shows), then its code, then auto-deploy on. No step of the user's.
+  // The run: auto-deploy first (the instance has no mode yet: releases), before a deployer looks; then the deployer's
+  // stack (its change set shows), then its code. No step of the user's.
   expect(cloud.out).toContain("    Add     Role (AWS::IAM::Role)");
-  expect(cloud.out).toContain(
-    `PASS  The deployer of ${HOST} is installed: it deploys each new release of main by itself (auto-deploy is on).`
-  );
+  expect(cloud.out).toContain(`PASS  The deployer of ${HOST} is installed: it deploys each new tagged release (vX.Y.Z) of main by itself.`);
   expect(cloud.out.some((l) => l.startsWith("WAIT"))).toBe(false);
-  expect(cloud.out.at(-1)).toContain("its deployer, in their own account, deploys each new release of that branch by itself");
+  expect(cloud.out.at(-1)).toContain(
+    "its deployer, in their own account, deploys each new tagged release (vX.Y.Z) of that branch by itself"
+  );
   // (Then the instance is done: its own stacks follow the code, as in each run. The deployer is not installed twice.)
-  expect(cloud.calls).toEqual([...install, "auto-deploy on", ...stacks]);
+  expect(cloud.calls).toEqual(["auto-deploy releases", ...install, ...stacks]);
   expect(cloud.files).toEqual(["erga-example-com-certs.json", `${DEPLOYER}.json`, "erga-example-com.json"].sort());
 
   // A run again with the same answer: the deployer's stack and code follow this code. The switch is not touched:
   // an admin may have turned auto-deploy off.
   expect(again.calls).toEqual([...stacks, ...install]);
-  expect(again.out.join("\n")).not.toContain("auto-deploy is on");
+  expect(again.out.at(-1)).toContain("deploys that branch by itself, as the server's auto-deploy mode says");
   expect(plan.out).toContain(
     "PLAN  Its deployer changes to this code's too: its stack, and the function's code. Auto-deploy stays as it is."
   );
@@ -680,4 +695,13 @@ test("AWS: --deploys cloud installs the deployer's stack and code and turns auto
   expect(local.out.at(-1)).toContain(`bun erga deploy ${HOST} gives it that branch's newest commit`);
   expect(local.calls).toEqual([`delete-stack ${DEPLOYER}`, ...stacks]);
   expect(localAgain.calls).toEqual(stacks);
+
+  // An instance that has a mode (a person set it, or a machine's auto-deploy reads it) keeps it: setup writes none.
+  expect(kept.out).toContain(`PASS  The deployer of ${HOST} is installed: it deploys each new commit of main by itself.`);
+  expect(kept.calls).toEqual([...install, ...stacks]);
+  // Only the user's choice changes it.
+  expect(chosen.out).toContain(
+    `PASS  Auto-deploy of ${HOST} is set, as the user chose: its deployer deploys only when an admin asks, on the server's Deploy page (auto-deploy is off).`
+  );
+  expect(chosen.calls).toEqual([...stacks, ...install, "auto-deploy off"]);
 });

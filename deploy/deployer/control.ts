@@ -132,8 +132,8 @@ export const writeLook = (
   });
 
 /**
- * Sets auto-deploy (off, releases, or commits), as the app does: setup sets it to releases when a person chooses
- * deploys from the cloud. It makes the row when there is none, and touches nothing else of it.
+ * Sets auto-deploy (off, releases, or commits), as the app does. It makes the row when there is none, and touches
+ * nothing else of it.
  */
 export const writeAuto = (sql: Sql, mode: AutoMode): Effect.Effect<void, DeployError | NoTable> =>
   mode == "off"
@@ -144,6 +144,19 @@ export const writeAuto = (sql: Sql, mode: AutoMode): Effect.Effect<void, DeployE
           [mode]
         )
       );
+
+/**
+ * Setup's part in auto-deploy, when a person chose deploys from the cloud. `chosen`: the mode that the person chose
+ * (setup's --auto-deploy). With none, an instance that has the row keeps its mode: a person set it, or a machine's
+ * auto-deploy reads it. An instance with no row gets releases. The answer: the mode after it.
+ */
+export const setUpAuto = (sql: Sql, chosen?: AutoMode): Effect.Effect<AutoMode, DeployError | NoTable> =>
+  Effect.gen(function* () {
+    const had = chosen ? null : yield* readControl(sql);
+    if (had) return had.autoMode;
+    yield* writeAuto(sql, chosen ?? "releases");
+    return chosen ?? "releases";
+  });
 
 /**
  * Takes `ask` off the row: true when it was still there. The deployer calls it after it has the instance's lock

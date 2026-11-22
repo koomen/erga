@@ -32,6 +32,7 @@
 // makes something, and prints the plan.
 
 import { ACCESS_OPEN } from "../../gate/core.ts";
+import type { AutoMode } from "../deployer/tags";
 import { ANSWER_VARS, type Answers, type Endpoints, namesOf, pagesOf, pagesProblem, sso, stackOf, varsOf, viaAccess, zoneOf } from "./plan";
 
 /** What the command observed (facts.ts; deploy/aws/setup.ts on AWS). */
@@ -144,6 +145,10 @@ export function missing(a: Answers): string[] {
     need.push("--pages <domain>: a second domain of the Cloudflare account, for the documents' pages (with single sign-on they need one).");
   if (a.where && !a.deploys)
     need.push("--deploys cloud or --deploys local: who deploys each new release: a deployer in your account, or you with bun erga deploy.");
+  if (a.auto && a.deploys == "local")
+    need.push(
+      "--auto-deploy goes with --deploys cloud only: leave it out. (bun erga track <host> --auto-deploy sets the mode of an instance that deploys from a machine.)"
+    );
   return need;
 }
 
@@ -247,23 +252,44 @@ export function checksOf(a: Answers, s: Seen): string[] {
 }
 
 /**
+ * What the deployer deploys by itself, as the plan says it: the mode that the user chose (--auto-deploy). With none,
+ * an instance that `runs` keeps the mode that it has (setup changes no mode that it did not get), and a new one
+ * gets releases.
+ */
+const autoPlan = (a: Answers, runs: boolean) =>
+  a.auto == "off"
+    ? "it deploys only when an admin asks, on the server's Deploy page (auto-deploy is off, as you chose)"
+    : a.auto == "commits"
+      ? "it deploys each new commit by itself"
+      : a.auto == "releases" || !runs
+        ? "it deploys each new release by itself"
+        : "it deploys by itself what the server's auto-deploy mode says. I do not change that mode (a server with no mode yet gets releases: each new release); --auto-deploy off|releases|commits sets another";
+
+/** What the deployer does in a mode, as the command's last lines say it. */
+export const autoText = (mode: AutoMode, branch: string) =>
+  mode == "off"
+    ? "deploys only when an admin asks, on the server's Deploy page (auto-deploy is off)"
+    : `deploys each new ${mode == "releases" ? "tagged release (vX.Y.Z)" : "commit"} of ${branch} by itself`;
+
+/**
  * Who deploys each new release, as the plan says it. `worker`: the instance's Worker, when it is not a new instance's
  * (an instance that runs has its entry's name: store.ts, namesAt). The user makes the token for that name. `where`:
- * the server's page where the user pastes it, when not a new server's setup page.
+ * the server's page where the user pastes it, when not a new server's setup page. `runs`: the instance runs already.
  */
-export const deploysText = (a: Answers, worker = namesOf(a.host).worker, where = "its setup page") =>
+export const deploysText = (a: Answers, worker = namesOf(a.host).worker, where = "its setup page", runs = false) =>
   a.deploys == "cloud" && a.where == "aws"
-    ? `• a deployer (the Lambda function ${stackOf(a)}-deployer, in a stack of its own) in your AWS account: it deploys each new release by itself. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`
+    ? `• a deployer (the Lambda function ${stackOf(a)}-deployer, in a stack of its own) in your AWS account: ${autoPlan(a, runs)}. It holds no token: its role may only put a release in the instance's bucket, and run the instance's fixed script on its machine`
     : a.deploys == "cloud"
-      ? `• a deployer (the Worker ${worker}-deployer) in your account: it deploys each new release by itself. It needs a token for the one Worker ${worker}, which you make on Cloudflare and paste on the server: on ${where}`
+      ? `• a deployer (the Worker ${worker}-deployer) in your account: ${autoPlan(a, runs)}. It needs a token for the one Worker ${worker}, which you make on Cloudflare and paste on the server: on ${where}`
       : `• no deployer: no credential stays in the cloud, and you deploy each new release with bun erga deploy ${a.host}`;
 
 /**
  * What setup says of a deployer from before the deployer kept its own token (its token was a secret of its Worker):
  * setup replaces it, and the token goes with it. `will`: the dry run's plan. `where`: the page for the new token.
+ * (The auto-deploy mode is not the deployer's: it stays, in the instance's database.)
  */
 export const oldDeployerText = (host: string, where: string, will = false) =>
-  `${will ? "Its deployer is from before the deployer kept its own token: I will replace it with a new one" : `The deployer of ${host} was from before the deployer kept its own token: it is replaced by a new one`}. The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on ${where}. Auto-deploy stays as it is.`;
+  `${will ? "Its deployer is from before the deployer kept its own token: I will replace it with a new one" : `The deployer of ${host} was from before the deployer kept its own token: it is replaced by a new one`}. The old deployer's token is not kept: the new deployer holds no token, and nothing deploys by itself until the user pastes a token on ${where}.`;
 
 /** The plan, as the agent says it before the user's yes. */
 export function planText(a: Answers, s: Seen): string[] {

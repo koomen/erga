@@ -74,7 +74,9 @@ do not choose for the user.
      its own. On Cloudflare it is a Worker with a token for the one Worker,
      which the user makes and pastes on the setup page. An admin turns the
      updates off and on later, and gives the deployer another token, on the
-     server's Deploy page.
+     server's Deploy page. For a server that runs already, the command
+     changes no auto-deploy mode by itself. Ask the user for a mode only
+     when they want another one (`--auto-deploy off|releases|commits`).
    - No (`--deploys local`): no deploy credential stays in the cloud. The
      user runs `bun erga deploy <address>` for each update.
 
@@ -82,6 +84,7 @@ Then run the dry run. It makes nothing, and prints the plan:
 
     bun erga setup <address> --host cloudflare|aws [--repo <repo>] [--branch <branch>] \
       [--account <name>] [--profile <name>] [--pages <domain>] --deploys cloud|local \
+      [--auto-deploy off|releases|commits] \
       [--sign-in sso --team <name> --aud <tag> | --sign-in sso --issuer <URL> --client <ID>] --dry-run
 
 Show the user the plan, and ask if you may go on. On their yes, run the

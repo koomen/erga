@@ -43,6 +43,11 @@ export interface Answers {
    * for the instance's Worker only). local: the user, with `bun erga deploy`: no credential stays in the cloud.
    */
   deploys: Deploys | "";
+  /**
+   * --auto-deploy, with deploys cloud: what the deployer deploys by itself: off, releases (each tagged release) or
+   * commits (each commit). "": an instance that runs keeps the mode that it has, and a new one gets releases.
+   */
+  auto: "off" | "releases" | "commits" | "";
   /** --remote (or $SSH_CONNECTION): the user is at another computer. Their steps go through their terminal, never a browser here. */
   remote: boolean;
 }
@@ -67,6 +72,7 @@ export const noAnswers = (host: string): Answers => ({
   signInDays: "",
   pages: "",
   deploys: "",
+  auto: "",
   remote: false,
 });
 
@@ -116,6 +122,8 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
       return is(low == "sso", low, "--sign-in takes sso only. Without it, you set up GitHub or Google sign-in on the server's setup page.");
     case "deploys":
       return is(low == "cloud" || low == "local", low, "deploys is cloud or local.");
+    case "auto":
+      return is(low == "off" || low == "releases" || low == "commits", low, "auto-deploy is off, releases or commits.");
     case "team": {
       const team = low.replace(/\.cloudflareaccess\.com$/, "");
       return is(

@@ -22,7 +22,8 @@ import * as Effect from "effect/Effect";
 import type { AwsEntry } from "../cli/config";
 import { gateParam, liveParam } from "../deployer/aws";
 import { DEPLOYER } from "../deployer/aws-cloud";
-import { writeAuto } from "../deployer/control";
+import { setUpAuto } from "../deployer/control";
+import type { AutoMode } from "../deployer/tags";
 import { type Aws, awsCli } from "./cli";
 import { awsSql } from "./deploy";
 import { documentScript } from "./machine";
@@ -295,17 +296,25 @@ export async function installDeployer(
 }
 
 /**
- * Cloud deploys for an instance on AWS (setup's answer --deploys cloud): the deployer is installed, and auto-deploy is
- * on (the instance's own switch: an admin turns it off on the server's ops page).
+ * Setup's part in an instance's auto-deploy (the instance's own switch: an admin changes it on the server's Deploy
+ * page): the mode that the user chose, else the mode that the instance has, else releases (control.ts, setUpAuto).
+ * The answer: the mode now.
  */
-export async function installWithAuto(dir: string, entry: AwsEntry, log: (line: string) => void): Promise<void> {
-  await installDeployer(dir, entry, log);
-  const sql = awsSql(awsCli({ profile: entry.profile, region: entry.aws.region }), entry.aws);
-  await Effect.runPromise(writeAuto(sql, "releases")).catch((e) => {
+export const setAuto = (entry: AwsEntry, chosen?: AutoMode): Promise<AutoMode> =>
+  Effect.runPromise(setUpAuto(awsSql(awsCli({ profile: entry.profile, region: entry.aws.region }), entry.aws), chosen)).catch((e) => {
     throw new Error(
-      `The deployer is installed, but auto-deploy is not on: ${e._tag == "NoTable" ? "the instance's database has no table for it yet (deploy the instance again, then set up again)" : e.message}`
+      `Auto-deploy is not set: ${e._tag == "NoTable" ? "the instance's database has no table for it yet (deploy the instance again, then set up again)" : e.message}`
     );
   });
+
+/**
+ * Cloud deploys for an instance on AWS (setup's answer --deploys cloud): auto-deploy first, before a deployer looks
+ * (setAuto), then the deployer. The answer: the instance's auto-deploy mode.
+ */
+export async function installWithAuto(dir: string, entry: AwsEntry, log: (line: string) => void, chosen?: AutoMode): Promise<AutoMode> {
+  const auto = await setAuto(entry, chosen);
+  await installDeployer(dir, entry, log);
+  return auto;
 }
 
 /**

@@ -8,7 +8,9 @@
 // lines comes one line, MARK and JSON: the AWS calls of the run (each call's first line), and the templates in
 // .erga/aws after it.
 //
-// The account has one instance that runs, with an admin. Its deployer is not installed at the start.
+// The account has one instance that runs, with an admin. Its deployer is not installed at the start, and its database
+// has no auto-deploy mode. A run that ends with `set-auto <mode>` is no run of the command: it sets that mode, as a
+// person or a machine's auto-deploy does.
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -43,12 +45,14 @@ class Refused {
 const deployer = { stack: null as string | null, code: false };
 /** The calls of the run: each one's first line. */
 let calls: string[] = [];
+/** The instance's auto-deploy mode; null: its database has no row for it. */
+let auto: string | null = null;
 
 /**
  * The answers: a call gets the first one whose pattern its arguments match ("*" is any text). An answer is the CLI's
  * output: JSON, or a text as it is.
  */
-const answers: [string, unknown | (() => unknown)][] = [
+const answers: [string, unknown | ((call: string) => unknown)][] = [
   [
     "lambda get-function-configuration*",
     () => (deployer.code ? { CodeSize: 400000 } : new Refused("An error occurred (ResourceNotFoundException): Function not found")),
@@ -71,9 +75,42 @@ const answers: [string, unknown | (() => unknown)][] = [
   ["cloudformation wait*", {}],
   ["lambda update-function-code*", () => ((deployer.code = true), {})],
   ["lambda wait*", {}],
-  // Auto-deploy on: one statement on the machine. (The statement is not in the call's first line: it gets a line of its own.)
-  ["ssm send-command*INSERT INTO deploy_control*", () => (calls.push("auto-deploy on"), { Command: { CommandId: "auto" } })],
+  // Auto-deploy: one statement on the machine. (The statement is not in the call's first line: it gets a line of its own.)
+  [
+    "ssm send-command*INSERT INTO deploy_control*",
+    (call: string) => {
+      // (A value goes into the statement as hex: deploy/deployer/aws-cloud.ts, statementOf.)
+      auto = ["releases", "commits"].find((m) => call.toLowerCase().includes(Buffer.from(m).toString("hex"))) ?? "off";
+      calls.push(`auto-deploy ${auto}`);
+      return { Command: { CommandId: "auto" } };
+    },
+  ],
   ["ssm get-command-invocation --command-id auto*", ran("")],
+  // The instance's row of it, as the database gives a row (deploy/deployer/instance.ts, row): none, until a mode is set.
+  ["ssm send-command*FROM deploy_control*", { Command: { CommandId: "control" } }],
+  [
+    "ssm get-command-invocation --command-id control*",
+    () =>
+      ran(
+        auto
+          ? `erga:${Buffer.from(
+              JSON.stringify({
+                auto: auto == "off" ? 0 : 1,
+                auto_mode: auto == "off" ? "commits" : auto,
+                ask: null,
+                by: null,
+                at: null,
+                looked: null,
+                head: null,
+                commits: [],
+                latest_release: null,
+              })
+            )
+              .toString("hex")
+              .toUpperCase()}`
+          : ""
+      ),
+  ],
   ["configure list-profiles*", "default"],
   ["configure get region*", "us-west-2"],
   ["sts get-caller-identity*", { Account: "444455556666", Arn: "arn:aws:iam::444455556666:user/ada" }],
@@ -107,7 +144,7 @@ function answer(args: string[]): Ended {
   calls.push(call.split("\n")[0]);
   const found = matchers.find((m) => m.is.test(call));
   if (!found) return { exitCode: 1, stdout: "", stderr: `no answer for: ${call}` };
-  const said = typeof found.answer == "function" ? found.answer() : found.answer;
+  const said = typeof found.answer == "function" ? found.answer(call) : found.answer;
   if (said instanceof Refused) return { exitCode: 254, stdout: "", stderr: said.words };
   return { exitCode: 0, stdout: typeof said == "string" ? said : JSON.stringify(said), stderr: "" };
 }
@@ -115,6 +152,11 @@ function answer(args: string[]): Ended {
 if (import.meta.main) {
   pretendAws(answer);
   for (const run of JSON.parse(process.argv[2]) as string[][]) {
+    // No run of the command: a person, or a machine's auto-deploy, set the instance's mode (bun erga track).
+    if (run.at(-2) == "set-auto") {
+      auto = run.at(-1)!;
+      continue;
+    }
     calls = [];
     await setupMain(run);
     const plans = join(DIR, "aws");
