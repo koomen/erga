@@ -14,15 +14,19 @@
 // which journeys are over their budget (e2e/COVERAGE.md). The wait for the turn does not count. Each step prints
 // "== <step>" and "== <step>: passed (n s)"; the steps that failed print last. `.e2e/run.json` keeps the times.
 // Everything a test starts carries ERGA_TEST_RUN in its environment: what's left of it at the end is killed.
+// Everything a test writes into the temp folder goes into the run's own (TMPDIR), which goes at the end: before, the
+// runs left their folders in the machine's temp folder (2,900 in one hour), and that made every run slower
+// (deploy/root.ts, scratchRoot).
 // Telemetry is off (E2E_TELEMETRY_DISABLED: the CLI reads it before it reads the config).
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join, resolve } from "node:path";
 import { Glob } from "bun";
 import { ergaDir } from "../deploy/cli/config";
 import { noteRun, takeTurn, type Turn } from "../dev/turn";
+import { scratchRoot } from "../deploy/root";
 import { runUnit } from "../dev/unit";
 import { budgets, overBudget } from "./budget";
 import { buildWorker } from "./helpers/worker-build";
@@ -38,6 +42,8 @@ const journeysFirst = flag("--journeys-first");
 const named = args.filter((a) => !a.startsWith("-") && /^e2e\//.test(a));
 const flags = args.filter((a) => !named.includes(a));
 const mark = `run-${process.pid}-${Date.now()}`;
+/** The run's temp folder, for this process too (the Worker's build). */
+const tmp = (process.env.TMPDIR = mkdtempSync(join(scratchRoot(), "erga-run-")));
 const env: Record<string, string | undefined> = { ...process.env, E2E_TELEMETRY_DISABLED: "1", ERGA_TEST_RUN: mark };
 const BROWSER = named.length ? "end-to-end tests" : "browser tests";
 
@@ -125,7 +131,8 @@ let workerBuild: string | null = null;
 const end = (code: number): never => {
   turn.free();
   sweep();
-  if (workerBuild) rmSync(workerBuild, { recursive: true, force: true });
+  // After this process: the folder holds each server's files and each browser's profile.
+  spawn("rm", ["-rf", tmp], { stdio: "ignore", detached: true }).unref();
   process.exit(code);
 };
 process.on("SIGINT", () => {

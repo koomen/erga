@@ -13,6 +13,22 @@ row fails, and the budgets sum to 280 seconds at most.
 Measured (2026-11-10, 10 runs with no failure): 436 browser tests in 28 files, 186 s of test time, 35 to 36 s for the
 whole run with the 1,100 unit tests beside them. Before: 861 browser tests in 282 files, 5 to 11 minutes.
 
+Measured again (2026-11-21): 464 browser tests in 28 files, 1,693 unit tests in 233 files. The gate's run (`bun erga
+test`: a new folder, the install, the suite) took 51 to 60 s in 45 runs, and its suite 47 to 54 s: the unit tests were
+the longest step (46 to 51 s), then the browser tests (41 to 46 s). Four causes, each one gone now: 3 runs of the gate
+took 40 to 41 s (the suite 39 to 40 s: the browser tests 36 to 37 s, the unit tests 22 s). Over their budget then:
+page-model by 0.1 to 0.3 s in each run, and S1 by 1.6 s in one (its step for a network drop waits 3 s when the page
+asked for its build less than 3 s before: client/live/release-state.ts, MIN_GAP_MS).
+
+1. The gate's folder was in the Mac's own temp folder, which held 352,000 entries: each bun process in a folder under
+   it reads that list first (deploy/root.ts, scratchRoot). The unit tests took 33 s there and 15 s in a folder
+   elsewhere, and 4 to 10 journeys were over their budget in each run. Now the folder is in /private/tmp, and so is the
+   temp folder of each run (TMPDIR, e2e/run.ts), which goes at the run's end: a run leaves nothing.
+2. The 18 unit files that read the release were one process, 30 s alone. Now the release is built one time, and each
+   file is a process of its own (dev/unit.ts): the longest takes 11 s.
+3. Each unit file built the inline code again, 0.17 s for each of the 233. Now only the run does (ERGA_BUILT).
+4. The gate's install ran the packages' scripts, 3 s (workerd's check of its binary). Now it runs none.
+
 GitHub runs the same suite for each commit of staging and main (.github/workflows/release.yml), on Linux with 4 cores.
 There the suite must pass, and that is all: the 60 seconds and the budgets are the Mac Studio's. A machine with fewer
 than 16 cores has no time limit (e2e/run.ts), and a journey over its budget is named, never failed. A journey holds on

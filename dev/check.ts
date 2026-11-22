@@ -9,9 +9,9 @@
 // the tests of the repository's rules (RULES), which read every file. It runs no browser test. It ends with what it
 // did not run. The unit tests stop at the time limit (LIMIT_MS): a file that did not end is named as not run.
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "../deploy/root";
+import { git, scratchRoot } from "../deploy/root";
 import { changeBase } from "./format";
 import { reached, ROOT, sourceFiles } from "./graph";
 import { runUnit } from "./unit";
@@ -35,6 +35,8 @@ const RULES = [
 ].map((n) => `tests/${n}.test.ts`);
 
 const t0 = performance.now();
+/** The check's own temp folder, as the suite has (e2e/run.ts): what the unit tests leave goes with it. */
+const tmp = (process.env.TMPDIR = mkdtempSync(join(scratchRoot(), "erga-check-")));
 const since = () => Math.round(performance.now() - t0);
 /** A step's command: it does not block (the steps run at once), and its answer is all that it printed. */
 const run = async (cmd: string[]) => {
@@ -119,4 +121,5 @@ if (!viteLoaded) notRun.push("the load of Vite's configuration");
 notRun.push("the browser tests");
 console.log(`not run: ${notRun.join("; ")}. Before a push: bun run test`);
 console.log(`quick check ${ok ? "passed" : "FAILED"} (${(since() / 1000).toFixed(1)} s)`);
+rmSync(tmp, { recursive: true, force: true });
 process.exit(ok ? 0 : 1);

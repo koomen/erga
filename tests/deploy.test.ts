@@ -1,53 +1,29 @@
 // The deploy pipeline on a new instance (as `bun erga setup` deploys one; tests/deploy-targets.test.ts has an instance
 // that runs already, and a second one: the same pipeline), against the pretend
-// Cloudflare, with the release this checkout builds (deploy/release.ts, made here if there's none): every step, what
+// Cloudflare, with the release this checkout builds (tests/helpers/release.ts): every step, what
 // it asks Cloudflare for, a second deploy, what it refuses, its errors, and the pieces around it (the assets' hash,
 // the shared pages host).
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
 import { assetHash, HEADERS_FILE } from "../deploy/deployer/cloudflare";
 import { Cloudflare, DeployError } from "../deploy/deployer/cloudflare-api";
 import { runPipeline, STEPS, type Target } from "../deploy/pipeline/pipeline";
-import { loadRelease, type Release } from "../deploy/deployer/release-format";
+import type { Release } from "../deploy/deployer/release-format";
 import { mockCloudflare } from "../dev/mock-cloudflare";
 import { HEADERS } from "../client/build.ts";
 import type { AssetManifest } from "../shared/assets.ts";
 import { pagesHost, pagesOrigin, pagesToken } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
 import { quietConsole } from "./helpers/quiet.ts";
+import { readRelease } from "./helpers/release.ts";
 
 quietConsole();
 
-const ROOT = new URL("..", import.meta.url).pathname;
 const ACC = "0123456789abcdef0123456789abcdef";
 let release: Release;
 
-/**
- * Whether .build/release is this checkout's: built from HEAD, with no edits since to what this test checks (the Worker's
- * config and Durable Objects, the migrations). One left from before a rebase or a commit is not.
- */
-function current(dir: string): boolean {
-  if (!existsSync(join(dir, "release.json"))) return false;
-  const git = (...args: string[]) =>
-    Bun.spawnSync(["git", ...args], { cwd: ROOT })
-      .stdout.toString()
-      .trim();
-  const built = (JSON.parse(readFileSync(join(dir, "release.json"), "utf8")) as { version: string }).version;
-  return (
-    built == git("rev-parse", "--short", "HEAD").slice(0, 12) &&
-    !git("status", "--porcelain", "--", "cloudflare.config.ts", "cloudflare", "server/migrations", "deploy")
-  );
-}
-
 beforeAll(async () => {
-  const dir = join(ROOT, ".build/release");
-  if (!current(dir)) {
-    if (!existsSync(join(ROOT, ".build/manifest.json"))) expect(Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT }).exitCode).toBe(0);
-    expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
-  }
-  release = (await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null)))!;
+  release = await readRelease();
 }, 120_000);
 
 /** A new server in the account: on workers.dev, its pages on the shared host, Ada its admin, its own new secret. */

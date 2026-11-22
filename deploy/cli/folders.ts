@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync }
 import { tmpdir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { PROTECTED } from "./flow";
-import { sh } from "../root";
+import { scratchRoot, sh } from "../root";
 import { proofDir } from "./proof";
 
 /** Where a project's folder is: worktrees/<branch> in the main clone (git ignores /worktrees/). */
@@ -98,7 +98,7 @@ export interface Folder {
   dirty: boolean;
   /** The folder the command runs in, or the main clone. */
   inUse: boolean;
-  /** A merge's or a test run's scratch folder (the system's temporary folder), with no change for an hour: its job crashed. */
+  /** A merge's or a test run's scratch folder (the system's temporary folder, or scratchRoot), with no change for an hour: its job crashed. */
   scratch: boolean;
 }
 
@@ -153,7 +153,7 @@ const real = (p: string) => {
 /** The clone's work folders (git worktree list), without the main clone itself. `cwd`: where the command runs. */
 export function foldersOf(clone: string, cwd: string, now = Date.now()): Folder[] {
   const git = (at: string, ...args: string[]) => sh(["git", ...args], { cwd: at });
-  const tmp = real(tmpdir());
+  const roots = [real(tmpdir()), real(scratchRoot())];
   const here = real(cwd);
   return git(clone, "worktree", "list", "--porcelain")
     .out.split("\n\n")
@@ -169,7 +169,7 @@ export function foldersOf(clone: string, cwd: string, now = Date.now()): Folder[
         ...w,
         dirty: git(w.path, "status", "--porcelain").out != "",
         inUse: here == path || here.startsWith(path + sep),
-        scratch: w.branch == null && path.startsWith(tmp + sep) && /^erga-(merge|tests|full)-/.test(basename(path)) && old,
+        scratch: w.branch == null && roots.some((r) => path.startsWith(r + sep)) && /^erga-(merge|tests|full)-/.test(basename(path)) && old,
       };
     });
 }

@@ -1,9 +1,18 @@
 // The repository's folder, for every tool of deploy/ and dev/; a command run in it (git, most often); and what a
 // command prints.
 
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 export const ROOT = resolve(import.meta.dirname, "..");
+
+/**
+ * The folder for a test run's files: /private/tmp on a Mac, the system's temp folder elsewhere. Never a Mac's own temp
+ * folder (os.tmpdir(), /var/folders/.../T): programs leave their files there, and nothing took them away (352,000
+ * entries on the Mac Studio on 2026-11-21, the oldest a month old). Each bun process that runs in a folder under it
+ * reads that whole list first, 0.2 s: the 233 unit test files took 33 s in a folder there, and 15 s in one elsewhere.
+ */
+export const scratchRoot = () => (process.platform == "darwin" ? "/private/tmp" : tmpdir());
 
 /** A command's result: its exit, and what it printed. It runs in the repository's folder, unless `cwd` names another. */
 export function sh(cmd: string[], o: { cwd?: string; input?: string; env?: Record<string, string | undefined> } = {}) {

@@ -6,26 +6,18 @@ import { expect } from "bun:test";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
 import { runPipeline, type Target } from "../../deploy/pipeline/pipeline";
 import { Cloudflare } from "../../deploy/deployer/cloudflare-api";
-import { loadRelease, type Release } from "../../deploy/deployer/release-format";
-import { gateHash } from "../../deploy/release";
+import type { Release } from "../../deploy/deployer/release-format";
 import { FLEET_ACCOUNT, mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
+import { readRelease } from "./release";
 
 export const ROOT = new URL("../..", import.meta.url).pathname;
 export let release: Release;
 
-/** The release the tests deploy: built here if missing, or when gate/ changed since it was built (deploy/release.ts). */
+/** The release the tests deploy: this checkout's (tests/helpers/release.ts builds it when it is not). */
 export async function prepareRelease() {
-  const dir = join(ROOT, ".build/release");
-  const index = existsSync(join(dir, "release.json")) ? JSON.parse(readFileSync(join(dir, "release.json"), "utf8")) : null;
-  if (index?.gate != gateHash()) {
-    if (!existsSync(join(ROOT, ".build/manifest.json"))) expect(Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT }).exitCode).toBe(0);
-    expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
-  }
-  release = (await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null)))!;
+  release = await readRelease();
 }
 
 export const SHA1 = "1111111111111111111111111111111111111111",

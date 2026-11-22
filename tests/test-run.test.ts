@@ -3,10 +3,11 @@
 
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { takeLock } from "../deploy/cli/jobs";
 import { mergeTree } from "../deploy/cli/observe";
 import { failedOf, readRuns, runPath, type Suite, testRun, treeOf } from "../deploy/cli/test-run";
+import { scratchRoot } from "../deploy/root";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 import { runOf } from "./helpers/pass.ts";
 
@@ -46,6 +47,8 @@ test("a branch's merge runs in a folder of its own, under its tree; the same tre
     // The folder has the merge's files, on staging's head; the record says running, with the branch.
     const r = readRuns(w.dir)[0];
     during = `${r.state} ${r.branch} ${readFileSync(join(at, "b.txt"), "utf8")} ${sh(at, "git", "rev-parse", "HEAD^") == w.staging}`;
+    // Not in a Mac's own temp folder, where each bun process of the suite is slow (deploy/root.ts).
+    expect(dirname(at)).toBe(scratchRoot());
     return s(at, log);
   };
   const said: string[] = [];

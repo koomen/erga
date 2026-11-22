@@ -14,7 +14,7 @@ import { failureOf } from "./flow";
 import { gateRefusal, type TestRun } from "./gate";
 import { takeLock, testEnv } from "./jobs";
 import { alive, ownStart } from "./pid";
-import { sh } from "../root";
+import { scratchRoot, sh } from "../root";
 
 export const runPath = (dir: string, tree: string) => join(dir, "tests", `${tree}.json`);
 
@@ -57,7 +57,9 @@ export function treeOf(clone: string, commit: string): string | null {
 export type Suite = (dir: string, log: string) => unknown;
 
 const suite: Suite = (dir, log) => {
-  const i = sh(["bun", "install", "--frozen-lockfile"], { cwd: dir, env: testEnv() });
+  // No scripts: workerd's check of its binary takes 3 s of each run, and the tests start it all the same; and a folder
+  // that goes after the run needs no git hook (package.json, prepare).
+  const i = sh(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: dir, env: testEnv() });
   if (!i.ok) writeFileSync(log, `bun install failed: ${i.err.slice(-600)}\n`);
   else sh(["sh", "-c", 'exec bun run test > "$0" 2>&1', log], { cwd: dir, env: testEnv() });
   try {
@@ -105,7 +107,7 @@ export async function testRun(o: {
   }
   const key = o.tree.slice(0, 12);
   const logFile = join(tmpdir(), `erga-tests-${key}.log`);
-  const dir = join(tmpdir(), `erga-tests-${key}-${process.pid}`);
+  const dir = join(scratchRoot(), `erga-tests-${key}-${process.pid}`);
   let run: TestRun = {
     tree: o.tree,
     what: o.what,
