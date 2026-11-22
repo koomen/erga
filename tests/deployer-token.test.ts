@@ -186,7 +186,7 @@ describe("the deployer's fetch handler, as its instance calls it", () => {
     const { mock } = await account();
     const store = storeBinding();
     const env = { ...WHERE, KEY, STATE: store } as unknown as Env;
-    const worker = deployer({ fetch: mock.fetch, now: () => 0, sleep: async () => {} });
+    const worker = deployer({ fetch: mock.fetch, now: () => 0, sleep: async () => {}, version: "111111111111" });
     const ask = async (token?: string) =>
       (await (
         await worker.fetch(new Request("https://deployer/", token == null ? {} : { method: "POST", body: token }), env)
@@ -196,13 +196,15 @@ describe("the deployer's fetch handler, as its instance calls it", () => {
 
   test("it holds no token at first; a token that the check refuses changes nothing; a good one is kept, sealed under its own secret", async () => {
     const { store, ask, sealed } = await installed();
-    expect(await ask()).toEqual({ ok: true, ready: false, head: null });
+    // (Its answer says the release that its code is of, and that it never gave itself newer code.)
+    const none = { ok: true as const, ready: false, head: null, version: "111111111111", renewed: null };
+    expect(await ask()).toEqual(none);
     expect(await ask("mock-deployer-token")).toEqual({ ok: false, why: D1 });
-    expect([await ask(), sealed()]).toEqual([{ ok: true, ready: false, head: null }, null]);
+    expect([await ask(), sealed()]).toEqual([none, null]);
 
     // (The instance sends the token as the person pasted it: the space around it is not the token's.)
-    expect(await ask(`  ${GOOD}\n`)).toEqual({ ok: true, ready: true, head: null });
-    expect(await ask()).toEqual({ ok: true, ready: true, head: null });
+    expect(await ask(`  ${GOOD}\n`)).toEqual({ ...none, ready: true });
+    expect(await ask()).toEqual({ ...none, ready: true });
     // The store never holds the token in the clear, and only the deployer's own secret opens it.
     expect([...store.cell.values()].join("\n")).not.toContain(GOOD);
     expect([await open(KEY, sealed()), await open("another-secret", sealed())]).toEqual([GOOD, null]);
@@ -226,7 +228,7 @@ describe("the deployer's fetch handler, as its instance calls it", () => {
     expect(await ask(GOOD)).toMatchObject({ ok: true, ready: true });
     await tell({ put: { ...state, head: "a".repeat(40) } });
     expect(await open(KEY, sealed())).toBe(GOOD);
-    expect(await ask()).toEqual({ ok: true, ready: true, head: "a".repeat(40) });
+    expect(await ask()).toMatchObject({ ok: true, ready: true, head: "a".repeat(40) });
   });
 });
 

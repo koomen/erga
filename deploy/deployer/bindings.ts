@@ -38,22 +38,15 @@ export function releaseBindings(env: Record<string, BuiltBinding>): Record<strin
   );
 }
 
-/**
- * The metadata of a binding the pipeline does not make: the release's own, or (a release from before it carried
- * its bindings) the same translation done here. Null: the release says the pipeline must make it, and this
- * pipeline doesn't know how.
- */
-export function passedBinding(release: Release, name: string, b: BuiltBinding): Record<string, unknown> | null {
-  if (!release.bindings) return cloudflareBinding(name, b);
-  return release.bindings[name] ?? null;
-}
+/** The release's own metadata of a binding the pipeline does not make. Null: the release says the pipeline must make it, and this pipeline doesn't know how. */
+export const passedBinding = (release: Release, name: string): Record<string, unknown> | null => release.bindings?.[name] ?? null;
 
 /**
  * Why this pipeline can't deploy the release's bindings, or null. Checked before the deploy changes anything, so a
  * release that needs a newer pipeline stops at once, with the target as it was.
  */
 export function bindingsProblem(release: Release): string | null {
-  const missing = Object.entries(release.worker.env).filter(([n, b]) => !TARGET_KINDS.includes(b.type) && !passedBinding(release, n, b));
+  const missing = Object.entries(release.worker.env).filter(([n, b]) => !TARGET_KINDS.includes(b.type) && !passedBinding(release, n));
   if (!missing.length) return null;
   const list = missing.map(([n, b]) => `${n} (${b.type})`).join(", ");
   return `Release ${release.version} has a binding that the deploy pipeline must make for each target, and it can't: ${list}. Nothing changed. Teach the pipeline (deploy/deployer/cloudflare.ts, workerMetadata) to make it.`;

@@ -346,6 +346,11 @@ section.everyone li.off .switch { cursor: default; }
 main.admin-main > .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0 0 40px; }
 .chart { min-width: 0; padding: 16px 16px 14px; border: 1px solid var(--rule); border-radius: 12px; }
 /* The Deploy page's section for the deployer's token (server/admin/deploy.ts): how to make one, and the field. */
+.deployer-status { margin-top: 36px; max-width: 640px; }
+.deployer-status dl { display: grid; grid-template-columns: 11em minmax(0, 1fr); align-items: baseline; gap: 8px 16px; margin: 12px 0 0; font-size: 13px; }
+.deployer-status dt { color: var(--soft); }
+.deployer-status dd { margin: 0; min-width: 0; color: var(--fg-strong); overflow-wrap: anywhere; }
+.deployer-status dd.s-err { color: var(--bad); }
 .deployer-token { margin-top: 36px; max-width: 640px; font-size: 14px; }
 .deployer-token summary { cursor: pointer; color: var(--fg-strong); font-weight: 500; }
 .deployer-token details > :is(p, ol, form) { margin: 12px 0 0; }

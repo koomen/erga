@@ -13,11 +13,14 @@
 // token's section all come from it, so they agree. With no token the deployer looks at GitHub and deploys nothing:
 // the row says that it waits for a token, with the saved mode still shown, and the control and the buttons are off.
 //
+// The section "The deployer" is the deployer's status (shared/deployer.ts, status): its state, its last look, the
+// release that its own code is of beside the server's, and how its last update of that code went.
+//
 // A server with no deployer deploys from a machine: the page says so, and what it knows of that machine's
 // auto-deploy, and shows its jobs, with no commits and no button. The page's script (client/inline/admin-deploy.ts)
-// draws the live part and the token section's words again (GET /admin/deploy/view) while the page is open.
+// draws the live part, the status and the token section's words again (GET /admin/deploy/view) while the page is open.
 
-import { autoText, blocked, AWAY, type Deployer, deployerOf, deploys, NO_TOKEN, tokenText } from "../../shared/deployer.ts";
+import { autoText, blocked, AWAY, type Deployer, deployerOf, deploys, NO_TOKEN, status, tokenText } from "../../shared/deployer.ts";
 import { esc } from "../../shared/html.ts";
 import { type InstanceView, instanceHtml } from "../../shared/ops-view.ts";
 import { timeAgo } from "../../shared/time.ts";
@@ -102,13 +105,25 @@ function tokenLede(d: Deployer, mode: AutoDeployMode, branch: string): string {
   return `<p class="lede" data-deployer="${d.at}" data-give="${give(d.at)}">${says}</p>`;
 }
 
-/** The page's parts that change by themselves: `html`, the Auto-deploy row and the view; `token`, the token section's words (null: no deployer to give one). */
+/** The deployer's status, line by line (shared/deployer.ts, status); "": the server has no deployer in the cloud. */
+export function statusHtml(d: Deployer, state: DeployState, runs: string | null, now: number): string {
+  if (d.at == "none") return "";
+  const lines = status(d, { looked: state.looked?.at ?? null, error: state.looked?.error ?? null, runs, now });
+  const row = (l: (typeof lines)[number]) =>
+    `<dt>${l.label}</dt><dd data-status="${l.key}"${l.bad ? ' class="s-err"' : ""}>${esc(l.text)}</dd>`;
+  return `<dl>${lines.map(row).join("")}</dl>`;
+}
+
+/**
+ * The page's parts that change by themselves: `html`, the Auto-deploy row and the view; `status`, the deployer's
+ * status ("": no deployer in the cloud); `token`, the token section's words (null: no deployer to give one).
+ */
 export async function deployLive(
   platform: Platform,
   session: Session,
   url: URL,
   now = Date.now()
-): Promise<{ html: string; token: string | null; deployer: Deployer }> {
+): Promise<{ html: string; status: string; token: string | null; deployer: Deployer }> {
   const who = whoOf(session);
   const jobs = platform.directory.deploys;
   const state = await jobs.state(who, now);
@@ -116,9 +131,11 @@ export async function deployLive(
   const at = deployer.at;
   const host = url.host;
   const token = platform.deploy.deployer ? tokenLede(deployer, state.auto, state.tracks?.branch ?? "its branch") : null;
+  const says = statusHtml(deployer, state, platform.deploy.version, now);
   if (!state.tracks)
     return {
       html: `<p class="lede">${esc(host)} has no deploy spec yet: its next deploy from a machine writes it (bun erga deploy ${esc(host)}).</p>`,
+      status: says,
       token,
       deployer,
     };
@@ -179,7 +196,8 @@ export async function deployLive(
   };
   const wait = view.busy ? BUSY_MS : IDLE_MS;
   const auto = at == "none" ? `<p class="lede">${esc(machineAuto(state.jobs, now))}</p>` : autoRow(state, at, state.tracks.branch);
-  return { html: `${auto}<div class="ops-view" id="ops" data-wait="${wait}">${instanceHtml(view, tab, id, now)}</div>`, token, deployer };
+  const html = `${auto}<div class="ops-view" id="ops" data-wait="${wait}">${instanceHtml(view, tab, id, now)}</div>`;
+  return { html, status: says, token, deployer };
 }
 
 /**
@@ -214,7 +232,7 @@ function tokenSection(
 export async function deployPage(platform: Platform, session: Session, url: URL, refused?: string) {
   const runs = platform.deploy.version;
   const bound = platform.deploy.deployer;
-  const { html, token, deployer } = await deployLive(platform, session, url);
+  const { html, status: says, token, deployer } = await deployLive(platform, session, url);
   return adminPage(
     {
       session,
@@ -222,7 +240,15 @@ export async function deployPage(platform: Platform, session: Session, url: URL,
       here: "deploy",
       lede: `${url.host} runs ${runs ?? "no release that it knows"}.`,
       body: `
-  <div id="deploy-live">${html}</div>${bound && token ? tokenSection(bound, deployer.at, token, session, refused) : ""}
+  <div id="deploy-live">${html}</div>${
+    says
+      ? `
+  <section class="deployer-status" aria-labelledby="deployer-head">
+    <h3 class="sub-head" id="deployer-head">The deployer</h3>
+    <div id="deployer-live">${says}</div>
+  </section>`
+      : ""
+  }${bound && token ? tokenSection(bound, deployer.at, token, session, refused) : ""}
 <script>${inlineCall("admin-deploy")}</script>`,
     },
     refused ? 400 : 200

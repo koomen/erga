@@ -12,7 +12,7 @@ import { type Commit, readControl, startOf, takeAsk, writeLook } from "../deploy
 import { LEASE_MS, NoTable, openJob, readJobs, type Sql, writeSpec } from "../deploy/deployer/instance";
 import type { Spec } from "../deploy/deployer/spec";
 import { DEPLOYER_MS } from "../server/directory/index.ts";
-import { autoText, blocked, deployerOf, deploys, tokenText } from "../shared/deployer.ts";
+import { autoText, blocked, type Deployer, deployerOf, deploys, status, tokenText } from "../shared/deployer.ts";
 import { esc } from "../shared/html.ts";
 import { OPERATIONS } from "../server/operations/index.ts";
 import { runTool, server } from "./helpers/app";
@@ -275,7 +275,7 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
   const says = () =>
     held.silent
       ? { ok: false as const, why: "The deployer gave no answer." }
-      : { ok: true as const, ready: held.yes, head: held.yes ? sha(4) : null };
+      : { ok: true as const, ready: held.yes, head: held.yes ? sha(4) : null, version: "111111111111", renewed: null };
   const post = (token: string, user = "") =>
     s.fetch(`/admin/deploy/token${user}`, {
       method: "POST",
@@ -284,7 +284,10 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
       body: new URLSearchParams({ token }).toString(),
     });
   /** The view's answer: the live part, and the token section's words. */
-  const view = async () => (await (await s.fetch("/admin/deploy/view")).json()) as { html: string; token: string | null };
+  const view = async () => (await (await s.fetch("/admin/deploy/view")).json()) as { html: string; status: string; token: string | null };
+  /** The lines of the section "The deployer": each one's key and words, with ! where the page marks it. */
+  const lines = (html: string) =>
+    [...html.matchAll(/<dd data-status="(\w+)"( class="s-err")?>([^<]*)<\/dd>/g)].map((m) => `${m[2] ? "! " : ""}${m[1]}: ${m[3]}`);
   /** The Auto-deploy row's words, and its buttons. */
   const row = (html: string) => ({
     says: /data-auto-desc [^>]*>([^<]*)</.exec(html)![1].replaceAll("&#39;", "'"),
@@ -323,6 +326,13 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
     saved: "commits",
   });
   expect(html).toContain('data-control="auto-mode" data-deployer="waits"');
+  // The section "The deployer" says where it is: its state, its last look, and its own code beside the server's.
+  expect(html).toContain('<h3 class="sub-head" id="deployer-head">The deployer</h3>');
+  const CODE = [
+    "code: Release 111111111111. This server runs 222222222222.",
+    "update: None by itself yet: its code came from the setup command, or from a deploy from a machine.",
+  ];
+  expect(lines(html)).toEqual(["! state: Waiting for a token: it looks at GitHub, and it deploys nothing.", "look: Just now.", ...CODE]);
   // Deploy and Roll back are off too, and say why. The operations refuse with the same words, and the read has them.
   const NO =
     'The deployer has no token: it deploys nothing. Give it one on the Deploy page (/admin/deploy), under "The deployer\'s token".';
@@ -355,6 +365,10 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
   expect(row(html)).toEqual({ says: "Deploys each new commit on main by itself.", off: 0, saved: "commits" });
   expect(html).not.toMatch(/disabled>(Deploy|Roll back)</);
   expect((await runTool(s, "deploys")).result.deployer).toEqual({ looked: expect.any(String), head: sha(4) });
+  // The status says that it is ready, in the page and in the read.
+  const READY = "Ready: it looks at GitHub each minute, and it can deploy.";
+  expect(lines(html)).toEqual([`state: ${READY}`, "look: Just now.", ...CODE]);
+  expect((await runTool(s, "deploys")).result.deployerStatus).toMatchObject({ state: READY, look: "Just now.", code: CODE[0].slice(6) });
   expect((await auto("releases")).status).toBe(200);
   let now = await view();
   expect(row(now.html).says).toBe("Deploys each new tagged release (vX.Y.Z) on main by itself.");
@@ -370,6 +384,7 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
   now = await view();
   expect(now.token).toBe('<p class="lede" data-deployer="silent" data-give="Give the deployer a token">The deployer gave no answer.</p>');
   expect(row(now.html).off).toBe(0);
+  expect(lines(now.status)).toEqual(["! state: Silent: The deployer gave no answer.", "look: Just now."]);
   held.silent = false;
   // A deployer that stopped: its last look is old. The row says so, with its control off, and nothing names a machine.
   s.sql.db.run("UPDATE deploy_control SET looked = looked - ?", [DEPLOYER_MS + 1000]);
@@ -379,6 +394,10 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
   expect(now.html).toContain(`<div class="none">${AWAY}</div>`);
   expect(now.html).not.toContain("machine");
   expect(now.token).toBe(`<p class="lede" data-deployer="away" data-give="Give the deployer a token">${AWAY}</p>`);
+  expect(lines(now.status).slice(0, 2)).toEqual([
+    "! state: Away: it does not look at GitHub now, and it deploys nothing.",
+    "! look: 5 minutes ago.",
+  ]);
   expect(await runTool(s, "deploy", { action: "rollback" })).toMatchObject({ status: 403, error: AWAY });
   expect((await runTool(s, "deploys")).result).toMatchObject({ deployer: AWAY, autoDeploy: "off" });
   // Only an admin, from this site's own page.
@@ -391,8 +410,15 @@ test("the deployer's state is one value, from whether it looked and what it says
   const none = { ok: true as const, ready: false, head: null };
   const silent = { ok: false as const, why: "No answer." };
   expect([deployerOf(false, null), deployerOf(true, null)]).toEqual([{ at: "none" }, { at: "ready", head: null }]);
-  expect([deployerOf(true, none), deployerOf(false, none)]).toEqual([{ at: "waits" }, { at: "waits" }]);
-  expect([deployerOf(true, holds), deployerOf(false, holds)]).toEqual([{ at: "ready", head: sha(4) }, { at: "away" }]);
+  // (With its answer comes what it says of its own code: nothing, from a deployer from before it said so.)
+  expect([deployerOf(true, none), deployerOf(false, none)]).toEqual([
+    { at: "waits", code: {} },
+    { at: "waits", code: {} },
+  ]);
+  expect([deployerOf(true, holds), deployerOf(false, holds)]).toEqual([
+    { at: "ready", head: sha(4), code: {} },
+    { at: "away", code: {} },
+  ]);
   expect([deployerOf(true, silent), deployerOf(false, silent)]).toEqual([{ at: "silent", why: "No answer." }, { at: "away" }]);
   // The controls are on only where an ask reaches a deployer that deploys; elsewhere something says why not.
   for (const at of ["none", "waits", "away", "silent", "ready"] as const)
@@ -407,6 +433,47 @@ test("the deployer's state is one value, from whether it looked and what it says
   );
   expect(tokenText("waits", "off", "main")).toBe("With a token, it deploys only when you use Deploy on a row above: auto-deploy is off.");
   expect([tokenText("silent", "commits", "main"), tokenText("away", "commits", "main")]).toEqual(["", ""]);
+});
+
+test("the deployer's status: its state, its last look, its code beside the server's, and its last update of that code with the reason", () => {
+  const now = Date.parse("2026-11-22T12:00:00Z");
+  const seen: Parameters<typeof status>[1] = { looked: now - 120_000, error: null, runs: "222222222222", now };
+  const says = (d: Deployer, o = seen) => (d.at == "none" ? [] : status(d, o).map((l) => `${l.bad ? "! " : ""}${l.label}: ${l.text}`));
+  const answer = { ok: true as const, ready: true, head: null };
+  const renewed = { at: now - 3 * 3_600_000, version: "222222222222", why: null as string | null };
+  const READY = "State: Ready: it looks at GitHub each minute, and it can deploy.";
+  // It runs the server's release, which it gave itself after its last deploy.
+  expect(says(deployerOf(true, { ...answer, version: "222222222222", renewed }))).toEqual([
+    READY,
+    "Last look: 2 minutes ago.",
+    "Its code: Release 222222222222, as this server.",
+    "Last update of its code: 3 hours ago, after its deploy of release 222222222222: done.",
+  ]);
+  // It kept its code, with the deployer's own reason. The look's error is the look's line.
+  const why =
+    "Cloudflare refused PUT /scripts/erga-deployer (it answered 403: Authentication error [code 10000]). A token for erga-deployer too changes that.";
+  expect(
+    says(deployerOf(true, { ...answer, version: "111111111111", renewed: { ...renewed, why } }), {
+      ...seen,
+      error: "github.com answered 503.",
+    })
+  ).toEqual([
+    READY,
+    "! Last look: 2 minutes ago: github.com answered 503.",
+    "Its code: Release 111111111111. This server runs 222222222222.",
+    `! Last update of its code: 3 hours ago, after its deploy of release 222222222222: it kept its code. ${why}`,
+  ]);
+  // Its code is another release's than its last update's (a deploy from a machine gave it that code after): only what is known.
+  expect(says(deployerOf(true, { ...answer, version: "333333333333", renewed })).at(-1)).toBe(
+    "Last update of its code: 3 hours ago, it asked Cloudflare for the code of release 222222222222. It runs release 333333333333 now."
+  );
+  // A deployer from before it said its release; one that never looked; one that needs no token (it gives no answer).
+  expect(says(deployerOf(false, { ...answer, ready: false }), { ...seen, looked: null })).toEqual([
+    "! State: Waiting for a token: it looks at GitHub, and it deploys nothing.",
+    "! Last look: None yet.",
+    "! Its code: Not known: this deployer is from before it said its release. The next deploy gives it newer code.",
+  ]);
+  expect(says(deployerOf(true, null))).toEqual([READY, "Last look: 2 minutes ago."]);
 });
 
 test("a job's state is the one that the ops page of a machine reads from the same row", async () => {

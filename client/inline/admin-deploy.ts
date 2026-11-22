@@ -1,8 +1,8 @@
 // The Deploy page's script (server/admin/deploy.ts). It draws the page's live part again (GET /admin/deploy/view) while the page
 // is open and shown: each second while a job runs or an ask waits, else each 10 seconds (the server says which), and
 // only when it changed. So a deploy that the deployer runs shows as it goes. A job's log that was scrolled to its end
-// stays at its end, and an open question stays open. The token section's words come with the same answer, and are
-// drawn again too: its form stays as it is.
+// stays at its end, and an open question stays open. The deployer's status and the token section's words come with
+// the same answer, and are drawn again too: the token's form stays as it is.
 //
 // The words of the Auto-deploy row and of the token's section come from one place (shared/deployer.ts), here and on
 // the server: a click on a mode shows both at once, as the server draws them after the save.
@@ -20,6 +20,8 @@ export default function adminDeploy(): void {
   const live = document.getElementById("deploy-live")!;
   /** The token section's words, where the server has a deployer to give a token. */
   const tokenLive = document.getElementById("token-live");
+  /** The deployer's status, where the server has a deployer in the cloud. */
+  const statusLive = document.getElementById("deployer-live");
   const view = window.ergaView;
   const mark = saveMark();
   /** The live part's HTML and the token section's words, as the server last gave them. */
@@ -50,10 +52,12 @@ export default function adminDeploy(): void {
   }
   async function drawNow(n: number) {
     const r = await fetch(asUser(`/admin/deploy/view${location.search}`), { headers: { Accept: "application/json" } }).catch(() => null);
-    const got = r?.ok ? ((await r.json().catch(() => null)) as { html?: string; token?: string | null } | null) : null;
+    type Parts = { html?: string; status?: string; token?: string | null };
+    const got = r?.ok ? ((await r.json().catch(() => null)) as Parts | null) : null;
     const html = got?.html;
-    if (html == null || view.signal.aborted || n != asked || html + got!.token == last) return;
-    last = html + got!.token;
+    if (html == null || view.signal.aborted || n != asked || html + got!.status + got!.token == last) return;
+    last = html + got!.status + got!.token;
+    if (statusLive && got!.status) statusLive.innerHTML = got!.status;
     if (tokenLive && got!.token) {
       tokenLive.innerHTML = got!.token;
       tokenLive.nextElementSibling!.querySelector("summary")!.textContent =

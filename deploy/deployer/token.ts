@@ -20,17 +20,18 @@
 // may write, and each permission that no read here tries, stays unknown: the first deploy shows whether it may deploy.
 // Trap: nothing here answers the token, or logs it.
 
+import type { Renewed, Store } from "./store";
 import { deployerName } from "./worker-form";
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 
-/** The part of the deployer's store that holds the token (worker.ts, Store): with `sealed`, it keeps that one. `head`: the last look's. */
-export interface TokenStore {
-  token(sealed?: string): Promise<{ token: string | null; head: string | null }>;
-}
-
-/** What the deployer answers its instance: whether it holds a token, and the head of the branch at its last look; or why a token is not taken. */
-export type DeployerAnswer = { ok: true; ready: boolean; head: string | null } | { ok: false; why: string };
+/**
+ * What the deployer answers its instance: whether it holds a token, the head of the branch at its last look, the
+ * release that its own code is of, and how the last update of that code went; or why a token is not taken.
+ */
+export type DeployerAnswer =
+  | { ok: true; ready: boolean; head: string | null; version: string; renewed: Renewed | null }
+  | { ok: false; why: string };
 
 /** Why the token is not taken, or null. */
 export async function tokenProblem(fetch: Fetch, env: { ACCOUNT: string; WORKER: string }, token: string): Promise<string | null> {
@@ -114,17 +115,15 @@ export async function open(key: string, sealed: string | null): Promise<string |
  */
 export async function answer(
   request: Request,
-  fetch: Fetch,
+  io: { fetch: Fetch; version: string },
   env: { ACCOUNT: string; WORKER: string; KEY: string },
-  store: TokenStore
+  store: Pick<Store, "says">
 ): Promise<Response> {
-  const say = (a: DeployerAnswer) => Response.json(a);
-  if (request.method != "POST") {
-    const at = await store.token();
-    return say({ ok: true, ready: !!at.token, head: at.head });
+  let token: string | undefined;
+  if (request.method == "POST") {
+    const why = await tokenProblem(io.fetch, env, (token = (await request.text()).trim()));
+    if (why) return Response.json({ ok: false, why } satisfies DeployerAnswer);
   }
-  const token = (await request.text()).trim();
-  const why = await tokenProblem(fetch, env, token);
-  if (why) return say({ ok: false, why });
-  return say({ ok: true, ready: true, head: (await store.token(await seal(env.KEY, token))).head });
+  const at = await store.says(token ? { token: await seal(env.KEY, token) } : {});
+  return Response.json({ ok: true, ready: !!at.token, head: at.head, version: io.version, renewed: at.renewed } satisfies DeployerAnswer);
 }

@@ -24,7 +24,8 @@
 //   /__providers/<name>  a stand-in for each model provider's answer to an API key's check
 //   /__deployer          a stand-in for the server's deployer (cloudflare/platform.ts, deployerOf), for a server whose
 //                        deploy facts (ERGA_DEPLOY) name an account and a Worker: it holds no token until one is
-//                        pasted; it takes any token but one with "refused" in it; DELETE takes its token away
+//                        pasted; it takes any token but one with "refused" in it; DELETE takes its token away; PUT
+//                        sets what it says of its own code ({version, renewed}: shared/deployer.ts, Code)
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -150,8 +151,9 @@ export function ergaDev(opts: DevOptions): Plugin {
         callback: `${devOrigin}/_edge/callback`,
         user: process.env.ERGA_GITHUB_USER || "ada",
       });
-      /** Whether the pretend deployer holds a token. */
+      /** Whether the pretend deployer holds a token, and what it says of its own code: an older release's, as setup gave it. */
       let deployerHolds = false;
+      let deployerCode: object = { version: "1".repeat(12), renewed: null };
       server.httpServer?.on("close", () => void stopLocalBrowser());
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
@@ -172,12 +174,15 @@ export function ergaDev(opts: DevOptions): Plugin {
           return void readBody(req).then((token) => {
             const refused = token.includes("refused");
             if (req.method == "DELETE") deployerHolds = false;
+            else if (req.method == "PUT") deployerCode = JSON.parse(token);
             else if (req.method == "POST" && !refused) deployerHolds = true;
             res
               .writeHead(200, { "Content-Type": "application/json" })
               .end(
                 JSON.stringify(
-                  refused ? { ok: false, why: "The token can read another Worker (other)." } : { ok: true, ready: deployerHolds, head: null }
+                  refused
+                    ? { ok: false, why: "The token can read another Worker (other)." }
+                    : { ok: true, ready: deployerHolds, head: null, ...deployerCode }
                 )
               );
           }, next);

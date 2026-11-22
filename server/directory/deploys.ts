@@ -75,6 +75,8 @@ export interface DeployState {
   ask: DeployAsk | null;
   /** The deployer's last look at GitHub; null: no deployer looked in the last DEPLOYER_MS. */
   look: { at: number; head: string | null; error: string | null } | null;
+  /** When a deployer last looked, however long ago, and what that look said; null: none ever did. */
+  looked: { at: number; error: string | null } | null;
   /** The newest semver release tag on the tracked branch, as that look saw it. */
   latestRelease: LatestRelease | null;
   /** The branch's last commits, newest first, as that look saw them. */
@@ -141,6 +143,7 @@ export class Deploys {
           ? { kind: deploy ? "deploy" : "rollback", sha: deploy, by: control.ask_by ?? "", at: Number(control.ask_at ?? 0) }
           : null,
       look: control && there ? { at: Number(control.looked), head: control.head, error: control.error } : null,
+      looked: control?.looked != null ? { at: Number(control.looked), error: control.error } : null,
       latestRelease: there ? read(Latest, control?.latest_release) : null,
       commits: (there && read(Schema.Array(Seen), control?.commits)) || [],
       jobs: jobs.map((j) => {

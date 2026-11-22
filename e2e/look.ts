@@ -327,6 +327,9 @@ if (deployPage) {
   const sha = (n: number) => String(n).repeat(40);
   const subjects = ["Search finds a document by its title", "Sign-in says why it refused", "A page keeps its place after a reload"];
   await fetch(`${root}/__deployer`, { method: "DELETE" });
+  // (Its code is the release that the server runs: it gave itself that code after its deploy, three hours ago.)
+  const code = { version: "2".repeat(12), renewed: { at: Date.now() - 3 * 3_600_000, version: "2".repeat(12), why: null } };
+  await fetch(`${root}/__deployer`, { method: "PUT", body: JSON.stringify(code) });
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* writeSpec(sql, {

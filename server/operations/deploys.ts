@@ -8,7 +8,7 @@
 // (shared/deployer.ts).
 
 import * as Schema from "effect/Schema";
-import { blocked, deployerOf } from "../../shared/deployer.ts";
+import { blocked, deployerOf, status } from "../../shared/deployer.ts";
 import { deployerNow, machineAuto } from "../admin/index.ts";
 import type { DeployJob, DeployState } from "../directory/index.ts";
 import { type Caller, iso, type Operation, OperationError, said } from "./operation.ts";
@@ -54,8 +54,10 @@ export const DEPLOY_OPERATIONS: Operation[] = [
         return { job: jobOf(job), log };
       }
       const runs = caller.platform?.deploy.version ?? null;
-      const { at } = await deployerNow(caller.platform, !!state.look);
+      const deployer = await deployerNow(caller.platform, !!state.look);
+      const { at } = deployer;
       const why = blocked(at, hostOf(caller));
+      const looked = { looked: state.looked?.at ?? null, error: state.looked?.error ?? null };
       return {
         runs,
         tracks: state.tracks,
@@ -67,6 +69,10 @@ export const DEPLOY_OPERATIONS: Operation[] = [
               ...(why ? { blocked: why } : {}),
             }
           : why,
+        // The deployer's status, in the Deploy page's words: its state, its last look, its own code, its last update of it.
+        ...(deployer.at == "none"
+          ? {}
+          : { deployerStatus: Object.fromEntries(status(deployer, { ...looked, runs, now: Date.now() }).map((l) => [l.key, l.text])) }),
         // With no deployer the switch is nobody's: auto-deploy is a machine's, and the read says what the server knows of it.
         autoDeploy: at == "none" ? machineAuto(state.jobs, Date.now()) : state.auto,
         ...(state.latestRelease ? { latestRelease: state.latestRelease } : {}),
@@ -89,7 +95,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
           ...(runs && c.sha.startsWith(runs) ? { live: true } : {}),
         })),
         jobs: state.jobs.map(jobOf),
-        note: "commits: the last ones of the branch, newest first, as the deployer saw them at its last look. release: released (deploy takes it), none (GitHub has no release of it yet) or refused. autoDeploy: off, releases (tagged vX.Y.Z releases only) or commits (every commit): the saved mode. deployer.blocked: why the deployer deploys nothing now, and takes no ask. An ask starts within a minute, as a job.",
+        note: "commits: the last ones of the branch, newest first, as the deployer saw them at its last look. release: released (deploy takes it), none (GitHub has no release of it yet) or refused. autoDeploy: off, releases (tagged vX.Y.Z releases only) or commits (every commit): the saved mode. deployer.blocked: why the deployer deploys nothing now, and takes no ask. deployerStatus: its state, its last look, the release that its own code is of (code), and how its last update of that code went (update). An ask starts within a minute, as a job.",
       };
     },
   },

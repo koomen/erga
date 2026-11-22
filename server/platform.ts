@@ -17,6 +17,7 @@ import type { ViewAnswer } from "../document/api/view.ts";
 import type { CommentAnswer, CommentCall } from "../document/api/comments.ts";
 import type { TreeOp } from "../document/model/pages.ts";
 import { VIA, type Act } from "../shared/attribution.ts";
+import type { Code } from "../shared/deployer.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -82,8 +83,11 @@ export type LiveRows = (platform: Platform, session: Session, keys: string[], or
  * (agents/models.ts) and `adminAgent`
  * (agents/person/sessions.ts). cloudflare/platform.ts builds the whole of it.
  */
-/** What a deployer says: whether it holds a token, and the head of the branch at its last look; or why it took no token. */
-export type DeployerSays = { ok: true; ready: boolean; head: string | null } | { ok: false; why: string };
+/**
+ * What a deployer says: whether it holds a token, the head of the branch at its last look, and (shared/deployer.ts,
+ * Code) the release that its own code is of and its last update of it; or why it took no token.
+ */
+export type DeployerSays = ({ ok: true; ready: boolean; head: string | null } & Code) | { ok: false; why: string };
 
 export interface Platform {
   /** Who's asking, if anyone: a signed-in person, or an agent with their token (server/identity/admit.ts). */

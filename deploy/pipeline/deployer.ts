@@ -29,13 +29,14 @@ export { DEPLOYER_TAG, deployerName } from "../deployer/worker-form";
 /** The deployer's secret that seals its token (deploy/deployer/token.ts). */
 const KEY = "KEY";
 
-/** deploy/deployer/worker-main.ts as one module: what the Worker runs. */
-export async function deployerModule(): Promise<string> {
+/** deploy/deployer/worker-main.ts as one module: what the Worker runs. `version`: the release that the code is of, which the deployer says. */
+export async function deployerModule(version: string): Promise<string> {
   const built = await Bun.build({
     entrypoints: [join(ROOT, "deploy/deployer/worker-main.ts")],
     target: "browser",
     format: "esm",
     minify: true,
+    define: { ERGA_DEPLOYER_VERSION: JSON.stringify(version) },
   });
   if (!built.success || built.outputs.length != 1)
     throw new DeployError({ message: `The deployer's code did not build: ${built.logs.map(String).join("; ") || "no module"}` });
@@ -75,8 +76,10 @@ export async function installDeployer(
   if (there && !keeps) await removeDeployer(cf, target);
 
   // A deployer that is there keeps the secret that it holds.
+  // Its code is this checkout's: it says this checkout's commit, as a release names its own.
+  const commit = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT }).stdout.toString().trim().slice(0, 12) || "dev";
   const form = deployerForm(
-    await deployerModule(),
+    await deployerModule(commit),
     target.account,
     target.worker,
     database,

@@ -106,7 +106,16 @@ const appOf = (facts: unknown): string | null => {
 };
 
 const Says = Schema.Union([
-  Schema.Struct({ ok: Schema.Literal(true), ready: Schema.Boolean, head: Schema.NullOr(Schema.String) }),
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    ready: Schema.Boolean,
+    head: Schema.NullOr(Schema.String),
+    // (A deployer from before 2026-11-22 says neither: the Deploy page says that its code is not known.)
+    version: Schema.optional(Schema.String),
+    renewed: Schema.optional(
+      Schema.NullOr(Schema.Struct({ at: Schema.Number, version: Schema.String, why: Schema.NullOr(Schema.String) }))
+    ),
+  }),
   Schema.Struct({ ok: Schema.Literal(false), why: Schema.String }),
 ]);
 

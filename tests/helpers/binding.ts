@@ -13,7 +13,7 @@ import { seal } from "../../deploy/deployer/token";
 import { DeployerState, type Env, type Fetch, type IO } from "../../deploy/deployer/worker";
 import { installDeployer } from "../../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../../dev/mock-cloudflare";
-import { bindingsOf, bootstrap, databaseOf, release, SHA2 } from "./deploys.ts";
+import { bindingsOf, bootstrap, databaseOf, release, SHA1, SHA2 } from "./deploys.ts";
 import { builtBundle, github } from "./github.ts";
 
 /** The spec of the mock's second instance (next.example.com), which tracks main of example/erga. */
@@ -116,7 +116,8 @@ export async function instanceOn(d1: D1, made?: ReturnType<typeof mockCloudflare
       ? new Response("<html>Sign in</html>", { status: 302, headers: { location: "https://example.cloudflareaccess.com/" } })
       : server();
   };
-  const io: IO = { fetch, now: () => state.now, sleep: async (ms) => void (state.now += ms) };
+  // (Its code is of the release that setup put on the instance.)
+  const io: IO = { fetch, now: () => state.now, sleep: async (ms) => void (state.now += ms), version: SHA1.slice(0, 12) };
   const store = storeBinding();
   store.cell.set("token", JSON.stringify(await seal(KEY, "mock-pair-erga-next")));
   const env: Env = {

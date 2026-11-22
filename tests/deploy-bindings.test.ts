@@ -42,14 +42,6 @@ describe("the app Worker's bindings", () => {
     expect(bindingsOf(mock.state, "erga-next").BROWSER).toEqual({ type: "browser", name: "BROWSER" });
   });
 
-  test("a release from before it carried its bindings: the pipeline translates each kind the same way", () => {
-    const { bindings: _, ...old } = release;
-    const meta = nextMeta({ ...old, worker: { ...release.worker, env: { ...release.worker.env, AI: { type: "ai" } } } });
-    expect(meta.find((b) => b.name == "BROWSER")).toEqual({ type: "browser", name: "BROWSER" });
-    expect(meta.find((b) => b.name == "LOADER")).toEqual({ type: "worker_loader", name: "LOADER" });
-    expect(meta.find((b) => b.name == "AI")).toEqual({ type: "ai", name: "AI" });
-  });
-
   test("the Worker gets its own deploy facts (ERGA_DEPLOY), which bun erga register reads from Cloudflare: the target's account, Worker, database, addresses and plain settings", () => {
     const target = next();
     const facts = JSON.parse(nextMeta(release).find((b) => b.name == "ERGA_DEPLOY").text);

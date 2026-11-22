@@ -98,9 +98,6 @@ export async function makeRelease(): Promise<ReleaseIndex> {
     ],
   });
   if (!one.success) throw new AggregateError(one.logs, "bundling the Worker as one module (for celld) failed");
-  // The deployer on Cloudflare, as one module: each deploy gives it to the instance's deployer (deploy/pipeline/deployer.ts).
-  mkdirSync(join(staging, DEPLOYER_MODULE, ".."), { recursive: true });
-  writeFileSync(join(staging, DEPLOYER_MODULE), await deployerModule());
   // Not the inline code (client/build.ts): the Worker's bundle has it.
   const assets = files(SITE).filter((p) => !p.startsWith("release/") && !p.startsWith("release.") && p != "inline-code.ts");
   for (const p of assets) { mkdirSync(join(staging, "assets", p, ".."), { recursive: true }); cpSync(join(SITE, p), join(staging, "assets", p)); }
@@ -111,6 +108,9 @@ export async function makeRelease(): Promise<ReleaseIndex> {
     process.env.WORKERS_CI_COMMIT_SHA ||
     Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: ROOT }).stdout.toString().trim() ||
     "dev";
+  // The deployer on Cloudflare, as one module: each deploy gives it to the instance's deployer (deploy/pipeline/deployer.ts).
+  mkdirSync(join(staging, DEPLOYER_MODULE, ".."), { recursive: true });
+  writeFileSync(join(staging, DEPLOYER_MODULE), await deployerModule(sha.slice(0, 12)));
   const index: ReleaseIndex = {
     version: sha.slice(0, 12),
     built: new Date().toISOString(),

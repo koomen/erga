@@ -113,7 +113,7 @@ export function workerMetadata(
     else if (b.type == "r2") bindings.push({ type: "r2_bucket", name, bucket_name: bucketName(target.worker, name) });
     // Any other kind is the same on every target: the release's own metadata for it, sent as it is (bindings.ts).
     else {
-      const passed = passedBinding(release, name, b);
+      const passed = passedBinding(release, name);
       if (!passed) throw new Error(bindingsProblem(release)!);
       bindings.push(passed);
     }

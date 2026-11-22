@@ -1,45 +1,35 @@
-// The deployer on Cloudflare: a Worker in the person's own account that deploys each new release of the instance's
-// branch by itself. It has no route and no address. Its schedule runs it each minute, and ONE RUN IS ONE DEPLOY: a run
-// carries no work over to the next one, and it always ends with a result.
+// The deployer on Cloudflare: a Worker in the person's own account that deploys the instance's branch by itself. It
+// has no route and no address. Its schedule runs it each minute, and ONE RUN IS ONE DEPLOY: a run carries no work over
+// to the next one, and it always ends with a result.
 //
 // A run:
-//   1. Takes the deployer's lock (its own Durable Object, DeployerState). A run that stopped frees it after LOCK_MS.
-//   2. Reads the instance's spec and the admin's switch and ask (the instance's database, through the binding DB). The
-//      store keeps the last spec and switch that it read: a database that gives no answer does not stop the deployer.
+//   1. Takes the deployer's lock (its own Durable Object: store.ts). A run that stopped frees it after LOCK_MS.
+//   2. Reads the instance's spec, and the admin's switch and ask (the instance's database, through the binding DB).
 //   3. Reads GitHub: the branch's head, its last commits, and whether each has a release.
-//   4. Deploys, when an admin asked or the head is new: the release from GitHub's registry (checked against its
-//      digest), the release's new migrations, the static files, the Worker. Then it asks the instance's own
-//      /api/health for at most HEALTH_MS. The new release must answer healthy two times in a row; else one call puts
-//      the version before back (Cloudflare's own deployment of that version).
-//   5. Writes the result into its store, and a COPY of its look and of the job into the instance's rows
-//      (deploy_control, deploy_jobs), where /admin/deploy reads them. The copy is best effort: the deployer never
-//      needs it. The job's row is also the lock that a deploy from a machine takes (instance.ts).
+//   4. Deploys, when an admin asked or auto-deploy has a new commit: the release from GitHub's registry (checked
+//      against its digest), its new migrations, the static files, the Worker. Then the instance's own /api/health
+//      must answer healthy two times in a row within HEALTH_MS; else one call puts the version before back.
+//   5. Writes its look and the job into the instance's rows (deploy_control, deploy_jobs), where /admin/deploy reads
+//      them. The job's row is also the lock that a deploy from a machine takes (instance.ts).
+//   6. After a healthy deploy, uploads the release's deployer code as its own (renew).
 //
-// What setup gives it (deploy/pipeline/deployer.ts). Each deploy after gives it its release's code, with these (renew):
-//   KEY                    a secret that setup makes: it seals the token in the store (token.ts)
-//   ACCOUNT, WORKER        the account and the instance's Worker: every call of Cloudflare's API is for those two
-//   DATABASE               the id of the instance's database, for the Worker's upload
-//   DB                     the instance's database: the spec, the migrations and the copy
-//   STATE                  its own Durable Object (store.ts): the lock, the last commit tried, the job that runs, the token
-//   INSTANCE               the instance's Worker: /api/health, when the public address does not give the server's
-//                          answer (Cloudflare Access is in front of it)
-//
-// The token (for the instance's Worker and the deployer's, the role Editor; no D1) is no part of the install. A
-// person pastes it on the instance, which hands it to `fetch` here over its service binding DEPLOYER (token.ts).
+// Setup gives it its bindings (worker-form.ts, deployerForm), and each deploy after gives them again: KEY (a secret,
+// which seals the token in the store), ACCOUNT and WORKER (every call of Cloudflare's API is for those two), DATABASE
+// and DB (the instance's database: its id, and the binding), STATE (the store) and INSTANCE (the instance's Worker).
+// The token is no part of the install: a person pastes it on the instance, which hands it to `fetch` here (token.ts).
 // With no token, a run looks at GitHub and deploys nothing.
 //
-// Health is the server's own answer to a request ({ok, version, checks, upload}: server/health.ts). It is never a row
-// that the new release must write. `upload` is the name that this deployer gave its upload: the answer must be that
-// upload's, not the version before's. The migrations only add, so the version before runs on the newer tables: an unhealthy
-// release goes back with no change to the database, and the log gives the one command that restores the database too.
+// Health is the server's own answer to a request ({ok, version, checks, upload}: server/health.ts). `upload` is the
+// name that this deployer gave its upload: the answer must be that upload's, not the version before's. The migrations
+// only add, so the version before runs on the newer tables: an unhealthy release goes back with no change to the
+// database, and the log gives the one command that restores the database too.
 //
 // No Effect here, by Pete's word (2026-11-20): "the deployer as compact and dead simple as possible, so a bad Erga
-// deploy can't take it down". This is the one exception to AGENTS.md's "Effect by default": plain TypeScript, and only
-// the plain files of this folder (worker-form.ts, bindings.ts, d1-binding.ts, store.ts, token.ts). A test holds its size, its lines and
-// its calls (tests/deployer-worker.test.ts).
+// deploy can't take it down". Plain TypeScript, and only the plain files of this folder (worker-form.ts, bindings.ts,
+// d1-binding.ts, store.ts, tags.ts, token.ts). A test holds its size, its lines and its calls
+// (tests/deployer-worker.test.ts).
 //
-// Trap: its fetch handler takes a token to check, and nothing else (token.ts): it starts no deploy. The Worker has
-// no route and no address, so only a Worker that binds it reaches the handler: the instance's.
+// Trap: its fetch handler takes a token to check, and nothing else (token.ts): it starts no deploy.
 // Trap: Cloudflare takes a Worker's module only when each thing that it exports is a handler or a class: the module
 // that it runs is worker-main.ts, which exports the Worker and its store, and nothing else of this file.
 // Trap: one run may make CALLS calls at most (Cloudflare's free plan stops a run at 50). Every call goes through `net`.
@@ -49,16 +39,16 @@ import { bindingsProblem } from "./bindings";
 import { type D1, statementsOf } from "./d1-binding";
 import type { Release, ReleaseIndex } from "./release-format";
 import type { CloudflareTarget, Spec } from "./spec";
-import { storeOf } from "./store";
+import { type Store, storeOf } from "./store";
 import * as tags from "./tags";
-import { answer, open, type TokenStore } from "./token";
+import { answer, open } from "./token";
 import { DEPLOYER_MODULE, deployerForm, deployerName, HEADERS_FILE, toHex, typeOf, workerMetadata } from "./worker-form";
 
 export { DeployerState, LOCK_MS } from "./store";
 /** How long a deploy waits for the new release's healthy answer, and how often it asks. */
 export const HEALTH_MS = 30_000;
 const HEALTH_EACH_MS = 5000;
-/** The most calls out of one run, and how many the Worker's upload leaves room for: the upload, the health checks, a rollback, the store. */
+/** The most calls out of one run, and how many the Worker's upload leaves room for: the upload, the health checks, a rollback, its own code. */
 export const CALLS = 45;
 const RESERVE = 12;
 /** One call's time limit. */
@@ -84,30 +74,21 @@ interface Commit {
 }
 type CloudSpec = Pick<Spec, "repo" | "branch" | "settings"> & { target: CloudflareTarget };
 
-/** What the deployer keeps, in its own store. */
+/** What the deployer keeps from run to run, in its own store. */
 export interface State {
   /** When the run that holds the lock took it. */
   lock?: number;
-  /** The last spec and switch that a run read from the instance. */
-  spec?: CloudSpec;
-  autoMode?: tags.AutoMode;
   /** The last look: the branch's head, commits and newest release tag. */
   head?: string;
   commits?: Commit[];
   latestRelease?: tags.LatestRelease | null;
-  /** The last commit that auto-deploy tried: how often, whether its deploy ended well, and whether it got to the Worker's upload. */
-  tried?: { sha: string; n: number; ok: boolean; up: boolean };
+  /** The last commit that auto-deploy tried: how often (TRIES: no more, as after the Worker's upload), and whether its deploy ended well. */
+  tried?: { sha: string; n: number; ok: boolean };
   /**
-   * The job that a run started and did not end. `row`: its copy on the instance. `before`: the version to go back to,
+   * The job that a run started and did not end. `row`: its row on the instance. `before`: the version to go back to,
    * and `upload`: the upload's own name (ERGA_UPLOAD), both set just before the Worker's upload.
    */
-  job?: { row: number | null; sha: string | null; before?: string | null; upload?: string };
-}
-
-export interface Store extends TokenStore {
-  /** The state, with the lock taken at `now`. null: another run holds it. */
-  take(now: number): Promise<State | null>;
-  put(state: State): Promise<void>;
+  job?: { row: number; sha: string | null; before?: string | null; upload?: string };
 }
 
 export interface Env {
@@ -120,12 +101,12 @@ export interface Env {
   INSTANCE: { fetch: Fetch };
 }
 
-/** The ways out of a run: the network, the time, and the store (a test gives its own). */
+/** The ways out of a run: the network and the time (a test gives its own). `version`: the release that this code is of. */
 export interface IO {
   fetch: Fetch;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
-  store?: Store;
+  version: string;
 }
 
 /** One run: what each step reads. */
@@ -145,8 +126,8 @@ interface Run {
   at: string;
   /** The token for the instance's Worker, opened from the store. null: the deployer holds none. */
   bearer: string | null;
-  /** After a deploy: the release's deployer code (none: a release from before it had one), and the job's row. */
-  renew?: { code?: string; row: number | null };
+  /** After a healthy deploy: the release, its deployer code (none: a release from before it had one), and the job's row. */
+  renew?: { version: string; code?: string; row: number };
 }
 
 const NO_TOKEN = "The deployer has no token: an admin pastes one on the instance's Deploy page (/admin/deploy).";
@@ -205,33 +186,30 @@ async function page(c: Run, url: string, headers: Record<string, string> = {}): 
   if (r.status != 200) throw new Error(`${new URL(url).host} answered ${r.status}. The deployer looks again in a minute.`);
   return r;
 }
+const textOf = async (c: Run, url: string) => (await (await page(c, url))?.text()) ?? "";
 
 /** The branch's head and semver release tags (newest first), from git's own list of the repository's refs. */
 async function refsOf(c: Run): Promise<{ head: string; tags: tags.ReleaseTag[] }> {
   const { repo, branch } = c.spec;
-  const refs = (await (await page(c, `https://${repo}.git/info/refs?service=git-upload-pack`))?.text()) ?? "";
-  const parsed = tags.parseRefs(refs, branch);
-  if (parsed.head) return { head: parsed.head, tags: parsed.tags };
-  throw new Error(`${repo} has no branch ${branch}, as GitHub lists its refs: the repository and the branch must be there, and public.`);
+  const { head, tags: all } = tags.parseRefs(await textOf(c, `https://${repo}.git/info/refs?service=git-upload-pack`), branch);
+  if (head) return { head, tags: all };
+  throw new Error(`GitHub lists no branch ${branch} of ${repo}: the repository and the branch must be there, and public.`);
 }
 
 /** The branch's last commits, newest first, from its feed. The titles are a stranger's text: whatever shows them escapes them. */
 async function commitsOf(c: Run): Promise<Commit[]> {
-  const feed = (await (await page(c, `https://${c.spec.repo}/commits/${c.spec.branch}.atom`))?.text()) ?? "";
-  const parsed = tags.parseCommitsFeed(feed);
-  if (!parsed) throw new Error("GitHub gave the branch's commits in a way that the deployer doesn't understand.");
-  return parsed;
+  const parsed = tags.parseCommitsFeed(await textOf(c, `https://${c.spec.repo}/commits/${c.spec.branch}.atom`));
+  if (parsed) return parsed;
+  throw new Error("The deployer can't read GitHub's feed of the branch's commits.");
 }
 
-/** Whether the branch has the commit, as GitHub's API says it (60 calls an hour with no credential: only an ask uses it). */
+/** Whether the branch has the commit of a release tag, as GitHub's API says it (60 calls an hour with no credential). */
 async function onBranch(c: Run, sha: string): Promise<boolean> {
   const { repo, branch } = c.spec;
-  const r = await net(c, `https://api.github.com/repos/${repo.slice("github.com/".length)}/compare/${branch}...${sha}?per_page=1`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "erga-deployer" },
+  const r = await page(c, `https://api.github.com/repos/${repo.slice("github.com/".length)}/compare/${branch}...${sha}?per_page=1`, {
+    Accept: "application/vnd.github+json",
   });
-  if (r.status == 404) return false;
-  if (r.status != 200) throw new Error(`GitHub did not say if ${short(sha)} is on ${branch} (it answered ${r.status}). Ask again.`);
-  return ((await r.json()) as { ahead_by?: number }).ahead_by === 0;
+  return !!r && ((await r.json()) as { ahead_by?: number }).ahead_by === 0;
 }
 
 /** The package that holds the branch's releases: verify's commits have one of their own. */
@@ -261,39 +239,36 @@ async function layerOf(c: Run, sha: string): Promise<{ digest: string; size: num
  */
 async function releaseOf(c: Run, sha: string): Promise<{ release: Release; files: Record<string, string>; self?: string }> {
   const at = `ghcr.io/${packageOf(c.spec)}:${sha}`;
+  const no = (why: string) => new Error(`${at} is not deployed: ${why}.`);
   const layer = await layerOf(c, sha);
   if (layer == "none") throw new Error(`GitHub's registry has no release of ${short(sha)}.`);
-  if (layer == "refused") throw new Error(`${at} is not a release: it is not deployed.`);
+  if (layer == "refused") throw no("it is not a release");
   const blob = await page(c, `https://ghcr.io/v2/${packageOf(c.spec)}/blobs/${layer.digest}`, { Authorization: `Bearer ${c.token}` });
-  if (!blob) throw new Error(`GitHub's registry has the release ${at}, but not its bundle.`);
+  if (!blob) throw no("the registry does not have its bundle");
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (bytes.byteLength != layer.size || `sha256:${await sha256(bytes)}` != layer.digest)
-    throw new Error(`The bundle of ${at} is not the one that its manifest names. It is not deployed.`);
+    throw no("its bundle is not the one that its manifest names");
   const { index, files } = JSON.parse(new TextDecoder().decode(bytes)) as { index: ReleaseIndex; files: Record<string, string> };
   if (!index || !files || typeof index.version != "string" || index.version.length < 12 || !sha.startsWith(index.version))
-    throw new Error(`The release at ${at} says that it is ${index?.version}, not that commit. It is not deployed.`);
-  const part = (dir: string, names: string[]) =>
-    names.map((n): [string, string] => {
-      if (typeof files[`${dir}/${n}`] != "string") throw new Error(`The release at ${at} is missing ${dir}/${n}.`);
-      return [n, files[`${dir}/${n}`]];
-    });
-  const assets = Object.fromEntries(part("assets", index.assets).map(([n, text]) => [`/${n}`, text]));
-  const headers = assets[HEADERS_FILE];
-  delete assets[HEADERS_FILE];
+    throw no(`it says that it is ${index?.version}, not that commit`);
+  const part = (dir: string, names: string[], as: (text: string) => unknown = (text) => text) =>
+    Object.fromEntries(
+      names.map((n) => {
+        if (typeof files[`${dir}/${n}`] != "string") throw no(`it has no ${dir}/${n}`);
+        return [n, as(files[`${dir}/${n}`])];
+      })
+    );
+  const assets = part("assets", index.assets) as Record<string, string>;
+  const headers = assets[HEADERS_FILE.slice(1)];
+  delete assets[HEADERS_FILE.slice(1)];
   const release: Release = {
-    version: index.version,
-    built: index.built,
-    worker: index.worker,
-    mainModule: index.mainModule,
-    modules: Object.fromEntries(part("bundle", index.modules).map(([n, text]) => [n, fromBase64(text)])),
+    ...index,
+    modules: part("bundle", index.modules, fromBase64) as Release["modules"],
     // Only the file of headers: the Worker's metadata holds it. The other files stay as base64 (`files`).
     assets: headers ? { [HEADERS_FILE]: fromBase64(headers) } : {},
-    migrations: Object.fromEntries(
-      part("migrations", index.migrations).map(([n, text]) => [n, new TextDecoder().decode(fromBase64(text))])
-    ),
-    ...(index.bindings ? { bindings: index.bindings } : {}),
+    migrations: part("migrations", index.migrations, (text) => new TextDecoder().decode(fromBase64(text))) as Release["migrations"],
   };
-  return { release, files: assets, self: files[DEPLOYER_MODULE] };
+  return { release, files: Object.fromEntries(Object.entries(assets).map(([n, text]) => [`/${n}`, text])), self: files[DEPLOYER_MODULE] };
 }
 
 // ------------------------------------------------------------------ Cloudflare
@@ -307,26 +282,18 @@ async function cf<T>(c: Run, method: string, path: string, body?: object | FormD
     headers: { Authorization: `Bearer ${bearer}`, ...(plain ? { "Content-Type": "application/json" } : {}) },
     body: plain ? JSON.stringify(body) : (body as FormData | Blob | undefined),
   });
-  const answer = (await r.json().catch(() => null)) as {
-    success?: boolean;
-    result?: T;
-    errors?: { code?: number; message?: string }[] | null;
-  } | null;
-  if (!r.ok || !answer?.success)
-    throw new Error(
-      `Cloudflare refused ${method} ${path.replace(/\?.*/, "")} (it answered ${r.status}${(answer?.errors ?? []).map((e) => `: ${e.message} [code ${e.code}]`).join("")}).`
-    );
-  return answer.result as T;
+  type Answer = { success?: boolean; result?: T; errors?: { code?: number; message?: string }[] | null } | null;
+  const answer = (await r.json().catch(() => null)) as Answer;
+  if (r.ok && answer?.success) return answer.result as T;
+  const errors = (answer?.errors ?? []).map((e) => `: ${e.message} [code ${e.code}]`).join("");
+  throw new Error(`Cloudflare refused ${method} ${path.replace(/\?.*/, "")} (it answered ${r.status}${errors}).`);
 }
 
 /** The Worker's versions as its deployments had them, newest first, each one time: the first one serves now. */
 async function versionsOf(c: Run): Promise<string[]> {
-  const list = await cf<{ deployments?: { created_on: string; versions: { version_id: string; percentage: number }[] }[] }>(
-    c,
-    "GET",
-    `/scripts/${c.env.WORKER}/deployments`
-  );
-  const newest = [...(list?.deployments ?? [])].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on));
+  type Deployments = { deployments?: { created_on: string; versions: { version_id: string; percentage: number }[] }[] };
+  const list = (await cf<Deployments>(c, "GET", `/scripts/${c.env.WORKER}/deployments`))?.deployments ?? [];
+  const newest = [...list].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on));
   const top = newest.map((d) => [...d.versions].sort((a, b) => b.percentage - a.percentage)[0]?.version_id).filter((v) => v != null);
   return [...new Set(top)];
 }
@@ -339,12 +306,11 @@ const rollbackTo = (c: Run, version: string, message: string) =>
     annotations: { "workers/message": message },
   });
 
-/** Applies the release's migrations that the database does not have, each with its record in one transaction: their names. */
+/**
+ * Applies the release's migrations that the database does not have, each with its record in one transaction: their
+ * names. (The record's table is there: the instance's first deploy, from a machine, made it.)
+ */
 async function migrate(db: D1, migrations: Record<string, string>): Promise<string[]> {
-  await rows(
-    db,
-    "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
-  );
   const done = new Set((await rows(db, "SELECT name FROM d1_migrations")).map((r) => String(r.name)));
   const pending = Object.keys(migrations)
     .sort()
@@ -376,7 +342,7 @@ async function uploadFiles(c: Run, files: Record<string, string>): Promise<strin
   type Session = { jwt?: string | null; buckets?: string[][] | null } | null;
   const session = await cf<Session>(c, "POST", `/scripts/${W}/assets-upload-session`, { manifest });
   const bearer = session?.jwt;
-  if (!bearer) throw new Error("Cloudflare didn't start the upload of the editor's files: its answer had no upload token.");
+  if (!bearer) throw new Error("Cloudflare gave no upload token for the editor's files.");
   let single = false;
   try {
     single = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).wrangler_single_asset_uploads === true;
@@ -388,7 +354,7 @@ async function uploadFiles(c: Run, files: Record<string, string>): Promise<strin
   if (!groups.length) return bearer;
   if (c.calls + groups.length + RESERVE > CALLS)
     throw new Error(
-      `This release has ${groups.length} uploads of files, and one run of the deployer has room for ${CALLS - RESERVE - c.calls}. Nothing changed. Deploy it one time from a machine: bun erga deploy ${hostOf(c.spec.target)}`
+      `This release has ${groups.length} uploads of files, and the run has room for ${CALLS - RESERVE - c.calls}. Nothing changed. Deploy it one time from a machine: bun erga deploy ${hostOf(c.spec.target)}`
     );
   let done: string | null = null;
   for (const group of groups) {
@@ -396,15 +362,8 @@ async function uploadFiles(c: Run, files: Record<string, string>): Promise<strin
     if (paths.includes("")) throw new Error("Cloudflare asked for a file that the release doesn't have.");
     const form = new FormData();
     for (const [i, hash] of group.entries()) form.append(hash, new File([files[paths[i]]], hash, { type: typeOf(paths[i]) }));
-    const answer = single
-      ? await cf<Session>(
-          c,
-          "POST",
-          `/assets/upload/${group[0]}`,
-          new Blob([fromBase64(files[paths[0]])], { type: typeOf(paths[0]) }),
-          bearer
-        )
-      : await cf<Session>(c, "POST", "/assets/upload?base64=true", form, bearer);
+    const body = single ? new Blob([fromBase64(files[paths[0]])], { type: typeOf(paths[0]) }) : form;
+    const answer = await cf<Session>(c, "POST", single ? `/assets/upload/${group[0]}` : "/assets/upload?base64=true", body, bearer);
     if (answer?.jwt) done = answer.jwt;
   }
   if (!done) throw new Error("Cloudflare took the editor's files but didn't say that the upload was complete.");
@@ -427,9 +386,10 @@ type Report = {
 
 /**
  * One ask of the instance's own /api/health: whether the release `want` (null: any) answers that it is healthy.
- * `upload`: the name of the upload that must answer (ERGA_UPLOAD: the server says which upload it is); a release from
- * before the server said it is known by its release's name only. The public address first. An answer there that is not the server's (Cloudflare Access's, or Cloudflare's own for an
- * address that a Worker may not call) goes to the instance's Worker itself, for the rest of the run: the same request.
+ * `upload`: the name of the upload that must answer (ERGA_UPLOAD: the server says which upload it is; a release from
+ * before 2026-11-20 does not). The public address first. An answer there that is not the server's (Cloudflare Access's,
+ * or Cloudflare's own for an address that a Worker may not call) goes to the instance's Worker itself, for the rest of
+ * the run: the same request.
  */
 async function healthNow(c: Run, want: string | null, upload?: string): Promise<Health> {
   const url = `https://${hostOf(c.spec.target)}/api/health`;
@@ -478,41 +438,35 @@ async function settledHealth(c: Run, want: string | null, upload?: string): Prom
 /** Deploys the release of `sha`. It fails with what stopped it; an unhealthy release goes back first. */
 async function deploy(c: Run, sha: string, log: (line: string) => void): Promise<void> {
   const W = c.env.WORKER;
-  log("Fetch the release from GitHub...");
   const { release, files, self } = await releaseOf(c, sha);
   const problem = bindingsProblem(release);
   if (problem) throw new Error(problem);
   log(`Fetch the release from GitHub: done, ghcr.io/${packageOf(c.spec)}:${sha}, checked against its digest`);
   const before = (await versionsOf(c))[0] ?? null;
-  log("Set up the database's tables...");
   const at = c.io.now();
   const applied = await migrate(c.env.DB, release.migrations);
   log(
     `Set up the database's tables: done, ${applied.length ? `applied ${applied.join(", ")}` : "already up to date"}; restore point: ${before ? `version ${before}` : "no version"}, the database at ${new Date(at).toISOString()}`
   );
-  log("Upload the editor's files...");
   const assetsJwt = await uploadFiles(c, files);
   log(`Upload the editor's files: done, ${Object.keys(files).length} files`);
-  if (c.calls + RESERVE > CALLS)
-    throw new Error(
-      `The run made ${c.calls} calls before the Worker's upload, and the health check needs ${RESERVE}. Nothing that the instance runs changed.`
-    );
   // From here the instance may run the release: the store knows where to go back to, also for the run after a run that stopped.
   const upload = `${release.version}-${c.io.now()}`;
-  Object.assign(c.state.job!, { before, upload });
-  if (c.state.tried?.sha == sha) c.state.tried.up = true;
+  const job = c.state.job!;
+  Object.assign(job, { before, upload });
+  if (c.state.tried?.sha == sha) c.state.tried.n = TRIES;
   await c.store.put(c.state);
-  log("Upload the Worker, with its settings...");
   const form = new FormData();
   form.set("metadata", JSON.stringify(workerMetadata(release, c.spec, { dbId: c.env.DATABASE, assetsJwt, upload, deployer: true })));
   for (const [module, bytes] of Object.entries(release.modules))
     form.append(module, new File([new Uint8Array(bytes)], module, { type: "application/javascript+module" }));
   await cf(c, "PUT", `/scripts/${W}`, form);
   log(`Upload the Worker, with its settings: done, ${W}, release ${release.version}`);
-  log("Wait for its health...");
   const h = await settledHealth(c, release.version, upload);
-  if (h.ok) c.renew = { code: self, row: c.state.job!.row };
-  if (h.ok) return log(`Wait for its health: done, release ${release.version}, healthy (${h.why})`);
+  if (h.ok) {
+    c.renew = { version: release.version, code: self, row: job.row };
+    return log(`Wait for its health: done, release ${release.version}, healthy (${h.why})`);
+  }
   const why = `Release ${release.version} is deployed to ${W}, but it is not healthy after ${HEALTH_MS / 1000} seconds: ${h.why}.`;
   // The migrations only add: the version before runs on the newer tables. A person may put the database back too.
   const restore = applied.length
@@ -527,18 +481,26 @@ async function deploy(c: Run, sha: string, log: (line: string) => void): Promise
 }
 
 /**
- * After a run that deployed, and last of all (the upload starts the deployer's store again): the deployer's own code,
- * from that release, as setup uploads it. Its line goes into the job's log. A token may be for the instance only.
+ * After a run that deployed, and last of all (Cloudflare starts the deployer again with the upload): the release's
+ * deployer code as the deployer's own, with what setup gave it. A token may be for the instance's Worker only: then
+ * the code stays. The store keeps how it went, for /admin/deploy: as done before the upload (the code that asked may
+ * not run after it), and why not when the upload failed. The job's log gets the same line.
  */
 async function renew(c: Run): Promise<void> {
-  const { code, row } = c.renew!;
+  const { version, code, row } = c.renew!;
   const name = deployerName(c.env.WORKER);
-  const put = async () => cf(c, "PUT", `/scripts/${name}`, deployerForm(fromBase64(code!), c.env.ACCOUNT, c.env.WORKER, c.env.DATABASE));
-  const line = await (code ? put() : Promise.reject(1)).then(
-    () => `Update the deployer: done, ${name} has this release's code`,
-    (e) => `The deployer keeps its code: ${code ? `${said(e)} A token for ${name} too changes that.` : "this release has none."}`
-  );
-  if (row != null) await quiet(rows(c.env.DB, "UPDATE deploy_jobs SET log = log || ? WHERE id = ?", `${line}\n`, row));
+  const note = (why: string | null) => quiet(c.store.says({ renewed: { at: c.io.now(), version, why } }));
+  let why: string | null = `Release ${version} carries no deployer code.`;
+  if (code) {
+    await note(null);
+    why = await cf(c, "PUT", `/scripts/${name}`, deployerForm(fromBase64(code), c.env.ACCOUNT, c.env.WORKER, c.env.DATABASE)).then(
+      () => null,
+      (e) => `${said(e)} A token for ${name} too changes that.`
+    );
+  }
+  if (why) await note(why);
+  const line = why ? `The deployer keeps its code. ${why}` : `Update the deployer: done, ${name} has this release's code`;
+  await quiet(rows(c.env.DB, "UPDATE deploy_jobs SET log = log || ? WHERE id = ?", `${line}\n`, row));
 }
 
 /** The rollback that an admin asked for: the version before the one that runs, and its own healthy answer. */
@@ -561,59 +523,41 @@ async function back(c: Run, log: (line: string) => void): Promise<void> {
 
 // ------------------------------------------------------------------ a job, and a run
 
-/** Writes the job's end into the copy's row, and takes the job off the store's state. */
+/** Writes the job's end into its row, and takes the job off the store's state. */
 async function end(c: Run, lines: string[], failed: string | null) {
-  const job = c.state.job;
-  const state = failed ? `failed: ${failed}` : "done";
-  if (job?.row != null) {
-    const sql = "UPDATE deploy_jobs SET log = log || ?, state = ?, alive = ? WHERE id = ?";
-    await quiet(rows(c.env.DB, sql, `${lines.join("\n")}\n`, state, c.io.now(), job.row));
-  }
-  if (job?.sha && c.state.tried?.sha == job.sha) c.state.tried.ok = !failed;
+  const job = c.state.job!;
+  const sql = "UPDATE deploy_jobs SET log = log || ?, state = ?, alive = ? WHERE id = ?";
+  await quiet(rows(c.env.DB, sql, `${lines.join("\n")}\n`, failed ? `failed: ${failed}` : "done", c.io.now(), job.row));
+  if (job.sha && c.state.tried?.sha == job.sha) c.state.tried.ok = !failed;
   delete c.state.job;
 }
 
+const JOB_SQL =
+  "INSERT INTO deploy_jobs (kind, command, source, sha, started, alive, state) SELECT ?, ?, ?, ?, ?, ?, 'running' WHERE NOT EXISTS (SELECT 1 FROM deploy_jobs WHERE state = 'running' AND alive > ?) RETURNING id";
+
 /**
- * One job: its row on the instance (the copy, and the instance's lock: one job at a time, also with a machine's), the
- * work, and its end, whatever stopped the work. The result: the run's line.
+ * One job: its row on the instance (the instance's lock: one job at a time, also with a machine's), the work, and its
+ * end, whatever stopped the work. `by`: the admin who asked; null: auto-deploy. The result: the run's line.
  */
 async function job(
   c: Run,
-  start: { kind: "deploy" | "rollback"; command: string; source: string; sha: string | null },
-  what: string,
+  kind: "deploy" | "rollback",
+  command: string,
+  by: string | null,
+  sha: string | null,
   work: (log: (line: string) => void) => Promise<void>
 ): Promise<string> {
   const now = c.io.now();
-  let row: number | null = null;
-  try {
-    const made = await rows(
-      c.env.DB,
-      "INSERT INTO deploy_jobs (kind, command, source, sha, started, alive, state) SELECT ?, ?, ?, ?, ?, ?, 'running' WHERE NOT EXISTS (SELECT 1 FROM deploy_jobs WHERE state = 'running' AND alive > ?) RETURNING id",
-      start.kind,
-      start.command,
-      start.source,
-      start.sha,
-      now,
-      now,
-      now - LEASE_MS
-    );
-    if (!made.length) return `${c.at}. A job runs on the instance: the deployer waits.`;
-    row = Number(made[0].id);
-  } catch {
-    /* no copy: the store has the job */
-  }
-  c.state.job = { row, sha: start.sha };
-  if (start.source == "auto-deploy" && start.sha)
-    c.state.tried = { sha: start.sha, n: (c.state.tried?.sha == start.sha ? c.state.tried.n : 0) + 1, ok: false, up: false };
+  const [made] = await rows(c.env.DB, JOB_SQL, kind, command, by ? `app, by ${by}` : "auto-deploy", sha, now, now, now - LEASE_MS);
+  if (!made) return `${c.at}. A job runs on the instance: the deployer waits.`;
+  c.state.job = { row: Number(made.id), sha };
+  if (!by && sha) c.state.tried = { sha, n: (c.state.tried?.sha == sha ? c.state.tried.n : 0) + 1, ok: false };
   await c.store.put(c.state);
   const lines: string[] = [];
-  const failed = await work((line) => lines.push(line)).then(
-    () => null,
-    (e) => said(e)
-  );
+  const failed = await work((line) => void lines.push(line)).then(() => null, said);
   if (failed) lines.push(failed);
   await end(c, lines, failed);
-  return failed ? `${c.at}. ${what} failed: ${failed}` : `${c.at}. ${what} is done.`;
+  return `${c.at}. ${by ? `The ${kind} that ${by} asked for` : "Its deploy"} ${failed ? `failed: ${failed}` : "is done."}`;
 }
 
 /** The job of a run that stopped with no end: its release is healthy, or the instance goes back; then the job ends. */
@@ -634,43 +578,37 @@ async function settle(c: Run) {
   await end(c, [failed ?? "The deployer's run stopped before the job's end. Its release is up, and healthy."], failed);
 }
 
+const LOOK_SQL =
+  "INSERT INTO deploy_control (id, looked, head, error, commits, latest_release) VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET looked = excluded.looked, head = excluded.head, error = excluded.error, commits = excluded.commits, latest_release = excluded.latest_release";
+const ASK_SQL =
+  "UPDATE deploy_control SET ask = NULL, ask_by = NULL, ask_at = NULL WHERE id = 1 AND ask = ? AND ask_by = ? AND ask_at = ? RETURNING id";
+
 /** One run, with the lock held. The result: one line that says what it did. */
 async function run(c: Run): Promise<string> {
   const { state } = c;
   const db = c.env.DB;
-  if (state.job && state.spec) await settle(c);
-  delete state.job;
-
-  // What the look saw, or why it failed: the copy on the instance, for /admin/deploy.
-  const copy = (error: string | null) =>
-    quiet(
-      rows(
-        db,
-        "INSERT INTO deploy_control (id, looked, head, error, commits, latest_release) VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET looked = excluded.looked, head = excluded.head, error = excluded.error, commits = excluded.commits, latest_release = excluded.latest_release",
-        c.io.now(),
-        state.head ?? null,
-        error,
-        JSON.stringify((state.commits ?? []).map((k) => ({ ...k, release: k.release ?? "none" }))),
-        state.latestRelease ? JSON.stringify(state.latestRelease) : null
-      )
-    );
+  // What the look saw, or why it failed: on the instance, for /admin/deploy.
+  const copy = (error: string | null) => {
+    const commits = JSON.stringify((state.commits ?? []).map((k) => ({ ...k, release: k.release ?? "none" })));
+    const latest = state.latestRelease ? JSON.stringify(state.latestRelease) : null;
+    return quiet(rows(db, LOOK_SQL, c.io.now(), state.head ?? null, error, commits, latest));
+  };
   const stop = async (e: unknown) => {
     await copy(said(e));
     return said(e);
   };
 
-  // The instance's spec and switch. No answer: the last ones that a run read.
-  const spec = await rows(db, "SELECT spec FROM deploy_spec WHERE id = 1").catch(() => null);
-  if (spec && !spec[0]) return "The instance has no spec: nothing to look at.";
+  // The instance's spec, its switch and an admin's ask.
+  const [spec] = await rows(db, "SELECT spec FROM deploy_spec WHERE id = 1");
+  if (!spec) return "The instance has no spec: nothing to look at.";
   try {
-    if (spec) state.spec = specOf(JSON.parse(String(spec[0].spec)), c.env);
+    c.spec = specOf(JSON.parse(String(spec.spec)), c.env);
   } catch (e) {
     return stop(e);
   }
-  if (!state.spec) return "The instance's database gave no spec, and the deployer has none from before: it looks again in a minute.";
-  c.spec = state.spec;
-  const control = await rows(db, "SELECT auto, auto_mode, ask, ask_by, ask_at FROM deploy_control WHERE id = 1").catch(() => null);
-  if (control) state.autoMode = tags.autoModeOf(control[0]?.auto as number | undefined, control[0]?.auto_mode as string | null | undefined);
+  if (state.job) await settle(c);
+  const [control] = await rows(db, "SELECT auto, auto_mode, ask, ask_by, ask_at FROM deploy_control WHERE id = 1");
+  const mode = tags.autoModeOf(control?.auto as number | undefined, control?.auto_mode as string | undefined);
 
   // GitHub: the head, the release tags, the commits when the head is new, and each commit's release.
   let head: string;
@@ -689,7 +627,7 @@ async function run(c: Run): Promise<string> {
     const stateOf = (sha: string): Promise<ReleaseState> => layerOf(c, sha).then((l) => (typeof l == "string" ? l : "released"));
     let asked = 0;
     for (const k of state.commits ?? []) {
-      const retry = k.sha == head || (state.autoMode == "releases" && k.sha == latestTag?.sha);
+      const retry = k.sha == head || (mode == "releases" && k.sha == latestTag?.sha);
       if (retry ? k.release != "released" && k.release != "refused" : k.release == null && asked++ < ASKED)
         k.release = await stateOf(k.sha);
     }
@@ -708,74 +646,49 @@ async function run(c: Run): Promise<string> {
   } catch (e) {
     return stop(e);
   }
-  c.at = `${c.spec.branch} on ${c.spec.repo} is at ${short(head)}`;
+  const { branch, repo } = c.spec;
+  c.at = `${branch} on ${repo} is at ${short(head)}`;
 
   // An admin's ask: it runs one time. The job takes the instance's lock first, and then takes the ask off the row.
-  const asks = control?.[0];
-  if (asks?.ask != null) {
-    const ask = /^(?:deploy ([0-9a-f]{40})|rollback)$/.exec(String(asks.ask));
-    const by = String(asks.ask_by ?? "");
-    const when = asks.ask_at;
+  if (control?.ask != null) {
+    const ask = /^(?:deploy ([0-9a-f]{40})|rollback)$/.exec(String(control.ask));
+    const by = String(control.ask_by ?? "");
+    const when = control.ask_at;
     if (!ask || !/^[^\n\r]{1,100}$/.test(by) || typeof when != "number")
       return `${c.at}. The ask on the instance is not one that the deployer reads.`;
     const sha = ask[1] ?? null;
-    const start = {
-      kind: sha ? ("deploy" as const) : ("rollback" as const),
-      command: sha ? `deploy ${short(sha)}` : "rollback",
-      source: `app, by ${by}`,
-      sha,
-    };
-    return job(c, start, `The ${start.kind} that ${by} asked for`, async (log) => {
-      const took = await rows(
-        db,
-        "UPDATE deploy_control SET ask = NULL, ask_by = NULL, ask_at = NULL WHERE id = 1 AND ask = ? AND ask_by = ? AND ask_at = ? RETURNING id",
-        String(asks.ask),
-        by,
-        when
-      );
+    return job(c, sha ? "deploy" : "rollback", sha ? `deploy ${short(sha)}` : "rollback", by, sha, async (log) => {
+      const took = await rows(db, ASK_SQL, String(control.ask), by, when);
       if (!took.length) throw new Error("The ask changed before its job started: nothing is done.");
       if (!sha) return back(c, log);
-      // A commit of another branch is refused, whatever the registry has of it (a build of verify stays off staging).
-      // The registry first, for a commit that the look did not see: it has no limit on its calls, and GitHub's API has
-      // one (60 an hour with no login, for all Workers together). Then the API says whether the branch has the commit.
-      const seen = state.commits?.some((k) => k.sha == sha);
-      if (!seen && (await layerOf(c, sha)) == "none")
-        throw new Error(
-          `GitHub's registry has no release of ${short(sha)} among the releases of ${c.spec.branch} on ${c.spec.repo}: the instance deploys only a commit of that branch, when its release is built.`
-        );
-      if (!seen && !(await onBranch(c, sha)))
-        throw new Error(
-          `Release ${short(sha)} is not a commit of ${c.spec.branch} on ${c.spec.repo}: the instance deploys only a commit of that branch.`
-        );
+      // Only a commit that the look saw on the branch: the instance offers no other (server/operations/deploys.ts).
+      if (!state.commits?.some((k) => k.sha == sha))
+        throw new Error(`${short(sha)} is not one of the last commits of ${branch} on ${repo}: the deployer deploys only those.`);
       return deploy(c, sha, log);
     });
   }
 
-  const target = tags.pickAutoTarget(state.autoMode ?? "off", c.spec.branch, head, release, state.latestRelease ?? null);
+  const target = tags.pickAutoTarget(mode, branch, head, release, state.latestRelease ?? null);
   if ("wait" in target) return `${c.at}. ${target.wait}`;
   if (!c.bearer) return `${c.at}. ${NO_TOKEN}`;
   const tried = state.tried?.sha == target.sha ? state.tried : null;
   if (tried?.ok) return `${c.at}. The instance has ${short(target.sha)}: nothing to deploy.`;
-  if (tried && (tried.up || tried.n >= TRIES))
+  if (tried && tried.n >= TRIES)
     return `${c.at}. Its deploy failed: the deployer waits for a new ${target.tag ? "release" : "commit"}, or for an admin's ask.`;
   if (target.release == "none") return `${c.at}. GitHub has no release of ${target.tag ?? "it"} yet: the deployer waits.`;
   if (target.release == "refused")
     return `${c.at}. What GitHub's registry has for ${target.tag ?? "it"} is not a release: it is not deployed.`;
   // A target that the deployer did not try: it may run already, or a job (deploy then rollback) already tried it.
   if (!tried) {
-    const seen = await rows(db, "SELECT 1 FROM deploy_jobs WHERE sha = ? LIMIT 1", target.sha).catch(() => []);
+    const seen = await rows(db, "SELECT 1 FROM deploy_jobs WHERE sha = ? LIMIT 1", target.sha);
     if (seen.length || (await healthNow(c, short(target.sha))).ok) {
-      state.tried = { sha: target.sha, n: 0, ok: true, up: true };
+      state.tried = { sha: target.sha, n: 0, ok: true };
       return `${c.at}. The instance has ${short(target.sha)}: nothing to deploy.`;
     }
   }
   const command = target.tag ? `deploy ${target.tag} (${short(target.sha)})` : `deploy ${target.sha}`;
-  return job(c, { kind: "deploy", command, source: "auto-deploy", sha: target.sha }, "Its deploy", (log) => {
-    log(
-      target.tag
-        ? `${c.at}: auto-deploy deploys release ${target.tag} (${short(target.sha)}).`
-        : `${c.at}: auto-deploy deploys its release.`
-    );
+  return job(c, "deploy", command, null, target.sha, (log) => {
+    log(`${c.at}: auto-deploy deploys ${target.tag ? `release ${target.tag} (${short(target.sha)})` : "its release"}.`);
     return deploy(c, target.sha, log);
   });
 }
@@ -783,16 +696,16 @@ async function run(c: Run): Promise<string> {
 /** The Worker, with its ways out (a test gives its own). */
 export const deployer = (io: IO) => ({
   async scheduled(_event: unknown, env: Env): Promise<void> {
-    const store = io.store ?? storeOf(env);
+    const store = storeOf(env);
     const state = await store.take(io.now());
     if (!state) return console.log("Another run of the deployer holds its lock: this one does nothing.");
-    const bearer = await open(env.KEY, (await store.token()).token);
-    const c: Run = { io, env, store, state, spec: state.spec!, calls: 0, at: "", bearer };
+    const bearer = await open(env.KEY, (await store.says()).token);
+    const c: Run = { io, env, store, state, spec: null as never, calls: 0, at: "", bearer };
     const line = await run(c).catch((e) => `The deployer stopped: ${said(e)}`);
     delete state.lock;
     await store.put(state);
     console.log(`${line} (${c.calls} calls)`);
     if (c.renew) await renew(c);
   },
-  fetch: (request: Request, env: Env): Promise<Response> => answer(request, io.fetch, env, io.store ?? storeOf(env)),
+  fetch: (request: Request, env: Env): Promise<Response> => answer(request, io, env, storeOf(env)),
 });

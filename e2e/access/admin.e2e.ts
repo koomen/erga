@@ -448,7 +448,7 @@ journey("an admin on the admin pages", () => {
     expect(await stayed()).toBe(true);
   });
 
-  test("Deploy: with no token the row waits for one and each control is off; with one, Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the switch sets auto-deploy, and the row and the token's section say the same; About has the repository, the branch, the commit and its release", async () => {
+  test("Deploy: with no token the row waits for one and each control is off; with one, Deploy on a commit asks the server's deployer; its job shows as it runs and when it ends, with its log; the deployer's status says its state, its code and its last update of it; the switch sets auto-deploy, and the row and the token's section say the same; About has the repository, the branch, the commit and its release", async () => {
     const sql = deployerSql(own!);
     const run = Effect.runPromise;
     const sha = (n: number) => String(n).repeat(40);
@@ -498,6 +498,16 @@ journey("an admin on the admin pages", () => {
       token:
         "The deployer has no token: it deploys nothing. Give it one below. With a token, it deploys each new commit on main by itself.",
     });
+    // The section "The deployer" says the same of its state, and which code it runs: an older release's than the server's.
+    const status = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>("#deployer-live dd")].map((d) => `${d.dataset.status}: ${d.innerText}`)
+      );
+    const CODE = [
+      "code: Release 111111111111. This server runs 222222222222.",
+      "update: None by itself yet: its code came from the setup command, or from a deploy from a machine.",
+    ];
+    expect(await status()).toEqual(["state: Waiting for a token: it looks at GitHub, and it deploys nothing.", "look: Just now.", ...CODE]);
     // A person pastes a token, with real keys. The deployer takes it: the page comes back with each control on, and
     // the row and the section say what the saved mode does.
     await clickOn(page, '.deployer-token input[name="token"]');
@@ -510,6 +520,7 @@ journey("an admin on the admin pages", () => {
       off: 0,
       token: "The deployer holds a token. It deploys each new commit on main by itself.",
     });
+    expect(await status()).toEqual(["state: Ready: it looks at GitHub each minute, and it can deploy.", "look: Just now.", ...CODE]);
     // (The token's form loaded the page: the window's mark goes on it again.)
     await page.evaluate(() => void ((window as unknown as { stayed: boolean }).stayed = true));
     expect(await text(`.row[data-sha="${sha(2)}"] .dep.live`)).toContain("live");
@@ -526,12 +537,20 @@ journey("an admin on the admin pages", () => {
     job.commit(sha(3));
     job.line("Worker: done");
     expect(await job.end({ at: "done" })).toBeNull();
+    // (After its deploy, the deployer gives itself the release's deployer code, and says so: the pretend one, as told.)
+    const renewed = { at: Date.now(), version: sha(3).slice(0, 12), why: null };
+    await fetch(`${own!.root}/__deployer`, { method: "PUT", body: JSON.stringify({ version: renewed.version, renewed }) });
     await soon(() => text("a.job.ok"), 5000).toContain("from the app, by tester");
     await clickOn(page, "a.job.ok");
     await soon(() => text(".logs")).toContain("Worker: done");
     // The 3-way auto-deploy control saves by itself, and the deployer reads it at its next look.
     await clickOn(page, 'a.tab[href="/admin/deploy"]');
     await page.waitForSelector("#auto-deploy");
+    // The status follows the deployer: its code is the release that it deployed, by its own update.
+    await soon(async () => (await status()).slice(2)).toEqual([
+      "code: Release 333333333333. This server runs 222222222222.",
+      "update: Just now, after its deploy of release 333333333333: done.",
+    ]);
     await clickOn(page, '#auto-deploy [data-auto-mode="releases"]');
     await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("releases");
     // The row and the token's section follow the mode, at the click and after the page draws itself again.

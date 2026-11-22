@@ -1,23 +1,14 @@
 // The deployer on Cloudflare, as setup installs it (deploy/pipeline/deployer.ts): on the mock Cloudflare, what the
-// install uploads; and in the Workers runtime on this machine (Miniflare), that the uploaded module runs: its schedule
-// takes its token as its instance hands it over, and deploys a release, with the mock Cloudflare and a pretend GitHub
-// as all that it can reach. Nothing real is touched.
+// install uploads. (That the uploaded module runs, in the Workers runtime: tests/deployer-e2e.test.ts.)
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import * as Effect from "effect/Effect";
-import { convertV4MiniflareOptions, Miniflare, Response as RuntimeResponse } from "miniflare";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { Cloudflare } from "../deploy/deployer/cloudflare-api";
-import type { D1 } from "../deploy/deployer/d1-binding";
-import { readControl } from "../deploy/deployer/control";
-import { readJobs, readLog } from "../deploy/deployer/instance";
-import { DEPLOYER_TAG, deployerModule, installDeployer, keepsToken } from "../deploy/pipeline/deployer";
+import { DEPLOYER_TAG, installDeployer, keepsToken } from "../deploy/pipeline/deployer";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { instanceOn } from "./helpers/binding.ts";
-import { bindingsOf, bootstrap, databaseOf, prepareRelease, SHA1, SHA2 } from "./helpers/deploys.ts";
+import { bindingsOf, bootstrap, databaseOf, prepareRelease, SHA1 } from "./helpers/deploys.ts";
 
 beforeAll(prepareRelease, 120_000);
 
-const run = Effect.runPromise;
 const short = (sha: string) => sha.slice(0, 12);
 const TARGET = { account: FLEET_ACCOUNT, worker: "erga-next" };
 
@@ -125,72 +116,4 @@ describe("the install", () => {
     );
     await expect(installDeployer(cf, { account: FLEET_ACCOUNT, worker: "w".repeat(60) })).rejects.toThrow("has more than 63 characters");
   });
-});
-
-describe("the installed Worker, in the Workers runtime", () => {
-  let runtime: Miniflare;
-  afterAll(() => runtime?.dispose());
-
-  test("it takes its token from its instance, and its schedule deploys the head's release: the module that the install uploads runs, and reaches only what a Worker can", async () => {
-    // All that the Worker reaches outside itself comes here: Cloudflare's API (the mock) and GitHub (the pretend one).
-    let out: Awaited<ReturnType<typeof instanceOn>>["fetch"] = async () => new Response("the test is not ready", { status: 503 });
-    const made = mockCloudflare({ fleet: true });
-    await bootstrap(made);
-    // The account has the deployer, as setup installs it: the instance's Worker binds it at each upload.
-    await installDeployer(new Cloudflare("mock-setup-token", made.fetch), TARGET);
-    runtime = new Miniflare(
-      convertV4MiniflareOptions({
-        modules: [{ type: "ESModule", path: "worker.js", contents: await deployerModule() }],
-        compatibilityDate: "2026-09-01",
-        d1Databases: ["DB"],
-        durableObjects: { STATE: "DeployerState" },
-        // The instance's Worker: not asked here, because the public address gives the server's own report.
-        serviceBindings: { INSTANCE: async () => new RuntimeResponse("not asked", { status: 500 }) },
-        bindings: {
-          ACCOUNT: FLEET_ACCOUNT,
-          WORKER: "erga-next",
-          DATABASE: databaseOf(made.state, "erga-next").uuid,
-          KEY: "the-deployers-own-secret",
-        },
-        outboundService: async (request: Request) => {
-          const body = request.method == "GET" || request.method == "HEAD" ? undefined : await request.arrayBuffer();
-          const answer = await out(request.url, { method: request.method, headers: [...request.headers], body });
-          return new RuntimeResponse(await answer.arrayBuffer(), { status: answer.status, headers: [...answer.headers] });
-        },
-      })
-    );
-    const { mock, sql, fetch, calls } = await instanceOn((await runtime.getD1Database("DB")) as unknown as D1, made);
-    out = fetch;
-    await run(sql("INSERT INTO deploy_control (id, auto) VALUES (1, 1)", []));
-    const worker = (await runtime.getWorker()) as unknown as { scheduled(event: { cron: string }): Promise<{ outcome: string }> };
-    // With no token, a run looks at GitHub and deploys nothing.
-    const says = async (init?: { method: string; body: string }) => (await runtime.dispatchFetch("https://deployer/", init)).json();
-    expect(await says()).toEqual({ ok: true, ready: false, head: null });
-    expect(await worker.scheduled({ cron: "* * * * *" })).toMatchObject({ outcome: "ok" });
-    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA1));
-    expect(await run(readJobs(sql))).toEqual([]);
-    // The token, as the instance hands it over its binding: a wide one is refused, a good one is kept. Then the next run deploys.
-    expect(await says({ method: "POST", body: "mock-deployer-token" })).toMatchObject({ ok: false, why: expect.stringContaining("D1") });
-    expect(await says({ method: "POST", body: "mock-pair-erga-next" })).toEqual({ ok: true, ready: true, head: SHA2 });
-    expect(await worker.scheduled({ cron: "* * * * *" })).toMatchObject({ outcome: "ok" });
-
-    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(short(SHA2));
-    const [job] = await run(readJobs(sql));
-    expect(job).toMatchObject({ kind: "deploy", source: "auto-deploy", sha: SHA2, state: { at: "done" } });
-    expect(new TextDecoder().decode(await run(readLog(sql, job.id, 0)))).toContain(
-      `Wait for its health: done, release ${short(SHA2)}, healthy`
-    );
-    expect(await run(readControl(sql))).toMatchObject({ auto: true, head: SHA2 });
-    // At Cloudflare, the instance's Worker only.
-    expect([...new Set(calls().filter((c) => !c.includes("/workers/scripts/erga-next")))]).toEqual([
-      `GET /accounts/${FLEET_ACCOUNT}/tokens/verify`,
-      `GET /accounts/${FLEET_ACCOUNT}/d1/database?per_page=1`,
-      `GET /accounts/${FLEET_ACCOUNT}/workers/scripts`,
-    ]);
-    // After the deploy, the deployer gave itself the release's own deployer code.
-    expect(calls().at(-1)).toBe(`PUT /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next-deployer`);
-    // (The check of the token asked Cloudflare whether it knows the token; then it read only the instance's Worker,
-    // the D1 list and the deployer's own name.)
-    expect(await says()).toEqual({ ok: true, ready: true, head: SHA2 });
-  }, 60_000);
 });

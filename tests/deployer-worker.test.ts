@@ -90,15 +90,10 @@ describe("a run of the deployer", () => {
     expect(job).toMatchObject({ kind: "deploy", command: `deploy ${SHA2}`, source: "auto-deploy", sha: SHA2, state: { at: "done" } });
     expect((await logOf(sql, job.id)).split("\n").map((l) => l.replace(/: done.*$/, ": done"))).toEqual([
       `${AT}: auto-deploy deploys its release.`,
-      "Fetch the release from GitHub...",
       "Fetch the release from GitHub: done",
-      "Set up the database's tables...",
       "Set up the database's tables: done",
-      "Upload the editor's files...",
       "Upload the editor's files: done",
-      "Upload the Worker, with its settings...",
       "Upload the Worker, with its settings: done",
-      "Wait for its health...",
       "Wait for its health: done",
       "Update the deployer: done",
       "",
@@ -132,7 +127,7 @@ describe("a run of the deployer", () => {
     for (const [path, bytes] of Object.entries(servedAssets(release)))
       expect(mock.state.assets.manifest[path].hash).toBe(await assetHash(path, bytes));
     // The store: the commit that it tried, no job, and no lock.
-    expect(stored()).toMatchObject({ tried: { sha: SHA2, ok: true, up: true }, autoMode: "commits", head: SHA2 });
+    expect(stored()).toMatchObject({ tried: { sha: SHA2, ok: true }, head: SHA2 });
     expect(stored().job).toBeUndefined();
     expect(stored().lock).toBeUndefined();
 
@@ -211,7 +206,7 @@ describe("a run of the deployer", () => {
     expect(gated.state.asked).toEqual(["public", "direct", "direct", "direct"]);
   }, 30_000);
 
-  test("asks: a rollback goes to the version before; a commit must be on the branch; an ask runs one time", async () => {
+  test("asks: a rollback goes to the version before; a commit must be one that the look saw; an ask runs one time", async () => {
     const { sql, hub, once, runs } = await instance();
     await once();
     expect(runs()).toBe(short(SHA2));
@@ -228,34 +223,23 @@ describe("a run of the deployer", () => {
     expect(await once()).toContain(`The instance has ${short(SHA2)}: nothing to deploy.`);
     expect(runs()).toBe(short(SHA1));
 
-    // A commit that the branch does not have (as GitHub's API says) is refused, though GitHub has a release of it.
+    // Only a commit that the deployer's look saw on the branch: any other is refused with no call, though GitHub has a
+    // release of it (a commit of another branch, or an old one: the instance's own operation offers neither).
     hub.state.releases.set(SHA3, builtBundle(SHA3));
+    hub.state.older.push(SHA3);
     await asks(sql, `deploy ${SHA3}`);
     const from = hub.state.calls.length;
     expect(await once()).toContain(
-      `The deploy that ada asked for failed: Release ${short(SHA3)} is not a commit of main on github.com/example/erga: the instance deploys only a commit of that branch.`
+      `The deploy that ada asked for failed: ${short(SHA3)} is not one of the last commits of main on github.com/example/erga: the deployer deploys only those.`
     );
-    // The registry is asked first (no limit on its calls), then GitHub's API.
-    expect(hub.state.calls.slice(from)).toEqual(["refs", `manifest ${short(SHA3)}`, `compare ${short(SHA3)}`]);
+    expect(hub.state.calls.slice(from)).toEqual(["refs"]);
     expect(runs()).toBe(short(SHA1));
-    // A commit with no release among the branch's releases (a commit of another branch): refused with no call of the API.
-    const none = "4".repeat(40);
-    await asks(sql, `deploy ${none}`);
-    const before = hub.state.calls.length;
-    expect(await once()).toContain(
-      `The deploy that ada asked for failed: GitHub's registry has no release of ${short(none)} among the releases of main on github.com/example/erga: the instance deploys only a commit of that branch, when its release is built.`
-    );
-    expect(hub.state.calls.slice(before)).toEqual(["refs", `manifest ${short(none)}`]);
-    expect(runs()).toBe(short(SHA1));
-
-    // An older commit of the branch, from before the commits that the look saw.
-    hub.state.older.push(SHA3);
-    await asks(sql, `deploy ${SHA3}`);
+    // The commit that the rollback left: an ask deploys it again.
+    await asks(sql, `deploy ${SHA2}`);
     expect(await once()).toContain("The deploy that ada asked for is done.");
-    expect(runs()).toBe(short(SHA3));
+    expect(runs()).toBe(short(SHA2));
     expect((await run(readJobs(sql))).map((j) => `${j.kind} ${j.source} ${j.state.at}`)).toEqual([
       "deploy app, by ada done",
-      "deploy app, by ada failed",
       "deploy app, by ada failed",
       "rollback app, by ada done",
       "deploy auto-deploy done",
@@ -286,19 +270,20 @@ describe("a run of the deployer", () => {
     expect(busy.calls()).toEqual([]);
   }, 30_000);
 
-  test("a database that gives no answer does not stop it: it looks with the spec that it read before", async () => {
-    const { env, once, hub } = await instance({ auto: false });
-    expect(await once()).toBe(`${AT}. Auto-deploy is off. (5 calls)`);
-    const down = {
-      ...env.DB,
+  test("a database that gives no answer: the run stops and says so, and the next run goes on", async () => {
+    const { env, once, runs, calls } = await instance();
+    const db = env.DB;
+    env.DB = {
+      ...db,
       prepare: () => {
         throw new Error("D1 is down");
       },
     } as unknown as D1;
-    env.DB = down;
-    const from = hub.state.calls.length;
-    expect(await once()).toBe(`${AT}. Auto-deploy is off. (1 calls)`);
-    expect(hub.state.calls.slice(from)).toEqual(["refs"]);
+    // Nothing is read, so nothing is deployed: a deploy needs the database for its migrations and its job.
+    expect(await once()).toBe("The deployer stopped: D1 is down (0 calls)");
+    expect([runs(), calls()]).toEqual([short(SHA1), []]);
+    env.DB = db;
+    expect(await once()).toContain("Its deploy is done.");
   }, 30_000);
 
   test("after its deploy, the deployer gives itself the release's own deployer code, with its secret; a token for the instance's Worker only, or a release with none, leaves its code", async () => {
@@ -323,6 +308,8 @@ describe("a run of the deployer", () => {
       expect(meta.bindings.map((b) => b.name)).toEqual(["DB", "DATABASE", "ACCOUNT", "WORKER", "STATE", "INSTANCE"]);
       expect(meta.bindings.find((b) => b.name == "WORKER")?.text).toBe("erga-next");
       expect([mock.state.secrets["erga-next-deployer"], store.cell.get("token")]).toEqual([{ KEY: key }, token]);
+      // The store keeps how it went, for the instance's Deploy page.
+      expect(JSON.parse(store.cell.get("renewed")!)).toEqual({ at: expect.any(Number), version: short(SHA2), why: null });
     }
     {
       // A token for the instance's Worker only: the deploy is done, and the log says why the deployer's code stays.
@@ -333,22 +320,30 @@ describe("a run of the deployer", () => {
       const [job] = await run(readJobs(sql));
       expect(job.state).toEqual({ at: "done" });
       expect((await logOf(sql, job.id)).split("\n").at(-2)).toBe(
-        "The deployer keeps its code: Cloudflare refused PUT /scripts/erga-next-deployer (it answered 403: Authentication error [code 10000]). A token for erga-next-deployer too changes that."
+        "The deployer keeps its code. Cloudflare refused PUT /scripts/erga-next-deployer (it answered 403: Authentication error [code 10000]). A token for erga-next-deployer too changes that."
       );
       expect(JSON.stringify(mock.state.scripts["erga-next-deployer"])).toBe(before);
+      expect(JSON.parse(store.cell.get("renewed")!)).toMatchObject({
+        version: short(SHA2),
+        why: expect.stringContaining("it answered 403"),
+      });
       expect(calls().length).toBeLessThan(CALLS);
     }
     {
       // A release from before a release carried the deployer's code.
-      const { sql, hub, once, calls } = await instance();
+      const { sql, hub, store, once, calls } = await instance();
       const bundle = JSON.parse(new TextDecoder().decode(builtBundle(SHA2))) as { files: Record<string, string> };
       delete bundle.files["deployer/worker.js"];
       hub.state.releases.set(SHA2, new TextEncoder().encode(JSON.stringify(bundle)));
       expect(await once()).toContain("Its deploy is done.");
       expect((await logOf(sql, (await run(readJobs(sql)))[0].id)).split("\n").at(-2)).toBe(
-        "The deployer keeps its code: this release has none."
+        "The deployer keeps its code. Release 222222222222 carries no deployer code."
       );
       expect(calls().some((c) => c.includes("erga-next-deployer"))).toBe(false);
+      expect(JSON.parse(store.cell.get("renewed")!)).toMatchObject({
+        version: short(SHA2),
+        why: "Release 222222222222 carries no deployer code.",
+      });
     }
   }, 30_000);
 
@@ -423,7 +418,7 @@ describe("a run of the deployer", () => {
       autoMode: "releases",
       latestRelease: { tag: "v0.2.0", sha: SHA2, release: "released" },
     });
-    expect(stored()).toMatchObject({ autoMode: "releases", tried: { sha: SHA2, ok: true, up: true } });
+    expect(stored()).toMatchObject({ tried: { sha: SHA2, ok: true } });
 
     // Even if another run has fresh store state (e.g. after a rollback), deploy_jobs already has SHA2 so it does not re-deploy.
     const next = await instance({ auto: false });
@@ -467,15 +462,15 @@ describe("the deployer's spec", () => {
 
 describe("the deployer's size", () => {
   test("one small module with no Effect and no Node; its source and its calls have a budget", async () => {
-    const code = await deployerModule();
+    const code = await deployerModule("0".repeat(12));
     expect(code).not.toMatch(/from\s*"node:|require\(/);
     expect(code).not.toContain("effect");
     expect(code).toContain("scheduled");
     expect(code).toContain("DeployerState");
     // The budget: a module that a person can read in one sitting. (With Effect in it, the module had 600,000 characters.)
-    expect(code.length).toBeLessThan(30_000);
+    expect(code.length).toBeLessThan(28_500);
     const source = readFileSync(join(ROOT, "deploy/deployer/worker.ts"), "utf8").split("\n");
-    expect(source.length).toBeLessThan(800);
+    expect(source.length).toBeLessThan(720);
     // Cloudflare's free plan stops a run at 50 calls.
     expect(CALLS).toBeLessThan(50);
   });

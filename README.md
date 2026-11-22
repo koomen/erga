@@ -75,7 +75,8 @@ do not choose for the user.
      (the server's and its own), which the user makes and pastes on the
      setup page. An admin turns the
      updates off and on later, and gives the deployer another token, on the
-     server's Deploy page. For a server that runs already, the command
+     server's Deploy page. That page also shows the deployer's status: its
+     state, its last look, and the release that its own code is of. For a server that runs already, the command
      changes no auto-deploy mode by itself. Ask the user for a mode only
      when they want another one (`--auto-deploy off|releases|commits`).
    - No (`--deploys local`): no deploy credential stays in the cloud. The

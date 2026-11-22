@@ -33,7 +33,7 @@ export interface Release {
   assets: Record<string, Uint8Array>;
   /** server/migrations/, by file name, in order. */
   migrations: Record<string, string>;
-  /** The metadata of each binding the pipeline does not make, as the release's own code writes it (bindings.ts). A release from before 2026-11-03 has none. */
+  /** The metadata of each binding the pipeline does not make, as the release's own code writes it (bindings.ts). */
   bindings?: Record<string, Record<string, unknown>>;
   /** The Worker as one module (celld/index.js), which the machine on AWS runs (celld.ts). A release from before 2026-11-20 has none. */
   celld?: Uint8Array;
