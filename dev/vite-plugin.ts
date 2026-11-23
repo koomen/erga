@@ -181,7 +181,7 @@ export function ergaDev(opts: DevOptions): Plugin {
               .end(
                 JSON.stringify(
                   refused
-                    ? { ok: false, why: "The token can read another Worker (other)." }
+                    ? { ok: false, why: "This token can access another Worker (other). Restrict it to erga and erga-deployer only." }
                     : { ok: true, ready: deployerHolds, head: null, ...deployerCode }
                 )
               );

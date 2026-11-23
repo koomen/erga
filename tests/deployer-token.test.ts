@@ -20,8 +20,9 @@ const WHERE = { ACCOUNT: FLEET_ACCOUNT, WORKER: "erga-next" };
 /** A token for the instance's Worker and the deployer's own; and one for the instance's Worker only. */
 const GOOD = "mock-pair-erga-next";
 const ONE = "mock-only-erga-next";
-const UNKNOWN = `Cloudflare does not know this token: it is not whole, it was deleted, or it is a token of another account than ${FLEET_ACCOUNT}.`;
-const D1 = "The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.";
+const INVALID = "This text is not a valid Cloudflare token. Copy the whole token and paste it again.";
+const UNKNOWN = `Cloudflare doesn't recognize this token. It may be deleted or for another account than ${FLEET_ACCOUNT}.`;
+const D1 = "This token has D1 access. Remove D1 permissions and try again.";
 
 /** The instance on the mock Cloudflare, with the person's own login. */
 async function account() {
@@ -67,18 +68,18 @@ describe("the deployer's check of a token", () => {
     const noD1: Fetch = (input, init) =>
       String(input).includes("/d1/database") ? Promise.resolve(new Response("{}", { status: 403 })) : mock.fetch(input, init);
     expect(await check("mock-deployer-token", noD1)).toBe(
-      "The token can read another Worker (erga). Make a token for the Workers erga-next and erga-next-deployer only."
+      "This token can access another Worker (erga). Restrict it to erga-next and erga-next-deployer only."
     );
     // A list that Cloudflare does not answer is no "none".
     const noList: Fetch = (input, init) =>
       String(input).endsWith("/workers/scripts") ? Promise.resolve(new Response("Bad gateway", { status: 502 })) : noD1(input, init);
-    expect(await check(GOOD, noList)).toContain("whether the token lists the account's Workers (it answered 502)");
+    expect(await check(GOOD, noList)).toContain("Cloudflare couldn't verify Workers list access (HTTP 502)");
   });
 
   test("a token that is not for the instance's Worker, that Cloudflare does not know, or that is no token, is refused at once", async () => {
     const { check, calls } = await account();
     expect(await check("mock-only-erga-000")).toBe(
-      `Cloudflare knows this token, but the token can't read the Worker erga-next of the account ${FLEET_ACCOUNT} (Cloudflare answered 403). Give it that Worker, with the role Editor.`
+      `This token can't access Worker erga-next in account ${FLEET_ACCOUNT} (HTTP 403). Give it Workers Editor for erga-next.`
     );
     expect(await check("not-a-token-0123456789")).toBe(UNKNOWN);
     // Nothing more is tried with such a token: the first one is verified and reads its Worker, the second one is
@@ -89,10 +90,7 @@ describe("the deployer's check of a token", () => {
       `GET /accounts/${FLEET_ACCOUNT}/tokens/verify`,
       "GET /user/tokens/verify",
     ]);
-    expect([await check(""), await check("two words")]).toEqual([
-      "Paste the token.",
-      "That isn't a token: it is one line, with no spaces.",
-    ]);
+    expect([await check(""), await check("two words")]).toEqual(["Paste a token.", INVALID]);
     expect(calls()).toHaveLength(4);
   });
 
@@ -100,11 +98,9 @@ describe("the deployer's check of a token", () => {
     const { mock, check } = await account();
     const down: Fetch = (input, init) =>
       String(input).includes("/d1/database") ? Promise.resolve(new Response("Bad gateway", { status: 502 })) : mock.fetch(input, init);
-    expect(await check(GOOD, down)).toBe(
-      "Cloudflare gave no clear answer about whether the token reads the account's D1 databases (it answered 502). Paste the token again in a minute."
-    );
+    expect(await check(GOOD, down)).toBe("Cloudflare couldn't verify D1 access (HTTP 502). Try again in a minute.");
     const gone: Fetch = () => Promise.reject(new Error("no network"));
-    expect(await check(GOOD, gone)).toContain("whether it knows the token (no answer)");
+    expect(await check(GOOD, gone)).toContain("Cloudflare couldn't verify the token (no response)");
   });
 });
 
@@ -115,7 +111,11 @@ describe("the check against Cloudflare's own answers", () => {
   // Not recorded: what verify answers to a token that Cloudflare knows (no agent holds one). It is as Cloudflare's
   // API reference gives it. That Cloudflare answers 401 [code 10000] to a known token for a Worker that the token may
   // not read is Pete's case of 2026-11-21 on staging, as the manager gave it: the check must not call that token unknown.
-  const INVALID = {
+  const MALFORMED = {
+    status: 400,
+    body: { success: false, errors: [{ code: 6003, message: "Invalid format for Authorization header" }], messages: [], result: null },
+  };
+  const BAD_TOKEN = {
     status: 401,
     body: { success: false, errors: [{ code: 1000, message: "Invalid API Token" }], messages: [], result: null },
   };
@@ -153,8 +153,14 @@ describe("the check against Cloudflare's own answers", () => {
     [`${ACC}/workers/scripts`]: { ...DENIED, status: 403 },
   };
 
+  test("text that does not have a token's shape: Cloudflare answers 400 (code 6003), refused immediately without asking to wait", async () => {
+    const cf = cloudflare({ [`${ACC}/tokens/verify`]: MALFORMED });
+    expect(await cf.check()).toBe(INVALID);
+    expect(cf.calls).toEqual([`${ACC}/tokens/verify`]);
+  });
+
   test("a token that Cloudflare does not know: both verifies say so, and no Worker is read", async () => {
-    const cf = cloudflare({ [`${ACC}/tokens/verify`]: INVALID, "/user/tokens/verify": INVALID, [WORKER]: DENIED });
+    const cf = cloudflare({ [`${ACC}/tokens/verify`]: BAD_TOKEN, "/user/tokens/verify": BAD_TOKEN, [WORKER]: DENIED });
     expect(await cf.check()).toBe(UNKNOWN);
     expect(cf.calls).toEqual([`${ACC}/tokens/verify`, "/user/tokens/verify"]);
   });
@@ -163,20 +169,20 @@ describe("the check against Cloudflare's own answers", () => {
     for (const status of [401, 403]) {
       const cf = cloudflare({ [`${ACC}/tokens/verify`]: verified("active"), [WORKER]: { ...DENIED, status } });
       expect(await cf.check()).toBe(
-        `Cloudflare knows this token, but the token can't read the Worker erga-next of the account ${FLEET_ACCOUNT} (Cloudflare answered ${status}). Give it that Worker, with the role Editor.`
+        `This token can't access Worker erga-next in account ${FLEET_ACCOUNT} (HTTP ${status}). Give it Workers Editor for erga-next.`
       );
     }
   });
 
   test("a user's token is not an account's: it verifies at the user, and is taken as an account's is", async () => {
-    const cf = cloudflare({ [`${ACC}/tokens/verify`]: INVALID, "/user/tokens/verify": verified("active"), [WORKER]: OK, ...REST });
+    const cf = cloudflare({ [`${ACC}/tokens/verify`]: BAD_TOKEN, "/user/tokens/verify": verified("active"), [WORKER]: OK, ...REST });
     expect(await cf.check()).toBeNull();
     expect(cf.calls.slice(0, 3)).toEqual([`${ACC}/tokens/verify`, "/user/tokens/verify", WORKER]);
   });
 
   test("a token that Cloudflare knows, but that is not active, is refused with Cloudflare's word", async () => {
     const cf = cloudflare({ [`${ACC}/tokens/verify`]: verified("expired") });
-    expect(await cf.check()).toBe("Cloudflare knows this token, but it is expired. Make a new one.");
+    expect(await cf.check()).toBe("This token is expired. Create a new one.");
   });
 });
 

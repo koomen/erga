@@ -54,12 +54,11 @@ export const deployerNow = async (platform: Platform | undefined, looked: boolea
  */
 export function machineAuto(jobs: DeployState["jobs"], now: number): string {
   const last = jobs.find((j) => j.kind == "deploy");
-  const how = "Install the cloud deployer to control it here (bun erga setup, with --deploys cloud).";
-  if (last?.from == "auto-deploy")
-    return `Auto-deploy: on at the last deploy (${timeAgo(last.started, now)}), from a machine (bun erga --auto-deploy). This server can't know whether it is on now. ${how}`;
-  const from = last?.from == "page" ? "the ops page of a machine" : last?.from.startsWith("app") ? "the app" : `a ${last?.from}`;
-  const seen = last ? `its last deploy came from ${from}, ${timeAgo(last.started, now)}` : "its job log has no deploy";
-  return `Auto-deploy: not known. It runs on a machine (bun erga --auto-deploy), which this server can't ask: ${seen}. ${how}`;
+  const how = "Run bun erga setup --deploys cloud to manage deploys here.";
+  if (last?.from == "auto-deploy") return `Auto-deploy ran from a machine ${timeAgo(last.started, now)}; current status unknown. ${how}`;
+  const from = last?.from == "page" ? "the ops page" : last?.from.startsWith("app") ? "the app" : `a ${last?.from}`;
+  const seen = last ? `last deploy from ${from}, ${timeAgo(last.started, now)}` : "no deploys yet";
+  return `Deploys run from a machine (${seen}). ${how}`;
 }
 
 /**
@@ -81,14 +80,14 @@ const autoRow = (state: DeployState, at: Deployer["at"], branch: string) => {
 /** The deployer's last look, in one line under the commits. */
 function looked(look: NonNullable<DeployState["look"]>, now: number): string {
   const what = look.error
-    ? `The deployer's look at GitHub, ${esc(timeAgo(look.at, now))}: <span class="s-err">${esc(look.error)}</span>`
-    : `GitHub, by the deployer, ${esc(timeAgo(look.at, now))}`;
+    ? `GitHub, ${esc(timeAgo(look.at, now))}: <span class="s-err">${esc(look.error)}</span>`
+    : `GitHub, ${esc(timeAgo(look.at, now))}`;
   const cls = look.error ? "bad" : "ok";
   return `<p class="checked" aria-label="Checks"><span>Checked:</span><span class="check ${cls}"><i class="light ${cls}"></i>${what}</span></p>`;
 }
 
 /** The label of the token's form, which the page's script sets again with the words (data-give). */
-const give = (at: Deployer["at"]) => (at == "ready" ? "Give the deployer another token" : "Give the deployer a token");
+const give = (at: Deployer["at"]) => (at == "ready" ? "Replace token" : "Add token");
 
 /**
  * The token section's words, for a server that has a deployer to ask: whether it holds a token, and what it does with
@@ -98,9 +97,9 @@ function tokenLede(d: Deployer, mode: AutoDeployMode, branch: string): string {
   const does = `<span data-token-does>${esc(tokenText(d.at, mode, branch))}</span>`;
   const says =
     d.at == "ready"
-      ? `The deployer holds a token${d.head ? `, and is at <code>${esc(d.head.slice(0, 12))}</code>` : ""}. ${does}`
+      ? `Token set${d.head ? ` (at <code>${esc(d.head.slice(0, 12))}</code>)` : ""}. ${does}`
       : d.at == "waits"
-        ? `<b>${NO_TOKEN}</b> Give it one below. ${does}`
+        ? `<b>${NO_TOKEN}</b> ${does}`
         : esc(d.at == "silent" ? d.why : AWAY);
   return `<p class="lede" data-deployer="${d.at}" data-give="${give(d.at)}">${says}</p>`;
 }
@@ -134,7 +133,7 @@ export async function deployLive(
   const says = statusHtml(deployer, state, platform.deploy.version, now);
   if (!state.tracks)
     return {
-      html: `<p class="lede">${esc(host)} has no deploy spec yet: its next deploy from a machine writes it (bun erga deploy ${esc(host)}).</p>`,
+      html: `<p class="lede">No deploy spec yet. Run <code>bun erga deploy ${esc(host)}</code> from a machine to create one.</p>`,
       status: says,
       token,
       deployer,
@@ -161,13 +160,11 @@ export async function deployLive(
     commits: state.commits.length
       ? state.commits.map((c) => ({ sha: c.sha, subject: c.title, at: c.at, release: c.release, ...(c.tag ? { tag: c.tag } : {}) }))
       : null,
-    none: state.look
-      ? (state.look.error ?? `The deployer has not seen the commits of ${state.tracks.branch} yet.`)
-      : (blocked(at, host) ?? ""),
+    none: state.look ? (state.look.error ?? `No commits seen on ${state.tracks.branch} yet.`) : (blocked(at, host) ?? ""),
     runs,
     lost: runsLatest
-      ? `${host} runs ${latest!.tag} (${runs}), which is older than the last ${state.commits.length} commits of ${state.tracks.branch}.`
-      : `${host} runs ${runs}, which is not one of the last ${state.commits.length} commits of ${state.tracks.branch}.`,
+      ? `Running ${latest!.tag} (${runs}), older than the last ${state.commits.length} commits on ${state.tracks.branch}.`
+      : `Running ${runs}, not in the last ${state.commits.length} commits on ${state.tracks.branch}.`,
     jobs: state.jobs.map((j) => ({
       id: String(j.id),
       commit: j.commit,
@@ -182,7 +179,7 @@ export async function deployLive(
     starting: ask
       ? {
           command: ask.kind == "deploy" ? `deploy ${ask.sha!.slice(0, 12)}` : "rollback",
-          what: `asked by ${ask.by} · the deployer starts it at its next look`,
+          what: `requested by ${ask.by} · starts within a minute`,
         }
       : null,
     failed: null,
@@ -190,7 +187,7 @@ export async function deployLive(
     ...(deploys(at) ? {} : { off: blocked(at, host)! }),
     deploying: [...running.flatMap((j) => (j.kind == "deploy" && j.commit ? [j.commit] : [])), ...(ask?.sha ? [ask.sha] : [])],
     rolling: running.some((j) => j.kind == "rollback") || ask?.kind == "rollback",
-    rollbackNote: "No branch moves. The next deploy goes forward again.",
+    rollbackNote: "Does not change the branch. The next deploy moves forward again.",
     bottom: state.look ? looked(state.look, now) : "",
     href: (to, job) => `/admin/deploy${to == "deploys" ? "" : `?tab=${to}${job ? `&job=${encodeURIComponent(job)}` : ""}`}`,
   };
@@ -214,7 +211,7 @@ function tokenSection(
 ) {
   return `
   <section class="deployer-token" aria-labelledby="token-head">
-    <h3 class="sub-head" id="token-head">The deployer's token</h3>
+    <h3 class="sub-head" id="token-head">Deployer token</h3>
     <div id="token-live">${lede}</div>
     <details${at != "ready" || refused ? " open" : ""}>
       <summary>${give(at)}</summary>
@@ -222,7 +219,7 @@ function tokenSection(
       ${refused ? `<p class="failed" role="alert">${esc(refused)}</p>` : ""}
       <form method="post" action="${esc(link("/admin/deploy/token", session))}">
         ${TOKEN_FIELD}
-        <button class="pill">Check the token</button>
+        <button class="pill">Verify and save</button>
       </form>
     </details>
   </section>`;
@@ -238,13 +235,13 @@ export async function deployPage(platform: Platform, session: Session, url: URL,
       session,
       title: "Deploy",
       here: "deploy",
-      lede: `${url.host} runs ${runs ?? "no release that it knows"}.`,
+      lede: runs ? `Running ${runs}.` : "Version unknown.",
       body: `
   <div id="deploy-live">${html}</div>${
     says
       ? `
   <section class="deployer-status" aria-labelledby="deployer-head">
-    <h3 class="sub-head" id="deployer-head">The deployer</h3>
+    <h3 class="sub-head" id="deployer-head">Deployer</h3>
     <div id="deployer-live">${says}</div>
   </section>`
       : ""

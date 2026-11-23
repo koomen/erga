@@ -35,7 +35,8 @@ export type DeployerAnswer =
 
 /** Why the token is not taken, or null. */
 export async function tokenProblem(fetch: Fetch, env: { ACCOUNT: string; WORKER: string }, token: string): Promise<string | null> {
-  if (!/^[\x21-\x7e]{16,400}$/.test(token)) return token ? "That isn't a token: it is one line, with no spaces." : "Paste the token.";
+  const invalid = "This text is not a valid Cloudflare token. Copy the whole token and paste it again.";
+  if (!/^[\x21-\x7e]{16,400}$/.test(token)) return token ? invalid : "Paste a token.";
   const get = (path: string) =>
     fetch(`https://api.cloudflare.com/client/v4${path}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -50,38 +51,38 @@ export async function tokenProblem(fetch: Fetch, env: { ACCOUNT: string; WORKER:
     return { status: r?.status ?? 0, is: String(body?.result?.status ?? "") };
   };
   const unclear = (what: string, s: number) =>
-    `Cloudflare gave no clear answer about ${what} (${s ? `it answered ${s}` : "no answer"}). Paste the token again in a minute.`;
+    `Cloudflare couldn't verify ${what} (${s ? `HTTP ${s}` : "no response"}). Try again in a minute.`;
   const no = (s: number) => s == 401 || s == 403 || s == 404;
   // An account's token verifies at its account, and a user's token at the user.
   let known = await verify(`/accounts/${env.ACCOUNT}/tokens/verify`);
-  if (known.status != 200) {
+  if (known.status != 200 && known.status != 400) {
     const user = await verify("/user/tokens/verify");
     if (user.status == 200 || known.status == 401) known = user;
   }
-  if (known.status == 401)
-    return `Cloudflare does not know this token: it is not whole, it was deleted, or it is a token of another account than ${env.ACCOUNT}.`;
-  if (known.status != 200) return unclear("whether it knows the token", known.status);
-  if (known.is != "active") return `Cloudflare knows this token, but it is ${known.is || "not active"}. Make a new one.`;
+  if (known.status == 400) return invalid;
+  if (known.status == 401) return `Cloudflare doesn't recognize this token. It may be deleted or for another account than ${env.ACCOUNT}.`;
+  if (known.status != 200) return unclear("the token", known.status);
+  if (known.is != "active") return `This token is ${known.is || "not active"}. Create a new one.`;
   const own = await status(`/workers/scripts/${env.WORKER}/settings`);
   if (own == 401 || own == 403)
-    return `Cloudflare knows this token, but the token can't read the Worker ${env.WORKER} of the account ${env.ACCOUNT} (Cloudflare answered ${own}). Give it that Worker, with the role Editor.`;
-  if (own != 200) return unclear(`whether the token reads the Worker ${env.WORKER}`, own);
+    return `This token can't access Worker ${env.WORKER} in account ${env.ACCOUNT} (HTTP ${own}). Give it Workers Editor for ${env.WORKER}.`;
+  if (own != 200) return unclear(`access to ${env.WORKER}`, own);
   // (Cloudflare answers 401 for D1 to a token for one Worker: recorded 2026-11-20, with a real one.)
   const d1 = await status("/d1/database?per_page=1");
-  if (d1 == 200) return "The token can read the account's D1 databases. The deployer needs no permission for D1: make a token without it.";
-  if (!no(d1)) return unclear("whether the token reads the account's D1 databases", d1);
+  if (d1 == 200) return "This token has D1 access. Remove D1 permissions and try again.";
+  if (!no(d1)) return unclear("D1 access", d1);
   // Another Worker: the first one that the token itself lists, which is not the instance's or its deployer. A token
   // that lists none is one for these Workers only.
   const mine = [env.WORKER, deployerName(env.WORKER)];
   const list = await get(`/accounts/${env.ACCOUNT}/workers/scripts`);
-  if (list?.status != 200 && !no(list?.status ?? 0)) return unclear("whether the token lists the account's Workers", list?.status ?? 0);
+  if (list?.status != 200 && !no(list?.status ?? 0)) return unclear("Workers list access", list?.status ?? 0);
   const scripts = list?.status == 200 ? ((await list.json().catch(() => null)) as { result?: { id?: unknown }[] } | null)?.result : null;
   const other = scripts
     ?.map((x) => x.id)
     .find((id): id is string => typeof id == "string" && /^[\w-]{1,63}$/.test(id) && !mine.includes(id));
   const reaches = other ? await status(`/workers/scripts/${other}/settings`) : 404;
-  if (reaches == 200) return `The token can read another Worker (${other}). Make a token for the Workers ${mine.join(" and ")} only.`;
-  if (!no(reaches)) return unclear(`whether the token reads another Worker (${other})`, reaches);
+  if (reaches == 200) return `This token can access another Worker (${other}). Restrict it to ${mine.join(" and ")} only.`;
+  if (!no(reaches)) return unclear(`access to ${other}`, reaches);
   return null;
 }
 

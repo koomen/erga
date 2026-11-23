@@ -491,23 +491,19 @@ journey("an admin on the admin pages", () => {
         token: document.querySelector<HTMLElement>("#token-live")!.innerText,
       }));
     expect(await row()).toEqual({
-      says: "Waits for a token: the deployer has none. Give it one below. Then it deploys each new commit on main by itself.",
+      says: "Add a token below. Will deploy every commit on main.",
       saved: "Every commit",
       // (The three modes, Deploy on two rows, and Roll back.)
       off: 6,
-      token:
-        "The deployer has no token: it deploys nothing. Give it one below. With a token, it deploys each new commit on main by itself.",
+      token: "No token set. Once set, auto-deploys every commit on main.",
     });
-    // The section "The deployer" says the same of its state, and which code it runs: an older release's than the server's.
+    // The section "Deployer" says the same of its state, and which code it runs: an older release's than the server's.
     const status = () =>
       page.evaluate(() =>
         [...document.querySelectorAll<HTMLElement>("#deployer-live dd")].map((d) => `${d.dataset.status}: ${d.innerText}`)
       );
-    const CODE = [
-      "code: Release 111111111111. This server runs 222222222222.",
-      "update: None by itself yet: its code came from the setup command, or from a deploy from a machine.",
-    ];
-    expect(await status()).toEqual(["state: Waiting for a token: it looks at GitHub, and it deploys nothing.", "look: Just now.", ...CODE]);
+    const CODE = ["code: 111111111111 (server runs 222222222222)", "update: Never (installed manually)"];
+    expect(await status()).toEqual(["state: Waiting for token", "look: Just now", ...CODE]);
     // A person pastes a token, with real keys. The deployer takes it: the page comes back with each control on, and
     // the row and the section say what the saved mode does.
     await clickOn(page, '.deployer-token input[name="token"]');
@@ -515,12 +511,12 @@ journey("an admin on the admin pages", () => {
     await page.keyboard.press("Enter");
     await page.waitForSelector('#token-live [data-deployer="ready"]');
     expect(await row()).toEqual({
-      says: "Deploys each new commit on main by itself.",
+      says: "Deploys every commit on main.",
       saved: "Every commit",
       off: 0,
-      token: "The deployer holds a token. It deploys each new commit on main by itself.",
+      token: "Token set. Auto-deploys every commit on main.",
     });
-    expect(await status()).toEqual(["state: Ready: it looks at GitHub each minute, and it can deploy.", "look: Just now.", ...CODE]);
+    expect(await status()).toEqual(["state: Ready", "look: Just now", ...CODE]);
     // (The token's form loaded the page: the window's mark goes on it again.)
     await page.evaluate(() => void ((window as unknown as { stayed: boolean }).stayed = true));
     expect(await text(`.row[data-sha="${sha(2)}"] .dep.live`)).toContain("live");
@@ -528,7 +524,7 @@ journey("an admin on the admin pages", () => {
     await clickOn(page, `.row[data-sha="${sha(3)}"] [data-deploy]`);
     await soon(() => text(".confirm:popover-open")).toContain("Deploy 3333333 Change 3 to");
     await clickOn(page, ".confirm [data-go]");
-    await soon(() => text(".job.running")).toContain("asked by tester");
+    await soon(() => text(".job.running")).toContain("requested by tester");
     // The deployer's look: it takes the lock with the ask's job, takes the ask, and deploys. The page follows by itself.
     const ask = (await run(readControl(sql)))!.ask!;
     expect(ask).toMatchObject({ kind: "deploy", sha: sha(3), by: "tester" });
@@ -548,19 +544,19 @@ journey("an admin on the admin pages", () => {
     await page.waitForSelector("#auto-deploy");
     // The status follows the deployer: its code is the release that it deployed, by its own update.
     await soon(async () => (await status()).slice(2)).toEqual([
-      "code: Release 333333333333. This server runs 222222222222.",
-      "update: Just now, after its deploy of release 333333333333: done.",
+      "code: 333333333333 (server runs 222222222222)",
+      "update: Just now (333333333333)",
     ]);
     await clickOn(page, '#auto-deploy [data-auto-mode="releases"]');
     await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("releases");
     // The row and the token's section follow the mode, at the click and after the page draws itself again.
-    const each = "eploys each new tagged release (vX.Y.Z) of the repository by itself.";
-    await soon(row).toMatchObject({ says: `D${each}`, saved: "Releases only", token: `The deployer holds a token. It d${each}` });
+    const each = "tagged releases (vX.Y.Z) of the repository.";
+    await soon(row).toMatchObject({ says: `Deploys ${each}`, saved: "Releases only", token: `Token set. Auto-deploys ${each}` });
     await clickOn(page, '#auto-deploy [data-auto-mode="off"]');
     await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("off");
     await soon(row).toMatchObject({
-      says: "Auto-deploy is off. Use Deploy on a row below to deploy by hand.",
-      token: "The deployer holds a token. It deploys only when you use Deploy on a row above: auto-deploy is off.",
+      says: "Manual only.",
+      token: "Token set. Auto-deploy is off.",
     });
     // About, the last link of the sidebar: the spec's repository and branch, the commit that the server runs (as the
     // deployer's look saw it), and the release tag that GitHub (the pretend one) has at that commit.

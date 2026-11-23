@@ -121,7 +121,7 @@ function jobLine(v: InstanceView, now: number): string {
   // A command that the page started, before its job shows.
   if (v.starting && job?.phase != "running")
     return `<div class="job running"><i class="light"></i><code>${esc(v.starting.command)}</code><span>${esc(v.starting.what)}</span></div>`;
-  if (!job) return `<div class="job none">No job yet. A deploy or a rollback of ${esc(v.host)} shows here as it runs.</div>`;
+  if (!job) return `<div class="job none">No job yet.</div>`;
   const st = jobLook(job, now);
   return `<a class="job ${st.cls}" href="${esc(v.href("logs", job.id))}" title="${esc(st.what)}"><i class="light"></i><code>${esc(job.command)}</code><span>${esc(st.what)}</span></a>`;
 }
@@ -138,7 +138,7 @@ const took = (job: ViewJob, now: number) => {
 /** Logs: the output of the job that `id` names, else of the job that runs, else of the last one. */
 function logs(v: InstanceView, id: string, now: number): string {
   const job = v.jobs.find((j) => j.id == id) ?? v.jobs.find((j) => j.phase == "running") ?? v.jobs[0];
-  if (!job) return `<p class="note">No job yet. The output of a deploy or a rollback of ${esc(v.host)} shows here as it runs.</p>`;
+  if (!job) return `<p class="note">No job yet.</p>`;
   const st = jobLook(job, now);
   const lines = job.out.map((l) => `<span>${esc(l)}</span>`).join("\n");
   const end = job.error ? `\n<span class="bad">${esc(job.error)}</span>` : "";
@@ -147,7 +147,7 @@ function logs(v: InstanceView, id: string, now: number): string {
 
 /** History: the jobs, newest first. */
 function history(v: InstanceView, now: number): string {
-  if (!v.jobs.length) return `<p class="note">No job yet. Each deploy and rollback of ${esc(v.host)} shows here.</p>`;
+  if (!v.jobs.length) return `<p class="note">No job yet.</p>`;
   const rows = v.jobs
     .map((j) => {
       const st = jobLook(j, now);

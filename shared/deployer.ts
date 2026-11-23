@@ -57,41 +57,32 @@ export function deployerOf(looked: boolean, says: Says | null): Deployer {
 /** Whether an ask reaches a deployer that deploys. Only then are the page's controls on. */
 export const deploys = (at: DeployerAt) => at == "ready" || at == "silent";
 
-export const NO_TOKEN = "The deployer has no token: it deploys nothing.";
-export const AWAY = "The deployer does not look at GitHub now: it deploys nothing.";
+export const NO_TOKEN = "No token set.";
+export const AWAY = "Deployer hasn't checked GitHub recently.";
 
 /** What a server with no deployer says. */
-export const noDeployer = (host: string) =>
-  `No deployer in the cloud deploys ${host}: its deploys come from a machine (bun erga deploy ${host}).`;
+export const noDeployer = (host: string) => `No cloud deployer for ${host}. Deploy from a machine with bun erga deploy ${host}.`;
 
 /** Why no ask goes to the deployer now, or null: the tip of a button that is off, and what the operation answers. */
 export const blocked = (at: DeployerAt, host: string): string | null =>
-  at == "none"
-    ? noDeployer(host)
-    : at == "waits"
-      ? `${NO_TOKEN} Give it one on the Deploy page (/admin/deploy), under "The deployer's token".`
-      : at == "away"
-        ? AWAY
-        : null;
+  at == "none" ? noDeployer(host) : at == "waits" ? "Deployer has no token. Add one on /admin/deploy." : at == "away" ? AWAY : null;
 
 const each = (mode: AutoMode, branch: string) =>
-  mode == "releases" ? "each new tagged release (vX.Y.Z) of the repository" : `each new commit on ${branch}`;
+  mode == "releases" ? "tagged releases (vX.Y.Z) of the repository" : `every commit on ${branch}`;
 
 /** The Auto-deploy row's words: what the saved mode does, or what the deployer waits for, and what the mode does then. */
 export function autoText(at: DeployerAt, mode: AutoMode, branch: string): string {
-  const does = `deploys ${each(mode, branch)} by itself.`;
-  if (deploys(at)) return mode == "off" ? "Auto-deploy is off. Use Deploy on a row below to deploy by hand." : `D${does.slice(1)}`;
-  const [why, then] =
-    at == "waits" ? ["Waits for a token: the deployer has none. Give it one below.", "Then it"] : [AWAY, "When it looks again, it"];
-  return `${why} ${mode == "off" ? "Auto-deploy is off." : `${then} ${does}`}`;
+  if (deploys(at)) return mode == "off" ? "Manual only." : `Deploys ${each(mode, branch)}.`;
+  const why = at == "waits" ? "Add a token below." : "Deployer offline.";
+  if (mode == "off") return `${why} Manual only.`;
+  return at == "waits" ? `${why} Will deploy ${each(mode, branch)}.` : `${why} Will deploy ${each(mode, branch)} when back.`;
 }
 
 /** The token section's words about the saved mode: what the deployer does with its token, or will do with one. */
 export function tokenText(at: DeployerAt, mode: AutoMode, branch: string): string {
   if (at != "ready" && at != "waits") return "";
-  const does =
-    mode == "off" ? "it deploys only when you use Deploy on a row above: auto-deploy is off" : `it deploys ${each(mode, branch)} by itself`;
-  return at == "waits" ? `With a token, ${does}.` : `${does[0].toUpperCase()}${does.slice(1)}.`;
+  if (mode == "off") return "Auto-deploy is off.";
+  return at == "waits" ? `Once set, auto-deploys ${each(mode, branch)}.` : `Auto-deploys ${each(mode, branch)}.`;
 }
 
 /** One line of the deployer's status. `bad`: it says that something is wrong. */
@@ -103,10 +94,10 @@ export interface StatusLine {
 }
 
 const STATES: Record<Exclude<DeployerAt, "none">, string> = {
-  ready: "Ready: it looks at GitHub each minute, and it can deploy.",
-  waits: "Waiting for a token: it looks at GitHub, and it deploys nothing.",
-  silent: "Silent:",
-  away: "Away: it does not look at GitHub now, and it deploys nothing.",
+  ready: "Ready",
+  waits: "Waiting for token",
+  silent: "No response:",
+  away: "Offline (not checking GitHub)",
 };
 
 /**
@@ -118,19 +109,19 @@ export function status(
   d: Exclude<Deployer, { at: "none" }>,
   o: { looked: number | null; error: string | null; runs: string | null; now: number }
 ): StatusLine[] {
-  // (A line starts with a capital: "Just now.", "3 hours ago, ...".)
+  // (A line starts with a capital: "Just now", "3 hours ago ...".)
   const ago = (at: number) => timeAgo(at, o.now).replace(/^./, (c) => c.toUpperCase());
   const lines: StatusLine[] = [
     {
       key: "state",
-      label: "State",
+      label: "Status",
       text: d.at == "silent" ? `${STATES.silent} ${d.why}` : STATES[d.at],
       ...(d.at == "ready" ? {} : { bad: true }),
     },
     {
       key: "look",
-      label: "Last look",
-      text: o.looked == null ? "None yet." : `${ago(o.looked)}${o.error ? `: ${o.error}` : "."}`,
+      label: "Last check",
+      text: o.looked == null ? "Never" : `${ago(o.looked)}${o.error ? `: ${o.error}` : ""}`,
       ...(o.looked == null || o.error || d.at == "away" ? { bad: true } : {}),
     },
   ];
@@ -140,25 +131,25 @@ export function status(
   const same = !!version && !!o.runs && (version.startsWith(o.runs) || o.runs.startsWith(version));
   lines.push({
     key: "code",
-    label: "Its code",
+    label: "Version",
     text: !version
-      ? "Not known: this deployer is from before it said its release. The next deploy gives it newer code."
+      ? "Unknown (updates on next deploy)"
       : same
-        ? `Release ${version}, as this server.`
-        : `Release ${version}. This server runs ${o.runs ?? "no release that it knows"}.`,
+        ? `${version} (matches server)`
+        : `${version} (server runs ${o.runs ?? "unknown"})`,
     ...(version ? {} : { bad: true }),
   });
   if (!version) return lines;
   lines.push({
     key: "update",
-    label: "Last update of its code",
+    label: "Last self-update",
     text: !renewed
-      ? "None by itself yet: its code came from the setup command, or from a deploy from a machine."
+      ? "Never (installed manually)"
       : renewed.why
-        ? `${ago(renewed.at)}, after its deploy of release ${renewed.version}: it kept its code. ${renewed.why}`
+        ? `${ago(renewed.at)}, ${renewed.version} failed: ${renewed.why}`
         : renewed.version == version
-          ? `${ago(renewed.at)}, after its deploy of release ${renewed.version}: done.`
-          : `${ago(renewed.at)}, it asked Cloudflare for the code of release ${renewed.version}. It runs release ${version} now.`,
+          ? `${ago(renewed.at)} (${renewed.version})`
+          : `${ago(renewed.at)} (requested ${renewed.version}; now on ${version})`,
     ...(renewed?.why ? { bad: true } : {}),
   });
   return lines;

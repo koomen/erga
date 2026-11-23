@@ -258,15 +258,15 @@ function rowsOf(o: RowsOf): { id: Row; title: string; state: State; body: string
       title: "Turn on automatic updates",
       state: ready ? "done" : o.skipped ? "skipped" : any ? "next" : "waiting",
       body: ready
-        ? `<p>The deployer is ready${says.ok && says.head ? `, at <code>${esc(says.head.slice(0, 12))}</code>` : ""}: each new release of Erga deploys by itself. An admin turns that off, or gives the deployer another token, on the Deploy page (<code>/admin/deploy</code>).</p>`
+        ? `<p>Ready${says.ok && says.head ? ` (at <code>${esc(says.head.slice(0, 12))}</code>)` : ""}. New releases deploy automatically. Change this anytime on <code>/admin/deploy</code>.</p>`
         : `${says.ok || o.problem?.row == "deployer" ? "" : `<p class="problem" role="alert">${esc(says.why)}</p>`}${
             o.skipped
-              ? `<p><b>Skipped.</b> The deployer has no token, so it deploys nothing: you deploy each new release from your machine, with <code>bun erga deploy ${esc(url.host)}</code>. Paste a token now, or later on the Deploy page (<code>/admin/deploy</code>).</p>`
+              ? `<p><b>Skipped.</b> Deploy from your machine with <code>bun erga deploy ${esc(url.host)}</code>, or add a token below or later on <code>/admin/deploy</code>.</p>`
               : ""
           }${tokenSteps(account, worker)}
 <form method="post" action="/setup/deployer" class="fields">
   ${TOKEN_FIELD}
-  <div class="buttons"><button class="new">Check the token</button>${o.skipped ? "" : `<a class="pill" href="/setup?skip">Skip for now</a>`}</div>
+  <div class="buttons"><button class="new">Verify and save</button>${o.skipped ? "" : `<a class="pill" href="/setup?skip">Skip</a>`}</div>
 </form>`,
     });
   }
@@ -292,17 +292,12 @@ function rowsOf(o: RowsOf): { id: Row; title: string; state: State; body: string
 }
 
 /** How a person makes the deployer's token, and where it goes: on the setup page, and on the Deploy page (server/admin/deploy.ts). */
-export const tokenSteps = (
-  account: string,
-  worker: string
-) => `<p>A deployer in your Cloudflare account deploys this server. It needs a token that can change the Worker <code>${esc(worker)}</code>, and nothing else.</p>
-<ol class="how">
-  <li>Open <a href="https://dash.cloudflare.com/${esc(account)}/api-tokens" target="_blank" rel="noopener">Account API tokens</a> on Cloudflare, and choose Create Token.</li>
-  <li>Give it one permission: Workers, with the role Editor, for two Workers only: <code>${esc(worker)}</code> and <code>${esc(worker)}-deployer</code>. No other permission, and no other Worker: the database needs none.</li>
-  <li>Create the token, copy it, and paste it here.</li>
+export const tokenSteps = (account: string, worker: string) => `<ol class="how">
+  <li>Open <a href="https://dash.cloudflare.com/${esc(account)}/api-tokens" target="_blank" rel="noopener">Account API tokens</a> on Cloudflare and click <b>Create Token</b>.</li>
+  <li>Grant <b>Workers — Editor</b> for <code>${esc(worker)}</code> and <code>${esc(worker)}-deployer</code> only. No D1 or other permissions; broader tokens are rejected.</li>
+  <li>Create the token, copy it, and paste it below.</li>
 </ol>
-<p>This server hands the token to the deployer, and keeps nothing of it. The deployer checks it with Cloudflare, and keeps it encrypted. Your agent never sees it. The deployer refuses a token that can do more.</p>
-<p>The second Worker is the deployer itself: with it, each deploy also gives the deployer its newest code. A token for <code>${esc(worker)}</code> only works too, but then the deployer's own code changes only when you run the setup command again.</p>`;
+<p>Stored encrypted in the deployer, never on this server. Including <code>${esc(worker)}-deployer</code> lets it self-update (optional).</p>`;
 
 /** The field for the token. */
-export const TOKEN_FIELD = `<label>The deployer's token<input class="input" type="password" name="token" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore placeholder="Paste the token" required></label>`;
+export const TOKEN_FIELD = `<label>Cloudflare API token<input class="input" type="password" name="token" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore placeholder="Paste token" required></label>`;

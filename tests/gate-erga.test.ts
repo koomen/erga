@@ -371,7 +371,7 @@ test("the gate inside, on a new server: the setup page's link passes the organiz
   expect(html).toContain('<p class="problem" role="alert">The token can read another Worker (other).</p>');
   html = await (await b.go(`${ORIGIN}/setup/deployer`, { method: "POST", headers: FORM_POST, body: post(TOKEN) })).text();
   expect(rowsOf(html)).toEqual(["deployer done", "admin next open"]);
-  expect(html).toContain("The deployer is ready, at <code>aaaaaaaaaaaa</code>");
+  expect(html).toContain("Ready (at <code>aaaaaaaaaaaa</code>)");
   expect(deployer.asked).toEqual(["w".repeat(40), TOKEN]);
   // The button: her account is new, so she names it, and comes back as the admin. The page is closed then.
   b.trail.length = 0;
