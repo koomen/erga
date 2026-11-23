@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import type { AwsApi } from "../deploy/deployer/aws";
 import { Cloudflare, DeployError, type Fetch } from "../deploy/deployer/cloudflare-api";
 import { deploy, type Ports } from "../deploy/deployer/deploy";
-import { onBranchAtGitHub, TryLater } from "../deploy/deployer/github";
+import { TryLater } from "../deploy/deployer/github";
 import type { Release } from "../deploy/deployer/release-format";
 import { decodeSpec, type Spec } from "../deploy/deployer/spec";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
@@ -302,64 +302,5 @@ describe("on AWS", () => {
     const later = await run(spec, rel, { aws, onBranch: () => Effect.fail(new TryLater({ message: "GitHub did not say." })) });
     expect(later.failed).toBeInstanceOf(TryLater);
     expect([...no.log, ...later.log, ...calls]).toEqual([]);
-  });
-});
-
-describe("the branch's commits, as GitHub says them", () => {
-  const COMMIT = "bbbbbbbbbbbb0123456789abcdef0123456789ab";
-  const of = { repo: "github.com/Example/erga", branch: "release/1.x" };
-  /** GitHub, as a fetch that answers each call with `status` and `body`: the calls it got. */
-  function github(status: number, body: unknown = {}) {
-    const calls: { url: string; headers: unknown }[] = [];
-    const fetch: Fetch = async (url, init) => {
-      calls.push({ url: String(url), headers: init?.headers });
-      if (status == 0) throw new Error("no network");
-      return new Response(typeof body == "string" ? body : JSON.stringify(body), { status });
-    };
-    return { fetch, calls };
-  }
-  /** The port's answer for the release "bbbbbbbbbbbb": true or false, or its failure. */
-  const ask = (fetch: Fetch, commit = COMMIT, version = "bbbbbbbbbbbb") =>
-    Effect.runPromise(Effect.match(onBranchAtGitHub(fetch, of, commit)(version), { onSuccess: (on) => on, onFailure: (e) => e }));
-
-  test("one call with no credential: the branch has the commit when it is not ahead of the branch", async () => {
-    const has = github(200, { status: "behind", ahead_by: 0, behind_by: 15 });
-    expect(await ask(has.fetch)).toBe(true);
-    expect(has.calls).toEqual([
-      {
-        url: `https://api.github.com/repos/Example/erga/compare/release/1.x...${COMMIT}?per_page=1`,
-        headers: { Accept: "application/vnd.github+json", "User-Agent": "erga-deployer" },
-      },
-    ]);
-    expect(await ask(github(200, { status: "identical", ahead_by: 0, behind_by: 0 }).fetch)).toBe(true);
-    // A commit of another branch (as verify's), and a commit or a branch that the repository has not.
-    expect(await ask(github(200, { status: "diverged", ahead_by: 2, behind_by: 1 }).fetch)).toBe(false);
-    expect(await ask(github(404, { message: "Not Found" }).fetch)).toBe(false);
-  });
-
-  test("GitHub's limit, its failure or no network is TryLater, never a refusal; another answer is an error", async () => {
-    for (const status of [403, 429, 500, 503, 0]) {
-      const later = await ask(github(status, { message: "API rate limit exceeded" }).fetch);
-      expect([status, later instanceof TryLater]).toEqual([status, true]);
-    }
-    expect(await ask(github(200, "<html>").fetch)).toBeInstanceOf(TryLater);
-    for (const g of [github(200, { status: "behind" }), github(301), github(422)]) {
-      const odd = await ask(g.fetch);
-      expect(odd).toBeInstanceOf(DeployError);
-      expect(odd).not.toBeInstanceOf(TryLater);
-    }
-  });
-
-  test("a short name, or a release that is not the tag's commit, makes no call", async () => {
-    const g = github(200, { ahead_by: 0 });
-    expect(((await ask(g.fetch, "bbbbbbbbbbbb")) as DeployError).message).toBe(
-      '"bbbbbbbbbbbb" is not a commit\'s full name (40 hex characters).'
-    );
-    expect(await ask(g.fetch, "main")).toBeInstanceOf(DeployError);
-    expect(((await ask(g.fetch, COMMIT, "aaaaaaaaaaaa")) as DeployError).message).toBe(
-      `The release says that it is aaaaaaaaaaaa, and its tag is the commit ${COMMIT}.`
-    );
-    expect(await ask(g.fetch, COMMIT, "bbbb")).toBeInstanceOf(DeployError);
-    expect(g.calls).toEqual([]);
   });
 });

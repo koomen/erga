@@ -1,7 +1,10 @@
 // Release tags (vX.Y.Z) and auto-deploy modes (off, releases, commits), pure and small: no Effect, no Node, so both
 // Cloudflare's small deployer (worker.ts) and AWS's (github.ts, look.ts, control.ts) share one implementation.
 
-/** Whether and what auto-deploy deploys on the tracked branch: off, tagged vX.Y.Z releases only, or every commit. */
+/**
+ * What auto-deploy deploys: nothing (off), the repository's newest release tag vX.Y.Z (releases), or the head of the
+ * tracked branch (commits). Both come from git's list of the refs: GitHub's API is asked nothing.
+ */
 export const AUTO_MODES = ["off", "releases", "commits"] as const;
 export type AutoMode = (typeof AUTO_MODES)[number];
 /** The two active modes (stored in deploy_control.auto_mode alongside deploy_control.auto = 1). */
@@ -13,7 +16,7 @@ export interface ReleaseTag {
   sha: string;
 }
 
-/** The newest release tag on the tracked branch, with what GitHub's registry has for its commit. */
+/** The repository's newest release tag, with what GitHub's registry has for its commit. */
 export interface LatestRelease {
   tag: string;
   sha: string;
@@ -79,34 +82,16 @@ export type AutoPick = { wait: string } | { sha: string; tag: string | null; rel
 /** Selects the auto-deploy target for `mode`, or returns why auto-deploy does nothing. */
 export function pickAutoTarget(
   mode: AutoMode,
-  branch: string,
   head: string,
   release: "released" | "none" | "refused",
   latestRelease: LatestRelease | null
 ): AutoPick {
   if (mode == "off") return { wait: "Auto-deploy is off." };
   if (mode == "releases") {
-    if (!latestRelease) return { wait: `No release tag (vX.Y.Z) on ${branch} yet: nothing to deploy.` };
+    if (!latestRelease) return { wait: "The repository has no release tag (vX.Y.Z) yet: nothing to deploy." };
     return { sha: latestRelease.sha, tag: latestRelease.tag, release: latestRelease.release };
   }
   return { sha: head, tag: null, release };
-}
-
-/** Finds the newest semver tag on the tracked branch (checking head, seen commits, cached release, then at most 3 compare calls). */
-export async function resolveLatestTag(
-  tags: readonly ReleaseTag[],
-  head: string,
-  commits: readonly { sha: string }[] | undefined,
-  cached: LatestRelease | null | undefined,
-  onBranch: (sha: string) => Promise<boolean>
-): Promise<ReleaseTag | null> {
-  for (let i = 0, checked = 0; i < tags.length; i++) {
-    const t = tags[i];
-    if (t.sha == head || commits?.some((k) => k.sha == t.sha) || cached?.sha == t.sha) return t;
-    if (checked++ >= 3) break;
-    if (await onBranch(t.sha)) return t;
-  }
-  return null;
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };

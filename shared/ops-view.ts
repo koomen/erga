@@ -50,7 +50,7 @@ export interface InstanceView {
   upstream?: { name: string; head: string; behind: ViewCommit[]; ahead: number };
   /** Auto-deploy mode for this instance, when known: "releases" mutes untagged commits above the live commit. */
   autoMode?: "off" | "releases" | "commits";
-  /** The newest semver release tag on the tracked branch, when known. */
+  /** The repository's newest semver release tag, when known. */
   latestRelease?: { tag: string; sha: string; release?: "released" | "none" | "refused" } | null;
   /** HTML after what it tracks, in the same line. */
   tracksMore?: string;

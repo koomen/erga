@@ -371,8 +371,10 @@ test("the deployer's token: the Deploy page says whether the deployer holds one,
   expect((await runTool(s, "deploys")).result.deployerStatus).toMatchObject({ state: READY, look: "Just now.", code: CODE[0].slice(6) });
   expect((await auto("releases")).status).toBe(200);
   let now = await view();
-  expect(row(now.html).says).toBe("Deploys each new tagged release (vX.Y.Z) on main by itself.");
-  expect(now.token).toContain(`${holds} <span data-token-does>It deploys each new tagged release (vX.Y.Z) on main by itself.</span>`);
+  expect(row(now.html).says).toBe("Deploys each new tagged release (vX.Y.Z) of the repository by itself.");
+  expect(now.token).toContain(
+    `${holds} <span data-token-does>It deploys each new tagged release (vX.Y.Z) of the repository by itself.</span>`
+  );
   expect((await auto("off")).status).toBe(200);
   now = await view();
   expect(row(now.html)).toEqual({ says: "Auto-deploy is off. Use Deploy on a row below to deploy by hand.", off: 0, saved: "off" });
@@ -429,7 +431,7 @@ test("the deployer's state is one value, from whether it looked and what it says
     ]);
   expect(autoText("waits", "off", "main")).toBe("Waits for a token: the deployer has none. Give it one below. Auto-deploy is off.");
   expect(autoText("away", "releases", "main")).toBe(
-    "The deployer does not look at GitHub now: it deploys nothing. When it looks again, it deploys each new tagged release (vX.Y.Z) on main by itself."
+    "The deployer does not look at GitHub now: it deploys nothing. When it looks again, it deploys each new tagged release (vX.Y.Z) of the repository by itself."
   );
   expect(tokenText("waits", "off", "main")).toBe("With a token, it deploys only when you use Deploy on a row above: auto-deploy is off.");
   expect([tokenText("silent", "commits", "main"), tokenText("away", "commits", "main")]).toEqual(["", ""]);

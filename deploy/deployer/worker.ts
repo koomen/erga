@@ -203,15 +203,6 @@ async function commitsOf(c: Run): Promise<Commit[]> {
   throw new Error("The deployer can't read GitHub's feed of the branch's commits.");
 }
 
-/** Whether the branch has the commit of a release tag, as GitHub's API says it (60 calls an hour with no credential). */
-async function onBranch(c: Run, sha: string): Promise<boolean> {
-  const { repo, branch } = c.spec;
-  const r = await page(c, `https://api.github.com/repos/${repo.slice("github.com/".length)}/compare/${branch}...${sha}?per_page=1`, {
-    Accept: "application/vnd.github+json",
-  });
-  return !!r && ((await r.json()) as { ahead_by?: number }).ahead_by === 0;
-}
-
 /** The package that holds the branch's releases: verify's commits have one of their own. */
 const packageOf = (s: CloudSpec) => `${s.repo.slice("github.com/".length).toLowerCase()}${s.branch == "verify" ? "-verify" : ""}`;
 
@@ -623,7 +614,8 @@ async function run(c: Run): Promise<string> {
     }
     const bySha = tags.tagBySha(refs.tags);
     for (const k of state.commits ?? []) k.tag = bySha.get(k.sha);
-    const latestTag = await tags.resolveLatestTag(refs.tags, head, state.commits, state.latestRelease, (sha) => onBranch(c, sha));
+    // The newest release tag (vX.Y.Z) of the repository, as its refs list it: GitHub is asked nothing more about it.
+    const latestTag = refs.tags[0] ?? null;
     const stateOf = (sha: string): Promise<ReleaseState> => layerOf(c, sha).then((l) => (typeof l == "string" ? l : "released"));
     let asked = 0;
     for (const k of state.commits ?? []) {
@@ -661,14 +653,16 @@ async function run(c: Run): Promise<string> {
       const took = await rows(db, ASK_SQL, String(control.ask), by, when);
       if (!took.length) throw new Error("The ask changed before its job started: nothing is done.");
       if (!sha) return back(c, log);
-      // Only a commit that the look saw on the branch: the instance offers no other (server/operations/deploys.ts).
-      if (!state.commits?.some((k) => k.sha == sha))
-        throw new Error(`${short(sha)} is not one of the last commits of ${branch} on ${repo}: the deployer deploys only those.`);
+      // Only a commit that the look saw, on the branch or as the newest release tag: the instance offers no other.
+      if (!state.commits?.some((k) => k.sha == sha) && state.latestRelease?.sha != sha)
+        throw new Error(
+          `${short(sha)} is not one of the last commits of ${branch} on ${repo}, or its newest release: the deployer deploys only those.`
+        );
       return deploy(c, sha, log);
     });
   }
 
-  const target = tags.pickAutoTarget(mode, branch, head, release, state.latestRelease ?? null);
+  const target = tags.pickAutoTarget(mode, head, release, state.latestRelease ?? null);
   if ("wait" in target) return `${c.at}. ${target.wait}`;
   if (!c.bearer) return `${c.at}. ${NO_TOKEN}`;
   const tried = state.tried?.sha == target.sha ? state.tried : null;
@@ -678,10 +672,11 @@ async function run(c: Run): Promise<string> {
   if (target.release == "none") return `${c.at}. GitHub has no release of ${target.tag ?? "it"} yet: the deployer waits.`;
   if (target.release == "refused")
     return `${c.at}. What GitHub's registry has for ${target.tag ?? "it"} is not a release: it is not deployed.`;
-  // A target that the deployer did not try: it may run already, or a job (deploy then rollback) already tried it.
+  // A target that the deployer did not try: the instance may run it already, or its last job with a commit had it (a
+  // deploy, then a rollback). An older one is due again: the release before, when the newest tag went away.
   if (!tried) {
-    const seen = await rows(db, "SELECT 1 FROM deploy_jobs WHERE sha = ? LIMIT 1", target.sha);
-    if (seen.length || (await healthNow(c, short(target.sha))).ok) {
+    const [last] = await rows(db, "SELECT sha FROM deploy_jobs WHERE sha IS NOT NULL ORDER BY id DESC LIMIT 1");
+    if (last?.sha == target.sha || (await healthNow(c, short(target.sha))).ok) {
       state.tried = { sha: target.sha, n: 0, ok: true };
       return `${c.at}. The instance has ${short(target.sha)}: nothing to deploy.`;
     }

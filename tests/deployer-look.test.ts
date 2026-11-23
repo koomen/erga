@@ -329,30 +329,28 @@ describe("a look", () => {
     expect(hub.state.calls).toEqual([]);
     expect(empty.db.query("SELECT count(*) AS n FROM deploy_control").get()).toEqual({ n: 0 });
   });
-  test("releases mode: waits with no tag, skips untagged head, deploys newest semver tag on branch, ignores prerelease and off-branch tags", async () => {
+  test("releases mode: waits with no tag, skips the untagged head, and deploys the repository's newest semver tag, whatever branch has its commit; GitHub's API is asked nothing", async () => {
     const SHA_OTHER = "9".repeat(40);
-    const { db, sql, hub, once } = await instance({ auto: false, shas: [SHA3, SHA2, SHA1] });
+    const { db, sql, hub, once, row } = await instance({ auto: false, shas: [SHA3, SHA2, SHA1] });
     db.run("INSERT INTO deploy_control (id, auto, auto_mode) VALUES (1, 1, 'releases')");
     hub.state.releases.set(SHA3, bundleOf(SHA3));
     hub.state.releases.set(SHA2, bundleOf(SHA2));
     hub.state.releases.set(SHA1, bundleOf(SHA1));
+    const at = `main on github.com/example/erga is at ${short(SHA3)}.`;
+    const latest = async () => (await run(readControl(sql)))?.latestRelease;
 
-    // No semver tag yet (only a prerelease and an off-branch tag): waits without starting a job.
-    hub.state.tags = [
-      { name: "v0.3.0-rc.1", sha: SHA3 },
-      { name: "v9.9.9", sha: SHA_OTHER },
-    ];
-    const none = await once();
-    expect(none.line).toBe(`main on github.com/example/erga is at ${short(SHA3)}. No release tag (vX.Y.Z) on main yet: nothing to deploy.`);
+    // No semver tag yet (a prerelease only): waits without starting a job.
+    hub.state.tags = [{ name: "v0.3.0-rc.1", sha: SHA3 }];
+    expect((await once()).line).toBe(`${at} The repository has no release tag (vX.Y.Z) yet: nothing to deploy.`);
+    expect(row()?.error).toBeNull();
     expect(await run(readJobs(sql))).toEqual([]);
-    expect((await run(readControl(sql)))?.latestRelease).toBeNull();
+    expect(await latest()).toBeNull();
 
     // Tag SHA2 with an annotated v0.2.0 while SHA3 stays untagged head: deploys SHA2 (not SHA3).
     hub.state.tags = [
       { name: "v0.1.0", sha: SHA1 },
       { name: "v0.2.0", sha: SHA2, annotated: true },
       { name: "v0.3.0-rc.1", sha: SHA3 },
-      { name: "v9.9.9", sha: SHA_OTHER },
     ];
     const deploy = await once();
     expect(deploy.line).toContain("Its deploy failed:");
@@ -366,14 +364,26 @@ describe("a look", () => {
       [short(SHA1), "v0.1.0"],
     ]);
 
-    // A rolled-back or failed release tag is not tried again even when >10 untagged commits land on top.
+    // A failed release tag is not tried again, even when more than 10 untagged commits land on top: the tag is the
+    // refs list's, and the look asks nothing about a commit from before the feed's.
     const extra = Array.from({ length: 12 }, (_, i) => (i + 20).toString(16).padStart(2, "0").repeat(20));
-    hub.state.older.push(SHA2);
     hub.state.commits = extra.map((sha, i) => ({ sha, title: `Extra ${i}`, at: Date.parse("2026-11-19T12:00:00Z") - i * 60_000 }));
     hub.state.releases.set(extra[0], bundleOf(extra[0]));
     const after = await once();
     expect(after.line).toContain(`A job of the instance has ${short(SHA2)}`);
-    expect((await run(readControl(sql)))?.latestRelease).toEqual({ tag: "v0.2.0", sha: SHA2, release: "released" });
+    expect(await latest()).toEqual({ tag: "v0.2.0", sha: SHA2, release: "released" });
+
+    // A newer tag at a commit that no branch of the look has: it is the newest tag, so it is the one to deploy. The
+    // registry has no release of it (GitHub builds main's commits only): the look waits.
+    hub.state.tags.push({ name: "v9.9.9", sha: SHA_OTHER });
+    expect((await once()).line).toContain("GitHub has no release of v9.9.9 yet: the look waits.");
+    expect(await latest()).toEqual({ tag: "v9.9.9", sha: SHA_OTHER, release: "none" });
+
+    // The two newest tags go away: the release before is the newest one, and it deploys (no rule holds an older version off).
+    hub.state.tags = [{ name: "v0.1.0", sha: SHA1 }];
+    expect((await once()).line).toContain("Its deploy failed:");
+    expect((await run(readJobs(sql)))[0]).toMatchObject({ command: `deploy v0.1.0 (${short(SHA1)})`, sha: SHA1, source: "auto-deploy" });
+    expect(hub.state.calls.filter((c) => c.startsWith("api "))).toEqual([]);
   });
 });
 
@@ -435,6 +445,7 @@ describe("when a head is due", () => {
     alive: now - 1000,
     sha: null,
     command: "c",
+    source: "machine",
     ...o,
   });
   test("no job has it, and none runs", () => {
@@ -449,6 +460,13 @@ describe("when a head is due", () => {
     );
     expect(due([job({ sha: SHA2 })], SHA2, now)).toBe(`The instance has ${short(SHA2)}: nothing to deploy.`);
     expect(due([job({ sha: short(SHA2), state: { at: "failed", why: "no" } })], SHA2, now)).toContain("a commit is tried one time");
+    // Only the instance's last job with a commit, and its last auto-deploy: a release from before them is due again
+    // when the newest tag goes away, and a head that auto-deploy tried stays tried after an admin's deploy of another.
+    const auto = { source: "auto-deploy" };
+    expect(due([job({ sha: SHA3, ...auto }), job({ sha: SHA2, ...auto })], SHA2, now)).toBeNull();
+    expect(
+      due([job({ sha: SHA1, source: "app, by ada" }), job({ sha: SHA2, ...auto, state: { at: "failed", why: "no" } })], SHA2, now)
+    ).toContain("a commit is tried one time");
     // A rollback after the head's deploy: the head is not deployed again.
     expect(due([job({ sha: null, command: "rollback" }), job({ sha: SHA2 })], SHA2, now)).toContain("nothing to deploy");
   });
@@ -580,19 +598,18 @@ describe("a look for an instance on Cloudflare, with the core's own steps", () =
     expect((await once()).line).toBe(`${at} The instance has ${short(SHA2)}: nothing to deploy.`);
     expect(runs()).toBe(short(SHA1));
 
-    // A commit that the branch does not have (as GitHub's API says) is refused, though GitHub has a release of it.
+    // A commit that the look did not see is refused, though GitHub has a release of it: nothing is asked about it.
     hub.state.releases.set(SHA3, builtBundle(SHA3));
     await asks(sql, `deploy ${SHA3}`);
     const refused = await once();
-    // The branch is asked first: nothing is fetched of a commit that the branch does not have.
-    expect(refused.calls).toEqual(["refs", `compare ${short(SHA3)}`]);
+    expect(refused.calls).toEqual(["refs"]);
     expect(refused.line).toBe(
-      `${at} The deploy that ada asked for failed: Release ${short(SHA3)} is not a commit of main on github.com/example/erga: the instance deploys only a commit of that branch.`
+      `${at} The deploy that ada asked for failed: ${short(SHA3)} is not one of the last commits of main on github.com/example/erga, or its newest release: the deployer deploys only those.`
     );
     expect(runs()).toBe(short(SHA1));
 
-    // An older commit of the branch, from before the commits that the look saw: GitHub's API says that the branch has it.
-    hub.state.older.push(SHA3);
+    // The newest release tag's commit, from before the commits that the look saw: the look saw the tag.
+    hub.state.tags = [{ name: "v0.3.0", sha: SHA3 }];
     await asks(sql, `deploy ${SHA3}`);
     expect((await once()).line).toBe(`${at} The deploy that ada asked for is done.`);
     expect(runs()).toBe(short(SHA3));

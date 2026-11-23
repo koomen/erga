@@ -667,11 +667,16 @@ test("AWS: --deploys cloud installs the deployer's stack and code and turns auto
   // The run: auto-deploy first (the instance has no mode yet: releases), before a deployer looks; then the deployer's
   // stack (its change set shows), then its code. No step of the user's.
   expect(cloud.out).toContain("    Add     Role (AWS::IAM::Role)");
-  expect(cloud.out).toContain(`PASS  The deployer of ${HOST} is installed: it deploys each new tagged release (vX.Y.Z) of main by itself.`);
+  expect(cloud.out).toContain(
+    `PASS  The deployer of ${HOST} is installed: it deploys each new tagged release (vX.Y.Z) of the repository by itself.`
+  );
   expect(cloud.out.some((l) => l.startsWith("WAIT"))).toBe(false);
   expect(cloud.out.at(-1)).toContain(
-    "its deployer, in their own account, deploys each new tagged release (vX.Y.Z) of that branch by itself"
+    "its deployer, in their own account, deploys each new tagged release (vX.Y.Z) of the repository by itself"
   );
+  // Releases mode takes the repository's newest tag as it is: the last lines say what that means for the tags.
+  expect(cloud.out.at(-1)).toContain("protect the tags v* with a GitHub ruleset, so that only the user makes one.");
+  expect(cloud.out.at(-1)).toContain("A fork that copies its upstream's tags deploys the upstream's release.");
   // (Then the instance is done: its own stacks follow the code, as in each run. The deployer is not installed twice.)
   expect(cloud.calls).toEqual(["auto-deploy releases", ...install, ...stacks]);
   expect(cloud.files).toEqual(["erga-example-com-certs.json", `${DEPLOYER}.json`, "erga-example-com.json"].sort());

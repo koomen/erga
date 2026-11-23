@@ -151,6 +151,75 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
   }
 });
 
+test("releases mode: the repository's newest tag deploys, whatever the instance runs and whatever branch has its commit; only the last deploy says that it was tried", async () => {
+  const { dir, c1, c2, c3, side } = world();
+  const hosts = ["back", "apart", "tried"].map((n) => `${n}.example.net`);
+  // (A repository for each one: a repository's tags are those of each instance that tracks it.)
+  writeFileSync(
+    join(dir, ".erga/config.json"),
+    JSON.stringify({ instances: hosts.map((h) => ({ ...entry(h, "main"), repo: `example.net/team/${h.split(".")[0]}` })) })
+  );
+  const job = (host: string, commit: string, started: string): JobRecord => ({
+    kind: "deploy",
+    host,
+    commit,
+    branch: null,
+    phase: "ok",
+    id: started,
+    command: `bun erga deploy ${host}`,
+    from: "auto-deploy",
+    started,
+    ended: started,
+    out: [],
+  });
+  // Each instance runs main's head (c3). The newest tag of each one's repository is of another commit.
+  const tags: Record<string, string> = { back: c2, apart: side, tried: c2 };
+  const records: Record<string, JobRecord[]> = {
+    // The release was on it before, and a newer one after: the newer tag went away, so the release deploys again.
+    "back.example.net": [job("back.example.net", c2, "2026-11-05T10:00:00.000Z"), job("back.example.net", c3, "2026-11-05T11:00:00.000Z")],
+    "apart.example.net": [],
+    // Its last deploy was of the release (and a rollback came after): it is not tried again.
+    "tried.example.net": [
+      job("tried.example.net", c3, "2026-11-05T10:00:00.000Z"),
+      job("tried.example.net", c2, "2026-11-05T11:00:00.000Z"),
+    ],
+  };
+  const started: string[][] = [];
+  /** What an instance runs after its deploy: the commit's first 12 characters. */
+  const runs: Record<string, string> = {};
+  let end = (_: { code: number; out: string }) => {};
+  const page = serveOpsPage({
+    dir: join(dir, ".erga"),
+    cwd: dir,
+    port: 0,
+    autoDeploy: true,
+    fetch: async () => null,
+    heads: async (_cwd, repo) => ({ heads: { main: c3 }, tags: [{ tag: "v0.2.0", sha: tags[repo.split("/").at(-1)!] }], error: null }),
+    ask: async (e) => ({ version: runs[e.host] ?? c3.slice(0, 12), healthy: true }),
+    jobs: async (e) => ({ jobs: records[e.host], cloud: false, autoMode: "releases" as const }),
+    run: (args, from) => {
+      started.push([...args, from]);
+      return { pid: 998_000 + started.length, done: new Promise((done) => (end = done)) };
+    },
+  });
+  try {
+    // Two deploys, one at a time; then no job runs, and the third instance got none.
+    const view = async () => (await fetch(`http://127.0.0.1:${page.server.port}/view?hash=${hosts[0]}`)).text();
+    for (const n of [1, 2]) {
+      for (let i = 0; i < 200 && started.length < n; i++) await Bun.sleep(20);
+      runs[started[n - 1]?.[2]] = started[n - 1]?.[1];
+      end({ code: 0, out: "" });
+    }
+    for (let i = 0; i < 200 && (await view()).includes(">deploying<"); i++) await Bun.sleep(20);
+    expect(started.map((s) => s.join(" ")).sort()).toEqual(
+      [`deploy ${side.slice(0, 12)} apart.example.net auto-deploy`, `deploy ${c2.slice(0, 12)} back.example.net auto-deploy`].sort()
+    );
+  } finally {
+    page.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("without --auto-deploy, the page deploys nothing: it asks the repository for the commits only", async () => {
   const { dir, c1, c3 } = world();
   writeFileSync(join(dir, ".erga/config.json"), JSON.stringify({ instances: [entry("a.example.net", "main")] }));

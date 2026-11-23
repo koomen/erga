@@ -269,7 +269,7 @@ const autoPlan = (a: Answers, runs: boolean) =>
 export const autoText = (mode: AutoMode, branch: string) =>
   mode == "off"
     ? "deploys only when an admin asks, on the server's Deploy page (auto-deploy is off)"
-    : `deploys each new ${mode == "releases" ? "tagged release (vX.Y.Z)" : "commit"} of ${branch} by itself`;
+    : `deploys each new ${mode == "releases" ? "tagged release (vX.Y.Z) of the repository" : `commit of ${branch}`} by itself`;
 
 /**
  * Who deploys each new release, as the plan says it. `worker`: the instance's Worker, when it is not a new instance's

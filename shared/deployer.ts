@@ -75,7 +75,7 @@ export const blocked = (at: DeployerAt, host: string): string | null =>
         : null;
 
 const each = (mode: AutoMode, branch: string) =>
-  mode == "releases" ? `each new tagged release (vX.Y.Z) on ${branch}` : `each new commit on ${branch}`;
+  mode == "releases" ? "each new tagged release (vX.Y.Z) of the repository" : `each new commit on ${branch}`;
 
 /** The Auto-deploy row's words: what the saved mode does, or what the deployer waits for, and what the mode does then. */
 export function autoText(at: DeployerAt, mode: AutoMode, branch: string): string {

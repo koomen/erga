@@ -77,7 +77,7 @@ export interface DeployState {
   look: { at: number; head: string | null; error: string | null } | null;
   /** When a deployer last looked, however long ago, and what that look said; null: none ever did. */
   looked: { at: number; error: string | null } | null;
-  /** The newest semver release tag on the tracked branch, as that look saw it. */
+  /** The repository's newest semver release tag, as that look saw it. */
   latestRelease: LatestRelease | null;
   /** The branch's last commits, newest first, as that look saw them. */
   commits: readonly SeenCommit[];

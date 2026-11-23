@@ -9,10 +9,14 @@
 //   3. That is written on the instance: the look's time, the head, the commits. Or the look's error.
 //   4. An ask of the app (an admin's: deploy this commit, or roll back), when no job runs on the instance. The look
 //      takes the instance's lock with a new job, and then takes the ask off the row: an ask waits while another job
-//      runs, and runs one time. A commit that is asked for must be a commit of the spec's branch.
+//      runs, and runs one time. A commit that is asked for must be one that the look saw: one of the branch's last
+//      commits, or the newest release tag's.
 //   5. Else, with auto-deploy on: no job runs on the instance, no job of the instance has the head, and the head has
 //      its release. Then the look takes the lock with a new job, fetches and checks the release, and deploys it
 //      (deploy.ts). The job's row has its log and its end.
+//
+// What auto-deploy deploys is the mode's (tags.ts): the branch's head (commits), or the repository's newest release
+// tag vX.Y.Z (releases). Both come from the refs list: the look asks GitHub's API nothing.
 //
 // Auto-deploy tries a commit one time: a head whose job failed waits for a new commit, or for a person's ask. A
 // release that is not there yet is no try: the look waits. The branch may be written again (`bun erga try` does that
@@ -27,7 +31,7 @@ import * as Effect from "effect/Effect";
 import { DeployError, type Fetch } from "./cloudflare-api";
 import { type Ask, type Commit, readControl, startOf, takeAsk, writeLook } from "./control";
 import { deploy, type Ports } from "./deploy";
-import { commitsAtGitHub, onBranchAtGitHub, refsAtGitHub } from "./github";
+import { commitsAtGitHub, refsAtGitHub } from "./github";
 import { holds, type Job, type JobLog, type NoTable, openJob, readJobs, readSpec, type Sql, type Start } from "./instance";
 import { fetchRelease, releaseState } from "./registry";
 import { rollback } from "./rollback";
@@ -55,13 +59,21 @@ const short = (sha: string) => sha.slice(0, 12);
 const wrong = (message: string) => new DeployError({ message });
 
 /**
- * Why auto-deploy does not deploy `head` now, or null: it is due. A job that holds the lock: wait. A job of the
- * instance that has the commit, however it ended: a commit is tried one time.
+ * Why auto-deploy does not deploy `head` (the branch's head, or the newest release tag's commit) now, or null: it is
+ * due. A job that holds the lock: wait. The instance's last job with a commit has it, or its last auto-deploy has it,
+ * however that ended: a commit is tried one time. A commit from before those is due again: the release before, when
+ * the newest tag went away, or the head of a branch that was written again.
  */
-export function due(jobs: readonly Pick<Job, "state" | "alive" | "sha" | "command">[], head: string, now: number): string | null {
+export function due(
+  jobs: readonly Pick<Job, "state" | "alive" | "sha" | "command" | "source">[],
+  head: string,
+  now: number
+): string | null {
   const runs = jobs.find((j) => holds(j, now));
   if (runs) return `A job runs on the instance (${runs.command}): the look waits.`;
-  const tried = jobs.find((j) => j.sha != null && j.sha.length >= 12 && head.startsWith(j.sha));
+  const tried = [jobs.find((j) => j.sha != null), jobs.find((j) => j.source == "auto-deploy")].find(
+    (j) => j?.sha != null && j.sha.length >= 12 && head.startsWith(j.sha)
+  );
   if (!tried) return null;
   return tried.state.at == "done"
     ? `The instance has ${short(head)}: nothing to deploy.`
@@ -112,21 +124,8 @@ export const look = (ports: LookPorts): Effect.Effect<string> =>
         const was = found.get(sha);
         return was == null || (was == "none" && retry) ? releaseState(fetch, spec, sha) : Effect.succeed(was);
       };
-      // The newest semver tag (vX.Y.Z) on the tracked branch (at most 3 tags checked via compare API when older than the feed).
-      let latestTag: { tag: string; sha: string } | null = null;
-      let checked = 0;
-      for (const t of tags) {
-        const local = t.sha == head || list.some((c) => c.sha == t.sha) || known.latestRelease?.sha == t.sha;
-        if (local) {
-          latestTag = t;
-          break;
-        }
-        if (checked++ >= 3) break;
-        if (yield* onBranchAtGitHub(fetch, spec, t.sha)(short(t.sha))) {
-          latestTag = t;
-          break;
-        }
-      }
+      // The newest release tag (vX.Y.Z) of the repository, as its refs list it: GitHub is asked nothing more about it.
+      const latestTag = tags[0] ?? null;
       const mode = control?.autoMode ?? "off";
       const commits: Commit[] = [];
       for (const c of list) {
@@ -191,19 +190,18 @@ export const look = (ports: LookPorts): Effect.Effect<string> =>
             // The admin said yes in the app.
             if (ask.kind == "rollback") return void (yield* rollback(spec, { ...ports.cloud, log: job.line, ok: Effect.succeed(true) }));
             job.commit(ask.sha);
-            // The branch first: a commit of another branch is refused for that, whatever the registry has of it. A
-            // commit that the look saw on the branch is on it. For an older one, GitHub's API says (github.ts).
-            const has = commits.some((c) => c.sha == ask.sha) || (yield* onBranchAtGitHub(fetch, spec, ask.sha)(short(ask.sha)));
-            if (!has)
+            // Only a commit that the look saw, on the branch or as the newest release tag: the instance offers no other
+            // (server/operations/deploys.ts).
+            if (!commits.some((c) => c.sha == ask.sha) && latestRelease?.sha != ask.sha)
               return yield* wrong(
-                `Release ${short(ask.sha)} is not a commit of ${spec.branch} on ${spec.repo}: the instance deploys only a commit of that branch.`
+                `${short(ask.sha)} is not one of the last commits of ${spec.branch} on ${spec.repo}, or its newest release: the deployer deploys only those.`
               );
             yield* deployOf(job, ask.sha, (version) => Effect.succeed(version.length >= 12 && ask.sha.startsWith(version)));
           })
         );
       }
 
-      const target = pickAutoTarget(mode, spec.branch, head, release, latestRelease);
+      const target = pickAutoTarget(mode, head, release, latestRelease);
       if ("wait" in target) return `${at}. ${target.wait}`;
       const wait = due(jobs, target.sha, now);
       if (wait) return `${at}. ${wait}`;

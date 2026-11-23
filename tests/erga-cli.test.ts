@@ -221,11 +221,11 @@ test("release tags and auto-deploy mode helpers (deploy/deployer/tags.ts)", asyn
   expect(autoModeOf(1, "releases")).toBe("releases");
   expect(autoModeOf(1, "commits")).toBe("commits");
   expect(autoModeOf(1, null)).toBe("commits");
-  expect(pickAutoTarget("off", "main", A, "released", null)).toEqual({ wait: "Auto-deploy is off." });
-  expect(pickAutoTarget("releases", "main", A, "released", null)).toEqual({
-    wait: "No release tag (vX.Y.Z) on main yet: nothing to deploy.",
+  expect(pickAutoTarget("off", A, "released", null)).toEqual({ wait: "Auto-deploy is off." });
+  expect(pickAutoTarget("releases", A, "released", null)).toEqual({
+    wait: "The repository has no release tag (vX.Y.Z) yet: nothing to deploy.",
   });
-  expect(pickAutoTarget("releases", "main", A, "none", { tag: "v0.2.0", sha: B, release: "released" })).toEqual({
+  expect(pickAutoTarget("releases", A, "none", { tag: "v0.2.0", sha: B, release: "released" })).toEqual({
     sha: B,
     tag: "v0.2.0",
     release: "released",

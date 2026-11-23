@@ -269,21 +269,19 @@ export function serveOpsPage(o: OpsPageOptions) {
     for (const e of entries()) {
       const branchHead = facts.heads[e.host] ?? null;
       const mode = facts.modes?.[e.host];
-      // Releases-only mode targets the newest semver tag on the tracked branch; commits mode (or no row yet) targets branch head; off targets nothing.
-      const target =
-        mode == "off"
-          ? null
-          : mode == "releases" && branchHead
-            ? (facts.tags?.[e.host]?.find((t) => inHistory(o.cwd, t.sha, branchHead))?.sha ?? null)
-            : branchHead;
+      // Releases mode targets the repository's newest semver tag, as its refs list it, whatever the instance runs (the
+      // deployers in the cloud have the same rule: deployer/tags.ts): with the newest tag gone, the release before
+      // deploys. Commits mode (or no row yet) targets the branch's head; off targets nothing.
+      const releases = mode == "releases";
+      const head = mode == "off" ? null : releases && branchHead ? (facts.tags?.[e.host]?.[0]?.sha ?? null) : branchHead;
       const runs = facts.answers[e.host]?.version ?? null;
-      // Never downgrade an instance running an untagged commit ahead of the latest release tag.
-      const ahead = mode == "releases" && !!target && !!runs && !target.startsWith(runs) && inHistory(o.cwd, target, runs);
-      const head = ahead ? null : target;
       const behind = !!head && !!runs && !head.startsWith(runs);
-      // A job of this instance has the target: it was tried. Else its history must have the commit that runs.
-      const tried = behind && facts.jobs.some((j) => j.kind == "deploy" && j.host == e.host && j.commit == head);
-      const rewritten = behind && !tried && !inHistory(o.cwd, runs!, head!);
+      // A job of this instance has the target: it was tried. Of a release, only the instance's last deploy counts.
+      // Else, for a branch's head, its history must have the commit that runs (a tag is no branch: no such rule).
+      const deploys = facts.jobs.filter((j) => j.kind == "deploy" && j.host == e.host);
+      const last = deploys.reduce<(typeof deploys)[number] | null>((a, j) => (a && a.started >= j.started ? a : j), null);
+      const tried = behind && (releases ? last?.commit == head : deploys.some((j) => j.commit == head));
+      const rewritten = behind && !tried && !releases && !inHistory(o.cwd, runs!, head!);
       step(e.host, { type: "seen", head, runs, tried, rewritten, cloud: !!cloud[e.host] });
     }
     if (busyWith(facts)) return;

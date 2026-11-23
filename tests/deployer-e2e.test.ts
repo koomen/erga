@@ -3,7 +3,8 @@
 // reaches outside comes to this test: Cloudflare's API (the mock), GitHub and its registry (the pretend one), and the
 // instance's own /api/health. Nothing real is touched.
 //
-// One journey: a person's token comes over the instance's binding; a new release goes on the instance; a release that
+// One journey: a new deployer's first look, with a release tag from before the feed's commits; a person's token
+// comes over the instance's binding; a new release goes on the instance; a release that
 // is not healthy goes back; after a healthy deploy the deployer uploads the release's deployer code as its own; and
 // the runtime then runs that upload, as Cloudflare does: the next look is the new code's.
 //
@@ -94,6 +95,12 @@ test("a token from the instance, a deploy, a rollback of an unhealthy release, a
   const { sql, hub, fetch, state, calls } = await instanceOn({ prepare: (text) => db.prepare(text), batch: (all) => db.batch(all) }, mock);
   out = fetch;
   await run(sql("INSERT INTO deploy_control (id, auto) VALUES (1, 1)", []));
+  // The repository's newest release tag is of a commit from before the feed's commits, as a new deployer finds it.
+  // (The pretend GitHub's API answers 403 to all, as the real one does to the address that Cloudflare's Workers share.)
+  const OLD = "a".repeat(40);
+  hub.state.tags = [{ name: "v0.2.0", sha: OLD }];
+  const control = () => run(readControl(sql));
+  const error = async () => (await run(sql("SELECT error FROM deploy_control WHERE id = 1", [])))[0];
   /** One minute of the schedule: one run. */
   const minute = async () => {
     const worker = (await runtime.getWorker()) as unknown as { scheduled(event: { cron: string }): Promise<{ outcome: string }> };
@@ -110,7 +117,14 @@ test("a token from the instance, a deploy, a rollback of an unhealthy release, a
   const first = { ok: true, ready: false, head: null, version: expect.stringMatching(/^[0-9a-f]{12}$/), renewed: null };
   expect(await says()).toEqual(first);
   await minute();
-  expect(await run(readControl(sql))).toMatchObject({ auto: true, head: SHA2 });
+  // Its first look is whole: the head, the commits and the tag are on the instance, with no error.
+  expect(await control()).toMatchObject({
+    auto: true,
+    head: SHA2,
+    commits: [{ sha: SHA2 }, { sha: SHA1 }],
+    latestRelease: { tag: "v0.2.0", sha: OLD, release: "none" },
+  });
+  expect(await error()).toBe("null");
   expect([runs(), await jobs()]).toEqual([short(SHA1), []]);
 
   // The token: one that can do more is refused, and the deployer keeps none. The right one is kept.
@@ -153,6 +167,24 @@ test("a token from the instance, a deploy, a rollback of an unhealthy release, a
   await minute();
   expect(Number((await run(sql("SELECT looked FROM deploy_control WHERE id = 1", [])))[0])).toBeGreaterThan(Number(before));
   expect([runs(), (await jobs()).length, uploads.length]).toEqual([short(SHA3), 2, 2]);
+
+  // Releases mode: the repository's newest tag deploys, as the refs list it. With that tag gone (a person takes the
+  // release back), the release before is the newest one: it deploys, though the instance runs a newer commit.
+  mock.state.unhealthy = [];
+  await run(sql("UPDATE deploy_control SET auto_mode = 'releases' WHERE id = 1", []));
+  hub.state.tags = [
+    { name: "v0.2.0", sha: SHA2 },
+    { name: "v0.3.0", sha: SHA3 },
+  ];
+  await minute();
+  expect([runs(), (await jobs()).length]).toEqual([short(SHA3), 2]);
+  expect((await control())?.latestRelease).toEqual({ tag: "v0.3.0", sha: SHA3, release: "released" });
+  hub.state.tags.pop();
+  await minute();
+  expect([runs(), (await jobs())[0]]).toEqual([short(SHA2), `deploy ${short(SHA2)} done`]);
+  expect((await run(readJobs(sql)))[0].command).toBe(`deploy v0.2.0 (${short(SHA2)})`);
+  // GitHub's API was asked nothing.
+  expect(hub.state.calls.filter((c) => c.startsWith("api "))).toEqual([]);
   // At Cloudflare, all of it reached two Workers only: the instance's and its own. (The other calls are the token's
   // check: whether Cloudflare knows it, and that it can't read the databases or another Worker.)
   expect([...new Set(calls().filter((c) => !c.includes("/workers/scripts/erga-next")))]).toEqual([

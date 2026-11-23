@@ -223,22 +223,27 @@ describe("a run of the deployer", () => {
     expect(await once()).toContain(`The instance has ${short(SHA2)}: nothing to deploy.`);
     expect(runs()).toBe(short(SHA1));
 
-    // Only a commit that the deployer's look saw on the branch: any other is refused with no call, though GitHub has a
-    // release of it (a commit of another branch, or an old one: the instance's own operation offers neither).
+    // Only a commit that the deployer's look saw: any other is refused with no call, though GitHub has a release of
+    // it (a commit of another branch, or an old one: the instance's own operation offers neither).
     hub.state.releases.set(SHA3, builtBundle(SHA3));
-    hub.state.older.push(SHA3);
     await asks(sql, `deploy ${SHA3}`);
     const from = hub.state.calls.length;
     expect(await once()).toContain(
-      `The deploy that ada asked for failed: ${short(SHA3)} is not one of the last commits of main on github.com/example/erga: the deployer deploys only those.`
+      `The deploy that ada asked for failed: ${short(SHA3)} is not one of the last commits of main on github.com/example/erga, or its newest release: the deployer deploys only those.`
     );
     expect(hub.state.calls.slice(from)).toEqual(["refs"]);
     expect(runs()).toBe(short(SHA1));
+    // The newest release tag's commit: the look saw the tag, so an ask deploys it.
+    hub.state.tags = [{ name: "v0.3.0", sha: SHA3 }];
+    await asks(sql, `deploy ${SHA3}`);
+    expect(await once()).toContain("The deploy that ada asked for is done.");
+    expect(runs()).toBe(short(SHA3));
     // The commit that the rollback left: an ask deploys it again.
     await asks(sql, `deploy ${SHA2}`);
     expect(await once()).toContain("The deploy that ada asked for is done.");
     expect(runs()).toBe(short(SHA2));
     expect((await run(readJobs(sql))).map((j) => `${j.kind} ${j.source} ${j.state.at}`)).toEqual([
+      "deploy app, by ada done",
       "deploy app, by ada done",
       "deploy app, by ada failed",
       "rollback app, by ada done",
@@ -433,6 +438,42 @@ describe("a run of the deployer", () => {
     next.hub.state.tags = [{ name: "v0.2.0", sha: SHA2 }];
     expect(await next.once()).toContain(`The instance has ${short(SHA2)}: nothing to deploy.`);
     expect(next.runs()).toBe(short(SHA1));
+  }, 30_000);
+  test("releases mode takes the repository's newest tag as its refs list it: an old tag asks GitHub's API nothing, and with the newest tag gone the release before deploys", async () => {
+    const { sql, hub, once, runs } = await instance({ auto: false });
+    await run(sql("INSERT INTO deploy_control (id, auto, auto_mode) VALUES (1, 1, 'releases')", []));
+    const OLD = "a".repeat(40);
+    const latest = async () => (await run(readControl(sql)))?.latestRelease;
+    // A new deployer: the newest tag is of a commit from before the feed's commits (63 commits before the head, as on
+    // a real one), and the registry has no release of it. The look is whole, and it waits.
+    hub.state.tags = [{ name: "v0.1.0", sha: OLD }];
+    expect(await once()).toContain(`${AT}. GitHub has no release of v0.1.0 yet: the deployer waits.`);
+    expect(await latest()).toEqual({ tag: "v0.1.0", sha: OLD, release: "none" });
+    expect(await run(readControl(sql))).toMatchObject({ head: SHA2, commits: [{ sha: SHA2 }, { sha: SHA1 }] });
+    expect((await run(sql("SELECT error FROM deploy_control WHERE id = 1", [])))[0]).toBe("null");
+
+    // Two releases: the newest one deploys.
+    hub.state.releases.set(SHA1, builtBundle(SHA1));
+    hub.state.tags.push({ name: "v0.2.0", sha: SHA1 }, { name: "v0.3.0", sha: SHA2 });
+    expect(await once()).toContain("Its deploy is done.");
+    expect(runs()).toBe(short(SHA2));
+    // A person takes v0.3.0 back (the tag goes away): v0.2.0 is the newest release, and it deploys, though it is the
+    // older commit. One time.
+    hub.state.tags.pop();
+    expect(await once()).toContain("Its deploy is done.");
+    expect(runs()).toBe(short(SHA1));
+    expect(await latest()).toEqual({ tag: "v0.2.0", sha: SHA1, release: "released" });
+    expect(await once()).toContain(`The instance has ${short(SHA1)}: nothing to deploy.`);
+    // The tag is there again: its release deploys again.
+    hub.state.tags.push({ name: "v0.3.0", sha: SHA2 });
+    expect(await once()).toContain("Its deploy is done.");
+    expect(runs()).toBe(short(SHA2));
+    expect((await run(readJobs(sql))).map((j) => `${j.command} ${j.state.at}`)).toEqual([
+      `deploy v0.3.0 (${short(SHA2)}) done`,
+      `deploy v0.2.0 (${short(SHA1)}) done`,
+      `deploy v0.3.0 (${short(SHA2)}) done`,
+    ]);
+    expect(hub.state.calls.filter((c) => c.startsWith("api "))).toEqual([]);
   }, 30_000);
 });
 

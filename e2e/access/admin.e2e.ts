@@ -554,7 +554,7 @@ journey("an admin on the admin pages", () => {
     await clickOn(page, '#auto-deploy [data-auto-mode="releases"]');
     await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("releases");
     // The row and the token's section follow the mode, at the click and after the page draws itself again.
-    const each = "eploys each new tagged release (vX.Y.Z) on main by itself.";
+    const each = "eploys each new tagged release (vX.Y.Z) of the repository by itself.";
     await soon(row).toMatchObject({ says: `D${each}`, saved: "Releases only", token: `The deployer holds a token. It d${each}` });
     await clickOn(page, '#auto-deploy [data-auto-mode="off"]');
     await soon(async () => (await run(readControl(sql)))?.autoMode).toBe("off");

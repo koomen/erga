@@ -476,7 +476,12 @@ async function run(a: Answers, o: Run) {
       : a.where == "aws"
         ? `its deployer, in their own account, ${does} (an admin changes that on the server's Deploy page)`
         : `its deployer, in their own account, ${does}, while it holds its token: the user pastes it on ${end == "page" ? "the setup page" : `the server's Deploy page (https://${a.host}/admin/deploy), which also says whether the deployer holds one`}`;
-  const rest = `${o.last.map((l) => `${l} `).join("")}It tracks ${branch} of ${repo}: ${deployed}. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page).`;
+  // Releases mode takes the repository's newest tag vX.Y.Z as it is (deployer/tags.ts): who may make one deploys.
+  const tags =
+    a.deploys == "cloud" && o.auto == "releases"
+      ? ` Each tag vX.Y.Z on ${repo} deploys: protect the tags v* with a GitHub ruleset, so that only the user makes one. A fork that copies its upstream's tags deploys the upstream's release.`
+      : "";
+  const rest = `${o.last.map((l) => `${l} `).join("")}It tracks ${branch} of ${repo}: ${deployed}.${tags} .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page).`;
   say(
     end == "done"
       ? `DONE  Tell the user: Erga is live at https://${a.host}, and it has its admin. ${rest}`
