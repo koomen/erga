@@ -666,6 +666,13 @@ export class Directory {
     }
     const [had] = await this.sql.all<{ login: string }>("SELECT login FROM emails WHERE provider = ?1 AND email = ?2", provider, handle);
     if (had) return this.roleOfUser(by, had.login, role);
+    // An account that keeps its person by that address (people.ts, `keeps`): the role is the account's.
+    const [keeps] = await this.sql.all<{ login: string }>(
+      "SELECT login FROM people WHERE provider = ?1 AND handle = ?2 AND login IS NOT NULL",
+      provider,
+      handle
+    );
+    if (keeps && (await this.users.get(keeps.login))) return this.roleOfUser(by, keeps.login, role);
     return { person: await this.people.add(by, { provider, handle, subject: null }, role) };
   }
 

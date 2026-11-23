@@ -5,6 +5,8 @@
 // auto-deploy mode (`track --auto-deploy`): each commit, or each release.
 // `bun erga skill` is the agents' manual.
 //
+// No command ignores an argument: it applies each one, or it stops before it does anything, and says why (flags.ts).
+//
 //   bun erga [--auto-deploy] [--port N] [--no-open]
 //                                       the ops page on localhost: the registered instances, deploys, logs, history;
 //                                       --auto-deploy: it checks the branch of each instance once a minute, and
@@ -83,8 +85,8 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { flagsOf, TAKES } from "./flags";
-import { mergeArgs, statusText } from "./flow";
+import { flagsOf, refusalOf } from "./flags";
+import { mergeArgs, mergeProblem, statusText } from "./flow";
 import { gateRefusal } from "./gate";
 import { headOf, readState, repoOf } from "./observe";
 import { isAutoMode } from "../deployer/tags";
@@ -423,17 +425,20 @@ export async function main(argv: string[]) {
   // No command, or only the ops page's options: the ops page.
   const [cmd, ...rest] = argv[0] == undefined || /^--(auto-deploy|port|no-open)$/.test(argv[0]) ? ["", ...argv] : argv;
   // Before anything runs: --help prints the manual only, and a flag that the command does not take stops it.
+  // No argument is ignored: one that the command can't apply stops it here, with why (flags.ts).
   const asked = flagsOf(cmd, rest);
   if (asked.help) return help();
-  if (asked.unknown.length) fail(`bun erga${cmd ? ` ${cmd}` : ""} takes no ${asked.unknown.join(", ")}. Nothing ran.`, "bun erga --help");
+  const refusal = refusalOf(cmd, asked);
+  if (refusal) fail(refusal, "bun erga --help");
   const flag = (f: string) => rest.includes(f);
   const opt = (f: string) => {
     const i = rest.indexOf(f);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const takes = TAKES[cmd]?.options ?? [];
-  const plain = rest.filter((x, i) => !x.startsWith("-") && !takes.includes(rest[i - 1] ?? ""));
+  const plain = asked.words;
   const upstream = { upstream: opt("--upstream"), upstreamRepo: opt("--upstream-repo"), noUpstream: flag("--no-upstream") };
+  /** An argument that the command takes, but that does nothing beside the others: the command stops. */
+  const idle = (why: string) => fail(`bun erga${cmd ? ` ${cmd}` : ""}: ${why} Nothing ran.`, "bun erga --help");
   switch (cmd) {
     case "skill":
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));
@@ -441,11 +446,7 @@ export async function main(argv: string[]) {
       return start(plain[0]);
     case "proof": {
       const all = (f: string) => rest.flatMap((x, i) => (x == f && rest[i + 1] != undefined ? [rest[i + 1]] : []));
-      return proof(
-        rest.find((x, i) => !x.startsWith("--") && !["--look", "--no-picture"].includes(rest[i - 1] ?? "")),
-        all("--look"),
-        opt("--no-picture")
-      );
+      return proof(plain[0], all("--look"), opt("--no-picture"));
     }
     case "clean":
       return clean(flag("--yes"));
@@ -469,6 +470,8 @@ export async function main(argv: string[]) {
       const { startOpsPage } = await import("./ops-page");
       const { ergaDir } = await import("./config");
       const port = opt("--port");
+      if (port != undefined && !(/^\d{1,5}$/.test(port) && Number(port) > 0 && Number(port) < 65536))
+        idle(`--port ${port} is no port: a number from 1 to 65535.`);
       startOpsPage({
         dir: ergaDir(),
         cwd: process.cwd(),
@@ -478,8 +481,11 @@ export async function main(argv: string[]) {
       });
       return;
     }
-    case "merge":
+    case "merge": {
+      const wrong = mergeProblem(rest);
+      if (wrong) idle(wrong);
       return merge(rest);
+    }
     case "try": {
       const { tryBranch } = await import("./try");
       return void (await tryBranch({ branch: plain[0], log: say }).catch((e: Error) => fail(e.message)));
@@ -489,6 +495,11 @@ export async function main(argv: string[]) {
     case "release":
       return release(plain[0], flag("--dry-run"));
     case "deploy":
+      // The dry run says what --remove-domain does, and nothing else: an argument for the deploy does nothing there.
+      if (flag("--dry-run") && opt("--remove-domain")) {
+        const more = [...(plain.length > 1 ? ["a commit"] : []), ...["--no-tests", "--write-spec", "--domain"].filter((f) => flag(f))];
+        if (more.length) idle(`--dry-run only says what --remove-domain does: leave out ${more.join(", ")}.`);
+      }
       return deploy(
         plain,
         flag("--no-tests"),
@@ -500,6 +511,8 @@ export async function main(argv: string[]) {
     case "rollback":
       return rollback(plain[0], flag("--yes"));
     case "register":
+      if (opt("--host") != "aws" && (opt("--profile") || opt("--region")))
+        idle("--profile and --region go with --host aws only: leave them out.");
       // The platform's or the file's error, in its own words.
       return register(plain[0], {
         repo: opt("--repo"),

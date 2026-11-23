@@ -34,12 +34,26 @@
 //         --issuer <URL> --client <ID>     on AWS, or on Cloudflare in place of Access: the organization's own
 //                                          sign-in (OpenID Connect). The user types the client's secret
 //         --sign-in-days <days>            on AWS: how long a sign-in lasts, from 1 to 90 (default: 30)
+//       --keep <username>=<address>      with --sign-in sso on Cloudflare, for an instance that has accounts
+//                                          already (it can repeat): the person with that address at the
+//                                          organization's sign-in keeps that account, with its documents
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
 //       --no-tests             the build runs no tests
 //       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
 //                              setup page's link shows on the user's terminal, and they open it in their own browser.
 //   bun erga setup <host> remove --yes       deletes the server: its Workers, database, bucket and the pages' DNS record (AWS: its stacks
 //                                            and secrets; the bucket stays, with the data)
+//
+// No option is ignored: the command applies each one, or it stops and says why, before it makes anything. An option
+// that isn't one, an option two times, and an option that does nothing with the other answers all stop it.
+//
+// An instance that has an admin already keeps its accounts and its documents. There a left-out option changes
+// nothing, and a given one applies: --sign-in sso (with its options) moves it to the organization's single sign-on,
+// and --pages <domain> moves the documents' pages from the shared workers.dev address to that domain (the Worker of
+// the old address goes). With single sign-on a person is known by their email address there, so each account keeps
+// its person by an address: --keep <username>=<address>; an account whose sign-in before verified one address
+// (Google's) keeps it by that one. GitHub's sign-in gives no address: the move stops until an admin's account has one.
+// The dry run says each change, and which accounts have no address yet.
 //
 // Each run ends in one of these lines: DRY RUN (the plan), DONE, WAIT (the user's step is still open: run the same
 // command again) or FAIL (what is wrong, and what to do). A run again goes on from where the last one stopped. In a
@@ -57,10 +71,24 @@ import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "..
 import type { AutoMode } from "../deployer/tags";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
-import { cloudflare, type Connection, observe } from "./facts";
-import { adoptEntry, autoOnCloudflare, firstDeploy, secretsFor, setDeployer } from "./first";
-import { accountName, autoText, checksOf, deploysText, missing, oldDeployerText, planText, type Seen, type State, step } from "./flow";
-import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
+import { cloudflare, type Connection, entryFacts, observe } from "./facts";
+import { adoptedEntry, adoptEntry, autoOnCloudflare, firstDeploy, moveDeploy, queryOf, secretsFor, setDeployer, writeKeeps } from "./first";
+import {
+  accountName,
+  autoText,
+  checksOf,
+  deployerOf,
+  deploysText,
+  keepsOf,
+  missing,
+  moveText,
+  oldDeployerText,
+  planText,
+  type Seen,
+  type State,
+  step,
+} from "./flow";
+import { type Answers, type Keep, noAnswers, parseAnswer, parseKeep, sso, type TextAnswer } from "./plan";
 import { DIR, loadSecrets, namesAt, putSecret, saveSecrets, SSO_SECRET } from "./store";
 
 /** How long one run waits for the user: under the ten minutes that an agent's command may take. */
@@ -95,7 +123,12 @@ interface Run {
   last: string[];
   /** The instance's auto-deploy mode, when a step of this run set it or read it. */
   auto?: AutoMode;
+  /** A step of this run deployed a commit whose tests are the gate (the build, the move): --no-tests applied there. */
+  deployed?: boolean;
 }
+
+/** The command for a run that makes the instance: a dry run's own, without --dry-run. */
+const real = (o: Run) => o.again.replace(/ --dry-run\b/, "");
 
 /** Observes, and folds what was seen in, until the code finds nothing more to fill. */
 async function look(a: Answers): Promise<{ answers: Answers; seen: Seen; state: State }> {
@@ -169,6 +202,7 @@ function login(a: Answers) {
 
 /** The build: the stack (AWS), the first deploy with its secrets, and the first rows. The next look sees its health and its sign-in settings. */
 async function build(a: Answers, seen: Seen, o: Run) {
+  o.deployed = true;
   const print = (line: string) => say(`  ${line.slice(0, 200)}`);
   const github = seen.github || undefined;
   const started = Date.now();
@@ -247,6 +281,49 @@ function printPlan(a: Answers, seen: Seen, resources: string[]) {
   if (resources.length) say(`PLAN  The stack's resources (${resources.length}): ${resources.join(", ")}`);
 }
 
+/** An Erga that setup takes over tracks what it tracked: why the run's --repo or --branch stops it, and what to do; or null. */
+const tracksOther = (a: Answers, entry: { repo: string; branch: string }): [string, string] | null =>
+  (a.given.includes("repo") && a.repo != entry.repo) || (a.given.includes("branch") && a.branch != entry.branch)
+    ? [
+        `${a.host} runs already, and it tracks ${entry.branch} of ${entry.repo}: setup does not change what it tracks.`,
+        `Leave --repo and --branch out; bun erga track ${a.host} changes them.`,
+      ]
+    : null;
+
+/** What an update or a move changes, in words. */
+const changesText = (state: Extract<State, { at: "update" | "move" }>) =>
+  [
+    ...(state.vars.length ? [`its settings ${state.vars.join(", ")}`] : []),
+    ...(state.pages ? [`its documents' pages (to ${state.pages})`] : []),
+    ...("tracks" in state && state.tracks ? ["what it tracks"] : []),
+  ].join(", and ") || "nothing";
+
+/** The move of an instance with an admin: its entry with the answers' change, and a deploy of its branch's head (first.ts, moveDeploy). */
+async function move(a: Answers, seen: Seen, o: Run, change: Extract<State, { at: "move" }>) {
+  o.deployed = true;
+  const started = Date.now();
+  try {
+    const c = await connect();
+    await moveDeploy({
+      dir: DIR,
+      answers: a,
+      change,
+      github: seen.github || undefined,
+      oidc: seen.oidc && "authorize" in seen.oidc ? seen.oidc : null,
+      net: c.net,
+      token: c.token,
+      noTests: o.noTests,
+      print: (line) => say(`  ${line.slice(0, 200)}`),
+    });
+    pass(`Deployed ${a.host} in ${Math.round((Date.now() - started) / 1000)} s.`);
+  } catch (e) {
+    fail(
+      (e as Error).message,
+      `The entry of ${a.host} and its spec are as they were. Fix what it names, then: ${o.again}. Every step is safe to run again.`
+    );
+  }
+}
+
 /**
  * One instance, from where its setup is: each step, until it is done, the user's step is still open (the wait
  * ended), or (a dry run) the first step that would make something.
@@ -255,7 +332,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
   const did = new Set<string>();
   for (;;) {
     const r = await look(a);
-    const { seen } = r;
+    let { seen } = r;
     let state = r.state;
     a = r.answers;
     const again = did.has(state.at);
@@ -267,14 +344,41 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         say(
           `PLAN  ${a.host} runs already: it is the Erga of the Worker ${state.worker}, in the Cloudflare account ${accountName(a, seen)}. I will take it over as it is: its entry goes into this clone's .erga/config.json, as bun erga register writes it. Its Worker, its database and its documents stay.`
         );
-      // A dry run writes no entry, and does no step of the user's (it needs no terminal): its plan is the step after those.
-      state = step(a, { ...seen, adopt: null, terminal: true }).state;
+      // A dry run writes no entry, and does no step of the user's (it needs no terminal): its plan is the step after
+      // those, on the instance as its entry would say it (read from Cloudflare, as the take-over writes it).
+      if (state.at == "adopt") {
+        const c = await connect();
+        const entry = await adoptedEntry({ answers: a, net: c.net, token: c.token }).catch((e: Error) => e);
+        if (entry instanceof Error)
+          say(`NOTE  The take-over will stop: ${entry.message} The plan after it is without the instance's entry.`);
+        else {
+          const other = tracksOther(a, entry);
+          if (other) return fail(other[0], other[1]);
+          seen = { ...seen, ...entryFacts(entry) };
+          a = { ...a, repo: entry.repo, branch: entry.branch };
+        }
+      }
+      seen = { ...seen, adopt: null, terminal: true };
+      // (An answer that the flow fills from the entry needs no new look here.)
+      for (let i = 0, next = step(a, seen); i < 4; i++, next = step(a, seen)) {
+        a = next.answers;
+        state = next.state;
+        if (!next.look) break;
+      }
     }
     if (o.dryRun && state.at == "update") {
       for (const c of checksOf(a, seen)) pass(c);
-      say(
-        `PLAN  ${a.host} runs. The answers change its settings ${state.vars.join(", ")}: I will write them into .erga/config.json and deploy it again.`
-      );
+      say(`PLAN  ${a.host} runs. The answers change ${changesText(state)}: I will write them into .erga/config.json and deploy it again.`);
+      return "dry";
+    }
+    if (o.dryRun && (state.at == "move" || state.at == "keep" || state.at == "old-pages")) {
+      for (const c of checksOf(a, seen)) pass(c);
+      for (const l of moveText(a, seen, { worker, again: real(o) })) say(`PLAN  ${l}`);
+      const deployer = deployerOf(a, seen);
+      if (deployer)
+        say(
+          `PLAN  ${deployer.do == "install" ? `${deploysText(a, worker, "its Deploy page (/admin/deploy)", true)}. I install it, with no token` : `${deploysText(a)}. I remove its deployer`}`
+        );
       return "dry";
     }
     if (o.dryRun && state.at == "deployer") {
@@ -324,7 +428,10 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         if (again) return fail(`${a.host} still has no entry in .erga/config.json.`, o.again);
         const c = await connect();
         const entry = await adoptEntry({ dir: DIR, answers: a, net: c.net, token: c.token });
-        // The instance tracks what it tracked: bun erga track changes it, never setup's options.
+        // The instance tracks what it tracked: bun erga track changes it, never setup's options. An option that names
+        // another branch is not ignored: it stops the run.
+        const other = tracksOther(a, entry);
+        if (other) return fail(`${other[0]} This clone has its entry now.`, other[1]);
         a = { ...a, repo: entry.repo, branch: entry.branch };
         pass(
           `${a.host} runs already, as the Worker ${state.worker}: this clone has its entry now (.erga/config.json). It tracks ${a.branch} of ${a.repo}.`
@@ -358,11 +465,46 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
             `${a.host} is deployed again, but its entry still has other settings than the answers: ${state.vars.join(", ")}.`,
             o.again
           );
-        say(
-          `NOTE  The answers change the settings ${state.vars.join(", ")} of ${a.host}: setup writes them into its entry and deploys again.`
-        );
+        say(`NOTE  The answers change ${changesText(state)} of ${a.host}: setup writes them into its entry and deploys again.`);
         await build(a, seen, o);
         break;
+      case "move":
+        if (again)
+          return fail(`${a.host} is deployed again, but its entry still differs from the answers: ${changesText(state)}.`, o.again);
+        say(
+          `NOTE  ${a.host} has an admin, and the answers change ${changesText(state)}: setup writes the change into its entry and deploys. Its accounts and its documents stay.`
+        );
+        await move(a, seen, o, state);
+        break;
+      case "keep": {
+        if (again) return fail(`The database of ${a.host} still lacks a row that keeps an account for its person.`, o.again);
+        const c = await connect();
+        const q = await queryOf(c.cf, `/accounts/${a.account}`, worker, "keep each account for its person");
+        await writeKeeps(q, state.rows).catch((e: Error) => fail(e.message, o.again));
+        pass(
+          `${state.rows.length == 1 ? "1 account keeps its person" : `${state.rows.length} accounts keep their person`} at the organization's sign-in, by their address there: ${state.rows.map((r) => r.login).join(", ")}.`
+        );
+        break;
+      }
+      case "old-pages": {
+        if (again) return fail(`The Worker ${worker}-pages is still in the account.`, o.again);
+        const { cf } = await connect();
+        await cf
+          .call(
+            "DELETE",
+            `/accounts/${a.account}/workers/scripts/${worker}-pages?force=true`,
+            "delete the Worker of the old pages address",
+            undefined,
+            {
+              allow404: true,
+            }
+          )
+          .catch((e: Error) => fail(e.message, o.again));
+        pass(
+          `The documents' pages of ${a.host} are on ${seen.pages}. The Worker of the old shared address (${worker}-pages) is deleted: that address answers no more.`
+        );
+        break;
+      }
       case "deployer": {
         if (again) return fail(`${a.host}'s deployer is not ${state.do == "install" ? "there" : "gone"} yet.`, o.again);
         if (a.where == "aws") {
@@ -403,6 +545,19 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         return "page";
       case "done": {
         if (o.dryRun) pass(`${a.host} runs already, with an admin.`);
+        if (did.has("move") && sso(a))
+          o.last.push(
+            `${a.host} takes only the organization's sign-in now: each person takes their account at their first sign-in there, by their address.`
+          );
+        // With single sign-on: the accounts that no person can take yet. Usernames only: no address is in the output.
+        const lost = Object.entries(keepsOf(a, seen).by)
+          .filter(([, how]) => how == "none")
+          .map(([login]) => login);
+        if (lost.length)
+          o.last.push(
+            `${lost.length == 1 ? "This account has" : "These accounts have"} no address at the organization's sign-in: ${lost.join(", ")}. Nobody signs in to ${lost.length == 1 ? "it" : "them"}, and ${lost.length == 1 ? "it stays" : "they stay"} as ${lost.length == 1 ? "it is" : "they are"}, until: ${real(o)} --keep <username>=<address>`
+          );
+
         /** A deployer that was there before this run: this run brings it to this code. Its mode stays, unless the user chose one now. */
         const there = seen.deployer && a.deploys == "cloud" && !did.has("deployer");
         const stays = a.auto ? "" : " Auto-deploy stays as it is.";
@@ -461,7 +616,18 @@ async function run(a: Answers, o: Run) {
   if (need.length)
     return fail(`The command needs: ${need.join(" ")}`, "Ask the user what the README's setup asks, then run the command again.");
   const end = await setUp(a, o);
+  // --no-tests is for the build's tests: a run with no build says that it did nothing, and the dry run what it will do.
+  if (o.noTests)
+    say(
+      o.dryRun
+        ? "NOTE  --no-tests: a deploy of this run goes without the tests."
+        : o.deployed
+          ? "NOTE  --no-tests: the deploy went without the tests."
+          : "NOTE  --no-tests did nothing in this run: no step of it runs the tests."
+    );
   if (end == "wait") return say(`WAIT  The user's step is still open. Run the same command again: ${o.again}`);
+  // (A dry run of an instance that is done: what the run would say last, of what is still open.)
+  if (o.dryRun) for (const l of o.last) say(`NOTE  ${l}`);
   if (o.dryRun)
     return say(
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run."
@@ -571,22 +737,57 @@ const usage = (code: number): never => {
   process.exit(code);
 };
 
-/** Reads the options into the answers: the answers, and why each option that isn't one isn't. */
+/**
+ * Reads the options into the answers: the answers, and why each option that isn't one isn't. An option two times is
+ * no answer (only --keep repeats), and neither is one with no value.
+ */
 export function readOptions(host: string, args: string[]): { answers: Answers; problems: string[]; rest: string[] } {
   let answers = noAnswers(host);
   const problems: string[] = [];
   const rest: string[] = [];
+  const given: TextAnswer[] = [];
+  const keep: Keep[] = [];
+  const flags = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const x = args[i];
-    const key = OPTIONS[x];
-    if (key) {
-      const r = parseAnswer(key, args[++i] ?? "");
-      if ("problem" in r) problems.push(`${x}: ${r.problem}`);
-      else answers = { ...answers, [key]: r.value };
-    } else if (x.startsWith("--") && !FLAGS.includes(x)) problems.push(`${x} isn't an option of bun erga setup.`);
-    else if (!x.startsWith("--")) rest.push(x);
+    const key = Object.hasOwn(OPTIONS, x) ? OPTIONS[x] : undefined;
+    if (key || x == "--keep") {
+      const raw = args[++i];
+      if (raw == undefined || Object.hasOwn(OPTIONS, raw) || raw == "--keep" || FLAGS.includes(raw)) {
+        problems.push(`${x} needs a value.`);
+        // The next word is an option of its own.
+        if (raw != undefined) i--;
+      } else if (!key) {
+        const r = parseKeep(raw);
+        if ("problem" in r) problems.push(`--keep: ${r.problem}`);
+        else keep.push(r.value);
+      } else if (given.includes(key)) problems.push(`${x} is there 2 times: give it one time.`);
+      else {
+        given.push(key);
+        const r = parseAnswer(key, raw);
+        if ("problem" in r) problems.push(`${x}: ${r.problem}`);
+        else answers = { ...answers, [key]: r.value };
+      }
+    } else if (x.startsWith("-") && !FLAGS.includes(x)) problems.push(`${x} isn't an option of bun erga setup.`);
+    else if (!x.startsWith("-")) rest.push(x);
+    else if (flags.has(x)) problems.push(`${x} is there 2 times: give it one time.`);
+    else flags.add(x);
   }
-  return { answers, problems, rest };
+  return { answers: { ...answers, keep, given }, problems, rest };
+}
+
+/**
+ * Why the words and flags of a setup command line don't go together, or null. `remove` takes --yes and nothing else:
+ * an option beside it would do nothing, so the removal does not run. --yes is the removal's only.
+ */
+export function wordsProblem(args: string[], rest: string[]): string | null {
+  if (rest[0] == "remove") {
+    const more = args.filter((x) => x != "remove" && x != "--yes");
+    return more.length ? `bun erga setup <host> remove takes --yes only, not ${more.join(" ")}. Nothing ran.` : null;
+  }
+  if (rest.length) return `No setup command ${rest[0]}. Nothing ran.`;
+  if (args.includes("--yes")) return "--yes goes with remove only (bun erga setup <host> remove --yes): leave it out. Nothing ran.";
+  return null;
 }
 
 /** `bun erga setup <host> [<options>]`, or `bun erga setup <host> remove --yes`. */
@@ -600,13 +801,11 @@ export async function setupMain(argv: string[]) {
   const flag = (f: string) => args.includes(f);
   const remote = flag("--remote") || !!process.env.SSH_CONNECTION;
   try {
-    if (rest[0] == "remove") return await remove(host, flag("--yes"));
     // An unknown option first: its value is no setup command.
-    if (problems.length) return fail(problems.join(" "), "bun erga setup --help lists the options.");
-    if (rest.length) {
-      say(`No setup command ${rest[0]}.`);
-      return usage(2);
-    }
+    if (problems.length && rest[0] != "remove") return fail(problems.join(" "), "bun erga setup --help lists the options.");
+    const wrong = wordsProblem(args, rest);
+    if (wrong) return fail(wrong, "bun erga setup --help lists the options.");
+    if (rest[0] == "remove") return await remove(host, flag("--yes"));
     const again = ["bun erga setup", host, ...args, ...(remote && !flag("--remote") ? ["--remote"] : [])].join(" ");
     await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), again, last: [] });
   } catch (e) {

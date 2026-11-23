@@ -293,7 +293,11 @@ the staging instance runs, and a release of `main` is what production runs.
   with `bun erga deploy`. A run again with the other answer changes it. On AWS, a run again with `cloud` also brings
   the deployer's stack and code to this checkout's. `--sign-in sso` puts the organization's single sign-on in the
   place of GitHub and Google (Cloudflare Access, or an OIDC issuer): the setup page's link then passes that sign-in
-  first, the page has no GitHub or Google step, and one button makes the user the admin.
+  first, the page has no GitHub or Google step, and one button makes the user the admin. On an instance that has an
+  admin already, a left-out option changes nothing, and each given option applies or stops the command: `--sign-in
+  sso` moves it to single sign-on, `--pages <domain>` moves the documents' pages off the shared `workers.dev` address,
+  and `--keep <username>=<address>` (it can repeat) says which account each person keeps, by their address at the
+  organization's sign-in. Its accounts and its documents stay.
 
 ## The rules
 
@@ -307,6 +311,10 @@ the staging instance runs, and a release of `main` is what production runs.
 - When a deploy fails, read its output, or its job on the ops page (Logs,
   History). A release whose own health row says that it fails for three
   minutes rolls the Worker back by itself.
+- No command of `bun erga` ignores an argument: it applies each one, or it
+  stops before it does anything, and says why. A new flag or option goes
+  into the table in `deploy/cli/flags.ts` (setup: `deploy/own/cli.ts`), and
+  `tests/erga-flags.test.ts` holds each command to the rule.
 - AGENTS.md has the code's rules. A file's traps are in the comment at
   its top.
 

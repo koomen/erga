@@ -277,14 +277,22 @@ export type Command =
 export function commandOf(
   words: string[],
   keep: boolean,
-  o: { prereqs: Prereq[]; left: Left[]; kept: KeptUnits; browsers: string[] }
+  o: { prereqs: Prereq[]; left: Left[]; kept: KeptUnits; browsers: string[]; options?: string[] }
 ): Command {
   const all = units();
   const fail = (why: string, next?: string): Command => ({ at: "fail", why, next });
-  if (!words.length || words[0] == "check") return { at: "check" };
+  // No argument is ignored (`options`: the options that the command line gave): one that does nothing here stops it.
+  const options = o.options ?? [];
+  if (!words.length || words[0] == "check") {
+    const more = [...words.slice(1), ...(keep ? ["--keep"] : []), ...options];
+    return more.length ? fail(`The check deploys nothing and asks nothing: it takes no ${more.join(", ")}. Nothing ran.`) : { at: "check" };
+  }
   const verb = words[0] == "remove" || words[0] == "update" ? words[0] : null;
   const names = verb ? words.slice(1) : words;
   if (keep && verb) return fail("--keep goes with a run: bun erga verify <setting> --keep.");
+  if (verb && options.includes("--yes")) return fail(`--yes goes with a run: ${verb} asks nothing. Leave it out. Nothing ran.`);
+  if (verb == "remove" && options.includes("--origin"))
+    return fail("--origin goes with a run or an update: remove checks nothing. Leave it out. Nothing ran.");
   const unknown = names.find((w) => w != "all" && !all.some((u) => u.id == w || u.name == w));
   if (unknown) return fail(`No setting ${unknown}: ${all.map((u) => u.id).join(", ")}, or all.`);
   const every = names.includes("all");

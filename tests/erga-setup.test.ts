@@ -16,7 +16,7 @@ import { Cloudflare } from "../deploy/deployer/cloudflare-api";
 import * as Effect from "effect/Effect";
 import { d1Sql } from "../deploy/deployer/cloudflare";
 import { readControl, writeAuto } from "../deploy/deployer/control";
-import { adminOn, adoptEntry, type First, firstDeploy, setDeployer, writeEntry } from "../deploy/own/first";
+import { adminOn, adoptEntry, type First, firstDeploy, moveDeploy, setDeployer, writeEntry } from "../deploy/own/first";
 import { specOn, sqlOf } from "../deploy/cli/instance";
 import { instanceReader, jobsReader } from "../deploy/cli/running";
 import { deployInstance } from "../deploy/cli/deploy";
@@ -27,6 +27,7 @@ import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { DEPLOYER_TAG, installDeployer, removeDeployer } from "../deploy/pipeline/deployer";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
+import { HOST as MOVES, MARK as MOVED } from "./helpers/cloudflare-move.ts";
 import { HOST as RUNS, MARK } from "./helpers/cloudflare-setup.ts";
 import { bindingsOf, bootstrap, fleet, next, prepareRelease, ROOT } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -106,6 +107,9 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, no 
     version: HEAD.slice(0, 12),
     healthy: true,
     signIn: "ok",
+    // What the release itself runs with: no single sign-on, and the documents' pages on the shared address.
+    sso: "",
+    pages: "shared",
   });
   expect((await liveOf(cf, ACCOUNT_ID, "erga-ada-example-com", answers, "Iv1.new"))?.signIn).toEqual({
     bad: "it signs in with the app (none), not yours (Iv1.new): deploy again",
@@ -459,6 +463,8 @@ test("the dry run in a new clone, as the user's agent runs it: the plan is the t
     // (An agent's shell has no terminal: the deployer's install needs none. The plan names the Worker's own name.)
     expect(p.stdout.toString().trim().split("\n")).toEqual([
       "PLAN  example.com runs already: it is the Erga of the Worker erga, in the Cloudflare account Erga. I will take it over as it is: its entry goes into this clone's .erga/config.json, as bun erga register writes it. Its Worker, its database and its documents stay.",
+      // (The mock's Worker is from no deploy of the pipeline: the dry run says what the take-over will say.)
+      "NOTE  The take-over will stop: The Worker erga at example.com holds no deploy facts (ERGA_DEPLOY): no deploy from the pipeline set them. The plan after it is without the instance's entry.",
       "PASS  Signed in to Cloudflare",
       "PASS  The account Erga holds example.com",
       "PLAN  example.com runs. I will install its deployer, with no token, and deploy example.com again, so that its Worker binds the deployer:",
@@ -550,6 +556,154 @@ test("the command itself, on an instance that runs with no deployer: it installs
     );
     expect(old.out.at(-1)).toContain(OLD);
     expect(facts(old)).toEqual([true, "erga-next-deployer", "off"]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("a move whose deploy fails puts the entry and the instance's spec back: nothing says that the move is done", async () => {
+  const mock = mockCloudflare();
+  const f = first(mock, HOST);
+  await firstDeploy(f);
+  const cf = new Cloudflare("mock-machine-token", mock.fetch);
+  const entry = () => readConfig(dir).instances.find((e) => e.host == HOST)!;
+  const spec = async () => specOn(await sqlOf(entry(), { cf }));
+  const [hadEntry, hadSpec] = [entry(), await spec()];
+  const answers = { ...f.answers, signIn: "sso" as const, team: "acme", aud: "f".repeat(64), pages: "ada-pages.net" };
+  const change = { vars: ["SSO", "SERVER_DEFAULTS"], pages: "ada-pages.net" };
+  // The Worker's upload fails: the spec had the change already (the deploy writes it before it builds).
+  mock.state.failNext = "worker";
+  await expect(moveDeploy({ ...f, answers, change })).rejects.toThrow();
+  expect([entry(), await spec()]).toEqual([hadEntry, hadSpec]);
+  expect(bindingsOf(mock.state, "erga-ada-example-com").SSO).toBeUndefined();
+  // The same move again goes through: the entry, the spec and the Worker have the change.
+  expect(await moveDeploy({ ...f, answers, change })).toBe(HEAD);
+  const SSO = `{"access":{"team":"acme","aud":"${"f".repeat(64)}"}}`;
+  expect((entry() as CloudflareEntry).pages).toEqual({ kind: "zone", zoneName: "ada-pages.net" });
+  expect([entry().vars.SSO, (await spec())?.settings.SSO, bindingsOf(mock.state, "erga-ada-example-com").SSO.text]).toEqual([
+    SSO,
+    SSO,
+    SSO,
+  ]);
+  expect(bindingsOf(mock.state, "erga-ada-example-com").PAGES_DOMAIN.text).toBe("ada-pages.net");
+}, 120_000);
+
+test("the command itself, on an instance with an admin: it moves to single sign-on and a pages domain, keeps the admin's account, and deletes the Worker of the old pages address", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "erga-move-"));
+  try {
+    Bun.spawnSync(["git", "init", "-q", tmp]);
+    const TAG = "f".repeat(64);
+    const local = ["--deploys", "local"];
+    const to = [
+      ...local,
+      "--sign-in",
+      "sso",
+      "--team",
+      "acme",
+      "--aud",
+      TAG,
+      "--pages",
+      "example-pages.com",
+      "--keep",
+      "koomen=pete@example.com",
+    ];
+    const runs = [[...local, "--dry-run"], [...to, "--dry-run"], to, [...local, "--dry-run"], [...local, "--keep", "bo=bo@example.com"]];
+    const p = Bun.spawn([process.execPath, join(ROOT, "tests/helpers/cloudflare-move.ts"), JSON.stringify(runs)], {
+      env: { ...process.env, GIT_DIR: join(tmp, ".git"), SSH_CONNECTION: undefined },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    // A run that failed says why in its lines.
+    expect([code, err, code ? out : ""]).toEqual([0, "", ""]);
+    interface Ran {
+      out: string[];
+      entry: { pages: unknown; sso: string | null; subdomain: string | null; repo: string };
+      sso: string | null;
+      pagesDomain: string | null;
+      pagesHost: string | null;
+      pagesWorker: boolean;
+      keeps: string[];
+    }
+    const ran: Ran[] = [];
+    let lines: string[] = [];
+    for (const line of out.split("\n")) {
+      if (line.startsWith(MOVED)) {
+        ran.push({ out: lines, ...JSON.parse(line.slice(MOVED.length)) });
+        lines = [];
+      } else if (!line.startsWith("  ") || line.startsWith("  - ")) lines.push(line);
+    }
+    const [before, dry, moved, after, later] = ran;
+    const SSO = `{"access":{"team":"acme","aud":"${TAG}"}}`;
+    const command = `bun erga setup ${MOVES} --host cloudflare ${to.join(" ")}`;
+    const asItWas = {
+      entry: { pages: { kind: "shared" }, sso: null, subdomain: "erga", repo: "github.com/koomen/erga" },
+      sso: null,
+      pagesDomain: null,
+      pagesWorker: true,
+      keeps: [],
+    };
+
+    // With no option that changes it, the instance is done, as before.
+    expect(before.out).toEqual([
+      `PASS  ${MOVES} runs already, with an admin.`,
+      "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run.",
+    ]);
+    expect(before).toMatchObject(asItWas);
+    expect(before.pagesHost).toEndWith("-pages.erga.workers.dev");
+
+    // The dry run: each change, and each account. It makes nothing.
+    const plan = dry.out.filter((l) => l.startsWith("PLAN")).map((l) => l.slice(6));
+    expect(plan.map((l) => l.split(/: |\. /)[0])).toEqual([
+      `${MOVES} runs, with an admin`,
+      "• sign-in",
+      `• before I deploy, the Access application must be in front of ${MOVES}`,
+      "• the documents' pages",
+      "• the settings' defaults",
+      "• its 3 accounts",
+      "  - by the address that you gave (--keep)",
+      "  - with no address",
+      "• who may come in stays as the server's Access page says (/admin/access)",
+      `• I write the change into this clone's entry of ${MOVES}, and deploy the newest commit of the branch that it tracks`,
+    ]);
+    expect(plan[6]).toBe("  - by the address that you gave (--keep): koomen (an admin)");
+    expect(plan[7]).toStartWith("  - with no address: ada, bo. ");
+    expect(plan[7]).toEndWith(`${command} --keep <username>=<address>`);
+    expect(dry).toMatchObject(asItWas);
+
+    // The run: the admin's row first, then the entry and the deploy, then the Worker of the old address.
+    expect(moved.out.slice(0, 4)).toEqual([
+      "PASS  1 account keeps its person at the organization's sign-in, by their address there: koomen.",
+      `NOTE  ${MOVES} has an admin, and the answers change its settings SSO, SERVER_DEFAULTS, and its documents' pages (to example-pages.com): setup writes the change into its entry and deploys. Its accounts and its documents stay.`,
+      expect.stringMatching(new RegExp(`^PASS  Deployed ${MOVES.replace(/\./g, "\\.")} in \\d+ s\\.$`)),
+      `PASS  The documents' pages of ${MOVES} are on example-pages.com. The Worker of the old shared address (move-example-com-pages) is deleted: that address answers no more.`,
+    ]);
+    const NONE = `These accounts have no address at the organization's sign-in: ada, bo. Nobody signs in to them, and they stay as they are, until: ${command} --keep <username>=<address>`;
+    expect(moved.out.at(-1)).toStartWith(
+      `DONE  Tell the user: Erga is live at https://${MOVES}, and it has its admin. ${MOVES} takes only the organization's sign-in now: each person takes their account at their first sign-in there, by their address. ${NONE} It tracks main of github.com/koomen/erga`
+    );
+    // The entry and the server: single sign-on, the pages on their domain, and nothing else of the entry changed.
+    expect(moved).toMatchObject({
+      entry: { pages: { kind: "zone", zoneName: "example-pages.com" }, sso: SSO, subdomain: null, repo: "github.com/koomen/erga" },
+      sso: SSO,
+      pagesDomain: "example-pages.com",
+      pagesHost: null,
+      pagesWorker: false,
+      keeps: ["koomen=pete@example.com"],
+    });
+
+    // A run again that leaves the sign-in out changes nothing, and says which accounts no person can take yet.
+    expect(after.out).toEqual([
+      `PASS  ${MOVES} runs already, with an admin.`,
+      `NOTE  These accounts have no address at the organization's sign-in: ada, bo. Nobody signs in to them, and they stay as they are, until: bun erga setup ${MOVES} --host cloudflare --deploys local --keep <username>=<address>`,
+      "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run.",
+    ]);
+    // A later run gives one more account its person: one row, and no deploy.
+    expect(later.out[0]).toBe("PASS  1 account keeps its person at the organization's sign-in, by their address there: bo.");
+    expect(later.out.at(-1)).toContain("This account has no address at the organization's sign-in: ada.");
+    expect(later.out.join("\n")).not.toContain("Deployed");
+    expect(later).toMatchObject({ sso: SSO, pagesWorker: false, keeps: ["bo=bo@example.com", "koomen=pete@example.com"] });
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

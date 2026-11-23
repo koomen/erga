@@ -6,6 +6,7 @@ import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
 import { githubAvatar } from "../shared/avatars.ts";
+import { accountsOf, type Query, writeKeeps } from "../deploy/own/first.ts";
 import { memory } from "./helpers/memory-sql.ts";
 
 const ADMIN = { login: "koomen", admin: true };
@@ -179,4 +180,102 @@ test("a person who waits as an email an account verified later waits no more onc
   expect(await resolve(dir, google("g-5", "erin@b.example"), { join: false })).toEqual({ kind: "in", login: "erin" });
   expect(await dir.people.list(ADMIN)).toEqual([]);
   expect((await dir.users.get("erin"))?.role).toBe("user");
+});
+
+// ------------------------------------------------------------ a server that moves to single sign-on
+
+/** A person as the gate's single sign-on names them (server/identity/caller.ts, vouchedOf): its own id, and the verified address. */
+const sso = (sub: string, email: string): Vouched => ({
+  provider: "sso",
+  subject: sub,
+  handle: email,
+  name: email.split("@")[0],
+  emails: email ? [{ email, verified: true }] : [],
+  groups: [],
+});
+
+test("a server that moves to single sign-on: each account keeps its person by the address that setup wrote, once; no other address finds an account", async () => {
+  const sql = memory();
+  const dir = new Directory(sql, { admins: [], providers: ["sso"] });
+  // The accounts from before: koomen (an admin) and bo by GitHub, which gives no address; ada by Google.
+  await dir.identities.createAccount("koomen", github(1, "koomen"), { role: "admin" });
+  await dir.identities.createAccount("bo", github(2, "bo"), writes("bo"));
+  await dir.identities.createAccount("ada", google("g-ada", "ada@example.com"), writes("ada"));
+  // Setup reads them through the database, as Cloudflare's API gives it (deploy/own/first.ts).
+  const q: Query = (text, params) => sql.all(text, ...params);
+  expect(await accountsOf(q)).toEqual({
+    keepable: true,
+    accounts: [
+      { login: "ada", admin: false, sso: false, emails: ["ada@example.com"], keeps: null },
+      { login: "bo", admin: false, sso: false, emails: [], keeps: null },
+      { login: "koomen", admin: true, sso: false, emails: [], keeps: null },
+    ],
+  });
+  // Before setup wrote a row, the admin's sign-in at the organization's sign-in is nobody here: no address finds an account.
+  expect(await resolve(dir, sso("s-pete", "pete@example.com"), { join: false })).toEqual({ kind: "refused" });
+  expect(await resolve(dir, sso("s-ada", "ada@example.com"), { join: false })).toEqual({ kind: "refused" });
+
+  await writeKeeps(
+    q,
+    [
+      { login: "koomen", email: "pete@example.com" },
+      { login: "ada", email: "ada@example.com" },
+    ],
+    7
+  );
+  expect((await accountsOf(q)).accounts.map((x) => [x.login, x.keeps])).toEqual([
+    ["ada", "ada@example.com"],
+    ["bo", null],
+    ["koomen", "pete@example.com"],
+  ]);
+  // The rows are no people who wait: the Users page lists none, and they let nobody join.
+  expect(await dir.people.list({ login: "koomen", admin: true })).toEqual([]);
+  expect(await dir.people.any()).toBe(false);
+  expect(await dir.mayJoin(sso("s-x", "pete@example.com"))).toBe(false);
+
+  // The admin's first sign-in at the organization's sign-in: their account, still the admin, with its documents' owner name.
+  expect(await resolve(dir, sso("s-pete", "pete@example.com"), { join: false })).toEqual({ kind: "in", login: "koomen", claimed: true });
+  expect((await dir.users.get("koomen"))?.role).toBe("admin");
+  expect((await dir.identities.of("koomen")).map((i) => [i.provider, i.subject])).toEqual([
+    ["github", "1"],
+    ["sso", "s-pete"],
+  ]);
+  // From then on the id finds the account, whatever the address is; and the row is gone: the address takes no account again.
+  expect(await resolve(dir, sso("s-pete", "pete@new.example"), { join: false })).toEqual({ kind: "in", login: "koomen" });
+  expect(await resolve(dir, sso("s-other", "pete@example.com"), { join: false })).toEqual({ kind: "refused" });
+  expect((await accountsOf(q)).accounts.find((x) => x.login == "koomen")).toMatchObject({ sso: true, keeps: null });
+  // Ada, by the address that Google verified before. An address that the provider did not verify takes nothing.
+  expect(
+    await resolve(dir, { ...sso("s-ada", "ada@example.com"), emails: [{ email: "ada@example.com", verified: false }] }, { join: false })
+  ).toEqual({
+    kind: "refused",
+  });
+  expect(await resolve(dir, sso("s-ada", "ada@example.com"), { join: false })).toEqual({ kind: "in", login: "ada", claimed: true });
+  // Bo has no row: nobody signs in to bo, and someone new with that name's address makes another account, where they may join.
+  expect(await resolve(dir, sso("s-bo", "bo@example.com"), { join: false })).toEqual({ kind: "refused" });
+  expect((await resolve(dir, sso("s-bo", "bo@example.com"), { join: true })).kind).toBe("new");
+  // A later run of setup gives bo's address; a second run with another address replaces the first.
+  await writeKeeps(q, [{ login: "bo", email: "robert@example.com" }], 8);
+  await writeKeeps(q, [{ login: "bo", email: "bo@example.com" }], 9);
+  expect(await resolve(dir, sso("s-rob", "robert@example.com"), { join: false })).toEqual({ kind: "refused" });
+  // An admin who adds that address as a person changes the account's role: no second account waits.
+  expect(await dir.addUser({ login: "koomen", admin: true }, { provider: "sso", handle: "bo@example.com" }, "read")).toMatchObject({
+    user: { login: "bo" },
+  });
+  expect(await resolve(dir, sso("s-bo", "bo@example.com"), { join: false })).toEqual({ kind: "in", login: "bo", claimed: true });
+  // An account that has a sign-in at the organization's sign-in already is never taken by a row.
+  await writeKeeps(q, [{ login: "bo", email: "mallory@example.com" }], 10);
+  expect(await resolve(dir, sso("s-mal", "mallory@example.com"), { join: false })).toEqual({ kind: "refused" });
+  expect((await dir.identities.of("bo")).map((i) => i.subject)).toEqual(["2", "s-bo"]);
+});
+
+test("a database from before the rows that keep an account: setup reads its accounts, and says that it can keep none yet", async () => {
+  const sql = memory();
+  sql.db.exec("ALTER TABLE people DROP COLUMN login");
+  const dir = new Directory(sql, { admins: [] });
+  await dir.identities.createAccount("koomen", github(1, "koomen"), { role: "admin" });
+  expect(await accountsOf((text, params) => sql.all(text, ...params))).toEqual({
+    keepable: false,
+    accounts: [{ login: "koomen", admin: true, sso: false, emails: [], keeps: null }],
+  });
 });

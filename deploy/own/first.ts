@@ -16,15 +16,17 @@ import { randomBytes } from "node:crypto";
 import * as Effect from "effect/Effect";
 import { type CloudflareEntry, type Config, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
+import { heldSecrets, putSpec, specOf, specOn, sqlOf } from "../cli/instance";
 import { entryAt } from "../cli/running";
 import { d1, d1Sql } from "../deployer/cloudflare";
 import { setUpAuto } from "../deployer/control";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { movedNames, OLD_SECRETS_KEY, SECRETS_KEY } from "../deployer/secrets-key";
 import type { AutoMode } from "../deployer/tags";
-import type { Seen } from "./flow";
+import { SSO } from "../../shared/sign-in";
+import type { Account, Seen } from "./flow";
 import { installDeployer, removeDeployer } from "../pipeline/deployer";
-import { type Answers, firstRows, setupEntry } from "./plan";
+import { type Answers, type Endpoints, firstRows, type Keep, movedEntry, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets, SSO_SECRET } from "./store";
 
 export interface First {
@@ -67,11 +69,16 @@ export function writeEntry(o: First): Config {
  * It only reads Cloudflare: the instance stays as it is.
  */
 export async function adoptEntry(o: Pick<First, "dir" | "answers" | "net" | "token">): Promise<Entry> {
-  const a = o.answers;
-  const found = await entryAt(a.host, { net: o.net, token: o.token });
-  const entry = found.spec ? found.entry : { ...found.entry, repo: a.repo, branch: a.branch };
+  const entry = await adoptedEntry(o);
   writeConfig(o.dir, withEntry(readConfig(o.dir), entry));
   return entry;
+}
+
+/** The entry that the adopt step writes, read from Cloudflare: the dry run's plan is the instance's step after it. It writes nothing. */
+export async function adoptedEntry(o: Pick<First, "answers" | "net" | "token">): Promise<Entry> {
+  const a = o.answers;
+  const found = await entryAt(a.host, { net: o.net, token: o.token });
+  return found.spec ? found.entry : { ...found.entry, repo: a.repo, branch: a.branch };
 }
 
 const random = () => randomBytes(32).toString("hex");
@@ -123,7 +130,7 @@ export async function firstDeploy(o: First): Promise<string> {
 }
 
 /** The database that `worker` binds as DB, or null: no such Worker, or no database. */
-async function databaseOf(cf: Cloudflare, acc: string, worker: string): Promise<string | null> {
+export async function databaseOf(cf: Cloudflare, acc: string, worker: string): Promise<string | null> {
   const settings = await cf.call<{ bindings?: { type: string; name: string; database_id?: string }[] }>(
     "GET",
     `${acc}/workers/scripts/${worker}/settings`,
@@ -165,6 +172,101 @@ export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string
       ...Object.values(row)
     );
   print(`The access rule is in the database of ${worker}: ${rows.map((r) => r.who).join(", ")} may write.`);
+}
+
+/** One statement of the instance's database, with its values: the rows it gives. */
+export type Query = (sql: string, params: (string | number | null)[]) => Promise<Record<string, unknown>[]>;
+
+/**
+ * The accounts of an instance that runs, as its database has them: each one's role, whether it signs in with the
+ * organization's single sign-on already, the addresses that its other sign-ins verified, and the address of the row
+ * that keeps it for its person. `keepable`: the database has a place for such rows (server/migrations/0570).
+ */
+export async function accountsOf(q: Query): Promise<{ accounts: Account[]; keepable: boolean }> {
+  const none = (e: Error) => (/no such (table|column)/.test(e.message) ? null : Promise.reject(e));
+  const users = (await q("SELECT login, role FROM users ORDER BY login", []).catch(none)) ?? [];
+  const has = (await q("SELECT login FROM identities WHERE provider = ?1", [SSO]).catch(none)) ?? [];
+  const emails = (await q("SELECT login, email FROM emails WHERE provider != ?1 ORDER BY email", [SSO]).catch(none)) ?? [];
+  const kept = await q("SELECT login, handle FROM people WHERE provider = ?1 AND login IS NOT NULL ORDER BY id", [SSO]).catch(none);
+  return {
+    keepable: !!kept,
+    accounts: users.map((u) => ({
+      login: String(u.login),
+      admin: u.role == "admin",
+      sso: has.some((i) => i.login == u.login),
+      emails: [...new Set(emails.filter((e) => e.login == u.login).map((e) => String(e.email)))],
+      keeps: (kept ?? []).filter((k) => k.login == u.login).map((k) => String(k.handle))[0] ?? null,
+    })),
+  };
+}
+
+/**
+ * Writes the rows that keep each account for its person (server/directory/people.ts, `keeps`): the person who signs
+ * in at the organization's sign-in with that address, verified, takes that account. One row for an account: a new
+ * address replaces the one before. A person who waits under that address (an admin added them) waits no more: the
+ * address is the account's.
+ *
+ * Trap: the row's role is "read", and no code of this release reads it (the account has its own role). A Worker from
+ * before these rows, after a rollback, takes the row for a person that an admin added, and gives a new account that
+ * role: so it is the lowest one.
+ */
+export async function writeKeeps(q: Query, rows: Keep[], now = Date.now()): Promise<void> {
+  for (const { login, email } of rows) {
+    await q("DELETE FROM people WHERE provider = ?1 AND (login = ?2 OR handle = ?3)", [SSO, login, email]);
+    await q(
+      "INSERT INTO people (provider, handle, subject, role, created, added_by, added_via, login) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+      [SSO, email, null, "read", now, null, "bun erga setup", login]
+    );
+  }
+}
+
+/** The instance's database, for setup's own reads and writes there. */
+export async function queryOf(cf: Cloudflare, acc: string, worker: string, what: string): Promise<Query> {
+  const db = await databaseOf(cf, acc, worker);
+  if (!db) throw new Error(`The Worker ${worker} binds no database (DB).`);
+  return (sql, params) => d1(cf, acc, db, sql, params, what).then((r) => r ?? []);
+}
+
+/**
+ * The flow's move step: the entry with what the answers change in it (plan.ts, movedEntry), then a deploy of the
+ * tracked branch's head with that entry as the instance's spec. The result: the commit it deployed.
+ *
+ * Trap: the deploy writes the spec before it builds or tests. A deploy that fails puts both back, the entry and the
+ * instance's spec: else the instance's deployer applies the change by itself at its next look, and the next run of
+ * setup sees an entry that says the move is done.
+ */
+export async function moveDeploy(
+  o: Pick<First, "dir" | "answers" | "net" | "token" | "print" | "noTests" | "suite" | "github"> & {
+    oidc?: Endpoints | null;
+    change: { vars: readonly string[]; pages: string | null };
+  }
+): Promise<string> {
+  const config = readConfig(o.dir);
+  const had = entryOf(config, o.answers.host);
+  if (!had || "aws" in had) throw new Error(`${o.answers.host} has no entry on Cloudflare in .erga/config.json.`);
+  const reach = { cf: new Cloudflare(o.token, o.net) };
+  const sql = await sqlOf(had, reach);
+  const spec = (await specOn(sql)) ?? specOf(had, await heldSecrets(had, reach));
+  writeConfig(o.dir, withEntry(config, movedEntry(had, o.answers, o.change, { github: o.github, oidc: o.oidc })));
+  const back = async (e: Error) => {
+    writeConfig(o.dir, withEntry(readConfig(o.dir), had));
+    if (!(await putSpec(sql, spec)))
+      throw new Error(
+        `${e.message}\nAnd the instance's spec did not go back to what it was: bun erga deploy ${had.host} --write-spec writes the entry's values there.`
+      );
+    throw e;
+  };
+  return deployInstance({
+    dir: o.dir,
+    host: o.answers.host,
+    command: `bun erga setup ${o.answers.host}`,
+    noTests: o.noTests,
+    suite: o.suite,
+    net: o.net,
+    token: o.token,
+    print: o.print ?? console.log,
+    writeSpec: true,
+  }).catch(back);
 }
 
 /**

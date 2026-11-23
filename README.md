@@ -123,6 +123,24 @@ many of Erga's commits the fork lacks. Take them with a merge commit or a
 rebase, not as one squashed commit: git can then tell which ones you have.
 Run setup again with the other `--deploys` answer to change who deploys.
 
+### A server that runs already
+
+A server that has its admin keeps its accounts and its documents. Setup
+ignores no option: it applies each one, or it stops and says why. An option
+that you leave out changes nothing there.
+
+- **To single sign-on.** Run setup with `--sign-in sso` and its options,
+  and with `--pages <domain>` when the pages share the `workers.dev`
+  address (that address stops). With Cloudflare Access, the user adds the
+  two Access applications first (question 4): the Audience tag is there
+  only then, and the application can go in front of a server that runs.
+- **Each person keeps their account.** With single sign-on, a person is
+  known by their email address there. Ask the user for the address of each
+  person who keeps an account, the admin first: `--keep
+  <username>=<address>` (it can repeat). The dry run lists the accounts
+  that have no address yet. Such an account stays, with its documents; a
+  later run with its `--keep` gives it back to its person.
+
 ## Develop
 
 `bun erga skill` tells how to work in this repository: a feature branch for

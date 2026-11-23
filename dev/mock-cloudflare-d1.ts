@@ -75,6 +75,31 @@ export function d1Query(
       .map((r) => /^INSERT INTO users \(login, name, role, created\) VALUES \('([^']+)', '[^']*', 'admin'/.exec(r)?.[1])
       .filter(Boolean)
       .map((login) => ({ login }));
+  // The accounts, as `bun erga setup` reads them before it changes the sign-in of an instance that has some
+  // (deploy/own/first.ts, accountsOf), and the rows that keep an account for its person.
+  const values = (row: string) =>
+    [...row.slice(row.indexOf(" VALUES (")).matchAll(/'((?:[^']|'')*)'|(-?\d+)|NULL/g)].map((v) =>
+      v[1] != null ? v[1].replace(/''/g, "'") : v[2] != null ? Number(v[2]) : null
+    );
+  if (/^SELECT login, role FROM users\b/i.test(sql.trim()))
+    return (db.rows ?? [])
+      .filter((r) => r.startsWith("INSERT INTO users (login, name, role, created)"))
+      .map(values)
+      .map(([login, , role]) => ({ login, role }))
+      .sort((x, y) => String(x.login).localeCompare(String(y.login)));
+  const KEEPS = "INSERT INTO people (provider, handle, subject, role, created, added_by, added_via, login)";
+  if (/^SELECT login, handle FROM people\b/i.test(sql.trim()))
+    return (db.rows ?? [])
+      .filter((r) => r.startsWith(KEEPS))
+      .map(values)
+      .map((v) => ({ handle: v[1], login: v[7] }));
+  if (/^DELETE FROM people WHERE provider = \?1 AND \(login = \?2 OR handle = \?3\)/i.test(sql.trim())) {
+    db.rows = (db.rows ?? []).filter((r) => {
+      const v = r.startsWith(KEEPS) ? values(r) : null;
+      return !(v && (v[7] == params?.[1] || v[1] == params?.[2]));
+    });
+    return [];
+  }
   // A row with its values as parameters (?1, ?2, ...: each once, in order), kept as the export writes it.
   const put = /^INSERT INTO (credentials|users|server_config|people|access_rules) \(([^)]+)\) VALUES \(\?/.exec(sql);
   if (put) {

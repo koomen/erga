@@ -325,6 +325,8 @@ export async function verifyMain(args: string[]) {
   // Each `aws` command of this command and of its steps is asked of the suite's rule first (aws-guard.ts).
   const awsOf = readLocal(dir, instanceHosts(readConfig(dir))).aws;
   if (awsOf.profile) await guardAws(awsOf.profile, [awsOf.shell, awsOf.content]);
+  // The options that the command line gave: one that does nothing with the command stops it (suite.ts, commandOf).
+  const options = ["--browsers", "--origin", "--yes"].filter((f) => args.includes(f));
   const opt = (f: string) => {
     const i = args.indexOf(f);
     return i < 0 ? undefined : args.splice(i, 2)[1];
@@ -338,7 +340,13 @@ export async function verifyMain(args: string[]) {
 
   const command = `bun erga verify ${args.filter((a) => a != "--yes").join(" ")}`;
   const { state, local } = await look(dir);
-  const cmd = commandOf(words, args.includes("--keep"), { prereqs: state.prereqs, left: state.left, kept: readKept(dir), browsers });
+  const cmd = commandOf(words, args.includes("--keep"), {
+    prereqs: state.prereqs,
+    left: state.left,
+    kept: readKept(dir),
+    browsers,
+    options,
+  });
   if (cmd.at == "check") return print(dir, state, readRuns(dir), readKept(dir));
   if (cmd.at == "fail") return fail(cmd.why, cmd.next);
   const env = dedicatedEnv(local);

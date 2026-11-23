@@ -3,15 +3,15 @@
 // is deploy/aws/setup.ts. Under ERGA_DEPLOY_MOCK=1, the account and the servers are a mock Cloudflare's
 // (dev/mock-cloudflare.ts): nothing real.
 
-import { entryOf, readConfig } from "../cli/config";
+import { type Entry, entryOf, isAws, readConfig } from "../cli/config";
 import { mocked, netOf } from "../cli/deploy";
 import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
-import { d1Api, healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
+import { d1, d1Api, healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
 import { keptLogin } from "../local-credential";
 import { DEPLOYER_TAG, deployerName } from "../pipeline/deployer";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, type Endpoints, sso, varsOf, viaAccess, zoneOf } from "./plan";
-import { adminOn } from "./first";
+import { accountsOf, adminOn, databaseOf } from "./first";
 import { DIR, loadSecrets, namesAt, SSO_SECRET } from "./store";
 
 export interface Connection {
@@ -78,13 +78,27 @@ export async function liveOf(
     version: r.version,
     healthy: readHealth(row, r.version, Date.now()).healthy === true,
     signIn: signInOf(a, githubId, r.vars, oidc),
+    sso: r.vars.SSO ?? "",
+    pages: r.vars.PAGES_DOMAIN || (r.vars.PAGES_HOST ? "shared" : null),
   };
 }
+
+/** What the flow reads of the instance's entry: its plain settings, what it tracks, and on Cloudflare its pages and its account. */
+export const entryFacts = (
+  entry: Entry | null
+): Pick<Seen, "vars" | "github" | "tracks"> & Partial<Pick<Seen, "pages" | "entryAccount">> => ({
+  vars: entry ? { ...entry.vars } : null,
+  github: entry?.vars.GITHUB_CLIENT_ID ?? "",
+  tracks: entry ? { repo: entry.repo, branch: entry.branch } : null,
+  ...(entry && !isAws(entry)
+    ? { pages: entry.pages.kind == "shared" ? "shared" : (entry.pages.domain ?? entry.pages.zoneName), entryAccount: entry.account }
+    : {}),
+});
 
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
 export async function observe(a: Answers, dir = DIR, connect = cloudflare): Promise<Seen> {
   const entry = entryOf(readConfig(dir), a.host);
-  const seen: Seen = { ...nothingSeen, vars: entry ? { ...entry.vars } : null, github: entry?.vars.GITHUB_CLIENT_ID ?? "" };
+  const seen: Seen = { ...nothingSeen, ...entryFacts(entry) };
   if (!a.where) return seen;
   if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, a, seen);
   const c = await connect();
@@ -176,6 +190,14 @@ export async function observe(a: Answers, dir = DIR, connect = cloudflare): Prom
     seen.live = await liveOf(cf, account.id, worker, a, seen.github || undefined, oidc);
     seen.admin = !!(await adminOn(cf, acc, worker).catch(() => null));
     seen.deployer = !!scripts.find((x) => x.id == deployerName(worker))?.tags?.includes(DEPLOYER_TAG);
+    seen.pagesWorker = !!scripts.find((x) => x.id == `${worker}-pages`)?.tags?.includes(WORKER_TAG);
+    // An instance with an admin has accounts, which a change of its sign-in must keep (flow.ts, keepsOf).
+    if (seen.admin) {
+      const db = await databaseOf(cf, acc, worker);
+      const read = db ? await accountsOf((sql, params) => d1(cf, acc, db, sql, params, "read the accounts").then((r) => r ?? [])) : null;
+      seen.accounts = read?.accounts ?? null;
+      seen.keepable = !!read?.keepable;
+    }
   }
   seen.app = issuer && (!!loadSecrets(dir)[a.host]?.[SSO_SECRET] || seen.held.includes(SSO_SECRET));
   return seen;

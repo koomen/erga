@@ -81,7 +81,10 @@ test("the command says each option it still needs, before it looks at anything",
     missing(
       options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--pages", "example-pages.com", "--deploys", "cloud").answers
     )
-  ).toEqual(["--aud <tag>: the Access application's Audience tag."]);
+  ).toEqual([
+    "--aud <tag>: the Access application's Audience tag.",
+    expect.stringContaining("For --team and --aud: in Cloudflare Zero Trust, in this order: 1."),
+  ]);
   // AWS: without single sign-on the pages need a domain of their own.
   expect(missing(options("--host", "aws").answers)).toEqual([
     "--pages <domain>: a second Route 53 domain of the account, for the documents' pages.",
@@ -322,8 +325,11 @@ test("a new server's settings and first rows: invited users only; single sign-on
   // One of the two, and each one whole.
   const need = (...more: string[]) =>
     missing({ ...options("--host", "cloudflare", "--sign-in", "sso", "--pages", "example-pages.com", ...more).answers, deploys: "local" });
-  expect(need()).toEqual([expect.stringContaining("--team <name> and --aud <tag>")]);
-  expect(need("--team", "acme")).toEqual(["--aud <tag>: the Access application's Audience tag."]);
+  // The Audience tag is there only when the Access application is: the command says the person's steps, in their order.
+  const steps =
+    "For --team and --aud: in Cloudflare Zero Trust, in this order: 1. Add a self-hosted Access application for erga.example.com, with the policy that lets your people in. It may go in front of a server that runs: people pass Access first, then sign in as before. 2. Add a second Access application for these paths of erga.example.com, with one policy (Bypass, Everyone): /_edge/vouch, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /oauth/token, /oauth/register, /mcp. They carry no Access sign-in (agents use them), and Erga checks its own tokens there. 3. Copy the Audience tag (AUD) of the first application: it is --aud. The team's name, the part before .cloudflareaccess.com, is --team.";
+  expect(need()).toEqual([expect.stringContaining("--team <name> and --aud <tag>"), steps]);
+  expect(need("--team", "acme")).toEqual(["--aud <tag>: the Access application's Audience tag.", steps]);
   expect(need("--issuer", "https://idp.example.com")).toEqual(["--client <ID>: Erga's client ID at the organization's sign-in."]);
   expect(need("--team", "acme", "--aud", "f".repeat(64), "--issuer", "https://idp.example.com", "--client", "c")).toEqual([
     "--team and --aud (Cloudflare Access), or --issuer and --client (the organization's own sign-in): not both.",
@@ -550,7 +556,8 @@ test("a run again with other sign-in answers writes the entry again and deploys,
   expect(run(other, CF2, { ...built, vars: varsOf(other, undefined) }).state).toEqual({ at: "page" });
   // Other settings of the entry are not the answers'. A registered instance is what its entry says (bun erga deploy).
   expect(run(a, CF2, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "page" });
-  expect(run(other, CF2, { ...built, vars, admin: true }).state).toEqual({ at: "done" });
+  // With an admin too: no answer is ignored. The setting changes, and the accounts and the documents stay.
+  expect(run(other, CF2, { ...built, vars, admin: true }).state).toEqual({ at: "move", vars: ["SSO"], pages: null });
   // On AWS the gate's values are in the stacks, which each run of setup brings to the answers: no setting changes.
   const aws = {
     ...options("--host", "aws", "--sign-in", "sso", "--issuer", "https://idp.example.com/pool", "--client", "c", "--profile", "work")

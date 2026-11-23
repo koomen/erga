@@ -81,6 +81,23 @@ export function mergeArgs(args: string[]): Merge[] {
   return out;
 }
 
+/** Why the arguments of `bun erga merge` don't go together, or null: a branch has one text, so a second -m for it would be lost. */
+export function mergeProblem(args: string[]): string | null {
+  let branches = 0,
+    texts = 0;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] == "-m") {
+      i++;
+      // A text before the first branch is that branch's.
+      if (++texts > 1) return `-m is there 2 times for ${branches ? "one branch" : "the first branch"}: a branch has one text.`;
+    } else if (!args[i].startsWith("-")) {
+      texts = branches || !texts ? 0 : texts;
+      branches++;
+    }
+  }
+  return null;
+}
+
 /** Why `bun erga merge <branch>` must not go on, or null. */
 export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number; conflicts: string[] }): string | null {
   if (!o.branch) return "Name the branch: bun erga merge <branch>.";

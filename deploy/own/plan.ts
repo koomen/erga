@@ -50,10 +50,26 @@ export interface Answers {
   auto: "off" | "releases" | "commits" | "";
   /** --remote (or $SSH_CONNECTION): the user is at another computer. Their steps go through their terminal, never a browser here. */
   remote: boolean;
+  /**
+   * --keep <username>=<address> (it can repeat), with single sign-on on an instance that has accounts already: the
+   * person with that address at the organization's sign-in keeps that account, and its documents (flow.ts, keepsOf).
+   */
+  keep: Keep[];
+  /**
+   * The answers that the command line gave, by key. A new instance takes a left-out option as its default. An instance
+   * with an admin is what it is: there a left-out option changes nothing, and only a given one does (flow.ts, filled).
+   */
+  given: TextAnswer[];
+}
+
+/** An account that keeps its person across the move to single sign-on: its username, and the person's address there. */
+export interface Keep {
+  login: string;
+  email: string;
 }
 
 /** The answers that an option gives as text. */
-export type TextAnswer = Exclude<keyof Answers, "remote">;
+export type TextAnswer = Exclude<keyof Answers, "remote" | "keep" | "given">;
 
 export const noAnswers = (host: string): Answers => ({
   host,
@@ -74,6 +90,8 @@ export const noAnswers = (host: string): Answers => ({
   deploys: "",
   auto: "",
   remote: false,
+  keep: [],
+  given: [],
 });
 
 export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
@@ -153,6 +171,32 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
   }
 }
 
+/** Reads one --keep as the user gave it: <username>=<address>. */
+export function parseKeep(raw: string): { value: Keep } | { problem: string } {
+  const [login, email, ...more] = raw.trim().toLowerCase().split("=");
+  return !more.length && /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/.test(login ?? "") && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email ?? "")
+    ? { value: { login, email } }
+    : {
+        problem: `"${raw}" isn't <username>=<address>: an account's username on the server, and its person's email address at the organization's sign-in.`,
+      };
+}
+
+/**
+ * The answers that a server's single sign-on setting gives (SSO, as ssoSetting writes it): of an instance that runs,
+ * for the options that a run leaves out. A server with no setting has none.
+ */
+export function ssoAnswers(setting: string | undefined): Partial<Pick<Answers, "signIn" | "team" | "aud" | "issuer" | "client">> {
+  try {
+    const o = JSON.parse(setting || "null") as {
+      access?: { team?: string; aud?: string };
+      oidc?: { issuer?: string; client?: string };
+    } | null;
+    if (o?.access) return { signIn: "sso", team: o.access.team ?? "", aud: o.access.aud ?? "" };
+    if (o?.oidc) return { signIn: "sso", issuer: o.oidc.issuer ?? "", client: o.oidc.client ?? "" };
+  } catch {}
+  return {};
+}
+
 /** The zone (of `zones`) that holds `host`: the longest one, or null. */
 export const zoneOf = (host: string, zones: string[]): string | null =>
   zones.filter((z) => host == z || host.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0] ?? null;
@@ -226,6 +270,37 @@ export function varsOf(a: Answers, github: string | undefined, oidc?: Endpoints 
     ...(setting == null ? {} : { SSO: setting }),
     SERVER_DEFAULTS: JSON.stringify(defaultsOf(a)),
   };
+}
+
+/**
+ * The entry of an instance that runs, with what the answers change in it and nothing more (flow.ts, changeOf):
+ * `change.pages`, the documents' pages on their domain; `change.vars`, the answers' plain settings by name. Everything
+ * else of the entry stays: its names, what it tracks, its upstream, its custom domains, each other setting, and each
+ * default of SERVER_DEFAULTS that is not the sign-in's (the sign-in decides Anyone's level and the public sharing).
+ */
+export function movedEntry(
+  had: CloudflareEntry,
+  a: Answers,
+  change: { vars: readonly string[]; pages: string | null },
+  o: { github?: string; oidc?: Endpoints | null } = {}
+): CloudflareEntry {
+  const want: Record<string, string> = varsOf(a, o.github, o.oidc);
+  const vars: Record<string, string> = { ...had.vars };
+  for (const k of change.vars) {
+    if (k != "SERVER_DEFAULTS") vars[k] = want[k] ?? "";
+    else {
+      let was: Record<string, unknown> = {};
+      try {
+        was = JSON.parse(had.vars.SERVER_DEFAULTS || "{}") as Record<string, unknown>;
+      } catch {}
+      const { anyone_access, public_sharing } = defaultsOf(a);
+      vars[k] = JSON.stringify({ ...JSON.parse(want[k]), ...was, anyone_access, public_sharing });
+    }
+  }
+  if (!change.pages) return { ...had, vars };
+  // The workers.dev subdomain is for a shared pages address, or a workers.dev app: an entry with neither names none.
+  const { subdomain, ...rest } = had;
+  return { ...(had.app.kind == "domain" ? rest : had), pages: { kind: "zone", zoneName: change.pages }, vars };
 }
 
 /** A row of a new server's database: who it lets write, its table, its values by column, what happens if it is there already. */

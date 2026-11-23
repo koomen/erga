@@ -16,6 +16,12 @@
 // Their first sign-in makes their account with that role (Identities.createAccount),
 // and the row goes: from then on they're a user (server/directory/users.ts). A sign-in
 // of an account that has the provider account already ends the wait too (signedIn).
+//
+// A row with a `login` is no person who waits: it is an account that keeps its person across a change of the server's
+// sign-in (server/migrations/0570). `bun erga setup` alone writes it, with the person's address at the new sign-in,
+// when it moves a server to single sign-on (deploy/own/first.ts): no route of the server does. The first sign-in with
+// that address, verified, takes the account (`keeps`; server/identity/accounts.ts, resolve). Such a row gives no
+// role and lets nobody join: every other function here leaves it out.
 
 import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./model.ts";
@@ -104,7 +110,7 @@ export class People {
   /** Everyone waiting, by provider and handle. Admins only. */
   async list(by: Actor): Promise<Person[]> {
     await this.users.mustAdmin(by);
-    return (await this.sql.all<Row>("SELECT * FROM people ORDER BY provider, handle")).map(fromRow);
+    return (await this.sql.all<Row>("SELECT * FROM people WHERE login IS NULL ORDER BY provider, handle")).map(fromRow);
   }
 
   async get(id: number): Promise<Person | null> {
@@ -114,7 +120,7 @@ export class People {
 
   /** Whether anyone waits (the share check: then someone not yet signed in may come). */
   async any(): Promise<boolean> {
-    return (await this.sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM people"))[0]?.n > 0;
+    return (await this.sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM people WHERE login IS NULL"))[0]?.n > 0;
   }
 
   /**
@@ -122,18 +128,42 @@ export class People {
    * provider verified, whose first match writes that id, so from then on only that account matches.
    */
   async match(v: Vouched): Promise<Person | null> {
-    const [bound] = await this.sql.all<Row>("SELECT * FROM people WHERE provider = ?1 AND subject = ?2", v.provider, v.subject);
+    const [bound] = await this.sql.all<Row>(
+      "SELECT * FROM people WHERE provider = ?1 AND subject = ?2 AND login IS NULL",
+      v.provider,
+      v.subject
+    );
     if (bound) return fromRow(bound);
     const emails = vouchedEmails(v);
     if (!emails.length) return null;
     const [row] = await this.sql.all<Row>(
-      `SELECT * FROM people WHERE provider = ?1 AND subject IS NULL AND handle IN (${emails.map((_, i) => `?${i + 2}`).join(", ")})`,
+      `SELECT * FROM people WHERE provider = ?1 AND subject IS NULL AND login IS NULL AND handle IN (${emails.map((_, i) => `?${i + 2}`).join(", ")})`,
       v.provider,
       ...emails
     );
     if (!row) return null;
     await this.sql.run("UPDATE people SET subject = ?2 WHERE id = ?1 AND subject IS NULL", row.id, v.subject);
     return { ...fromRow(row), subject: v.subject };
+  }
+
+  /**
+   * The account that the person a provider just vouched for keeps (the top of this file): the row that setup wrote
+   * for an address that the provider verified now, with its account. Null: none.
+   */
+  async keeps(v: Vouched): Promise<{ id: number; login: string } | null> {
+    const emails = vouchedEmails(v);
+    if (!emails.length) return null;
+    const [row] = await this.sql.all<{ id: number; login: string }>(
+      `SELECT id, login FROM people WHERE provider = ?1 AND login IS NOT NULL AND handle IN (${emails.map((_, i) => `?${i + 2}`).join(", ")}) ORDER BY id`,
+      v.provider,
+      ...emails
+    );
+    return row ? { id: Number(row.id), login: row.login } : null;
+  }
+
+  /** The person took their account (`keeps`): each row for that account goes. */
+  async kept(login: string): Promise<void> {
+    await this.sql.run("DELETE FROM people WHERE login = ?1", login.toLowerCase());
   }
 
   /**

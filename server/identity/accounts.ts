@@ -11,15 +11,20 @@
 //      it, once: the accounts from before keep that login as their username.
 //      An account that has an identity is never claimed by a login: a login
 //      that changed hands is taken, and its person gets another username.
-//   3. Anyone else who may join makes a new account. Where the setting usernames gives them a name (usernames.ts: their
+//   3. An identity whose verified address names an account that keeps its person (server/directory/people.ts,
+//      `keeps`) takes that account, once. Only `bun erga setup` writes such a row, when it moves a server to single
+//      sign-on: there the accounts' people come back with another identity. An account that has an identity of that
+//      provider already is never taken.
+//   4. Anyone else who may join makes a new account. Where the setting usernames gives them a name (usernames.ts: their
 //      GitHub username, or their address's part before the @) and that name is free, Erga makes the account under it,
 //      at once. Else they choose a username first (/auth/username): until they do, who they are waits in a signed
 //      cookie for half an hour, and nothing is written.
-//   4. Anyone who may not join sees one page (refusedPage), which says nothing
+//   5. Anyone who may not join sees one page (refusedPage), which says nothing
 //      of who may: the server's access rules are private.
 //
 // The emails a provider verified are kept to match a person an admin added
-// by an email (server/directory/people.ts), never to find an account.
+// by an email (server/directory/people.ts), never to find an account: step 3's row is setup's own word for one
+// account, not an address that an account happens to have.
 // (The routes /auth/username and /auth/dev are rows of server/app.ts's list.)
 
 import * as Effect from "effect/Effect";
@@ -92,6 +97,18 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
       return { kind: "in", login: user.login, claimed: true };
     }
     if (row) taken = row.login;
+  }
+  // The account that this person keeps across the server's move to another sign-in (step 3).
+  const keeps = await dir.people.keeps(v);
+  if (keeps && (await users.get(keeps.login)) && !(await identities.of(keeps.login)).some((i) => i.provider == v.provider)) {
+    if (o.onlyAdmins && !(await users.isAdmin(keeps.login))) return { kind: "refused" };
+    const user = await users.signedIn(keeps.login, v.name, { create: o.create });
+    if (!user) return { kind: "refused", login: keeps.login };
+    await identities.link(user.login, v);
+    await dir.people.kept(user.login);
+    dir.forgetAccess(user.login);
+    users.forget(user.login);
+    return { kind: "in", login: user.login, claimed: true };
   }
   if (!o.join) return { kind: "refused" };
   return taken ? { kind: "new", suggestion: await identities.suggest(v), taken } : { kind: "new", suggestion: await identities.suggest(v) };
