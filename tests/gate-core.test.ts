@@ -137,7 +137,16 @@ describe("the shell, SSO", () => {
     expect(b).toEqual({ do: "forward", caller: { kind: "person", ...ADA, i: NOW - 5 * 3600_000, e: now + 7 * 3600 }, cookies: [] });
   });
 
-  test("another host is nothing behind SSO, and its own where anyone may come in", async () => {
+  test("a custom domain's published site is its own behind SSO too, with nobody; any other host is nothing there", async () => {
+    const withSite = { ...sso, sites: ["www.example.org"] };
+    // (A proof of the shell's counts for nothing there: the site is nobody's.)
+    const s = await shellCookie(sso);
+    for (const r of [req("https://www.example.org/about"), req("https://www.example.org/", { cookie: { "__Host-erga": s } })])
+      expect(forwarded(await gate(r, withSite, port))).toEqual({ kind: "none" });
+    // The gate's own paths are not the site's.
+    expect(responded(await gate(req("https://www.example.org/_edge/sign-in"), withSite, port)).status).toBe(404);
+    for (const host of ["other.example.org", "x.www.example.org", "www.example.org.example.net"])
+      expect(responded(await gate(req(`https://${host}/`), withSite, port)).status).toBe(404);
     expect(responded(await gate(req("https://www.example.org/"), sso, port)).status).toBe(404);
     expect(forwarded(await gate(req("https://www.example.org/"), oauth, port))).toEqual({ kind: "none" });
   });

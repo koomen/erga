@@ -344,6 +344,32 @@ test("the gate inside, behind Cloudflare Access: Access's proof is the sign-in; 
   ]);
 });
 
+test("behind Cloudflare Access, a custom domain's published site answers anyone, and no other host does", async () => {
+  const { s, behind, ada } = await behindAccess();
+  // The deploy's custom domain (`bun erga deploy <host> --domain <domain>`): Access is in front of the app's host only.
+  s.platform.deploy.domains.push("site.example.com");
+  // Ada, an admin, publishes a document there.
+  await browser(behind(ada)).go(`${ORIGIN}/documents`);
+  await s.dir.users.setRole({ login: "tester", admin: true }, "ada", "admin");
+  const tool = async (name: string, args: object) =>
+    (
+      await behind(ada)(new Request(`${ORIGIN}/api/tools/${name}`, { method: "POST", headers: JSON_POST, body: JSON.stringify(args) }))
+    ).json();
+  const page = "<!doctype html><html><head><title>Alpha</title></head><body><h1>Alpha</h1></body></html>";
+  const document = (await tool("create_document", { title: "Alpha", files: { "index.html": page, "about.html": page } })).result.id;
+  await tool("set_publishing", { document, domain: "site.example.com" });
+  expect((await tool("publish_document", { document })).result.publishing).toMatchObject({ state: "published", serving: true });
+  // Nobody's request, with no proof: the site's pages as they are.
+  const anyone = behind(null);
+  for (const path of ["/", "/about"]) {
+    const r = await anyone(new Request(`https://site.example.com${path}`));
+    expect([r.status, await r.text()]).toEqual([200, expect.stringContaining("<h1>Alpha</h1>")]);
+  }
+  // Nothing at a host that the deploy did not name; the app's own host asks for a proof.
+  expect((await anyone(new Request("https://other.example.com/"))).status).toBe(404);
+  expect((await anyone(new Request(`${ORIGIN}/api/tools/whoami`, { method: "POST" }))).status).toBe(401);
+});
+
 test("the gate inside, on a new server: the setup page's link passes the organization's sign-in; the deployer's token goes to the deployer; one button makes the person the admin", async () => {
   const { s, b, gate, outside } = await setUp();
   const { directory, deployer } = await asNewServer(s, SHELL);

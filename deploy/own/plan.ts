@@ -230,7 +230,8 @@ export function pagesProblem(a: Answers, zones: string[]): string | null {
 /**
  * The settings' defaults of a new server (SERVER_DEFAULTS): an admin can change each on its admin page (/admin).
  * Only users that the admin invites sign in (/admin/access); they share with anyone with the link: Anyone may view
- * public documents, and the switch is on. With single sign-on, nobody outside the organization sees a document.
+ * public documents, and the switch is on. With single sign-on, nobody outside the organization sees a document, but
+ * the one that an admin publishes to a custom domain (gate/core.ts, Config.sites).
  */
 export const defaultsOf = (a: Pick<Answers, "signIn">) => ({
   anyone_access: sso(a) ? "none" : "public",

@@ -63,6 +63,8 @@
 //                                         keeps nothing, and takes only redirects that authorize takes anyway.
 //   /_edge/sign-in, /_edge/callback       where a proof is made. The callback counts only with the browser's state.
 //   a document's page (other site)        a page that goes on to the vouch, and a nonce: nothing of the document.
+//   a custom domain (Config.sites)        its published site, as nobody: an admin published it there, for everyone.
+//                                         Erga answers nothing else at that host (server/app.ts).
 //   accept.<content>/_edge/accept         its proof is the ticket, with the browser's nonce.
 //
 // The vouch and sign-out's frame on the accept host need a member cookie.
@@ -110,6 +112,8 @@ export interface Config {
   https: boolean;
   /** Anyone may come in; a request with no proof goes on as nobody. */
   open: boolean;
+  /** The custom domains' hosts (the deploy's, with the port locally): each has a published site, which is everyone's. */
+  sites?: string[];
   /** Who signs people in. */
   idp: Record<string, Idp> | "access";
   /** Where a browser with no sign-in goes: Erga's page of providers (OAuth), else the gate's own sign-in. */
@@ -412,8 +416,8 @@ export async function pass(q: Req, c: Config, p: Port): Promise<Answer> {
   // (On CloudFront `edge` is another function's. An address of the gate's own never goes on, whatever sent it here.)
   if (own(q, c)) return respond(404, "Not found");
   if (isContent(q.host, c)) return content(q, c, p, now);
-  // Another host (a custom domain's published site): its own, with nobody; behind SSO, nothing.
-  if (q.host != c.shell) return c.open ? forward(NOBODY) : respond(404, "Not found");
+  // Another host: a custom domain's published site is its own, with nobody, behind SSO too. Any other: nothing behind SSO.
+  if (q.host != c.shell) return c.open || c.sites?.includes(q.host) ? forward(NOBODY) : respond(404, "Not found");
   // The health report (Config.health): nobody's, whatever came with the request.
   if (c.health && q.method == "GET" && q.path == c.health) return forward(NOBODY);
   const who = await callerOf(q, c, p, now);

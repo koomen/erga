@@ -80,8 +80,9 @@ export const contentDomain = (platform: Pick<Platform, "pagesDomain">, url: URL)
  * the values that wait for a test sign-in).
  * With the organization's sign-in (gate/sso.ts): only a request with a proof goes on, and the issuer is the deploy's,
  * or Cloudflare Access. The shell is the deploy's app host and no other: an address of this Worker that the deploy
- * did not name (workers.dev) is no way in. One path goes on with no proof, as nobody: the server's health report,
- * which the account's deployer asks after each deploy (gate/core.ts, Config.health).
+ * did not name (workers.dev) is no way in. Two things go on with no proof, as nobody: the server's health report,
+ * which the account's deployer asks after each deploy (gate/core.ts, Config.health), and a custom domain's published
+ * site (Config.sites: the deploy's domains), where Erga answers only that site (server/app.ts).
  *
  * How long a sign-in lasts is the admins' setting (sign_in_days), read only where the gate signs one: its callback
  * (this file's second trap). A change is for the sign-ins after it: a cookie keeps the end it was signed with. Local
@@ -107,6 +108,7 @@ export async function gateConfig(platform: Platform, url: URL): Promise<Config> 
     content,
     https: url.protocol == "https:",
     open: !sso,
+    sites: platform.deploy.domains.map((d) => d + portOf(url)),
     idp: sso ? sso.idp : idp,
     // (With the organization's sign-in: the deployer's check of a new release has no sign-in. Where anyone may come
     // in, the report goes on as every path does.)
