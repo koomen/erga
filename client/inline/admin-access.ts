@@ -1,9 +1,10 @@
 // The Access page's script (/admin/access, server/admin/access.ts): the group rules (add one, change its access, remove
 // one), and everyone else: Anyone's level, and whether users can share publicly. Each menu and the switch save as they
 // change, with no Save button (client/common/autosave.ts): the save mark left of the buttons' bar says how far it is;
-// refused, the value stays, with the server's reason under it.
+// refused, the value stays, with the server's reason under it. A change that would stop the usernames rule that is set
+// (the Sign-in page) asks first (proceeds).
 
-import { runTool, say } from "../common/admin-post";
+import { proceeds, runTool, say } from "../common/admin-post";
 import { saveMark } from "../common/admin-save";
 import { autosave } from "../common/autosave";
 import { liveList, refresh } from "../common/live-rows";
@@ -26,7 +27,13 @@ export default function adminAccess(): void {
       row: li,
       read: () => select.value,
       saved: select.value,
-      save: (value) => runTool("set_access", { action: "anyone", level: value }),
+      async save(value) {
+        if (await proceeds((proceed) => runTool("set_access", { action: "anyone", level: value, ...proceed }))) return;
+        // Cancel: the menu goes back. A refused save whose field shows the saved value is no failure (autosave).
+        select.value = auto.saved;
+        auto.changed(true);
+        throw new Error("");
+      },
       ended(why) {
         say(publicHint, why ?? "", !!why);
         select.toggleAttribute("aria-invalid", !!why);
@@ -91,13 +98,17 @@ export default function adminAccess(): void {
     e.preventDefault();
     say(rulesHint, "Adding…");
     try {
-      const rule = await runTool("set_access", {
-        action: "add",
-        kind: field("kind").value,
-        value: field("value").value.trim(),
-        access: field("access").value,
-      });
+      const rule = await proceeds((proceed) =>
+        runTool("set_access", {
+          action: "add",
+          kind: field("kind").value,
+          value: field("value").value.trim(),
+          access: field("access").value,
+          ...proceed,
+        })
+      );
       say(rulesHint, "");
+      if (!rule) return;
       field("value").value = "";
       refresh(`rule:${rule.kind}:${rule.value}`);
     } catch (err) {
@@ -126,7 +137,7 @@ export default function adminAccess(): void {
     li.querySelector(".remove-rule")?.addEventListener("click", async () => {
       if (!confirm("Remove this rule? The people only it lets in can't sign in any more.")) return;
       try {
-        await runTool("set_access", { action: "remove", id: Number(li.dataset.id) });
+        if (!(await proceeds((proceed) => runTool("set_access", { action: "remove", id: Number(li.dataset.id), ...proceed })))) return;
         refresh(li.dataset.live!);
       } catch (err) {
         say(rulesHint, (err as Error).message, true);

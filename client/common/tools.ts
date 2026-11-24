@@ -14,7 +14,7 @@ export function asUser(path: string): string {
 /** For list_documents, where a page needs the person's whole list: it gives 20 if not told how many. */
 export const WHOLE_LIST = { limit: 1000 };
 
-/** Runs operation `name` with `args`: its result; the server's error, or a line about the network, as an Error. */
+/** Runs operation `name` with `args`: its result; the server's error (with its HTTP `status`), or a line about the network, as an Error. */
 export async function runTool<T = any>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   const r = await fetch(asUser("/api/tools/" + encodeURIComponent(name)), {
     method: "POST",
@@ -22,6 +22,7 @@ export async function runTool<T = any>(name: string, args: Record<string, unknow
     body: JSON.stringify(args),
   }).catch(() => null);
   const body = r ? await r.json().catch(() => ({})) : {};
-  if (!r || !r.ok || body.ok === false) throw new Error(body.error || "Couldn't reach the server: try again.");
+  if (!r || !r.ok || body.ok === false)
+    throw Object.assign(new Error(body.error || "Couldn't reach the server: try again."), { status: r?.status ?? 0 });
   return body.result as T;
 }

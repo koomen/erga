@@ -2,9 +2,9 @@
 // (Replace opens their form), Discard and Remove. The switch and the values save by themselves, with no Save button (client/common/autosave.ts): the
 // switch at once; an app's Client ID and secret together, once both are there, when the typing pauses or the focus
 // leaves the form. The save mark left of the buttons' bar says how far it is; refused, the value stays, with the
-// server's reason under it.
+// server's reason under it. A switch that would stop the usernames rule that is set asks first (proceeds).
 
-import { post, reload, runTool, say } from "../common/admin-post";
+import { post, proceeds, reload, runTool, say } from "../common/admin-post";
 import { saveMark } from "../common/admin-save";
 import { autosave } from "../common/autosave";
 import { liveList, refresh } from "../common/live-rows";
@@ -54,7 +54,14 @@ export default function adminAuth(): void {
       row: section,
       read: () => String(box.checked),
       saved: String(box.checked),
-      save: (value) => runTool("set_sign_in", { provider: box.dataset.provider!, action: value == "true" ? "on" : "off" }),
+      async save(value) {
+        const action = value == "true" ? "on" : "off";
+        if (await proceeds((proceed) => runTool("set_sign_in", { provider: box.dataset.provider!, action, ...proceed }))) return;
+        // Cancel: the switch goes back. A refused save whose field shows the saved value is no failure (autosave).
+        box.checked = on.saved == "true";
+        on.changed(true);
+        throw new Error("");
+      },
       ended(why) {
         // (The hint of the section on the page now: a change heard meanwhile may have drawn it again.)
         const hint = document.querySelector(`section.provider[data-live="${section.dataset.live}"] .provider-hint`);

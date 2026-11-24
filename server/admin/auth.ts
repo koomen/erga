@@ -2,7 +2,7 @@
 // changes it). It shows what the sign-in reports (server/identity/settings.ts, authOps.status): the mode, and that
 // mode's own parts: each OAuth provider's card; none with a gate in front. A secret that is set shows as its last 4
 // characters, with Replace and Remove: the page never has the secret. Then what a new account gets: how its username is
-// assigned (usernamesRow: a radio, with why an option can't be chosen now under it), and the deploy's secrets that
+// assigned (usernamesRow: a radio, with what each option requires under it), and the deploy's secrets that
 // sign-in needs.
 
 import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
@@ -18,7 +18,9 @@ import {
   type CheckState,
   type Provider,
   type ProvidersOn,
+  RULE_ABOUT,
   RULE_LABEL,
+  ruleNow,
   type SignInStatus,
   usernameFacts,
   type UsernameFacts,
@@ -150,17 +152,16 @@ function modeSection(mode: SignInStatus["mode"]): string {
 const USERNAMES = "setting:usernames";
 
 /**
- * How a new account gets its username (the setting usernames: server/identity/usernames.ts), a radio: an option whose
- * condition does not hold now can't be chosen, and says why under it. The option that is set and holds no more stays
- * checked, with what happens meanwhile.
+ * How a new account gets its username: the setting `usernames`, as a radio. Under each option, what it does and what
+ * it requires; one whose requirements do not hold now can't be chosen. The option that is checked is the rule that
+ * names a new account now (ruleNow): choose, while the rule that is set can't apply.
  */
 export function usernamesRow(e: ConfigEntry, facts: UsernameFacts): string {
-  const why = (text: string) => esc(text).replace("the Access page", `<a href="/admin/access">the Access page</a>`);
+  const now = ruleNow(e.value as UsernameRule, facts);
+  const about = (rule: UsernameRule) => esc(RULE_ABOUT[rule]).replace("access limited to", `<a href="/admin/access">access limited to</a>`);
   const options = USERNAME_RULES.map((rule: UsernameRule) => {
-    const no = whyNot(rule, facts),
-      set = e.value == rule;
-    const note = !no ? "" : set ? `<b>Not in effect: new users choose their usernames.</b> ${why(no)}` : why(no);
-    return `<label class="choice${no ? " off" : ""}"><input type="radio" name="value" value="${rule}"${set ? " checked" : ""}${no || e.locked ? " disabled" : ""}><span class="what">${esc(RULE_LABEL[rule])}${note ? `<small class="why${set ? " warn" : ""}">${note}</small>` : ""}</span></label>`;
+    const no = whyNot(rule, facts);
+    return `<label class="choice${no ? " off" : ""}"><input type="radio" name="value" value="${rule}"${now == rule ? " checked" : ""}${no || e.locked ? " disabled" : ""}><span class="what">${esc(RULE_LABEL[rule])}<small class="why">${about(rule)}</small></span></label>`;
   }).join("\n        ");
   return `  <li class="setting usernames" data-key="usernames" data-control="radio" data-live="${USERNAMES}" data-sort="-1">
     <div class="about">

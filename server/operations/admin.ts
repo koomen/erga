@@ -9,6 +9,7 @@ import {
   type AccessRule,
   ANYONE_LABEL,
   ANYONE_LEVELS,
+  anyoneValue,
   type ConfigEntry,
   ConfigError,
   type Directory,
@@ -16,12 +17,24 @@ import {
   type Person,
   ROLE_LABEL,
   roleValue,
+  type RuleKind,
+  ruleValue,
   type User,
   USERNAME_RULES,
   type UsernameRule,
 } from "../directory/index.ts";
-import { type AuthOps, type AuthStatus, type Provider, providerOf, PROVIDERS, usernameFacts, whyNot } from "../identity/index.ts";
-import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
+import {
+  type AuthOps,
+  type AuthStatus,
+  type Provider,
+  providerOf,
+  PROVIDERS,
+  RULE_ENDS,
+  usernameFacts,
+  type UsernameFacts,
+  whyNot,
+} from "../identity/index.ts";
+import { SIGN_IN_PROVIDERS, SSO } from "../../shared/sign-in.ts";
 import { aboutOf, aboutRead, ACTIVE_DAYS, analytics, analyticsList, isSpan, pageLlmUsage, SPANS } from "../admin/index.ts";
 import { type Caller, iso, LOGIN, type Operation, OperationError, said } from "./operation.ts";
 
@@ -35,6 +48,16 @@ const ACCOUNT_PROVIDER = Schema.Literals(Object.keys(SIGN_IN_PROVIDERS)).annotat
 const ACCESS = Schema.Literals(["read", "write"]).annotate({
   description: `add, change: read ('${ACCESS_LABEL.read}') or write ('${ACCESS_LABEL.write}'). No access: remove the rule`,
 });
+/** A change that stops the usernames rule that is set is made only with this (keepsUsernames). */
+const PROCEED = Schema.optionalKey(
+  Schema.Boolean.annotate({
+    description:
+      "true: also when the change stops the usernames rule that is set (the refusal says so): the rule then becomes choose. Only after the user agreed",
+  })
+);
+/** What an agent's question says of it. */
+const proceeds = (args: Record<string, unknown>) =>
+  args.proceed === true ? ", and let new users choose their usernames if that stops the usernames rule" : "";
 const PERSON = Schema.Int.annotate({ description: "For a user who hasn't signed in yet: their waiting id, as people lists it" });
 
 /** US dollars to a tenth of a cent. */
@@ -81,7 +104,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
       const facts = platform ? await usernameFacts(platform) : null;
       const inEffect = (e: ConfigEntry) => {
         const why = facts && e.key == "usernames" ? whyNot(e.value as UsernameRule, facts) : null;
-        return why ? { inEffect: "choose", note: `Not in effect: new users choose their usernames. ${why}` } : {};
+        return why ? { inEffect: "choose", note: `Not in effect now (${why}): new users choose their usernames.` } : {};
       };
       return {
         settings: settings.map((e) => ({ ...entryOf(e), ...inEffect(e) })),
@@ -136,8 +159,8 @@ export const ADMIN_OPERATIONS: Operation[] = [
     description: "Sets one of the server's settings, or puts it back to its default (reset).",
     asks: (args) =>
       args.reset === true
-        ? `Put the server's setting ${said(args.key)} back to its default`
-        : `Set the server's setting ${said(args.key)} to ${said(args.value)}`,
+        ? `Put the server's setting ${said(args.key)} back to its default${proceeds(args)}`
+        : `Set the server's setting ${said(args.key)} to ${said(args.value)}${proceeds(args)}`,
     parameters: Schema.Struct({
       key: Schema.String.annotate({ description: "The setting's key, e.g. delete_docs_after_hours (settings lists them)" }),
       value: Schema.optionalKey(
@@ -147,13 +170,21 @@ export const ADMIN_OPERATIONS: Operation[] = [
         })
       ),
       reset: Schema.optionalKey(Schema.Boolean.annotate({ description: "true: back to its default (no value)" })),
+      proceed: PROCEED,
     }),
-    run: async (args, { dir, who, platform }) => {
+    run: async (args, caller) => {
+      const { dir, who, platform } = caller;
       const key = String(args.key ?? "");
       // Anyone's level and public sharing hold each other (set_access): the directory sets them, a reset too.
       const set = async (value: unknown) => {
         if (key == "usernames") await ruleApplies(platform, value);
-        if (key == "anyone_access") await dir.setAnyone(who, value);
+        if (key == "anyone_access")
+          await keepsUsernames(
+            caller,
+            args.proceed,
+            (f) => ({ ...f, anyone: anyoneValue(value) }),
+            () => dir.setAnyone(who, value)
+          );
         else if (key == "public_sharing" && typeof value == "boolean") await dir.setPublicSharing(who, value);
         else return dir.config.set(who, key, value);
         return dir.config.entry(key);
@@ -233,7 +264,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
       if (args.action == "clear")
         return `Clear the ${provider} sign-in app's values${args.force === true ? ", even if nobody can sign in then" : ""}`;
       if (args.action == "discard") return `Discard the ${provider} sign-in app's new values`;
-      return `Turn sign-in with ${provider} ${said(args.action)}`;
+      return `Turn sign-in with ${provider} ${said(args.action)}${proceeds(args)}`;
     },
     parameters: Schema.Struct({
       provider: PROVIDER,
@@ -247,13 +278,22 @@ export const ADMIN_OPERATIONS: Operation[] = [
             "clear: even when the page's values work and the deploy's don't (nobody could sign in). Only after you told the user",
         })
       ),
+      proceed: PROCEED,
     }),
     run: async (args, caller) => {
       const provider = providerOf(args.provider);
       if (!provider) throw new OperationError({ message: `provider: ${OAUTH.map((id) => `"${id}"`).join(" or ")}.`, status: 400 });
       const auth = authOf(caller);
-      if (args.action == "on" || args.action == "off")
-        return { providersOn: await auth.setProvider(caller.who, provider, args.action == "on") };
+      if (args.action == "on" || args.action == "off") {
+        const on = args.action == "on";
+        return keepsUsernames(
+          caller,
+          args.proceed,
+          // (With a gate in front there is no provider to switch: setProvider refuses.)
+          (f) => (f.ways.includes(SSO) ? f : { ...f, ways: OAUTH.filter((p) => (p == provider ? on : f.ways.includes(p))) }),
+          async () => ({ providersOn: await auth.setProvider(caller.who, provider, on) })
+        );
+      }
       if (args.action == "discard") return { provider, ...(await auth.discard(caller.who, provider)) };
       if (args.action == "clear") return { provider, ...(await auth.clear(caller.who, args.force === true, provider)) };
       throw new OperationError({ message: "action: on, off, clear or discard.", status: 400 });
@@ -398,9 +438,9 @@ export const ADMIN_OPERATIONS: Operation[] = [
     asks: (args) => {
       if (args.action == "public") return `Turn public sharing ${args.on ? "on" : "off"} for the whole server`;
       if (args.action == "anyone")
-        return `Set what anyone may do on the server to ${said(args.level)}${args.level == "none" ? " (public sharing goes off too)" : ""}`;
-      if (args.action == "add") return `Add the access rule ${said(args.kind)} ${said(args.value)}: ${said(args.access)}`;
-      if (args.action == "remove") return `Remove the access rule ${said(args.id)}`;
+        return `Set what anyone may do on the server to ${said(args.level)}${args.level == "none" ? " (public sharing goes off too)" : ""}${proceeds(args)}`;
+      if (args.action == "add") return `Add the access rule ${said(args.kind)} ${said(args.value)}: ${said(args.access)}${proceeds(args)}`;
+      if (args.action == "remove") return `Remove the access rule ${said(args.id)}${proceeds(args)}`;
       return `Change the access rule ${said(args.id)} to ${said(args.access)}`;
     },
     parameters: Schema.Struct({
@@ -427,17 +467,29 @@ export const ADMIN_OPERATIONS: Operation[] = [
             "public: true lets users share a document with anyone with the link (signed out, they view it); it needs Anyone at public or higher. false: nobody can share so, and such shares made before stop working until it is on again",
         })
       ),
+      proceed: PROCEED,
     }),
-    run: async (args, { dir, who }) => {
+    run: async (args, caller) => {
+      const { dir, who } = caller;
       const action = args.action;
-      if (action == "add")
-        return ruleOf(
-          await dir.rules.add(who, {
-            kind: need(args, "kind", action),
-            value: need(args, "value", action),
-            access: need(args, "access", action),
-          })
+      if (action == "add") {
+        const rule = {
+          kind: need<RuleKind>(args, "kind", action),
+          value: need(args, "value", action),
+          access: need(args, "access", action),
+        };
+        return keepsUsernames(
+          caller,
+          args.proceed,
+          (f) => {
+            const value = ruleValue(rule.kind, rule.value);
+            return f.rules.some((r) => r.kind == rule.kind && r.value == value)
+              ? f
+              : { ...f, rules: [...f.rules, { kind: rule.kind, value }] };
+          },
+          async () => ruleOf(await dir.rules.add(who, rule))
         );
+      }
       if (action == "change") {
         const id = Number(need(args, "id", action));
         const before = (await dir.rules.list(who)).find((r) => r.id == id);
@@ -447,13 +499,28 @@ export const ADMIN_OPERATIONS: Operation[] = [
       if (action == "remove") {
         const id = Number(need(args, "id", action));
         const before = (await dir.rules.list(who)).find((r) => r.id == id);
-        await dir.rules.remove(who, id);
-        return { removed: before ? ruleOf(before) : id };
+        return keepsUsernames(
+          caller,
+          args.proceed,
+          (f) => ({ ...f, rules: f.rules.filter((r) => !(r.kind == before?.kind && r.value == before.value)) }),
+          async () => {
+            await dir.rules.remove(who, id);
+            return { removed: before ? ruleOf(before) : id };
+          }
+        );
       }
       if (action == "anyone") {
-        const before = await dir.anyone();
-        await dir.setAnyone(who, need(args, "level", action));
-        return { ...(await everyoneOf(dir)), before };
+        const before = await dir.anyone(),
+          level = need(args, "level", action);
+        return keepsUsernames(
+          caller,
+          args.proceed,
+          (f) => ({ ...f, anyone: anyoneValue(level) }),
+          async () => {
+            await dir.setAnyone(who, level);
+            return { ...(await everyoneOf(dir)), before };
+          }
+        );
       }
       if (action == "public") {
         if (typeof args.on != "boolean") throw new OperationError({ message: "public needs on: true or false.", status: 400 });
@@ -543,7 +610,29 @@ async function ruleApplies(platform: Caller["platform"], value: unknown): Promis
   if (!rule) return;
   if (!platform) throw new OperationError({ message: "This server's sign-in settings aren't reachable from here.", status: 404 });
   const why = whyNot(rule, await usernameFacts(platform));
-  if (why) throw new OperationError({ message: `usernames can't be "${rule}" now. ${why} Nothing changed.`, status: 400 });
+  if (why) throw new OperationError({ message: `usernames can't be "${rule}" now: ${why}. Nothing changed.`, status: 400 });
+}
+
+/**
+ * A change to the sign-in or the access (`change`) that would stop the usernames rule that is set: the rule applies
+ * now, and not with the facts `after` the change. It is refused (428) with what will happen (RULE_ENDS), until the
+ * caller proceeds: then the change is made, and the rule becomes choose. A rule that the deploy locks stays.
+ */
+async function keepsUsernames<T>(
+  caller: Caller,
+  proceed: unknown,
+  after: (now: UsernameFacts) => UsernameFacts,
+  change: () => Promise<T>
+): Promise<T> {
+  const { dir, who, platform } = caller;
+  if (!platform) return change();
+  const [entry, now] = await Promise.all([dir.config.entry("usernames"), usernameFacts(platform)]);
+  const rule = entry.value as UsernameRule;
+  const ends = rule != "choose" && !entry.locked && !whyNot(rule, now) && whyNot(rule, after(now)) ? RULE_ENDS[rule] : null;
+  if (ends && proceed !== true) throw new OperationError({ message: ends, status: 428 });
+  const done = await change();
+  if (ends) await dir.config.set(who, "usernames", "choose");
+  return done;
 }
 
 function authOf(caller: Caller): AuthOps {

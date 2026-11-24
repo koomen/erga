@@ -9,7 +9,7 @@ export { devSignIn, usernameStep } from "./accounts.ts";
 export { setupRoute, TOKEN_FIELD, tokenSteps } from "./setup.ts";
 export { providersOf, type SignIn, signInOf } from "./mode.ts";
 export { accountLookup, authOps, signInChoices } from "./settings.ts";
-export { RULE_LABEL, usernameFacts, type UsernameFacts, whyNot } from "./usernames.ts";
+export { RULE_ABOUT, RULE_ENDS, RULE_LABEL, ruleNow, usernameFacts, type UsernameFacts, whyNot } from "./usernames.ts";
 export { DOMAIN_ERGA, DOMAIN_SIGN_OUT, domainPass, domainSignIn, domainVisitor } from "./domain-pass.ts";
 export { authorize } from "./authorize.ts";
 export { tokensRoutes } from "./tokens-page.ts";

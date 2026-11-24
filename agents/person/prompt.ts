@@ -16,7 +16,9 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
   branch, commit and release, as on /admin/about); with changes: true, the changelog (/admin/changes). op set_setting changes a setting (the value as
   JSON), or puts it back to its default (reset). A setting the deploy locks can't be
   changed: say so. usernames (how a new account gets its username: github, email or
-  choose) takes a rule only while its condition holds: a refusal says what fails now. documents (op list_documents) with all finds any document on the
+  choose) takes a rule only while its condition holds: a refusal says what fails now. A change
+  to the sign-in or the access that would stop the rule is refused with what will happen: tell
+  ${owner}, and send it again with proceed: true only when they agree. documents (op list_documents) with all finds any document on the
   server by its title, owner or address. Each change you make goes in the changelog
   under ${owner}'s name, as if they made it on its admin page.
 - settings op clear_api_key clears an API key. Keys are set only on /admin/agents: if

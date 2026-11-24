@@ -189,14 +189,14 @@ journey("who may sign in, on a server of its own", () => {
       `You signed in with Google as bob.${id}@example.org. Ask an admin of this Erga server to add you, then sign in again. Or sign in with another account.`,
     ]);
     // How a new account gets its username, on the Sign-in page. Until an admin chooses, each new person chooses, as
-    // Amy did. The email prefix can't be chosen here, and says why under it. With the keys: Arrow up from "Users
+    // Amy did. The email prefix can't be chosen here: what it requires is under it. With the keys: Arrow up from "Users
     // choose" passes it, to "GitHub username", which saves by itself.
     const option = (rule: string) => `li.usernames input[value=${rule}]`;
     await page.goto(`${root}/admin/auth?user=tester`);
     expect(await page.isChecked(option("choose"))).toBe(true);
     expect(await page.isDisabled(option("email"))).toBe(true);
-    expect(await page.innerText("li.usernames label:has(input[value=email]) .why")).toContain(
-      "Now: Google is off; GitHub is on; 2 group rules give access."
+    expect(await page.innerText("li.usernames label:has(input[value=email]) .why")).toBe(
+      "Requires either SSO, or OAuth with Google as the only provider, and access limited to a single Google Workspace."
     );
     await page.focus(option("choose"));
     await page.keyboard.press("ArrowUp");
@@ -272,23 +272,39 @@ journey("who may sign in, on a server of its own", () => {
     await page.evaluate(() => {
       (window as unknown as { stayed: boolean }).stayed = true;
     });
-    // Google's switch, with the keys: with two providers on, a GitHub username is one person's no more. The rule stays
-    // chosen, and says in place that it has no effect; with Google off again, it says nothing.
-    const note = () =>
+    // Google's switch, with the keys: with two providers on, a GitHub username is one person's no more, so the page asks
+    // first, with what will happen. Escape: the switch goes back, and the rule stays.
+    const google = 'section.provider[data-provider="google"] input[role=switch]';
+    const asked = () =>
       page
-        .locator("li.usernames .why.warn")
+        .locator("dialog.proceed p")
         .innerText({ timeout: 100 })
         .catch(() => "");
-    const google = 'section.provider[data-provider="google"] input[role=switch]';
+    const now = async () => [
+      await page.isChecked(google),
+      await page.$eval("li.usernames input:checked", (i) => (i as HTMLInputElement).value),
+      await page.isDisabled("li.usernames input[value=github]"),
+    ];
     await page.focus(google);
     await page.keyboard.press("Space");
-    await soon(note).toBe(
-      "Not in effect: new users choose their usernames. Only while GitHub is the only sign-in provider. Now: Google is on."
+    await soon(asked).toBe(
+      "Usernames are assigned based on GitHub username, which requires GitHub to be the only provider. If you proceed, each new user will choose their own username."
     );
-    expect(await page.isChecked("li.usernames input[value=github]")).toBe(true);
+    await page.keyboard.press("Escape");
+    await soon(async () => [...(await now()), await markOf(page)]).toEqual([false, "github", false, "saved"]);
+    // Enter, on Proceed: Google is on, each new user chooses, and the GitHub username can't be chosen.
     await page.focus(google);
     await page.keyboard.press("Space");
-    await soon(note).toBe("");
+    await soon(asked).not.toBe("");
+    await page.keyboard.press("Enter");
+    await soon(now).toEqual([true, "choose", true]);
+    // Google off again asks nothing: no rule is set. The GitHub username again, for the sign-in below.
+    await page.focus(google);
+    await page.keyboard.press("Space");
+    await soon(now).toEqual([false, "choose", false]);
+    await page.focus("li.usernames input[value=choose]");
+    await page.keyboard.press("ArrowUp");
+    await until(async () => (await now())[1] == "github" && (await markOf(page)) == "saved", 5000, "the rule saved again");
     // No Save button. The Client ID alone waits for the secret (the gray circle); with both, they save when the
     // typing pauses.
     expect(await page.locator(`${CARD} button:text-is("Save")`).count()).toBe(0);

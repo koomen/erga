@@ -103,7 +103,7 @@ ol.rows > :is(li.setting, li.provider, li.deploy-secret) { display: grid; grid-t
 .setting .value .unit { min-width: 3em; font-size: 13px; color: var(--soft); }
 .setting .value select { min-width: 6.5em; }
 .setting .value .input.pick { width: 9em; }
-/* A setting that is a radio (Sign-in: usernames): its options under its name, each with why it can't be chosen now. */
+/* A setting that is a radio (Sign-in: usernames): its options under its name, each with what it does and requires. */
 li.setting.usernames .about { grid-column: 1 / -1; }
 .setting .choices { display: grid; gap: 8px; margin: 10px 0 8px; }
 .setting .choice { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 1.4; color: var(--fg); cursor: pointer; }
@@ -111,7 +111,9 @@ li.setting.usernames .about { grid-column: 1 / -1; }
 .setting .choice.off { cursor: default; }
 .setting .choice.off .what { color: var(--soft); }
 .setting .choice .why { display: block; margin-top: 2px; max-width: 68ch; font-size: 12.5px; line-height: 1.45; color: var(--soft); }
-.setting .choice .why.warn b { color: var(--warn); font-weight: 600; }
+/* The question before a change (client/common/admin-post.ts, proceeds): Erga's dialog (client/inline/app.css). */
+dialog.proceed h2 { margin-bottom: 8px; white-space: normal; }
+dialog.proceed p { margin: 0 0 16px; line-height: 1.5; }
 .keys-mode { min-width: 15em; }
 /* The Sites row: each domain, the document that has it, and whether it is published. */
 ol.rows > li.sites { display: block; }

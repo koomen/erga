@@ -10,8 +10,9 @@
 //   choose   each new person chooses (/auth/username).
 //
 // The condition is asked when the rule is set (set_setting refuses a rule that can't apply) and again at each first
-// sign-in: a rule whose condition stopped (a second provider went on, a second group rule came) stays the setting's
-// value, but has no effect until the condition holds again. New people choose meanwhile, and the page says so.
+// sign-in. An admin's change that would stop the rule that is set (a second provider on, a second group rule) asks
+// first: after it, the rule is choose (server/operations/admin.ts, keepsUsernames; RULE_ENDS has the question). A rule
+// whose condition stopped another way (the deploy's sign-in changed) has no effect, and the page shows choose.
 //
 // A rule never makes a second account of one name: a name that is not free (an older account's, a reserved one, two
 // addresses that give the same name) goes to the username step, where its person chooses another (accounts.ts).
@@ -32,14 +33,27 @@ export interface UsernameFacts {
   anyone: Anyone;
 }
 
-/** Each rule, as the page names it. */
+/** Each rule, as the page names it, and the line under its name: what it does, and what it requires. */
 export const RULE_LABEL: Record<UsernameRule, string> = {
   github: "GitHub username",
   email: 'Email prefix, e.g. "pete" for pete@example.com',
   choose: "Users choose their own usernames",
 };
+export const RULE_ABOUT: Record<UsernameRule, string> = {
+  github: "New users get their GitHub username. Requires GitHub to be the only provider.",
+  email: "Requires either SSO, or OAuth with Google as the only provider, and access limited to a single Google Workspace.",
+  choose: "Each new user chooses a username when they first sign in.",
+};
 
-/** Why a rule can't apply now, for an admin; null: it can. */
+/** What an admin reads before a change that stops the rule that is set: to proceed makes the rule choose. */
+export const RULE_ENDS: Record<Exclude<UsernameRule, "choose">, string> = {
+  github:
+    "Usernames are assigned based on GitHub username, which requires GitHub to be the only provider. If you proceed, each new user will choose their own username.",
+  email:
+    "Usernames are assigned based on email prefix, which requires access limited to a single Google Workspace. If you proceed, each new user will choose their own username.",
+};
+
+/** What stops a rule now, for an admin ("Google is off; GitHub is on"); null: it can apply. */
 export function whyNot(rule: UsernameRule, f: UsernameFacts): string | null {
   if (rule == "choose") return null;
   const sso = f.ways.includes(SSO);
@@ -51,14 +65,16 @@ export function whyNot(rule: UsernameRule, f: UsernameFacts): string | null {
         ...(f.ways.includes(provider) ? [] : [`${providerName(provider)} is off`]),
         ...f.ways.filter((w) => w != provider).map((w) => `${providerName(w)} is on`),
       ];
-  if (rule == "github") return now.length ? `Only while GitHub is the only sign-in provider. Now: ${now.join("; ")}.` : null;
-  if (f.rules.length != 1) now.push(f.rules.length ? `${f.rules.length} group rules give access` : "no group rule gives access");
-  else if (f.rules[0].kind != "workspace") now.push("the one group rule is a GitHub organization");
-  if (anyoneAccess(f.anyone) != "none") now.push("Anyone can sign in");
-  return now.length
-    ? `Only while Google is the only sign-in provider, and one Google Workspace is the only way in: the only group rule on the Access page, with Anyone at "No access" or "Can view public documents". Now: ${now.join("; ")}.`
-    : null;
+  if (rule == "email") {
+    if (f.rules.length != 1) now.push(f.rules.length ? `${f.rules.length} group rules give access` : "no group rule gives access");
+    else if (f.rules[0].kind != "workspace") now.push("the one group rule is a GitHub organization");
+    if (anyoneAccess(f.anyone) != "none") now.push("Anyone can sign in");
+  }
+  return now.length ? now.join("; ") : null;
 }
+
+/** The rule that names a new account now: the one that is set, or choose while it can't apply. */
+export const ruleNow = (rule: UsernameRule, f: UsernameFacts): UsernameRule => (whyNot(rule, f) ? "choose" : rule);
 
 /**
  * The username the rule gives this person, as their sign-in names them; null: they choose (the rule is choose, its

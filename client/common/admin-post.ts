@@ -14,6 +14,28 @@ export async function post(action: string, fields: Record<string, string>): Prom
   return body;
 }
 
+/**
+ * Runs a change to the sign-in or the access that may stop the usernames rule that is set. The server refuses such a
+ * change (428) with what will happen (server/operations/admin.ts, keepsUsernames): the admin reads it in a dialog.
+ * Proceed runs the change again with `proceed`; Cancel (or Escape) answers null, and nothing changed.
+ */
+export async function proceeds<T>(run: (proceed: { proceed?: true }) => Promise<T>): Promise<T | null> {
+  try {
+    return await run({});
+  } catch (err) {
+    if ((err as { status?: number }).status != 428) throw err;
+    const d = Object.assign(document.createElement("dialog"), { className: "proceed" });
+    d.setAttribute("aria-labelledby", "proceed-title");
+    d.innerHTML = `<h2 id="proceed-title">Change how usernames are assigned?</h2><p></p><form method="dialog" class="buttons"><button value="">Cancel</button><button class="primary" value="proceed" autofocus>Proceed</button></form>`;
+    d.querySelector("p")!.textContent = (err as Error).message;
+    document.body.append(d);
+    d.showModal();
+    await new Promise((closed) => d.addEventListener("close", closed, { once: true }));
+    d.remove();
+    return d.returnValue == "proceed" ? run({ proceed: true }) : null;
+  }
+}
+
 /** `text` in `hint`, red when it's an error. */
 export const say = (hint: Element, text: string, error?: boolean) => {
   hint.textContent = text;

@@ -199,9 +199,10 @@ export const SETTINGS = {
   }),
   usernames: setting<UsernameRule>({
     label: "Usernames are assigned based on",
-    description: "A name that is taken or reserved: that user chooses. Existing accounts keep their usernames.",
+    description:
+      "Changing this setting does not affect existing accounts. If a new user signs in and their default username is already taken, they'll be asked to choose a username.",
     values:
-      "How a new account gets its username. github: the GitHub username; only while GitHub is the only sign-in provider that is on. email: the part of the email address before the @ (pete@example.com: pete); only with single sign-on, or while Google is the only provider that is on, one Google Workspace rule is the only group rule, and Anyone's level is none or public (a user outside that Workspace chooses). choose: each new user chooses. A rule is set only while its condition holds. When the condition stops later, the rule stays but has no effect, and new users choose (settings says which rule is in effect).",
+      "How a new account gets its username. github: the GitHub username; only while GitHub is the only sign-in provider that is on. email: the part of the email address before the @ (pete@example.com: pete); only with single sign-on, or while Google is the only provider that is on, one Google Workspace rule is the only group rule, and Anyone's level is none or public (a user outside that Workspace chooses). choose: each new user chooses. A rule is set only while its condition holds. A change to the sign-in or the access that would stop the rule (set_sign_in, set_access, anyone_access) is refused until it is sent with proceed: the rule then becomes choose. When the deploy's sign-in stops the condition, the rule stays but has no effect, and new users choose (settings says which rule is in effect).",
     default: "choose",
     parse: (v) => {
       const rule = typeof v == "string" ? v.trim().toLowerCase() : v;
