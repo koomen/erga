@@ -1,6 +1,8 @@
 // A pretend Cloudflare, for testing the deploy pipeline without a real account:
 // the API calls the deploy makes, and Registrar. It is Cloudflare's API only: no deployed server answers here, as no
-// deploy and no ops command asks one. It keeps what it was
+// deploy and no ops command asks one. The one exception: a name of the documents' pages on a zone answers (a 200 with
+// nothing) when its zone has the wildcard record and the route to a Worker, as setup asks it before it deletes the
+// Worker of the old pages address (deploy/own/first.ts, removeOldPages). It keeps what it was
 // asked to do in `state`, which the tests read.
 //
 // Its requests and answers follow Cloudflare's OpenAPI schema
@@ -48,7 +50,7 @@ import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
 import type { Fetch } from "../deploy/deployer/cloudflare-api";
 import { hex, randomBytes } from "../shared/bytes";
-import { accountZones, zones } from "./mock-cloudflare-zones";
+import { accountZones, pagesWorkerAt, zones } from "./mock-cloudflare-zones";
 import { seedFleet } from "./mock-cloudflare-fleet";
 import { D1Error, d1Query } from "./mock-cloudflare-d1";
 import { sleep } from "../shared/time";
@@ -457,6 +459,7 @@ export function mockCloudflare(
       if (!upload && !token.startsWith("mock-")) return fail(401, 1000, "Invalid API Token");
       return api(req, path, upload ? subFor ?? "" : token);
     }
+    if (pagesWorkerAt(state, url.hostname)) return new Response("", { status: 200 });
     return new Response(`This mock is Cloudflare's API only: nothing answers at ${url.host}`, { status: 502 });
   };
   return { fetch, state };

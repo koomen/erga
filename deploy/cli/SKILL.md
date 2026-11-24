@@ -297,7 +297,9 @@ the staging instance runs, and a release of `main` is what production runs.
   admin already, a left-out option changes nothing, and each given option applies or stops the command: `--sign-in
   sso` moves it to single sign-on, `--pages <domain>` moves the documents' pages off the shared `workers.dev` address,
   and `--keep <username>=<address>` (it can repeat) says which account each person keeps, by their address at the
-  organization's sign-in. Its accounts and its documents stay.
+  organization's sign-in. Its accounts and its documents stay. The move of the pages makes the domain's wildcard DNS
+  record and the Worker's route there (a deploy makes neither), and deletes the Worker of the old address only when a
+  page answers on the domain. A run again makes a record or a route that the pages' domain lacks.
 
 ## The rules
 

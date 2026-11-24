@@ -14,6 +14,8 @@ const ADA = "a".repeat(32);
 const CF: Partial<Seen> = { login: { ok: true }, choices: [{ id: ADA, name: "Ada Lovelace" }], zones: ["example.com"], account: ADA };
 const LIVE: Partial<Seen> = { live: { version: "abc123", healthy: true, signIn: "ok" } };
 const seen = (s: Partial<Seen>): Seen => ({ ...nothingSeen, ...s });
+/** The pages' zone has their wildcard DNS record, and their route to the instance's Worker. */
+const THERE = { record: true, route: true, taken: null };
 const options = (...args: string[]) => readOptions(HOST, args);
 /** The answers of the options, and the state after each look, as the command folds them in. */
 function run(a: Answers, ...looks: Partial<Seen>[]) {
@@ -87,8 +89,29 @@ test("an instance with an admin: a left-out option changes nothing, a given one 
     sso: varsOf(options(...to).answers, undefined).SSO,
     pages: "example-pages.com",
   };
-  const moved = { ...kept, vars: varsOf(options(...to).answers, undefined), pages: "example-pages.com", live: onDomain };
+  const moved = {
+    ...kept,
+    vars: varsOf(options(...to).answers, undefined),
+    pages: "example-pages.com",
+    live: onDomain,
+    pagesAddress: THERE,
+  };
   expect(at(keep, { ...moved, accounts: was.accounts }).state).toEqual({ at: "keep", rows });
+  // The pages' zone lacks their DNS record or their route (a move from before the move made them): the run makes them
+  // first. The Worker of the shared address never goes before them, and a run with no option is not done either.
+  const gone = { record: false, route: false, taken: null };
+  for (const lacks of [gone, { ...THERE, record: false }, { ...THERE, route: false }])
+    expect(at(keep, { ...moved, pagesAddress: lacks }).state).toEqual({ at: "pages" });
+  expect(at(base, { ...moved, pagesWorker: false, pagesAddress: gone }).state).toEqual({ at: "pages" });
+  const lost = seen({ ...moved, pagesWorker: false, pagesAddress: gone });
+  expect(moveText(at(base, moved).answers, lost, { worker: "erga-example-com", again: "" })[1]).toBe(
+    "• the documents' pages are on example-pages.com, and that domain has no DNS record *.example-pages.com and no route *.example-pages.com/* to the Worker erga-example-com: no page answers there. I make what it lacks"
+  );
+  // Another Worker has the pages' route: the user decides.
+  expect(at(base, { ...moved, pagesAddress: { record: true, route: false, taken: "shop" } }).state).toEqual({
+    at: "stop",
+    why: "*.example-pages.com/* sends requests to another Worker (shop), so the documents' pages do not answer on example-pages.com. Remove that route on Cloudflare, then run this again.",
+  });
   // Then the Worker of the shared address goes (only when the server is healthy on the domain), and the run is done.
   expect(at(keep, moved).state).toEqual({ at: "old-pages" });
   expect(at(keep, { ...moved, live: { ...onDomain, healthy: false } }).state).toEqual({ at: "done" });
@@ -193,7 +216,7 @@ test("an instance with an admin: a left-out option changes nothing, a given one 
     `${HOST} runs, with an admin. I will change it as you chose. Its accounts and its documents stay:`,
     `• sign-in: from GitHub or Google sign-in to your organization's sign-in, with Cloudflare Access in front of ${HOST} (the team acme). After the deploy, Erga takes only a request with Access's proof for the application with your Audience tag. GitHub and Google sign-in stop`,
     `• before I deploy, the Access application must be in front of ${HOST}: with none, or with a wrong Audience tag, nobody comes in until a run again with the right one. The steps, in Cloudflare Zero Trust, in this order: 1. Add a self-hosted Access application for ${HOST}, with the policy that lets your people in. It may go in front of a server that runs: people pass Access first, then sign in as before. 2. Add a second Access application for these paths of ${HOST}, with one policy (Bypass, Everyone): /_edge/vouch, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /oauth/token, /oauth/register, /mcp. They carry no Access sign-in (agents use them), and Erga checks its own tokens there. 3. Copy the Audience tag (AUD) of the first application: it is --aud. The team's name, the part before .cloudflareaccess.com, is --team.`,
-    `• the documents' pages: from the shared workers.dev address to example-pages.com, each document on a subdomain of its own. A document keeps its address on ${HOST}. I delete the Worker of the old address (erga-example-com-pages): that address answers no more, and a page that is open there must be loaded again`,
+    `• the documents' pages: from the shared workers.dev address to example-pages.com, each document on a subdomain of its own. I make the DNS record *.example-pages.com and the Worker's route there before the deploy. A document keeps its address on ${HOST}. When a page answers on example-pages.com, I delete the Worker of the old address (erga-example-com-pages): that address answers no more, and a page that is open there must be loaded again`,
     `• the settings' defaults: Anyone's level becomes "none", and sharing with anyone with the link is off. A setting that an admin set on the server stays as it is`,
     "• its 3 accounts: with single sign-on a person is known by their email address there. Each person takes their account at their first sign-in:",
     "  - by the address that you gave (--keep): koomen (an admin)",
@@ -225,6 +248,7 @@ test("an instance with no admin yet: --pages and --branch are answers too, and -
     ...built,
     pages: "example-pages.com",
     live: { version: "abc123", healthy: true, signIn: "ok" as const, sso: "", pages: "example-pages.com" },
+    pagesAddress: THERE,
   };
   expect(run(pages, CF2, onDomain).state).toEqual({ at: "old-pages" });
   expect(run(pages, CF2, { ...onDomain, pagesWorker: false }).state).toEqual({ at: "page" });
@@ -321,6 +345,7 @@ test("a move that did not end, and an entry that differs from the release: the r
     pagesWorker: true,
     keepable: true,
     accounts: [{ login: "koomen", admin: true, sso: false, emails: [], keeps: "pete@example.com" }],
+    pagesAddress: THERE,
   };
   const stale = { ...entry, live: { version: "abc123", healthy: true, signIn: "ok" as const, sso: "", pages: "shared" } };
   // The same options again end the move: a deploy of the entry. The pages' Worker stays until the release has the domain.
@@ -336,7 +361,7 @@ test("a move that did not end, and an entry that differs from the release: the r
   });
   // With no admin yet: an update of the pages that did not end deploys again, before the Worker goes.
   const a = options(...base, "--pages", "example-pages.com").answers;
-  const fresh = { ...CF2, vars: varsOf(a, undefined), pages: "example-pages.com", pagesWorker: true };
+  const fresh = { ...CF2, vars: varsOf(a, undefined), pages: "example-pages.com", pagesWorker: true, pagesAddress: THERE };
   expect(run(a, CF2, { ...fresh, live: { version: "abc123", healthy: true, signIn: "ok", sso: "", pages: "shared" } }).state).toEqual({
     at: "build",
   });

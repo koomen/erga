@@ -49,8 +49,9 @@
 //
 // An instance that has an admin already keeps its accounts and its documents. There a left-out option changes
 // nothing, and a given one applies: --sign-in sso (with its options) moves it to the organization's single sign-on,
-// and --pages <domain> moves the documents' pages from the shared workers.dev address to that domain (the Worker of
-// the old address goes). With single sign-on a person is known by their email address there, so each account keeps
+// and --pages <domain> moves the documents' pages from the shared workers.dev address to that domain (the move makes
+// the domain's wildcard DNS record and the Worker's route there; the Worker of the old address goes when a page
+// answers on the domain). A run again makes a record or a route that the pages' domain lacks. With single sign-on a person is known by their email address there, so each account keeps
 // its person by an address: --keep <username>=<address>; an account whose sign-in before verified one address
 // (Google's) keeps it by that one. GitHub's sign-in gives no address: the move stops until an admin's account has one.
 // The dry run says each change, and which accounts have no address yet.
@@ -71,8 +72,20 @@ import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "..
 import type { AutoMode } from "../deployer/tags";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
-import { cloudflare, type Connection, entryFacts, observe } from "./facts";
-import { adoptedEntry, adoptEntry, autoOnCloudflare, firstDeploy, moveDeploy, queryOf, secretsFor, setDeployer, writeKeeps } from "./first";
+import { addressOf, cloudflare, type Connection, entryFacts, observe } from "./facts";
+import {
+  adoptedEntry,
+  adoptEntry,
+  autoOnCloudflare,
+  firstDeploy,
+  makePagesAddress,
+  moveDeploy,
+  queryOf,
+  removeOldPages,
+  secretsFor,
+  setDeployer,
+  writeKeeps,
+} from "./first";
 import {
   accountName,
   autoText,
@@ -354,7 +367,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         else {
           const other = tracksOther(a, entry);
           if (other) return fail(other[0], other[1]);
-          seen = { ...seen, ...entryFacts(entry) };
+          seen = { ...seen, ...entryFacts(entry), pagesAddress: await addressOf(c.cf, entry) };
           a = { ...a, repo: entry.repo, branch: entry.branch };
         }
       }
@@ -371,7 +384,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
       say(`PLAN  ${a.host} runs. The answers change ${changesText(state)}: I will write them into .erga/config.json and deploy it again.`);
       return "dry";
     }
-    if (o.dryRun && (state.at == "move" || state.at == "keep" || state.at == "old-pages")) {
+    if (o.dryRun && (state.at == "move" || state.at == "keep" || state.at == "pages" || state.at == "old-pages")) {
       for (const c of checksOf(a, seen)) pass(c);
       for (const l of moveText(a, seen, { worker, again: real(o) })) say(`PLAN  ${l}`);
       const deployer = deployerOf(a, seen);
@@ -486,22 +499,19 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait" | "pag
         );
         break;
       }
+      case "pages": {
+        const has = `The documents' pages of ${a.host} are on ${seen.pages}: it has the DNS record *.${seen.pages} and the route to the Worker now`;
+        if (again) return fail(`${seen.pages} still lacks the DNS record or the route of the documents' pages.`, o.again);
+        const why = await makePagesAddress(await connect(), DIR, a.host).catch((e: Error) => fail(e.message, o.again));
+        if (why) return fail(`${has}, but no page answers there yet (${why}).`, `Wait a minute, then: ${o.again}`);
+        pass(`${has}, and a page answers there.`);
+        break;
+      }
       case "old-pages": {
         if (again) return fail(`The Worker ${worker}-pages is still in the account.`, o.again);
-        const { cf } = await connect();
-        await cf
-          .call(
-            "DELETE",
-            `/accounts/${a.account}/workers/scripts/${worker}-pages?force=true`,
-            "delete the Worker of the old pages address",
-            undefined,
-            {
-              allow404: true,
-            }
-          )
-          .catch((e: Error) => fail(e.message, o.again));
+        await removeOldPages(await connect(), DIR, a.host).catch((e: Error) => fail(e.message, `Fix what it names, then: ${o.again}`));
         pass(
-          `The documents' pages of ${a.host} are on ${seen.pages}. The Worker of the old shared address (${worker}-pages) is deleted: that address answers no more.`
+          `The documents' pages of ${a.host} are on ${seen.pages}: it has the DNS record *.${seen.pages} and the route to the Worker, and a page answers there. The Worker of the old shared address (${worker}-pages) is deleted: that address answers no more.`
         );
         break;
       }

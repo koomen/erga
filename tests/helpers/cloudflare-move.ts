@@ -8,7 +8,8 @@
 // documents' pages on the shared workers.dev address. It has three accounts: koomen (an admin), ada and bo.
 //
 // The command's .erga folder is beside the clone that GIT_DIR names (deploy/cli/config.ts, ergaDir). After each run's
-// lines comes one line, MARK and JSON: what the entry and the account have then.
+// lines comes one line, MARK and JSON: what the entry and the account have then. A run that is only LOSE runs no
+// command: it deletes the pages' DNS record and their route on PAGES, as a move from before the move made them left it.
 
 import { type CloudflareEntry, entryOf, readConfig } from "../../deploy/cli/config";
 import { boundDatabase } from "../../deploy/deployer/cloudflare";
@@ -24,6 +25,9 @@ import { writePass } from "./pass.ts";
 export const MARK = "CLOUDFLARE-MOVE-RAN ";
 export const HOST = "move.example.com";
 export const WORKER = "move-example-com";
+/** The domain that the runs move the documents' pages to: a zone of the mock's account with nothing on it. */
+export const PAGES = "example-pages-next.com";
+export const LOSE = "!lose-the-pages-address";
 
 if (import.meta.main) {
   // GIT_DIR chose the .erga folder (DIR, read at import). The commits and the release are this checkout's.
@@ -33,14 +37,17 @@ if (import.meta.main) {
   const acc = `/accounts/${FLEET_ACCOUNT}`;
   await prepareRelease();
   writePass(DIR, Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT }).stdout.toString().trim());
-  const zones = (
-    (await c.cf.call<{ name: string }[]>("GET", `/zones?account.id=${FLEET_ACCOUNT}&per_page=50`, "list the domains")) ?? []
-  ).map((z) => z.name);
+  const zones =
+    (await c.cf.call<{ id: string; name: string }[]>("GET", `/zones?account.id=${FLEET_ACCOUNT}&per_page=50`, "list the domains")) ?? [];
+  const zone = `/zones/${zones.find((z) => z.name == PAGES)!.id}`;
+  const records = async () => (await c.cf.call<{ id: string; name: string }[]>("GET", `${zone}/dns_records`, "read the records")) ?? [];
+  const routes = async () =>
+    (await c.cf.call<{ id: string; pattern: string; script: string }[]>("GET", `${zone}/workers/routes`, "read the routes")) ?? [];
   const subdomain = (await c.cf.call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read the subdomain"))?.subdomain ?? null;
   await firstDeploy({
     dir: DIR,
     answers: { ...noAnswers(HOST), where: "cloudflare", account: FLEET_ACCOUNT, deploys: "local" },
-    seen: { zones, subdomain, held: [] },
+    seen: { zones: zones.map((z) => z.name), subdomain, held: [] },
     net: c.net,
     token: c.token,
     print: () => {},
@@ -57,6 +64,11 @@ if (import.meta.main) {
     });
 
   for (const run of JSON.parse(process.argv[2]) as string[][]) {
+    if (run[0] == LOSE) {
+      for (const r of await records()) await c.cf.call("DELETE", `${zone}/dns_records/${r.id}`, "delete the record");
+      for (const r of await routes()) await c.cf.call("DELETE", `${zone}/workers/routes/${r.id}`, "delete the route");
+      continue;
+    }
     await setupMain([HOST, "--host", "cloudflare", ...run]);
     const entry = entryOf(readConfig(DIR), HOST) as CloudflareEntry;
     const scripts = (await c.cf.call<{ id: string }[]>("GET", `${acc}/workers/scripts`, "list the Workers")) ?? [];
@@ -74,6 +86,8 @@ if (import.meta.main) {
         pagesDomain: text("PAGES_DOMAIN"),
         pagesHost: text("PAGES_HOST"),
         pagesWorker: scripts.some((s) => s.id == `${WORKER}-pages`),
+        records: (await records()).map((r) => r.name),
+        routes: (await routes()).map((r) => `${r.pattern} ${r.script}`),
         keeps: accounts.filter((x) => x.keeps).map((x) => `${x.login}=${x.keeps}`),
       })}`
     );

@@ -2,7 +2,7 @@
 // Cloudflare gave it, and the ones it had before), their DNS records, routes and certificates; Workers' custom domains;
 // and Registrar. As Cloudflare does: a custom domain on a name with a DNS record of its own is refused unless the
 // request says override_existing_dns_record; a new custom domain answers only once its certificate is there (`certMs`
-// after it was added).
+// after it was added). A name of a zone's pages answers (pagesWorkerAt): the one thing here that is no API call.
 //
 // Registrar: a name with "taken" in it is taken, ".xyz" can't be registered through the API, ".dev" costs 12.18 USD
 // and anything else 10.44.
@@ -19,6 +19,23 @@ interface Answers {
   randomHex: (n: number) => string;
   /** How long a new custom domain waits for its certificate. */
   certMs: number;
+}
+
+/** A route's id: fixed by its zone and its pattern, here. */
+export const routeId = (zone: string, pattern: string) => createHash("md5").update(`route:${zone}:${pattern}`).digest("hex");
+
+/**
+ * The Worker that answers at `host`, a name of the documents' pages: an active zone has a wildcard DNS record over the
+ * name, and a route for it to a Worker of the account. Else null: nothing answers there.
+ */
+export function pagesWorkerAt(state: MockState, host: string): string | null {
+  const over = (name: string) => name.startsWith("*.") && host.endsWith(name.slice(1));
+  for (const z of state.zones.filter((z) => z.status == "active")) {
+    if (!(state.dns[z.id] ?? []).some((r) => over(r.name))) continue;
+    const route = (state.routes[z.id] ?? []).find((r) => r.pattern.endsWith("/*") && over(r.pattern.slice(0, -2)));
+    if (route && state.scripts[route.script]) return route.script;
+  }
+  return null;
 }
 
 /** A custom domain whose certificate isn't there yet: a browser (or fetch) can't reach it. */
@@ -145,12 +162,19 @@ export async function zones(state: MockState, a: Answers, m: string, path: strin
     ]);
   if (rest == "/workers/routes") {
     const list = (state.routes[zone] ??= []);
-    if (m == "GET") return ok(list);
+    if (m == "GET") return ok(list.map((x) => ({ id: routeId(zone, x.pattern), ...x })));
     if (m == "POST") {
       const d = await body();
       list.push({ pattern: d.pattern, script: d.script });
-      return ok({ id: a.randomHex(16), ...d });
+      return ok({ id: routeId(zone, d.pattern), ...d });
     }
+  }
+  const route = /^\/workers\/routes\/([0-9a-f]+)$/.exec(rest);
+  if (route && m == "DELETE") {
+    const list = (state.routes[zone] ??= []);
+    if (!list.some((x) => routeId(zone, x.pattern) == route[1])) return fail(404, 10020, "Route not found.");
+    state.routes[zone] = list.filter((x) => routeId(zone, x.pattern) != route[1]);
+    return ok({ id: route[1] });
   }
   return null;
 }

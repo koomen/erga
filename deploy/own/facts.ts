@@ -9,6 +9,7 @@ import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { d1, d1Api, healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
 import { keptLogin } from "../local-credential";
 import { DEPLOYER_TAG, deployerName } from "../pipeline/deployer";
+import { pagesAddressOf } from "../pipeline/pipeline";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, type Endpoints, sso, varsOf, viaAccess, zoneOf } from "./plan";
 import { accountsOf, adminOn, databaseOf } from "./first";
@@ -94,6 +95,18 @@ export const entryFacts = (
     ? { pages: entry.pages.kind == "shared" ? "shared" : (entry.pages.domain ?? entry.pages.zoneName), entryAccount: entry.account }
     : {}),
 });
+
+/**
+ * What the zone of an entry's pages has of their address (pipeline.ts, pagesAddressOf), or null: the pages are on the
+ * shared address. A zone that gives no answer has none that this look saw: the pages step reads it again, and says why.
+ */
+export const addressOf = async (cf: Cloudflare, entry: Entry | null): Promise<Seen["pagesAddress"]> =>
+  entry && !isAws(entry) && entry.pages.kind == "zone"
+    ? pagesAddressOf(cf, { accountId: entry.account, workerName: entry.worker, pages: entry.pages }).then(
+        ({ record, route, taken }) => ({ record, route, taken }),
+        () => ({ record: false, route: false, taken: null })
+      )
+    : null;
 
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
 export async function observe(a: Answers, dir = DIR, connect = cloudflare): Promise<Seen> {
@@ -191,6 +204,7 @@ export async function observe(a: Answers, dir = DIR, connect = cloudflare): Prom
     seen.admin = !!(await adminOn(cf, acc, worker).catch(() => null));
     seen.deployer = !!scripts.find((x) => x.id == deployerName(worker))?.tags?.includes(DEPLOYER_TAG);
     seen.pagesWorker = !!scripts.find((x) => x.id == `${worker}-pages`)?.tags?.includes(WORKER_TAG);
+    seen.pagesAddress = await addressOf(cf, entry);
     // An instance with an admin has accounts, which a change of its sign-in must keep (flow.ts, keepsOf).
     if (seen.admin) {
       const db = await databaseOf(cf, acc, worker);

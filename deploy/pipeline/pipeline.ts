@@ -121,6 +121,62 @@ export async function boundDatabaseName(cf: Cloudflare, acc: string, worker: str
  */
 export const PAGES_RECORD = { type: "AAAA", content: "100::" } as const;
 
+/** A target with the documents' pages on a zone: what the pages' address there is made from. */
+export type PagesTarget = Pick<Target, "accountId" | "workerName"> & { pages: Extract<Target["pages"], { kind: "zone" }> };
+
+/**
+ * What the pages' zone has of their address, read from Cloudflare: the wildcard DNS record (`record`) and the route of
+ * every name under it to the target's Worker (`route`). `taken`: the route's pattern sends requests to another Worker
+ * (its name; "none": a route that turns Workers off).
+ */
+export async function pagesAddressOf(cf: Cloudflare, target: PagesTarget) {
+  const zoneId = target.pages.zoneId ?? (await zoneIdOf(cf, target.accountId, target.pages.zoneName));
+  const zone = `/zones/${zoneId}`,
+    name = target.pages.domain ?? target.pages.zoneName,
+    pattern = `*.${name}/*`;
+  const records =
+    (await cf.call<{ id: string }[]>(
+      "GET",
+      `${zone}/dns_records?type=AAAA&name=${encodeURIComponent(`*.${name}`)}`,
+      `read ${target.pages.zoneName}'s DNS records`
+    )) ?? [];
+  const routes =
+    (await cf.call<{ pattern: string; script?: string }[]>(
+      "GET",
+      `${zone}/workers/routes`,
+      `read ${target.pages.zoneName}'s Worker routes`
+    )) ?? [];
+  const route = routes.find((r) => r.pattern == pattern);
+  const mine = route?.script == target.workerName;
+  return { zone, name, pattern, record: records.length > 0, route: mine, taken: route && !mine ? (route.script ?? "none") : null };
+}
+
+/**
+ * The pages' address on their zone: the wildcard DNS record and the Worker's route, each made if the zone lacks it.
+ * The pipeline's pages step, and setup's move of a running instance to a pages domain (deploy/own/first.ts). A route
+ * there to another Worker stops it, before it makes anything. The answer: what it made.
+ */
+export async function ensurePagesAddress(cf: Cloudflare, target: PagesTarget): Promise<{ name: string; made: ("record" | "route")[] }> {
+  const at = await pagesAddressOf(cf, target);
+  if (at.taken)
+    throw new DeployError({
+      message: `${at.pattern} already sends requests to another Worker (${at.taken}). Remove that route, or pick another domain for pages.`,
+    });
+  if (!at.record)
+    await cf.call("POST", `${at.zone}/dns_records`, `add the wildcard DNS record *.${at.name}`, {
+      ...PAGES_RECORD,
+      name: `*.${at.name}`,
+      proxied: true,
+      comment: "Erga: documents' pages",
+    });
+  if (!at.route)
+    await cf.call("POST", `${at.zone}/workers/routes`, `route ${at.pattern} to the Worker`, {
+      pattern: at.pattern,
+      script: target.workerName,
+    });
+  return { name: at.name, made: [...(at.record ? [] : ["record" as const]), ...(at.route ? [] : ["route" as const])] };
+}
+
 export const targetHost = (t: Pick<Target, "app" | "workerName" | "subdomain">) =>
   t.app.kind == "domain" ? t.app.hostname : `${t.workerName}.${t.subdomain}.workers.dev`;
 export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain">) =>
@@ -361,39 +417,8 @@ export async function runPipeline(
 
     // Documents' pages: a wildcard on their own zone, or the shared workers.dev host (a small Worker handing every request to the app).
     async pages() {
-      if (target.pages.kind == "zone") {
-        const zoneId = target.pages.zoneId ?? (await zoneIdOf(cf, target.accountId, target.pages.zoneName));
-        const zone = `/zones/${zoneId}`,
-          name = target.pages.domain ?? target.pages.zoneName,
-          pattern = `*.${name}/*`;
-        const records =
-          (await cf.call<{ id: string }[]>(
-            "GET",
-            `${zone}/dns_records?type=AAAA&name=${encodeURIComponent(`*.${name}`)}`,
-            `read ${target.pages.zoneName}'s DNS records`
-          )) ?? [];
-        if (!records.length)
-          await cf.call("POST", `${zone}/dns_records`, `add the wildcard DNS record *.${name}`, {
-            ...PAGES_RECORD,
-            name: `*.${name}`,
-            proxied: true,
-            comment: "Erga: documents' pages",
-          });
-        const routes =
-          (await cf.call<{ pattern: string; script?: string }[]>(
-            "GET",
-            `${zone}/workers/routes`,
-            `read ${target.pages.zoneName}'s Worker routes`
-          )) ?? [];
-        const route = routes.find((r) => r.pattern == pattern);
-        if (route && route.script != target.workerName)
-          throw new DeployError({
-            message: `${pattern} already sends requests to another Worker (${route.script ?? "none"}). Remove that route, or pick another domain for pages.`,
-          });
-        if (!route)
-          await cf.call("POST", `${zone}/workers/routes`, `route ${pattern} to the Worker`, { pattern, script: target.workerName });
-        return `https://<document>.${name}`;
-      }
+      if (target.pages.kind == "zone")
+        return `https://<document>.${(await ensurePagesAddress(cf, { ...target, pages: target.pages })).name}`;
       const proxy = new FormData();
       const name = `${target.workerName}-pages`;
       proxy.set(

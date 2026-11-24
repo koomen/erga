@@ -1,12 +1,12 @@
 // The setup of a new instance, as one state machine (`bun erga setup <host> --host ... --deploys ...`). Pure: no
 // network, no files.
 //
-//   login > (adopt) > (stop) > (app) > build > (update) > (old-pages) > (deployer) > page > done
+//   login > (adopt) > (stop) > (app) > build > (update) > (pages) > (old-pages) > (deployer) > page > done
 //
 // An instance that has an admin already is what it is, with its accounts and its documents: there a left-out option
 // changes nothing, and each given option applies, or the command stops and says why. No answer is ignored:
 //
-//   login > (adopt) > (stop) > (app) > (keep) > (move) > (keep) > (old-pages) > (deployer) > done
+//   login > (adopt) > (stop) > (app) > (keep) > (move) > (keep) > (pages) > (old-pages) > (deployer) > done
 //
 // move: the answers change the instance's sign-in (to the organization's single sign-on, or to another setting of
 // it), or the documents' pages (from the shared workers.dev address to a domain): the command writes the change into
@@ -14,8 +14,11 @@
 // one that made their account, so each account keeps its person by their address at the organization's sign-in
 // (--keep <username>=<address>; an account whose sign-in before verified one address keeps it by that one). The
 // command writes a row for each into the instance's database (first.ts, writeKeeps), before the move when the release
-// that runs knows such rows, else after it. old-pages: the pages moved to a domain, and the Worker of the shared
-// address is still in the account: the command deletes it.
+// that runs knows such rows, else after it. pages: the pages are on a domain that lacks their wildcard DNS record or
+// their route to the Worker (the move makes both before its deploy; a move from before it did, or a person, left the
+// domain without them): the command makes what it lacks. old-pages: the pages moved to a domain, and the Worker of the
+// shared address is still in the account: the command deletes it, only when the domain has the record and the route,
+// and a page answers there (first.ts, removeOldPages).
 //
 // page: the server runs, with no sign-in and no admin. The command opens the server's setup page in the user's browser
 // (/setup, server/identity/setup.ts), and the user finishes there: GitHub or Google sign-in, the deployer's token (cloud
@@ -131,6 +134,12 @@ export interface Seen {
   keepable: boolean;
   /** Cloudflare: the Worker of the shared pages address (<worker>-pages) is in the account. */
   pagesWorker: boolean;
+  /**
+   * Cloudflare, the entry's pages on a domain: what their zone has of their address (pipeline.ts, pagesAddressOf). Its
+   * wildcard DNS record, and the route to the instance's Worker; `taken`: another Worker that has the route's pattern.
+   * Null: the pages are on the shared address, or the instance does not run.
+   */
+  pagesAddress: { record: boolean; route: boolean; taken: string | null } | null;
 }
 
 export const nothingSeen: Seen = {
@@ -159,6 +168,7 @@ export const nothingSeen: Seen = {
   accounts: null,
   keepable: false,
   pagesWorker: false,
+  pagesAddress: null,
 };
 
 export type State =
@@ -185,7 +195,9 @@ export type State =
   | { at: "move"; vars: string[]; pages: string | null }
   /** With single sign-on: the rows that keep each account for its person, by their address there. */
   | { at: "keep"; rows: Keep[] }
-  /** The pages are on a domain now: the Worker of the shared pages address goes. */
+  /** The pages are on a domain that lacks their DNS record or their route: the command makes them. */
+  | { at: "pages" }
+  /** The pages are on a domain now, with their record and their route: the Worker of the shared pages address goes. */
   | { at: "old-pages" }
   /** The instance runs, and who deploys it is not what --deploys says: the command installs the deployer, or removes it. */
   | { at: "deployer"; do: "install" | "remove" }
@@ -406,12 +418,41 @@ const pagesStop = (a: Answers, from: string): State => ({
   why: `The documents' pages of ${a.host} are on ${from}. Setup moves the pages only from the shared workers.dev address to a domain: give --pages ${from}, as it is.`,
 });
 
+/** What the pages' domain lacks of their address, in words. */
+export const lacksText = (domain: string, worker: string, at: { record: boolean; route: boolean }) =>
+  [...(at.record ? [] : [`no DNS record *.${domain}`]), ...(at.route ? [] : [`no route *.${domain}/* to the Worker ${worker}`])].join(
+    " and "
+  );
+
+/**
+ * The pages are on a domain that lacks their wildcard DNS record or their route to the Worker: no page answers there.
+ * The command makes what it lacks. A route there to another Worker is the user's to remove.
+ */
+const pagesAddress = (_a: Answers, s: Seen): State | null =>
+  !s.pagesAddress || (s.pagesAddress.record && s.pagesAddress.route)
+    ? null
+    : s.pagesAddress.taken
+      ? {
+          at: "stop",
+          why: `*.${s.pages}/* sends requests to another Worker (${s.pagesAddress.taken}), so the documents' pages do not answer on ${s.pages}. Remove that route on Cloudflare, then run this again.`,
+        }
+      : { at: "pages" };
+
 /**
  * The Worker of the shared pages address, when the Worker is still in the account, and the release that runs has the
- * pages on their domain, healthy. Never from the entry alone: a deploy that did not end leaves the pages on that Worker.
+ * pages on their domain, healthy, with their DNS record and their route there. Never from the entry alone: a deploy
+ * that did not end leaves the pages on that Worker.
  */
 const oldPages = (_a: Answers, s: Seen): State | null =>
-  !!s.pages && s.pages != "shared" && s.pagesWorker && !!s.live?.healthy && s.live.pages == s.pages ? { at: "old-pages" } : null;
+  !!s.pages &&
+  s.pages != "shared" &&
+  s.pagesWorker &&
+  !!s.live?.healthy &&
+  s.live.pages == s.pages &&
+  !!s.pagesAddress?.record &&
+  s.pagesAddress.route
+    ? { at: "old-pages" }
+    : null;
 
 /**
  * What the release that runs lacks of the instance's entry: a run wrote the entry and its deploy did not end (or a
@@ -467,7 +508,7 @@ export function stateOf(a: Answers, s: Seen): State {
       ...(change.pages ? { pages: change.pages.to } : {}),
       ...(change.tracks ? { tracks: true as const } : {}),
     };
-  return oldPages(a, s) ?? deployer ?? { at: "page" };
+  return pagesAddress(a, s) ?? oldPages(a, s) ?? deployer ?? { at: "page" };
 }
 
 /**
@@ -512,7 +553,7 @@ function withAdmin(a: Answers, s: Seen, deployer: State | null): State {
         at: "stop",
         why: `The release that ${a.host} runs can't keep an account for its person yet (its database has no place for it). Deploy a newer release first (bun erga deploy ${a.host}), then run this again.`,
       };
-    return keep ?? oldPages(a, s) ?? deployer ?? { at: "done" };
+    return keep ?? pagesAddress(a, s) ?? oldPages(a, s) ?? deployer ?? { at: "done" };
   }
   const stop = blocked(a, s);
   if (stop) return stop;
@@ -650,7 +691,7 @@ export function accountsText(a: Answers, s: Pick<Seen, "accounts">, again: strin
 }
 
 /**
- * The plan for an instance that runs with an admin, where the answers change it (stateOf: move, keep, old-pages):
+ * The plan for an instance that runs with an admin, where the answers change it (stateOf: move, keep, pages, old-pages):
  * each change, and what stays. `worker`: the instance's Worker. `again`: the command, for the lines that name it.
  */
 export function moveText(a: Answers, s: Seen, o: { worker: string; again: string }): string[] {
@@ -672,7 +713,11 @@ export function moveText(a: Answers, s: Seen, o: { worker: string; again: string
     );
   if (change.pages)
     lines.push(
-      `• the documents' pages: from the shared workers.dev address to ${change.pages.to}, each document on a subdomain of its own. A document keeps its address on ${a.host}. I delete the Worker of the old address (${o.worker}-pages): that address answers no more, and a page that is open there must be loaded again`
+      `• the documents' pages: from the shared workers.dev address to ${change.pages.to}, each document on a subdomain of its own. I make the DNS record *.${change.pages.to} and the Worker's route there before the deploy. A document keeps its address on ${a.host}. When a page answers on ${change.pages.to}, I delete the Worker of the old address (${o.worker}-pages): that address answers no more, and a page that is open there must be loaded again`
+    );
+  else if (pagesAddress(a, s)?.at == "pages")
+    lines.push(
+      `• the documents' pages are on ${s.pages}, and that domain has ${lacksText(s.pages!, o.worker, s.pagesAddress!)}: no page answers there. I make what it lacks${s.pagesWorker ? `. When a page answers there, I delete the Worker of the old pages address (${o.worker}-pages)` : ""}`
     );
   else if (oldPages(a, s))
     lines.push(`• I delete the Worker of the old pages address (${o.worker}-pages): the pages are on ${s.pages} now`);

@@ -14,8 +14,9 @@
 
 import { randomBytes } from "node:crypto";
 import * as Effect from "effect/Effect";
-import { type CloudflareEntry, type Config, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
-import { type DeployOptions, deployInstance } from "../cli/deploy";
+import * as Schedule from "effect/Schedule";
+import { type CloudflareEntry, type Config, type Entry, entryOf, isAws, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type DeployOptions, deployInstance, entryTarget, mocked } from "../cli/deploy";
 import { heldSecrets, putSpec, specOf, specOn, sqlOf } from "../cli/instance";
 import { entryAt } from "../cli/running";
 import { d1, d1Sql } from "../deployer/cloudflare";
@@ -24,8 +25,9 @@ import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { movedNames, OLD_SECRETS_KEY, SECRETS_KEY } from "../deployer/secrets-key";
 import type { AutoMode } from "../deployer/tags";
 import { SSO } from "../../shared/sign-in";
-import type { Account, Seen } from "./flow";
+import { type Account, lacksText, type Seen } from "./flow";
 import { installDeployer, removeDeployer } from "../pipeline/deployer";
+import { ensurePagesAddress, pagesAddressOf, type PagesTarget, runWith } from "../pipeline/pipeline";
 import { type Answers, type Endpoints, firstRows, type Keep, movedEntry, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets, SSO_SECRET } from "./store";
 
@@ -231,6 +233,10 @@ export async function queryOf(cf: Cloudflare, acc: string, worker: string, what:
  * The flow's move step: the entry with what the answers change in it (plan.ts, movedEntry), then a deploy of the
  * tracked branch's head with that entry as the instance's spec. The result: the commit it deployed.
  *
+ * A move of the pages to a domain makes their address there first, before it changes anything else: the wildcard DNS
+ * record and the Worker's route (pipeline.ts, ensurePagesAddress). The deploy changes the code only, and makes
+ * neither: without them no page answers on the domain. They stay when the deploy fails: the next run finds them.
+ *
  * Trap: the deploy writes the spec before it builds or tests. A deploy that fails puts both back, the entry and the
  * instance's spec: else the instance's deployer applies the change by itself at its next look, and the next run of
  * setup sees an entry that says the move is done.
@@ -245,9 +251,11 @@ export async function moveDeploy(
   const had = entryOf(config, o.answers.host);
   if (!had || "aws" in had) throw new Error(`${o.answers.host} has no entry on Cloudflare in .erga/config.json.`);
   const reach = { cf: new Cloudflare(o.token, o.net) };
+  const moved = movedEntry(had, o.answers, o.change, { github: o.github, oidc: o.oidc });
+  if (o.change.pages && moved.pages.kind == "zone") await ensurePagesAddress(reach.cf, { ...entryTarget(moved), pages: moved.pages });
   const sql = await sqlOf(had, reach);
   const spec = (await specOn(sql)) ?? specOf(had, await heldSecrets(had, reach));
-  writeConfig(o.dir, withEntry(config, movedEntry(had, o.answers, o.change, { github: o.github, oidc: o.oidc })));
+  writeConfig(o.dir, withEntry(config, moved));
   const back = async (e: Error) => {
     writeConfig(o.dir, withEntry(readConfig(o.dir), had));
     if (!(await putSpec(sql, spec)))
@@ -267,6 +275,69 @@ export async function moveDeploy(
     print: o.print ?? console.log,
     writeSpec: true,
   }).catch(back);
+}
+
+/** The pages' target of an instance's entry: its account, its Worker and the pages' zone. */
+function pagesTarget(dir: string, host: string): PagesTarget {
+  const entry = entryOf(readConfig(dir), host);
+  if (!entry || isAws(entry) || entry.pages.kind != "zone")
+    throw new Error(`The entry of ${host} names no domain for the documents' pages.`);
+  return { ...entryTarget(entry), pages: entry.pages };
+}
+
+/**
+ * Whether a page answers on the documents' domain: a request for the page that every name there answers
+ * (server/identity/caller.ts, WARM_PATH). An answer under 500 is the server's, or its gate's: the name resolves, its
+ * certificate is there, and a Worker answers. It asks for a minute, each time under a new name: a new DNS record takes
+ * some seconds, and a resolver keeps "no such name" for a name that it asked before. Null: a page answers; else why not.
+ *
+ * Trap: this is setup's one request to a deployed server. Every other check reads Cloudflare's API (facts.ts).
+ */
+export function pageAnswers(net: Fetch, domain: string): Promise<string | null> {
+  const ask = Effect.suspend(() => {
+    const url = `https://check-${randomBytes(4).toString("hex")}.${domain}/erga-warm`;
+    return Effect.tryPromise({
+      try: () => net(url, { redirect: "manual", signal: AbortSignal.timeout(10_000) }),
+      catch: (e) => `${url}: ${(e as Error).message}`,
+    }).pipe(Effect.flatMap((r) => (r.status < 500 ? Effect.succeed(null) : Effect.fail(`${url}: status ${r.status}`))));
+  });
+  const asked = ask.pipe(
+    Effect.retry({ schedule: Schedule.spaced("5 seconds").pipe(Schedule.upTo({ duration: "1 minute" })) }),
+    Effect.catch((why) => Effect.succeed(why))
+  );
+  return runWith(mocked() ? async () => {} : undefined, asked);
+}
+
+/**
+ * The flow's pages step: the pages' wildcard DNS record and their route on their domain, each made if the domain
+ * lacks it (pipeline.ts, ensurePagesAddress). Then it asks a page there. The answer: why no page answers yet, or null.
+ */
+export async function makePagesAddress(c: { cf: Cloudflare; net: Fetch }, dir: string, host: string): Promise<string | null> {
+  return pageAnswers(c.net, (await ensurePagesAddress(c.cf, pagesTarget(dir, host))).name);
+}
+
+/**
+ * The flow's old-pages step: deletes the Worker of the shared pages address (<worker>-pages), only after the checks
+ * that the pages are on their domain. Read from Cloudflare now: the domain has the wildcard DNS record and the route
+ * to the instance's Worker. Then asked: a page answers there. Else it throws why, and the Worker stays.
+ */
+export async function removeOldPages(c: { cf: Cloudflare; net: Fetch }, dir: string, host: string): Promise<void> {
+  const t = pagesTarget(dir, host);
+  const old = `${t.workerName}-pages`;
+  const at = await pagesAddressOf(c.cf, t);
+  if (!at.record || !at.route)
+    throw new Error(`${at.name} has ${lacksText(at.name, t.workerName, at)}. The Worker of the old pages address (${old}) stays.`);
+  const why = await pageAnswers(c.net, at.name);
+  if (why) throw new Error(`No page answers on ${at.name} (${why}). The Worker of the old pages address (${old}) stays.`);
+  await c.cf.call(
+    "DELETE",
+    `/accounts/${t.accountId}/workers/scripts/${old}?force=true`,
+    "delete the Worker of the old pages address",
+    undefined,
+    {
+      allow404: true,
+    }
+  );
 }
 
 /**

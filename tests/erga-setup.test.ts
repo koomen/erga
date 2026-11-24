@@ -16,7 +16,7 @@ import { Cloudflare } from "../deploy/deployer/cloudflare-api";
 import * as Effect from "effect/Effect";
 import { d1Sql } from "../deploy/deployer/cloudflare";
 import { readControl, writeAuto } from "../deploy/deployer/control";
-import { adminOn, adoptEntry, type First, firstDeploy, moveDeploy, setDeployer, writeEntry } from "../deploy/own/first";
+import { adminOn, adoptEntry, type First, firstDeploy, moveDeploy, removeOldPages, setDeployer, writeEntry } from "../deploy/own/first";
 import { specOn, sqlOf } from "../deploy/cli/instance";
 import { instanceReader, jobsReader } from "../deploy/cli/running";
 import { deployInstance } from "../deploy/cli/deploy";
@@ -27,7 +27,7 @@ import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { DEPLOYER_TAG, installDeployer, removeDeployer } from "../deploy/pipeline/deployer";
 import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { HOST as MOVES, MARK as MOVED } from "./helpers/cloudflare-move.ts";
+import { LOSE, HOST as MOVES, MARK as MOVED, PAGES } from "./helpers/cloudflare-move.ts";
 import { HOST as RUNS, MARK } from "./helpers/cloudflare-setup.ts";
 import { bindingsOf, bootstrap, fleet, next, prepareRelease, ROOT } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -561,7 +561,7 @@ test("the command itself, on an instance that runs with no deployer: it installs
   }
 }, 120_000);
 
-test("a move whose deploy fails puts the entry and the instance's spec back: nothing says that the move is done", async () => {
+test("a move whose deploy fails puts the entry and the instance's spec back; a move to a pages domain makes their DNS record and route, and the old pages Worker goes only when a page answers there", async () => {
   const mock = mockCloudflare();
   const f = first(mock, HOST);
   await firstDeploy(f);
@@ -586,28 +586,52 @@ test("a move whose deploy fails puts the entry and the instance's spec back: not
     SSO,
   ]);
   expect(bindingsOf(mock.state, "erga-ada-example-com").PAGES_DOMAIN.text).toBe("ada-pages.net");
+  // The pages' address on their domain, as the pipeline's pages step makes it: the wildcard record, and the route.
+  const zone = mock.state.zones.find((z) => z.name == "ada-pages.net")!;
+  const address = () => [mock.state.dns[zone.id].map((r) => `${r.type} ${r.name} ${r.content}`), mock.state.routes[zone.id]];
+  const there = [["AAAA *.ada-pages.net 100::"], [{ pattern: "*.ada-pages.net/*", script: "erga-ada-example-com" }]];
+  expect(address()).toEqual(there);
+  // What setup's look sees of it, and the flow's step: the Worker of the old pages address.
+  const look = async () => {
+    const seen = await observe(answers, dir, async () => ({ cf, net: mock.fetch, token: "mock-machine-token" }));
+    return [seen.pagesAddress, step(answers, { ...seen, admin: true }).state];
+  };
+  expect(await look()).toEqual([{ record: true, route: true, taken: null }, { at: "old-pages" }]);
+  // The old pages Worker goes only after the record, the route and an answer on the domain. No answer: it stays.
+  const old = () => !!mock.state.scripts["erga-ada-example-com-pages"];
+  const remove = () => removeOldPages({ cf, net: mock.fetch }, dir, HOST);
+  zone.status = "pending";
+  await expect(remove()).rejects.toThrow(
+    /^No page answers on ada-pages\.net \(https:\/\/[a-z0-9-]+\.ada-pages\.net\/erga-warm: status 502\)\./
+  );
+  zone.status = "active";
+  // No route (and then no record): it stays, and the look's next step makes them.
+  mock.state.routes[zone.id] = [];
+  await expect(remove()).rejects.toThrow("ada-pages.net has no route *.ada-pages.net/* to the Worker erga-ada-example-com.");
+  mock.state.dns[zone.id] = [];
+  await expect(remove()).rejects.toThrow("ada-pages.net has no DNS record *.ada-pages.net and no route *.ada-pages.net/* to the Worker");
+  expect([old(), await look()]).toEqual([true, [{ record: false, route: false, taken: null }, { at: "pages" }]]);
+  // A route there to another Worker stops the move before it changes anything.
+  mock.state.routes[zone.id] = [{ pattern: "*.ada-pages.net/*", script: "shop" }];
+  await expect(moveDeploy({ ...f, answers, change })).rejects.toThrow("*.ada-pages.net/* already sends requests to another Worker (shop)");
+  expect((await look())[0]).toEqual({ record: false, route: false, taken: "shop" });
+  // The move again makes what the domain lacks (a deploy of the same entry): then the old Worker goes.
+  mock.state.routes[zone.id] = [];
+  expect(await moveDeploy({ ...f, answers, change })).toBe(HEAD);
+  expect(address()).toEqual(there);
+  await remove();
+  expect([old(), (await look())[1]]).toEqual([false, { at: "done" }]);
 }, 120_000);
 
-test("the command itself, on an instance with an admin: it moves to single sign-on and a pages domain, keeps the admin's account, and deletes the Worker of the old pages address", async () => {
+test("the command itself, on an instance with an admin: it moves to single sign-on and a pages domain with its DNS record and route, keeps the admin's account, and deletes the Worker of the old pages address; a run again makes a record and a route that the domain lacks", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "erga-move-"));
   try {
     Bun.spawnSync(["git", "init", "-q", tmp]);
     const TAG = "f".repeat(64);
     const local = ["--deploys", "local"];
-    const to = [
-      ...local,
-      "--sign-in",
-      "sso",
-      "--team",
-      "acme",
-      "--aud",
-      TAG,
-      "--pages",
-      "example-pages.com",
-      "--keep",
-      "koomen=pete@example.com",
-    ];
-    const runs = [[...local, "--dry-run"], [...to, "--dry-run"], to, [...local, "--dry-run"], [...local, "--keep", "bo=bo@example.com"]];
+    const to = [...local, "--sign-in", "sso", "--team", "acme", "--aud", TAG, "--pages", PAGES, "--keep", "koomen=pete@example.com"];
+    const dry = [...local, "--dry-run"];
+    const runs = [dry, [...to, "--dry-run"], to, dry, [LOSE], dry, local, dry, [...local, "--keep", "bo=bo@example.com"]];
     const p = Bun.spawn([process.execPath, join(ROOT, "tests/helpers/cloudflare-move.ts"), JSON.stringify(runs)], {
       env: { ...process.env, GIT_DIR: join(tmp, ".git"), SSH_CONNECTION: undefined },
       stdin: "ignore",
@@ -624,6 +648,8 @@ test("the command itself, on an instance with an admin: it moves to single sign-
       pagesDomain: string | null;
       pagesHost: string | null;
       pagesWorker: boolean;
+      records: string[];
+      routes: string[];
       keeps: string[];
     }
     const ran: Ran[] = [];
@@ -634,7 +660,7 @@ test("the command itself, on an instance with an admin: it moves to single sign-
         lines = [];
       } else if (!line.startsWith("  ") || line.startsWith("  - ")) lines.push(line);
     }
-    const [before, dry, moved, after, later] = ran;
+    const [before, planned, moved, after, lost, repaired, again, later] = ran;
     const SSO = `{"access":{"team":"acme","aud":"${TAG}"}}`;
     const command = `bun erga setup ${MOVES} --host cloudflare ${to.join(" ")}`;
     const asItWas = {
@@ -642,6 +668,8 @@ test("the command itself, on an instance with an admin: it moves to single sign-
       sso: null,
       pagesDomain: null,
       pagesWorker: true,
+      records: [],
+      routes: [],
       keeps: [],
     };
 
@@ -654,7 +682,7 @@ test("the command itself, on an instance with an admin: it moves to single sign-
     expect(before.pagesHost).toEndWith("-pages.erga.workers.dev");
 
     // The dry run: each change, and each account. It makes nothing.
-    const plan = dry.out.filter((l) => l.startsWith("PLAN")).map((l) => l.slice(6));
+    const plan = planned.out.filter((l) => l.startsWith("PLAN")).map((l) => l.slice(6));
     expect(plan.map((l) => l.split(/: |\. /)[0])).toEqual([
       `${MOVES} runs, with an admin`,
       "• sign-in",
@@ -670,24 +698,27 @@ test("the command itself, on an instance with an admin: it moves to single sign-
     expect(plan[6]).toBe("  - by the address that you gave (--keep): koomen (an admin)");
     expect(plan[7]).toStartWith("  - with no address: ada, bo. ");
     expect(plan[7]).toEndWith(`${command} --keep <username>=<address>`);
-    expect(dry).toMatchObject(asItWas);
+    expect(planned).toMatchObject(asItWas);
 
     // The run: the admin's row first, then the entry and the deploy, then the Worker of the old address.
     expect(moved.out.slice(0, 4)).toEqual([
       "PASS  1 account keeps its person at the organization's sign-in, by their address there: koomen.",
-      `NOTE  ${MOVES} has an admin, and the answers change its settings SSO, SERVER_DEFAULTS, and its documents' pages (to example-pages.com): setup writes the change into its entry and deploys. Its accounts and its documents stay.`,
+      `NOTE  ${MOVES} has an admin, and the answers change its settings SSO, SERVER_DEFAULTS, and its documents' pages (to ${PAGES}): setup writes the change into its entry and deploys. Its accounts and its documents stay.`,
       expect.stringMatching(new RegExp(`^PASS  Deployed ${MOVES.replace(/\./g, "\\.")} in \\d+ s\\.$`)),
-      `PASS  The documents' pages of ${MOVES} are on example-pages.com. The Worker of the old shared address (move-example-com-pages) is deleted: that address answers no more.`,
+      `PASS  The documents' pages of ${MOVES} are on ${PAGES}: it has the DNS record *.${PAGES} and the route to the Worker, and a page answers there. The Worker of the old shared address (move-example-com-pages) is deleted: that address answers no more.`,
     ]);
+    // The pages' address on their domain: the wildcard DNS record, and the route to the instance's Worker.
+    const address = { records: [`*.${PAGES}`], routes: [`*.${PAGES}/* move-example-com`] };
+    expect(moved).toMatchObject(address);
     const NONE = `These accounts have no address at the organization's sign-in: ada, bo. Nobody signs in to them, and they stay as they are, until: ${command} --keep <username>=<address>`;
     expect(moved.out.at(-1)).toStartWith(
       `DONE  Tell the user: Erga is live at https://${MOVES}, and it has its admin. ${MOVES} takes only the organization's sign-in now: each person takes their account at their first sign-in there, by their address. ${NONE} It tracks main of github.com/koomen/erga`
     );
     // The entry and the server: single sign-on, the pages on their domain, and nothing else of the entry changed.
     expect(moved).toMatchObject({
-      entry: { pages: { kind: "zone", zoneName: "example-pages.com" }, sso: SSO, subdomain: null, repo: "github.com/koomen/erga" },
+      entry: { pages: { kind: "zone", zoneName: PAGES }, sso: SSO, subdomain: null, repo: "github.com/koomen/erga" },
       sso: SSO,
-      pagesDomain: "example-pages.com",
+      pagesDomain: PAGES,
       pagesHost: null,
       pagesWorker: false,
       keeps: ["koomen=pete@example.com"],
@@ -699,6 +730,23 @@ test("the command itself, on an instance with an admin: it moves to single sign-
       `NOTE  These accounts have no address at the organization's sign-in: ada, bo. Nobody signs in to them, and they stay as they are, until: bun erga setup ${MOVES} --host cloudflare --deploys local --keep <username>=<address>`,
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run.",
     ]);
+    // An instance that a move from before left with no pages: its domain has no DNS record and no route, and the
+    // Worker of the old address is deleted. A dry run is not done: it says what the domain lacks, and makes nothing.
+    const LACKS = `the documents' pages are on ${PAGES}, and that domain has no DNS record *.${PAGES} and no route *.${PAGES}/* to the Worker move-example-com: no page answers there`;
+    expect(lost.out.filter((l) => !l.startsWith("PASS")).slice(0, 2)).toEqual([
+      `PLAN  ${MOVES} runs, with an admin. I will change it as you chose. Its accounts and its documents stay:`,
+      `PLAN  • ${LACKS}. I make what it lacks`,
+    ]);
+    expect(lost.out.at(-1)).toStartWith("DRY RUN  Nothing is made.");
+    expect(lost).toMatchObject({ records: [], routes: [], pagesWorker: false, pagesDomain: PAGES });
+    // The run makes them, with no deploy, and says that a page answers there.
+    expect(repaired.out[0]).toBe(
+      `PASS  The documents' pages of ${MOVES} are on ${PAGES}: it has the DNS record *.${PAGES} and the route to the Worker now, and a page answers there.`
+    );
+    expect(repaired.out.join("\n")).not.toContain("Deployed");
+    expect(repaired.out.at(-1)).toStartWith(`DONE  Tell the user: Erga is live at https://${MOVES}, and it has its admin.`);
+    expect(repaired).toMatchObject(address);
+    expect([again.out, again.records, again.routes]).toEqual([after.out, address.records, address.routes]);
     // A later run gives one more account its person: one row, and no deploy.
     expect(later.out[0]).toBe("PASS  1 account keeps its person at the organization's sign-in, by their address there: bo.");
     expect(later.out.at(-1)).toContain("This account has no address at the organization's sign-in: ada.");
