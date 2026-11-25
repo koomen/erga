@@ -367,7 +367,7 @@ journey("the caret and a selection on a board that pans", () => {
 
     // Was a failure on GitHub's machine: after two zoom keys the browser gave the page no pointer, for good (the click
     // below). The viewer changed the frame's scale and its size in the same screen frame, which it never does now
-    // (client/inline/viewer-zoom.ts, the trap): each change of the two here is of one alone.
+    // (client/viewer/zoom.ts, the trap): each change of the two here is of one alone.
     const changes = ed.page.evaluate(
       () =>
         new Promise<string[]>((done) => {

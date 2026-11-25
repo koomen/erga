@@ -175,18 +175,60 @@ export function linkEnding(u: M.Unit, pos: number): M.ElementNode | null {
 
 /** An attribute's value as text: only the references escapeAttr and esc write (decodeEntities makes &nbsp; a plain space). */
 export const decodeAttr = (v: string) => v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-export const attrPattern = (name: string) => new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]*)`, "i");
+
+/** Finds an attribute (case-insensitive) in an opening tag, skipping over quoted attribute values; null if absent. */
+function findAttr(open: string, name: string): { from: number; to: number; value: string } | null {
+  const start = /^<[a-zA-Z][^\s/>]*/.exec(open);
+  if (!start) return null;
+  const want = name.toLowerCase();
+  let i = start[0].length;
+  const n = open.length;
+  while (i < n) {
+    const from = i;
+    while (i < n && /\s/.test(open[i])) i++;
+    if (i >= n || open[i] == ">") break;
+    if (open[i] == "/") {
+      if (open[i + 1] == ">") break;
+      i++;
+      continue;
+    }
+    const nameFrom = i;
+    while (i < n && !/[\s=/>]/.test(open[i])) i++;
+    const attr = open.slice(nameFrom, i).toLowerCase();
+    const afterName = i;
+    while (i < n && /\s/.test(open[i])) i++;
+    let value = "";
+    if (open[i] == "=") {
+      i++;
+      while (i < n && /\s/.test(open[i])) i++;
+      const q = open[i];
+      if (q == '"' || q == "'") {
+        const end = open.indexOf(q, i + 1);
+        value = end < 0 ? open.slice(i + 1) : open.slice(i + 1, end);
+        i = end < 0 ? n : end + 1;
+      } else {
+        const valFrom = i;
+        while (i < n && !/[\s>]/.test(open[i])) i++;
+        value = open.slice(valFrom, i);
+      }
+    } else {
+      i = afterName;
+    }
+    if (attr == want) return { from, to: i, value };
+  }
+  return null;
+}
 
 /** An attribute's value in an opening tag, decoded; null without it. */
 export function attrOf(open: string, name: string): string | null {
-  const m = attrPattern(name).exec(open);
-  return m ? decodeAttr(m[1].replace(/^(["'])(.*)\1$/s, "$2")) : null;
+  const hit = findAttr(open, name);
+  return hit ? decodeAttr(hit.value) : null;
 }
 
 /** An opening tag with an attribute set to an (escaped) value, or taken off for null. */
 export function setAttr(open: string, name: string, value: string | null): string {
-  const re = attrPattern(name);
-  if (value == null) return open.replace(re, "");
-  if (re.test(open)) return open.replace(re, ` ${name}="${value}"`);
+  const hit = findAttr(open, name);
+  if (value == null) return hit ? open.slice(0, hit.from) + open.slice(hit.to) : open;
+  if (hit) return `${open.slice(0, hit.from)} ${name}="${value}"${open.slice(hit.to)}`;
   return open.replace(/\s*\/?>$/, (end) => ` ${name}="${value}"${end.trim()}`);
 }

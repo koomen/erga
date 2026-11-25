@@ -23,16 +23,11 @@ type Kept = {
 
 export default function viewerEditingHead(scripts: string[], restoreKey: string): void {
   window.ergaConnect = () => {
-    // The editor's start (its hello and the document's whole text: shared/room-socket.ts), on the connection this page
-    // came on, and the document's one socket, which needs a connection of its own: both at once. libs/text/ui/collab.ts takes
-    // them over (the socket with what came on it before then).
+    // The shell's lightweight JSON-only socket (?events=1&shell=1: hello, events, presence — no Yjs sync) and the page
+    // editor's edit key, asked for as the page parses. client/shell/shell-room.ts takes the socket over.
     const was = window.ergaSocket;
     if (was && was.readyState < 2) return was;
     const base = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')!.content;
-    window.ergaStart = fetch(asUser(base + "/api/start")).then(
-      (r) => (r.ok ? r.arrayBuffer() : null),
-      () => null
-    );
     // The edit key for the page's editor (client/shell/editor.ts takes it over), asked for now too, not after the first
     // sync: unless this tab holds one that lasts (the editor's RENEW_MS).
     const q = asUser("");
@@ -43,9 +38,8 @@ export default function viewerEditingHead(scripts: string[], restoreKey: string)
     if (!(held && held.expires! - Date.now() > 300_000))
       window.ergaKey = fetch(base + "/api/key" + q, { method: "POST" }).catch(() => null);
     const ws: WebSocket & { early?: (string | ArrayBuffer)[] } = new WebSocket(
-      (location.protocol == "https:" ? "wss://" : "ws://") + location.host + asUser(base + "/api/room?events=1")
+      (location.protocol == "https:" ? "wss://" : "ws://") + location.host + asUser(base + "/api/room?events=1&shell=1")
     );
-    ws.binaryType = "arraybuffer";
     const early: (string | ArrayBuffer)[] = (ws.early = []);
     ws.onmessage = (e) => early.push(e.data);
     return (window.ergaSocket = ws);

@@ -26,7 +26,22 @@ import {
   WHOLE_BLOCKS,
 } from "./source";
 import { backspaceBlock, enterBlock, indentBlocks } from "./blocks";
-import { carryLists, dropBlankItem, enterItem, indentItems, itemSplit, type Change, untodo } from "./lists";
+import {
+  carryLists,
+  compatibleLists,
+  dropBlankItem,
+  elements,
+  enterItem,
+  indentItems,
+  isList,
+  itemOf,
+  itemSplit,
+  listNeighbors,
+  trimEnd,
+  type Change,
+  untodo,
+  unwrapItemP,
+} from "./lists";
 import * as C from "./clipboard";
 
 /** The page as the rules know it: its HTML, the text blocks in it, and what the page says about them. */
@@ -133,6 +148,20 @@ export function joinBlocks(src: string, prev: M.Unit, next: M.Unit, pos: number)
   const between = M.gap(src, prev, next);
   if (between.kind == "apart") return null;
   if (between.kind == "rule") {
+    // If the rule sits between two compatible lists, removing it joins them into one list.
+    const listA = itemOf(prev)?.list,
+      listB = itemOf(next)?.list;
+    if (
+      listA &&
+      listB &&
+      listA != listB &&
+      listA.parent &&
+      listA.parent == listB.parent &&
+      compatibleLists(src, listA, listB) &&
+      !src.slice(listA.to, between.from).trim() &&
+      !src.slice(between.to, listB.from).trim()
+    )
+      return Object.assign([{ from: trimEnd(src, listA.closeFrom), to: listB.openTo }], { at: pos });
     // The rule, with the spaces and line break before it.
     let from = between.from;
     while (from > prev.to && /[ \t]/.test(src[from - 1])) from--;
@@ -199,8 +228,51 @@ export function joinBlocks(src: string, prev: M.Unit, next: M.Unit, pos: number)
   const changes: Change[] = [];
   // Two blank blocks: one <br> stays, to keep the one left a line high.
   if (!moved && !br && placeholderBr(src, next) && !contentIn(src, prev, prev.contentFrom, prev.contentTo)) moved = "<br>";
+  // If deleting `gone` removes the last nested list from `prev`'s <li>, unwrap its plain <p> in the same pass.
+  const unwrap = isList(gone) ? unwrapItemP(src, prev.node, new Set([gone])) : null;
+  if (unwrap) {
+    changes.push(unwrap.open);
+    if (br && moved && br.to <= at) changes.push(br);
+    if (at == unwrap.closeFrom) changes.push({ from: at, to: unwrap.closeTo, insert: moved + (carried?.after ?? "") });
+    else changes.push({ from: at, insert: moved + (carried?.after ?? "") }, { from: unwrap.closeFrom, to: unwrap.closeTo });
+    changes.push(...(carried?.changes ?? []));
+    return Object.assign(changes, { at });
+  }
+  // If deleting `gone` brings two compatible lists directly together, merge them in the same pass.
+  let delFrom = goFrom,
+    delTo = gone.to;
+  const siblings = gone.parent ? elements(gone.parent) : [];
+  const idx = siblings.indexOf(gone);
+  const sibPrev = idx > 0 ? siblings[idx - 1] : null;
+  const sibNext = idx >= 0 && idx + 1 < siblings.length ? siblings[idx + 1] : null;
+  if (
+    sibPrev &&
+    sibNext &&
+    compatibleLists(src, sibPrev, sibNext) &&
+    !src.slice(sibPrev.to, gone.from).trim() &&
+    !src.slice(gone.to, sibNext.from).trim()
+  ) {
+    delFrom = trimEnd(src, sibPrev.closeFrom);
+    delTo = sibNext.openTo;
+  } else {
+    const listA = itemOf(prev)?.list,
+      listB = gone.parent;
+    if (
+      listA &&
+      listB &&
+      listA != listB &&
+      listA.parent &&
+      listA.parent == listB.parent &&
+      elements(listA.parent)[elements(listA.parent).indexOf(listA) + 1] == listB &&
+      compatibleLists(src, listA, listB) &&
+      !src.slice(listA.to, listB.from).trim() &&
+      elements(listB)[0] == gone &&
+      !src.slice(listB.openTo, gone.from).trim()
+    )
+      delFrom = trimEnd(src, listA.closeFrom);
+  }
   if (br && moved && br.to <= at) changes.push(br);
-  changes.push({ from: at, insert: moved + (carried?.after ?? "") }, { from: goFrom, to: gone.to }, ...(carried?.changes ?? []));
+  changes.push({ from: at, insert: moved + (carried?.after ?? "") }, { from: delFrom, to: delTo }, ...(carried?.changes ?? []));
   return Object.assign(changes, { at });
 }
 
@@ -283,34 +355,74 @@ export function replace(page: Page, from: number, to: number, text: string, user
   const between = units.slice(a.id, b.id + 1);
   const joinable = between.every((u, i) => i == 0 || M.adjacent(src, between[i - 1], u));
   if (!joinable) {
-    // The text inside the two end blocks goes, and so do the paragraphs, headings and list items in between; other
-    // blocks (a table's cells, a widget's label) only lose their text, so the page keeps its shape.
-    const changes: Change[] = [cut(src, a, from, M.textEnd(a), insert)];
+    // The text inside the two end blocks goes, and so do the paragraphs, headings and list items in between (climbing
+    // to any container like a list left completely empty between `a` and `b`); other blocks (a table's cells, a
+    // widget's label) only lose their text, so the page keeps its shape.
+    const midUnits = between.slice(1, -1);
+    const deletedEls = new Set<M.ElementNode>();
+    const keptUnits: M.Unit[] = [];
     let last = M.textEnd(a);
-    for (const u of between.slice(1, -1)) {
+    for (const u of midUnits) {
       if (u.from < last || u.to > M.textStart(b)) continue;
       if (!WHOLE_BLOCKS.test(u.tag)) {
-        changes.push({ from: u.contentFrom, to: u.contentTo, insert: "" });
+        keptUnits.push(u);
         last = u.contentTo;
-        continue;
+      } else {
+        deletedEls.add(u.node);
+        last = u.to;
       }
-      // The whole element, with the indent and line break before it.
-      const indent = /\n[ \t]*$/.exec(src.slice(last, u.from));
-      changes.push({ from: indent ? u.from - indent[0].length : u.from, to: u.to, insert: "" });
-      last = u.to;
+    }
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const el of [...deletedEls]) {
+        const p = el.parent;
+        if (!p?.parent || deletedEls.has(p) || p.from < a.to || p.to > b.from) continue;
+        if (p.children.every((c) => (c.kind == "element" ? deletedEls.has(c) : !/\S/.test(src.slice(c.from, c.to))))) {
+          deletedEls.add(p);
+          grew = true;
+        }
+      }
+    }
+    const topDeleted = [...deletedEls].filter((el) => !el.parent || !deletedEls.has(el.parent));
+    const unwrap = unwrapItemP(src, a.node, deletedEls);
+    const changes: Change[] = [];
+    if (unwrap) changes.push(unwrap.open);
+    const aCut = cut(src, a, from, M.textEnd(a), insert);
+    if (unwrap && aCut.to == unwrap.closeFrom) changes.push({ from: aCut.from, to: unwrap.closeTo, insert: aCut.insert });
+    else {
+      changes.push(aCut);
+      if (unwrap) changes.push({ from: unwrap.closeFrom, to: unwrap.closeTo });
+    }
+    const midPieces: { from: number; to: number; whole: boolean }[] = [
+      ...keptUnits.map((u) => ({ from: u.contentFrom, to: u.contentTo, whole: false })),
+      ...topDeleted
+        .filter((el) => !unwrap || el.from >= unwrap.closeTo || el.to <= unwrap.closeFrom)
+        .map((el) => ({ from: el.from, to: el.to, whole: true })),
+    ].sort((x, y) => x.from - y.from);
+    let cursor = unwrap ? unwrap.closeTo : M.textEnd(a);
+    for (const m of midPieces) {
+      if (m.whole) {
+        // The whole element, with the indent and line break before it.
+        const indent = /\n[ \t]*$/.exec(src.slice(cursor, m.from));
+        changes.push({ from: indent ? m.from - indent[0].length : m.from, to: m.to, insert: "" });
+      } else {
+        changes.push({ from: m.from, to: m.to, insert: "" });
+      }
+      cursor = m.to;
     }
     changes.push(cut(src, b, M.textStart(b), to, ""));
-    const plain = step(changes, { anchor: from + insert.length }, userEvent, src);
+    const deleted = ChangeSet.of(changes, src.length);
+    const caret1 = deleted.mapPos(from, -1) + insert.length;
+    const plain = step(changes, { anchor: caret1 }, userEvent, src);
     // Text blocks at both ends, and only whole ones between: the two join, as Backspace would join them then (a
     // paragraph and a list item, two items of two lists).
-    if (!WHOLE_BLOCKS.test(a.tag) || !WHOLE_BLOCKS.test(b.tag) || !between.slice(1, -1).every((u) => WHOLE_BLOCKS.test(u.tag)))
-      return plain;
-    const deleted = ChangeSet.of(changes, src.length);
+    if (!WHOLE_BLOCKS.test(a.tag) || !WHOLE_BLOCKS.test(b.tag) || !midUnits.every((u) => WHOLE_BLOCKS.test(u.tag))) return plain;
     const src1 = applyTo(src, deleted);
     const units1 = M.analyzeHtml(src1, page.decode).units;
-    const a1 = M.unitAt(units1, from + insert.length),
+    const a1 = M.unitAt(units1, caret1),
       b1 = a1 && units1[a1.id + 1];
-    const join = a1 && b1 && b1.from == deleted.mapPos(b.from) ? joinBlocks(src1, a1, b1, from + insert.length) : null;
+    const join = a1 && b1 && b1.from == deleted.mapPos(b.from) ? joinBlocks(src1, a1, b1, caret1) : null;
     if (!join) return plain;
     const joined = ChangeSet.of(join, src1.length);
     return composed(src, deleted, joined, { anchor: joined.mapPos(join.at, -1) }, userEvent);
@@ -531,9 +643,13 @@ function paste(page: Page, sel: Sel, blocks: C.Block[]): Step | null {
   // In a list item, the pieces are items; an item with its text in a <p> splits as an item (lists.ts, itemSplit).
   const split = itemSplit(src, u);
   const inList = !!split || (u.tag == "li" && (u.node.parent?.tag == "ul" || u.node.parent?.tag == "ol"));
-  const pieces: { src: string; html: string | null }[] = inList
+  const pieces: { src: string; html: string | null; listTag?: "ul" | "ol" }[] = inList
     ? C.items(blocks).map((i) => ({ src: C.itemSource(i, indent), html: i.lists.length ? null : i.html }))
-    : blocks.map((b) => ({ src: C.toSource([b], indent), html: b.tag == "p" ? b.html : null }));
+    : blocks.map((b) => ({
+        src: C.toSource([b], indent),
+        html: b.tag == "p" ? b.html : null,
+        ...(b.tag == "ul" || b.tag == "ol" ? { listTag: b.tag } : {}),
+      }));
   let insert: string, from: number, to: number, caret: number;
   if ((!inList && !SPLITS.test(u.tag)) || (pieces.length == 1 && pieces[0].html != null)) {
     // Into the block, inside the formatting at the caret; a link can't hold another.
@@ -548,10 +664,31 @@ function paste(page: Page, sel: Sel, blocks: C.Block[]): Step | null {
       hasTail = contentIn(src, u, pos, u.contentTo);
     const first = pieces[0].html,
       last = pieces.length > 1 ? pieces.at(-1)!.html : null;
-    const middle = pieces.slice(first != null ? 1 : 0, last != null ? -1 : undefined);
+    const middle = pieces.slice(first != null ? 1 : 0, last != null ? -1 : undefined).map((p) => ({ ...p }));
     // The block's first half, ended with the first paragraph; it goes if it would be empty.
     const head = hasHead || first != null ? (hasHead ? M.closeTags(stack) : "") + (first ?? "") + close : "";
     from = hasHead ? pos : first != null ? u.contentFrom : (split?.from ?? u.from);
+    const keepTail = hasTail || last != null || (split && split.to == null);
+    // Join pasted list blocks directly into compatible neighboring lists so no split lists remain.
+    let joinedPrev: M.ElementNode | null = null;
+    if (!inList && middle.length && !head && from == u.from && middle[0].listTag) {
+      joinedPrev = listNeighbors(src, u.node, middle[0].listTag).prev;
+      if (joinedPrev) {
+        from = trimEnd(src, joinedPrev.closeFrom);
+        middle[0].src = middle[0].src.slice(middle[0].listTag.length + 2);
+      }
+    }
+    let joinedNext: M.ElementNode | null = null;
+    if (!inList && middle.length && !keepTail && middle[middle.length - 1].listTag) {
+      joinedNext = listNeighbors(src, u.node, middle[middle.length - 1].listTag!).next;
+      if (joinedNext) {
+        middle[middle.length - 1].src = middle[middle.length - 1].src.replace(/\s*<\/(ul|ol)>$/i, "");
+        if (!(middle.length == 1 && joinedPrev)) {
+          const last = middle[middle.length - 1];
+          last.src = src.slice(joinedNext.from, joinedNext.openTo) + last.src.slice(last.listTag!.length + 2);
+        }
+      }
+    }
     insert = head;
     caret = 0;
     for (const p of middle) {
@@ -559,12 +696,12 @@ function paste(page: Page, sel: Sel, blocks: C.Block[]): Step | null {
       caret = insert.length - (/(\s*<\/[a-z0-9]+>)+\s*$/i.exec(p.src)?.[0].length ?? 0);
     }
     // The second half, started with the last paragraph (an item with lists in it keeps one, for them).
-    if (hasTail || last != null || (split && split.to == null)) {
+    if (keepTail) {
       insert += (insert ? sep : "") + open + (last ?? "");
       if (hasTail || last != null) caret = insert.length;
       insert += hasTail ? M.openTags(stack) : last == null ? "<br>" : "";
       to = hasTail ? pos : u.contentTo;
-    } else to = split?.to ?? u.to;
+    } else to = joinedNext ? joinedNext.openTo : (split?.to ?? u.to);
   }
   const drops: Change[] = from == pos && to == pos ? placeholderDrops(src, [u], pos, pos, true) : [];
   if (split?.drop && from > u.openFrom) drops.push({ from: split.drop.from, to: split.drop.to ?? split.drop.from });

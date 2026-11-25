@@ -1,19 +1,18 @@
 // The page editor's shell: the controls around the document's page while editing, and its one word to the editor in
 // the page (edit, with the edit key, or view: page-frame.ts). The editor is the page's own (libs/text/ui/frame.ts): it
-// joins the document's room itself. The shell joins it too, for what it shows: who's here, the pages and the name, and
-// your agent's events (your agent runs in its own object; its conversation is yours alone, and its edits arrive through
-// the room like anyone's).
+// joins the document's Yjs room itself. The shell holds a lightweight JSON-only socket (?events=1&shell=1) for what it
+// shows: who's here (presence), the pages and the name, and your agent's events (your agent runs in its own object; its
+// conversation is yours alone, and its edits arrive through the room like anyone's).
 //
 // This file loads the document and wires the shell's parts (client/shell/), which share one object (shell.ts).
 
-import { Collab, type EarlySocket, type SocketEvent } from "../../libs/text/ui/collab";
+import { ShellRoom, type EarlySocket, type SocketEvent } from "./shell-room";
 import { watchUnsaved } from "../../libs/text/ui/unsaved";
-import { EditorSelection, EditorState } from "@codemirror/state";
 import { mountPageFrame } from "./page-frame";
 import { mountCommentBox } from "../common/comment-box";
 import { isMac, type Keys } from "../common/app-keys";
 import { describeProblem } from "./problems";
-import { colorFor, files, type Author } from "../../document/model/content";
+import { colorFor, type Author } from "../../shared/author";
 import type { Attachment } from "../../shared/attach";
 import { isPage, pageUrl } from "../../document/model/pages";
 import { live } from "../live/client";
@@ -21,7 +20,7 @@ import { restoredFor } from "../live/restore";
 import { fastClick } from "../common/fast-click";
 import { asUser } from "../common/tools";
 import { mountLayout } from "../agent/layout";
-import { BASE, $, store, type Shell } from "./shell";
+import { BASE, $, type Shell } from "./shell";
 import { mountEditor } from "./editor";
 import { mountNaming } from "./naming";
 import { mountRoom } from "./room";
@@ -43,10 +42,9 @@ declare global {
   interface Window {
     ergaPage?: unknown;
     ergaShell?: { ready(): void };
-    /** The document's socket and start, as the page opened them while it parsed (server/pages/viewer.ts, ergaConnect). */
+    /** The shell's JSON-only socket, opened as the page parsed (client/inline/viewer-editing-head.ts, ergaConnect). */
     ergaSocket?: EarlySocket;
-    ergaStart?: Promise<ArrayBuffer | null>;
-    /** The edit key's answer, asked for with them (null: no answer). */
+    /** The edit key's answer, asked for with it (null: no answer). */
     ergaKey?: Promise<Response | null>;
   }
 }
@@ -109,67 +107,57 @@ const TITLE_NOT_SAVED = {
   // What this page kept of itself before it reloaded for a new release, if it did.
   const back = restoredFor<EditorKept>("editor");
 
-  // The document's socket (collab.ts), open since the page began (server/pages/viewer.ts): the room, and this person's
-  // events. Its first message says who this tab is and what the document is called (the hello), then comes the room's
-  // whole text. Presence, connection news and events before the shell is set up are picked up once it is (`started`).
+  // The shell's lightweight JSON-only socket (shell-room.ts), open since the page began (viewer-editing-head.ts):
+  // hello, this person's events, and JSON presence. Presence, connection news and events before the shell is set up are
+  // picked up once it is (`started`).
   let started = false;
   const pending: SocketEvent[] = [];
-  const early = window.ergaSocket,
-    start =
-      window.ergaStart ??
-      fetch(`${BASE}/api/start${as}`).then(
-        (r) => (r.ok ? r.arrayBuffer() : null),
-        () => null
-      );
-  window.ergaSocket = window.ergaStart = undefined;
-  // A start that brought nothing: whether the host says there's no such document (only its 404 says so).
-  const missing = start.then(
-    async (bytes) =>
-      !bytes &&
-      (await fetch(`${BASE}/api/start${as}`).then(
-        (r) => r.status == 404,
-        () => false
-      ))
-  );
-  const collab: Collab = new Collab({
-    url: (q) =>
-      `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser(`${BASE}/api/room?${new URLSearchParams({ events: "1", ...Object.fromEntries(q) })}`)}`,
-    start,
+  const early = window.ergaSocket;
+  window.ergaSocket = undefined;
+  // Checked only if the socket is refused: whether the host says there's no such document (404).
+  const checkMissing = () =>
+    fetch(`${BASE}/api/doc${as}`).then(
+      (r) => r.status == 404,
+      () => false
+    );
+  const socket = new ShellRoom({
+    url: () => `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser(`${BASE}/api/room?events=1&shell=1`)}`,
     early,
-    // (Kept in this browser, as this person: the document opens from it with no connection.)
+    // (Kept in this browser, as this person: the shell opens from its cached hello with no connection.)
     keep: `${BASE}${as}`,
-    onEvent: (msg) => { if (started) shell.room.socketEvent(msg); else pending.push(msg); },
-    onRemote: (_changes, author) => {
-      // This person's own edit, made on the page (its editor has a replica of its own): the controls fade, as for typing.
-      if (started && author?.kind == "person" && author.user == shell.me.user) shell.chrome.hideChrome();
+    onEvent: (msg) => {
+      if (started) shell.room.socketEvent(msg);
+      else pending.push(msg);
     },
-    // (The page's editor makes the page again for a change to another file: frame.ts, refreshSoon.)
-    onFiles: () => {},
     onPresence: () => {
       if (started) shell.people.presenceChanged();
     },
     onStatus: (status) => {
       if (started) shell.room.connectionChanged(status);
-      // (A key asked for again, if the last request had no answer.)
-      if (started && status == "up") shell.editor.send({ type: "online" });
+      // (A key asked for again, if the last request had no answer; and any offline title rename flushed.)
+      if (started && status == "up") {
+        shell.editor.send({ type: "online" });
+        void shell.naming.flushTitle();
+      }
     },
-    // The room lost the history this tab holds: the page loads again, and this tab's edits go in as edits (collab.ts, adopt).
-    onStale: () => location.reload(),
   });
   // However long the room takes (opening.ts): a slow document isn't a missing one.
-  const first = await awaitHello(collab.hello, missing);
+  const first = await awaitHello(socket.hello, checkMissing);
   if (!first) return;
   shell.info = first.info;
   shell.pages = first.tree.pages;
   shell.canMakePages = first.tree.canEdit;
+  shell.treeEntries = first.tree.entries;
+  shell.latestContext = null;
   performance.mark("erga:hello");
+  // This page, its files, and the cached hello, kept in this browser for a reload with no connection (client/common/offline.ts).
+  void keepOffline(location.href);
+  socket.persist();
 
   // Which of the document's pages the editor holds: the one the viewer shows (the meta erga-page, which
-  // client/inline/viewer-nav.ts owns), else the document's own. One room holds them all; this tab edits this one, and
-  // goes to another by its address. (Another page opened in place, while editing, changes it: swapPage.) The editor's
-  // replica (collab) keeps it from then on; shell.pagePath reads it there.
-  const firstPage = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || shell.info.path;
-  Object.defineProperty(shell, "pagePath", { get: () => collab.pagePath || firstPage });
+  // client/viewer/nav.ts owns), else the document's own. Another page opened in place while editing changes it (swapTo).
+  let pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || shell.info.path;
+  Object.defineProperty(shell, "pagePath", { get: () => pagePath });
   /** A page's address (the editor's, while editing), given its path in the document; the root page's for null. */
   const addressOf = (path: string | null) => {
     const doc = shell.docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
@@ -259,52 +247,11 @@ const TITLE_NOT_SAVED = {
   /** The host's endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}${as}`;
 
-  // Into the room as who this tab is, and the document's text (on its way already, or here). Its presence is the page
-  // editor's (frame.ts: its own replica).
-  collab.join(me, firstPage, null);
-  try {
-    await collab.ready();
-    performance.mark("erga:synced");
-    // As the tab goes, what this replica holds of the room goes with it, for the page that loads in its place: as the
-    // page's editor's does (libs/text/ui/frame.ts, Carry). An edit of the shell's (the title: naming.ts) that the room
-    // did not have comes back with it. The browser's copy (`keep`) is written a moment after an edit, and a reload at
-    // once is sooner. (From here on only: a page that goes before this keeps what the one before it held.)
-    const HELD = `erga:held:${BASE}${as}`;
-    try {
-      collab.merge(JSON.parse(sessionStorage.getItem(HELD) ?? "null") ?? undefined);
-    } catch {
-      /* no storage: the browser's copy has it, if it was written in time */
-    }
-    addEventListener("pagehide", () => {
-      try {
-        const held = collab.held();
-        if (held) sessionStorage.setItem(HELD, JSON.stringify(held));
-        else sessionStorage.removeItem(HELD);
-      } catch {
-        /* no storage, or no room in it */
-      }
-    });
-  } catch (e) {
-    $("welcome").hidden = false;
-    $("welcome").innerHTML = `<div><p>Couldn't join the document: ${(e as Error).message}.</p><p>Is the server still running?</p></div>`;
-    window.ergaShell?.ready();
-    return;
-  }
   document.title = document.documentElement.dataset.pageTitle || (info.docName?.title ?? shell.pagePath);
 
-  /**
-   * The text and the caret in it as a state, made afresh (the text whole: for the agent's look, not for each key). The
-   * caret is the page's: its editor's presence in the room says where it is (it carries this tab's mark, `tab`).
-   */
   const tab = Math.random().toString(36).slice(2, 10);
-  const pageSelection = () => {
-    const mine = collab.others().find((p) => (p as { tab?: unknown }).tab == tab);
-    const at = mine && collab.positions(mine);
-    return at ? EditorSelection.single(at.anchor, at.head ?? at.anchor) : EditorSelection.single(0);
-  };
-  const currentState = () => EditorState.create({ doc: collab.current(), selection: pageSelection() });
   Object.assign(shell, {
-    collab,
+    socket,
     me,
     as,
     api,
@@ -313,11 +260,10 @@ const TITLE_NOT_SAVED = {
     goTo,
     openPage,
     swapPage,
-    currentState,
   });
   // (Asked each time: a load of the page again puts a new frame in its place, client/inline/viewer-frames.ts.)
   Object.defineProperty(shell, "frame", { get: () => window.ergaFrames.frame });
-  // Editing, as the viewer says (client/inline/viewer-edit-boot.ts: it tells setEditing from now on), and full screen.
+  // Editing, as the viewer says (client/viewer/edit-boot.ts: it tells setEditing from now on), and full screen.
   shell.editor = mountEditor(
     shell,
     document.body.classList.contains("erga-editing"),
@@ -330,28 +276,28 @@ const TITLE_NOT_SAVED = {
   shell.sharing = mountSharing(shell);
   shell.toast = mountToast();
   shell.alerts = mountAlerts(shell);
-  // The save mark: each copy of the room says how far its edits are (libs/text/ui/unsaved.ts), under a key of its own.
+  // The save mark: each copy says how far its edits are (libs/text/ui/unsaved.ts), under a key of its own.
   // The mark is the gray check only when the server has them all.
   shell.save = mountSaveMark($("save-state"));
   const edits =
     (key: string, why = NOT_SAVED) =>
     (at: At) =>
       shell.save.set(key, at, why);
-  // The shell's own edit of the room (the title: naming.ts) is in its replica: while the server doesn't have it, the
-  // mark says so, as for the page editor's edits (libs/text/ui/frame.ts), in words of its own: the card can say both.
-  shell.unsaved = watchUnsaved(window, { flushed: () => collab.flushed(), key: BASE, mark: edits("shell", TITLE_NOT_SAVED) });
+  // Pending title renames (naming.ts): while the server doesn't have one, the mark says so in words of its own.
+  shell.unsaved = watchUnsaved(window, { flushed: () => shell.naming.flushTitle(), key: BASE, mark: edits("shell", TITLE_NOT_SAVED) });
+  if (shell.naming.hasPending()) {
+    shell.unsaved.edit();
+    if (socket.connected) void shell.naming.flushTitle();
+  }
   shell.uploads = mountUploads(shell);
-  // Focusing or using this tab makes it the one you're shown by. Focus
-  // lands on the frame's window when the caret is in the page.
   // Signed out (client/live/live.ts): the room's sockets, this one and the page's own, try no more.
   live((l) =>
     l.signedOut(() => {
-      collab.signedOut();
+      socket.signedOut();
+      shell.naming.signedOut();
       page.signedOut();
     })
   );
-  const activate = () => collab.activate();
-  for (const type of ["focus", "pointerdown", "keydown"]) window.addEventListener(type, activate, true);
 
   // ---------------------------------------------------------------- the page editor
 
@@ -403,7 +349,6 @@ const TITLE_NOT_SAVED = {
     },
     // A press on the page: as one anywhere else in the shell would.
     onPress: () => {
-      activate();
       // (Also a card that's waiting for what it shows, to open.)
       shell.chrome.closeCards();
       shell.people.stackPeople();
@@ -411,8 +356,14 @@ const TITLE_NOT_SAVED = {
       shell.save.close();
     },
     onPressed: keyPressed,
+    onContext: (path, context) => {
+      shell.latestContext = { path, context };
+    },
     onActivity: (kind) => {
-      activate();
+      if (kind == "edit") {
+        shell.chrome.hideChrome();
+        return;
+      }
       if (kind == "key") {
         live((l) => l.activity());
         shell.chrome.keyPressed();
@@ -426,8 +377,6 @@ const TITLE_NOT_SAVED = {
     () => shell.pagePath,
     () => editing()
   );
-  // This page and its files, kept in this browser for a reload with no connection (client/common/offline.ts).
-  void keepOffline(location.href);
   rememberOrigin(pagesOrigin);
   // The page's editor starts, if it should (its edit key: client/shell/editor.ts).
   shell.editor.send({ type: "tick" });
@@ -447,7 +396,7 @@ const TITLE_NOT_SAVED = {
 
   // ---------------------------------------------------------------- zoom
 
-  // The document's zoom is the viewer's (client/inline/viewer-zoom.ts), viewing and editing alike: a key's change of the
+  // The document's zoom is the viewer's (client/viewer/zoom.ts), viewing and editing alike: a key's change of the
   // level shows in the toast.
   addEventListener("erga-zoom-level", (e) =>
     shell.toast.flash(`Zoom ${Math.round((e as CustomEvent<{ level: number }>).detail.level * 100)}%`)
@@ -519,7 +468,7 @@ const TITLE_NOT_SAVED = {
     true
   );
 
-  // Full screen (client/inline/viewer-full.ts) is for showing the page, not editing it: the editor in it stops, so the
+  // Full screen (client/viewer/full.ts) is for showing the page, not editing it: the editor in it stops, so the
   // page's own keys work (a deck's arrows); it starts again after.
   addEventListener("erga-full", (e) => shell.editor.send({ type: "full", on: (e as CustomEvent<{ on: boolean }>).detail.on }));
 
@@ -559,7 +508,7 @@ const TITLE_NOT_SAVED = {
   // the same way, and so does the editor's look: the document's page opens with it from its first frame,
   // before this script has loaded.
   live((l) => {
-    l.flush(() => collab.flushed());
+    l.flush(() => shell.naming.flushTitle());
     l.hold(() => (agentPanel()?.files.reading ? "files are being read" : null));
     l.keep(
       "editor",
@@ -600,28 +549,35 @@ const TITLE_NOT_SAVED = {
   let swaps: Promise<void> = Promise.resolve();
   /** Opens `path` in place, if it can (else false: the caller loads its address). `push`: a new entry in the history. */
   function swapPage(path: string, push = true): boolean {
-    if (!started || !editing() || !shell.docName?.address || !files(collab.doc).get(path)) return false;
-    swaps = swaps.then(() => swapTo(path, push)).catch((e) => { console.error(e); location.assign(addressOf(path)); });
+    if (!started || !editing() || !shell.docName?.address || !shell.treeEntries.some((e) => e.path == path && e.type == "page"))
+      return false;
+    swaps = swaps
+      .then(() => swapTo(path, push))
+      .catch((e) => {
+        console.error(e);
+        location.assign(addressOf(path));
+      });
     return true;
   }
   function swapTo(path: string, push: boolean) {
-    if (path == shell.pagePath) return;
-    const text = collab.setPath(path);
-    if (text == null) { goTo(addressOf(path)); return; }
+    if (path == pagePath) return;
+    pagePath = path;
+    shell.latestContext = null;
     page.load(path);
     // What was said of the last page was of it alone.
     shell.alerts.left();
     shell.naming.togglePages(false);
+    shell.people.presenceChanged();
     // The new page has the focus for its editor, unless the agent's box has it.
     if (!$("agent").contains(document.activeElement)) page.focus();
-    // A new entry in the history, then the page shown (viewer-nav.ts: the address and the entry follow).
+    // A new entry in the history, then the page shown (client/viewer/nav.ts: the address and the entry follow).
     if (push) window.history.pushState({ ...window.history.state, ergaPage: path }, "", addressOf(path));
     window.ergaShowPage(path);
     shell.naming.tree()?.setCurrent(path);
     shell.naming.viewHref(shell.docName!.address);
   }
   // Each entry in the history says which page it is (the pencil's and the viewer's say it as they're made:
-  // viewer-edit-boot.ts, viewer-nav.ts). Viewing, the viewer follows Back and Forward alone.
+  // client/viewer/edit-boot.ts, client/viewer/nav.ts). Viewing, the viewer follows Back and Forward alone.
   const stamp = () => { if (typeof window.history.state?.ergaPage != "string") window.history.replaceState({ ...window.history.state, ergaPage: shell.pagePath }, ""); };
   stamp();
   addEventListener("popstate", () => {
@@ -634,20 +590,18 @@ const TITLE_NOT_SAVED = {
 
   started = true;
   shell.people.presenceChanged();
-  shell.room.connectionChanged(collab.status);
+  shell.room.connectionChanged(socket.status);
   // What came on the socket while the shell was being set up (its hello, the agent's state), in order.
   for (const m of pending.splice(0)) shell.room.socketEvent(m);
   window.ergaPage = {
     page,
-    collab,
+    room: shell.room,
+    socket,
     agentContext: () => messageContext(shell),
     feedbackContext: () => feedbackContext(shell),
     setEditing,
     get pagePath() {
       return shell.pagePath;
-    },
-    get state() {
-      return currentState();
     },
   };
   window.ergaShell?.ready();

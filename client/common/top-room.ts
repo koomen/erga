@@ -65,25 +65,32 @@ export function topRoom(d: Document): { update(insets: boolean): Seat; room: num
     room: TOP_ROOM,
     inset: { top: 0, right: 0, bottom: 0, left: 0 },
     update(insets: boolean) {
+      if (insets) {
+        const { top, right, bottom, left } = out.inset;
+        const text = `html { --erga-inset-top: ${top}px; --erga-inset-right: ${right}px; --erga-inset-bottom: ${bottom}px; --erga-inset-left: ${left}px; }`;
+        if (style.textContent != text) style.textContent = text;
+        if (!style.isConnected) (d.head || d.documentElement).append(style);
+        return "whole";
+      }
       // The page's own padding and the rest, without the rule. While it's off, the page moves up by the room, and the
       // browser's scroll anchoring scrolls up with it (a tall block across the window's top is enough), but not back
       // down when the rule is on again: the page would jump by the room. So the window goes back to where it was.
-      const w = d.defaultView!,
-        y = w.scrollY;
-      style.disabled = true;
-      const cs = w.getComputedStyle(d.documentElement),
-        seat = seatOf(fillsWindow(d), insets),
-        pad = parseFloat(cs.paddingTop) || 0,
-        scroll = parseFloat(cs.scrollPaddingTop) || 0;
-      style.disabled = false;
-      if (w.scrollY != y) w.scrollTo(w.scrollX, y);
-      const { top, right, bottom, left } = out.inset;
-      const text =
-        seat == "under"
-          ? `html { padding-top: ${pad + out.room}px !important; scroll-padding-top: ${scroll + out.room}px !important; }`
-          : seat == "whole"
-            ? `html { --erga-inset-top: ${top}px; --erga-inset-right: ${right}px; --erga-inset-bottom: ${bottom}px; --erga-inset-left: ${left}px; }`
-            : "";
+      const had = !!style.textContent,
+        w = d.defaultView!,
+        y = had ? w.scrollY : 0;
+      if (had) style.disabled = true;
+      const seat = seatOf(fillsWindow(d), false);
+      let text = "";
+      if (seat == "under") {
+        const cs = w.getComputedStyle(d.documentElement),
+          pad = parseFloat(cs.paddingTop) || 0,
+          scroll = parseFloat(cs.scrollPaddingTop) || 0;
+        text = `html { padding-top: ${pad + out.room}px !important; scroll-padding-top: ${scroll + out.room}px !important; }`;
+      }
+      if (had) {
+        style.disabled = false;
+        if (w.scrollY != y) w.scrollTo(w.scrollX, y);
+      }
       if (style.textContent != text) style.textContent = text;
       if (!style.isConnected) (d.head || d.documentElement).append(style);
       return seat;

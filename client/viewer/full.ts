@@ -16,7 +16,7 @@
 type Doc = Document & { webkitFullscreenElement?: Element | null; webkitFullscreenEnabled?: boolean; webkitExitFullscreen?: () => void };
 type Root = HTMLElement & { webkitRequestFullscreen?: () => void };
 
-export default function viewerFull(): void {
+export function mountFull(): void {
   const d = document as Doc,
     root = document.documentElement as Root;
   document.addEventListener("keydown", (e) => {

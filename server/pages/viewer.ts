@@ -56,17 +56,14 @@ export const framesScript = (pages: string) => inlineCall("viewer-frames", pages
 /** The frame's page was refused (its pass ended): the viewer gets a new page, or says that it has none (client/inline/viewer-refused.ts). */
 const REFUSED_SCRIPT = inlineCall("viewer-refused");
 
-/** Which of the document's pages is shown: the address bar follows the frame (client/inline/viewer-nav.ts). */
-export const NAV_SCRIPT = inlineCall("viewer-nav");
-
 /**
  * The band at the top of a document's page (viewDocument), where the
  * controls are: the document's frame starts below it, so they never cover
  * the document, and it takes the document's own background, so it reads as
  * part of the page: its colour, and over that its gradient or image
- * (.erga-canvas, which has the frame's box; BAND_BOOT paints it). --band-h is the controls' row
+ * (.erga-canvas, which has the frame's box; client/viewer/band.ts paints it). --band-h is the controls' row
  * (34px, at max(12px, the notch)) and a 10px gap; the editor's client/styles/editor.css
- * keeps the frame there too. Until the frame says (BAND_BOOT), the colour
+ * keeps the frame there too. Until the frame says, the colour
  * is the one this document had last time on this browser, and the
  * controls' tone (light or dark text) with it.
  */
@@ -75,36 +72,17 @@ export const BAND_STYLE = inlineStyle("viewer-band");
 /** Sets the band's colour (ergaBand(id, colour)), or the one remembered for document `id` (ergaBand(id)): client/inline/viewer-band-head.ts. */
 export const BAND_HEAD = inlineCall("viewer-band-head");
 
-/** The band's colour and the page's canvas, as the page tells them (client/inline/viewer-band.ts). */
-export const BAND_BOOT = inlineCall("viewer-band");
-
-/** Going into the editor and back, for those who may (client/inline/viewer-edit-boot.ts). */
-export const editBoot = () =>
-  inlineCall("viewer-edit-boot", assetScripts("page.js"), { "editor.html": asset("editor.html"), "frame.js": asset("frame.js") });
-
-/** Full screen: the page's frame, from the button in the viewer and the editor (client/inline/viewer-full.ts). */
-export const FULL_BOOT = inlineCall("viewer-full");
-
-/** The document's zoom, viewing and editing (client/inline/viewer-zoom.ts). */
-export const ZOOM_BOOT = inlineCall("viewer-zoom");
-
 /** The levels the zoom menu offers. */
 const ZOOM_LEVELS = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2];
 
 /**
- * The zoom's menu (client/inline/viewer-zoom.ts), which the level opens: in the bar (#btn-zoom), or on a phone in the
+ * The zoom's menu (client/viewer/zoom.ts), which the level opens: in the bar (#btn-zoom), or on a phone in the
  * corner (#zoom-pill), while the document is zoomed. And what a screen reader hears of each level.
  */
 const ZOOM_PARTS = `<div class="erga-new-menu zoom-menu" id="zoom-menu" role="menu" aria-label="Zoom" hidden><div class="zm-row"><button type="button" class="zm-step zm-out" role="menuitem" aria-label="Zoom out">−</button><output class="zm-level"></output><button type="button" class="zm-step zm-in" role="menuitem" aria-label="Zoom in">+</button></div><hr class="erga-new-sep"><div class="zm-list">${ZOOM_LEVELS.map((l) => `<button type="button" role="menuitemradio" aria-checked="false" data-level="${l}">${Math.round(l * 100)}%</button>`).join("")}</div><hr class="erga-new-sep"><p class="zm-keys"></p></div><button type="button" class="zoom-pill" id="zoom-pill" aria-haspopup="menu" aria-controls="zoom-menu" aria-expanded="false" hidden></button><p class="zm-said" id="zoom-said" aria-live="polite"></p>`;
 
 /** Reloaded in the editor: the bars' parts as they were (client/inline/viewer-editing-body.ts), before their scripts run. */
 const RESTORE_BARS = `<script>window.ergaRestoreParts?.()</script>`;
-
-/** The bars' quick actions on a phone, and Share with an agent (client/inline/viewer-bars.ts). */
-export const BARS_BOOT = inlineCall("viewer-bars");
-
-/** The Document LLM API (window.ergaLLM), asked of the viewer by the page in its frame (client/inline/viewer-llm.ts). */
-export const LLM_BOOT = inlineCall("viewer-llm");
 
 /** The controls and the breadcrumbs on the band (client/inline/viewer.css). */
 export const VIEW_STYLE = `<style>${inlineStyle("viewer")}</style>`;
@@ -138,15 +116,15 @@ export function viewerPage(o: {
   /** Who you are (server/pages/account-menu.ts, accountHtml): at the right of the buttons' bar. */
   corner: string;
   /**
-   * The version the page shows, for someone signed in: it follows each change (client/inline/viewer-live.ts). In a meta,
+   * The version the page shows, for someone signed in: it follows each change (client/viewer/live.ts). In a meta,
    * never in a script: the page's build (server/live.ts) is its scripts, and one that changed reloads an open editor.
    */
   live?: string;
-  /** Someone who may comment and not edit: who they are, for the comments on the page (client/inline/viewer-comment.ts). */
+  /** Someone who may comment and not edit: who they are, for the comments on the page (client/viewer/comment.ts). */
   commenter?: { user: string; name: string; color: string; avatar?: string };
   /**
    * For someone signed in: the document's address, and whether it has more than one page (its crumb opens its tree:
-   * client/inline/viewer-tree.ts). The tree's script is there either way: the page's build (server/live.ts) is its
+   * client/viewer/tree.ts). The tree's script is there either way: the page's build (server/live.ts) is its
    * scripts, and a page made or deleted must not reload an open editor.
    */
   tree?: { address: string; many: boolean };
@@ -159,10 +137,10 @@ export function viewerPage(o: {
   const editing = o.editable && o.editing;
   const opening = o.editable ? `${shellTemplate()}<script>${editingHead()}</script>` : "";
   const editingBody = o.editable ? `<script>${EDITING_BODY}</script>` : "";
-  // The app's stylesheet (the agent's panel). In the page's HTML, the scripts after it wait for it: someone who reads gets
-  // it from a script (client/inline/viewer-style.ts), so the document's frame starts at once, and the editor's parts
-  // (72 kB) after the frame.
-  const style = !o.agent
+  // The app's stylesheet (the agent's panel and the editor's shell). In the page's HTML, the scripts after it wait for it:
+  // someone who reads gets it from a script (client/inline/viewer-style.ts), so the document's frame starts at once, and
+  // the editor's parts after the frame.
+  const style = !(o.agent || o.editable)
     ? ""
     : editing
       ? styleTag()
@@ -170,16 +148,19 @@ export function viewerPage(o: {
   // The page on its own origin, connected to from the start; it may play media only on the editor's say (EDITOR_ALLOW).
   const frame = `<iframe id="frame" class="erga-view" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
   // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
-  // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT). With none remembered, the
+  // document's last visit, before anything has loaded, then as the frame tells it (client/viewer/band.ts). With none remembered, the
   // page waits for its own (BAND_WAIT).
   const backdrop = `<script>${BAND_HEAD}ergaBand(${JSON.stringify(o.docId)});${BAND_WAIT}</script>`;
+  const viewerPreloads = assetScripts("viewer.js")
+    .map((href) => `<link rel="modulepreload" href="${href}">`)
+    .join("");
   const session = o.session;
   const before = `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 ${headTags(o.head, o.title, o.file, o.files)}
-<link rel="preconnect" href="${esc(o.pages)}">
+<link rel="preconnect" href="${esc(o.pages)}">${viewerPreloads}
 <meta name="erga-doc" content="${esc(o.docId)}">
 ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</script>${backdrop}${crumbsFont(session, true)}${style}<style>${BAND_STYLE}</style>${editing ? opening : ""}
 <body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${editing ? editingBody : ""}
@@ -193,8 +174,24 @@ ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</scr
     corner: o.corner,
     editor: o.editable,
   });
+  const viewerConfig = {
+    ...(o.editable
+      ? { edit: { scripts: assetScripts("page.js"), built: { "editor.html": asset("editor.html"), "frame.js": asset("frame.js") } } }
+      : {}),
+    ...(o.commenter ? { commenter: o.commenter } : {}),
+    ...(o.tree && session
+      ? {
+          tree: {
+            script: asset("pages-tree.js"),
+            address: o.tree.address,
+            query: session.as ? `?user=${encodeURIComponent(session.as)}` : "",
+          },
+        }
+      : {}),
+  };
+  const viewerScript = `<script id="erga-viewer" type="module" src="${asset("viewer.js")}" data-config="${esc(JSON.stringify(viewerConfig))}"></script>`;
   const after = `
-${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script>${ZOOM_PARTS}<script>${FULL_BOOT}</script><script>${ZOOM_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.tree && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.tree.address, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${ZOOM_PARTS}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}">` : ""}${viewerScript}
 `;
   return { before, after };
 }
@@ -203,7 +200,7 @@ ${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}$
  * The viewer's own head, from the page's: the tab's title (the page's <title>, else the document's), its icon (Erga's,
  * unless the page names one), and what a link's preview reads (description, og:*). The page is in a frame, so a browser
  * and a link's preview see only these. `erga-title` is the document's title, for the tab when the page has none
- * (client/inline/viewer-nav.ts follows the page's head as it changes).
+ * (client/viewer/nav.ts follows the page's head as it changes).
  */
 function headTags(head: PageHead, docTitle: string, file: string, files: string): string {
   const title = tabTitle(head, docTitle);

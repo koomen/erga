@@ -48,7 +48,7 @@ export interface ViewAnswer {
 /** How long with no file changed before a viewer's answer may be kept (ViewAnswer.quiet). */
 const QUIET_MS = 60_000;
 
-/** How often, at most, the open viewers' pages hear that what they show changed (each then shows the change: client/inline/viewer-live.ts). */
+/** How often, at most, the open viewers' pages hear that what they show changed (each then shows the change: client/viewer/live.ts). */
 const TELL_EVERY_MS = 2000;
 
 /** Where what viewers see is kept in the document's storage, while no file changes. */
@@ -69,7 +69,7 @@ export interface ViewOptions {
   changedAfterQuiet?: () => void;
   /** The document's page and where it is, now (null: no document): the version viewers see is worked out from it. */
   info: () => Promise<{ index: string; disk?: unknown } | null>;
-  /** Tells the open viewers' pages the version they should show, and the files that changed since the last time (client/inline/viewer-live.ts). */
+  /** Tells the open viewers' pages the version they should show, and the files that changed since the last time (client/viewer/live.ts). */
   tell: (ver: string, paths?: string[]) => void;
   log: (line: string) => void;
 }

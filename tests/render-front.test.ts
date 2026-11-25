@@ -140,6 +140,7 @@ for (const [browser, allow, content] of [
     expect(asked).toContainEqual({ at: `GET ${pages.slice(8)}/t/<pass>/index.html`, who: null });
     expect(asked).toContainEqual({ at: `GET ${pages.slice(8)}/t/<pass>/style.css`, who: null });
     // Each said what a browser says of it: the window's page, the frame's page, the viewer's own request.
+    expect(await evaluate(`fetch("/d/${id}/api/doc").then((r) => r.status)`, true)).toBe(200);
     expect(said[`GET erga.example/d/${id}`]).toBe("document, none");
     expect(said[`GET ${pages.slice(8)}/t/<pass>/index.html`]).toBe("iframe, null");
     expect(said[`GET erga.example/d/${id}/api/doc`]).toBe("null, same-origin");
@@ -188,6 +189,7 @@ for (const content of SITES)
     );
     expect(tried).toEqual(["refused", "opaque", 404]);
     // (The viewer's own page asks for the same address, and that one is Ada's.)
+    expect(await evaluate(`fetch("/d/${id}/api/doc").then((r) => r.status)`, true)).toBe(200);
     const doc = asked.filter((a) => a.at.endsWith("/api/doc"));
     expect(doc.filter((a) => a.who).map((a) => a.at)).toEqual([`GET erga.example/d/${id}/api/doc`]);
     expect(

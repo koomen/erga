@@ -20,12 +20,26 @@ const OPAQUE = new Set(["svg", "math", "select", "template", "noscript", "textar
 const VOID = /^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/;
 
 type Range = { fa: number; ta: number };
+type ReconcilePlan =
+  | { kind: "attrs"; target: M.ElementNode; live: Element; was: Map<string, string>; now: Map<string, string> }
+  | { kind: "text"; target: M.ElementNode; live: Element }
+  | {
+      kind: "region";
+      target: M.ElementNode;
+      live: Node;
+      fresh: M.ElementNode;
+      old: M.SourceNode[];
+      keep: Map<number, M.SourceNode[]>;
+      wholeOld: Map<M.SourceNode, { from: number; to: number }>;
+    };
 
 export class Mirror {
   /** Source node to live node. */
   private dom = new Map<M.SourceNode, Node>();
   /** Live node to source node. */
   private live = new WeakMap<Node, M.SourceNode>();
+  /** Text nodes created or bound by this mirror, so foreign text nodes added by scripts/extensions are never deleted. */
+  private ownedText = new WeakSet<Text>();
 
   private constructor(
     readonly doc: Document,
@@ -84,6 +98,7 @@ export class Mirror {
     this.dom.set(s, n);
     this.live.set(n, s);
     ours.add(n);
+    if (n.nodeType == 3) this.ownedText.add(n as Text);
   }
 
   /** Binds the children of a source element to those of its live element, in order, passing over nodes of others. */
@@ -115,12 +130,56 @@ export class Mirror {
   }
 
   /**
+   * Whether `changes` from `oldSrc` to `newSrc` can be reconciled in place without mutating the DOM or binding.
+   */
+  canReconcile(changes: ChangeSet, oldSrc: string, newSrc: string): boolean {
+    return this.plan(changes, oldSrc, newSrc) != null;
+  }
+
+  /**
    * Brings the page to `newSrc`, the HTML after `changes`, in place: the smallest bound element that holds every change
    * gets its new content. The tree (`root`) is the parse of `newSrc` after it. Returns that element, or null, with
    * nothing changed, if the change can't be made in place (a script or style changed, or the change is outside the
    * body): the page must then load again.
    */
   reconcile(changes: ChangeSet, oldSrc: string, newSrc: string, decode: M.EntityDecoder): M.ElementNode | null {
+    const planned = this.plan(changes, oldSrc, newSrc);
+    if (!planned) return null;
+    if (planned.kind == "attrs") {
+      const { target, live, was, now } = planned;
+      mapTree(this.root, changes);
+      for (const [name] of was) if (!now.has(name)) live.removeAttribute(name);
+      for (const [name, value] of now) if (was.get(name) !== value) live.setAttribute(name, value);
+      return target;
+    }
+    if (planned.kind == "text") {
+      const { target, live } = planned;
+      mapTree(this.root, changes);
+      for (const c of target.children) {
+        c.from = target.openTo;
+        c.to = target.closeFrom;
+      }
+      const text = newSrc.slice(target.openTo, target.closeFrom);
+      live.textContent = target.tag == "title" ? M.decodeText(newSrc, target.openTo, target.closeFrom, false, decode).text : text;
+      return target;
+    }
+    const { target: e, live: liveE, fresh, old, keep, wholeOld } = planned;
+    // The tree's positions, outside the region and in what is kept whole, move through the change.
+    mapTree(this.root, changes);
+    for (const n of old) {
+      if (wholeOld.has(n)) continue;
+      const l = this.dom.get(n);
+      this.dom.delete(n);
+      if (l) this.live.delete(l);
+    }
+    const kids = this.build(fresh.children, e, liveE, newSrc, keep, wholeOld, decode);
+    e.children = kids;
+    for (const k of kids) if (k.kind == "element") k.parent = e;
+    return e;
+  }
+
+  /** Pure planning phase for `reconcile`: validates targets and live DOM connectivity without mutating anything. */
+  private plan(changes: ChangeSet, oldSrc: string, newSrc: string): ReconcilePlan | null {
     const ranges: Range[] = [];
     changes.iterChangedRanges((fa, ta) => ranges.push({ fa, ta }));
     if (!ranges.length) return null;
@@ -134,29 +193,17 @@ export class Mirror {
       if (this.dom.has(c)) t = c;
       at = c;
     }
-    const live = t && (this.dom.get(t) as Element);
+    const live = t && (this.dom.get(t) as Element | undefined);
     // Its attributes alone (a theme's class on the <body>, a to-do's style): set in place, those that changed.
-    if (t && live && lo > t.from + t.tag.length && hi < t.openTo) {
+    if (t && live?.isConnected && lo > t.from + t.tag.length && hi < t.openTo) {
       const openTo = changes.mapPos(t.openTo, -1);
       const was = this.attrsOf(oldSrc.slice(t.from, t.openTo), t.tag),
         now = this.attrsOf(newSrc.slice(changes.mapPos(t.from, 1), openTo), t.tag);
-      if (was && now) {
-        mapTree(this.root, changes);
-        for (const [name] of was) if (!now.has(name)) live.removeAttribute(name);
-        for (const [name, value] of now) if (was.get(name) !== value) live.setAttribute(name, value);
-        return t;
-      }
+      if (was && now) return { kind: "attrs", target: t, live, was, now };
     }
     // The text of a style or the title: set in place (a script's: the page loads again).
-    if (t && live && (t.tag == "style" || t.tag == "title") && t.openTo <= lo && hi <= t.closeFrom) {
-      mapTree(this.root, changes);
-      for (const c of t.children) {
-        c.from = t.openTo;
-        c.to = t.closeFrom;
-      }
-      const text = newSrc.slice(t.openTo, t.closeFrom);
-      live.textContent = t.tag == "title" ? M.decodeText(newSrc, t.openTo, t.closeFrom, false, decode).text : text;
-      return t;
+    if (t && live?.isConnected && (t.tag == "style" || t.tag == "title") && t.openTo <= lo && hi <= t.closeFrom) {
+      return { kind: "text", target: t, live };
     }
     // The region: the deepest bound element whose content holds every change.
     let e = this.body;
@@ -167,6 +214,7 @@ export class Mirror {
       );
       if (!c || !this.dom.has(c) || WHOLE.has(c.tag) || RUN.has(c.tag) || M.ATOMIC.has(c.tag) || c.tag == "textarea" || c.tag == "title")
         break;
+      if (!this.dom.get(c)!.isConnected) return null;
       e = c;
     }
     /** A change strictly inside [from, to): it overlaps it, or inserts inside it. */
@@ -197,6 +245,8 @@ export class Mirror {
       if (!up) return null;
       e = up;
     }
+    const liveE = this.dom.get(e);
+    if (!liveE?.isConnected) return null;
 
     // The old nodes in the region that can be kept, by where their start is now.
     const keep = new Map<number, M.SourceNode[]>();
@@ -228,23 +278,10 @@ export class Mirror {
       const w = o && wholeOld.get(o);
       return !!w && w.from == n.from && w.to == n.to;
     };
-    const plan = (n: M.ElementNode): boolean =>
-      n.children.every((c) => c.kind == "text" || (RUN.has(c.tag) ? isKept(c) : isKept(c) || plan(c)));
-    if (!plan(fresh)) return null;
-
-    // The tree's positions, outside the region and in what is kept whole, move through the change.
-    mapTree(this.root, changes);
-    const liveE = this.dom.get(e)!;
-    for (const n of old) {
-      if (wholeOld.has(n)) continue;
-      const l = this.dom.get(n);
-      this.dom.delete(n);
-      if (l) this.live.delete(l);
-    }
-    const kids = this.build(fresh.children, e, liveE, newSrc, keep, wholeOld, decode);
-    e.children = kids;
-    for (const k of kids) if (k.kind == "element") k.parent = e;
-    return e;
+    const checkFresh = (n: M.ElementNode): boolean =>
+      n.children.every((c) => c.kind == "text" || (RUN.has(c.tag) ? isKept(c) : isKept(c) || checkFresh(c)));
+    if (!checkFresh(fresh)) return null;
+    return { kind: "region", target: e, live: liveE, fresh, old, keep, wholeOld };
   }
 
   /** An open tag's attributes, as the browser reads them; null if it is not an open tag of `tag`. */
@@ -347,7 +384,7 @@ export class Mirror {
     const want = new Set(kids);
     let cur = parent.firstChild;
     for (const k of kids) {
-      while (cur && cur != k && !want.has(cur) && !this.live.has(cur) && !wasOurs(cur)) cur = cur.nextSibling;
+      while (cur && cur != k && !want.has(cur) && !this.live.has(cur) && !this.wasOurs(cur)) cur = cur.nextSibling;
       if (cur == k) {
         cur = cur.nextSibling;
         continue;
@@ -356,20 +393,19 @@ export class Mirror {
     }
     for (let n = parent.firstChild; n; ) {
       const next = n.nextSibling;
-      if (!want.has(n) && wasOurs(n)) n.parentNode!.removeChild(n);
+      if (!want.has(n) && this.wasOurs(n)) n.parentNode!.removeChild(n);
       n = next;
     }
   }
+
+  /** Whether a live node was drawn from the HTML (only text nodes and elements this mirror created or bound). */
+  private wasOurs(n: Node): boolean {
+    if (n.nodeType == 3) return this.ownedText.has(n as Text);
+    return n.nodeType == 1 && !(n as Element).localName.startsWith("erga-") && !(n as Element).hasAttribute("data-erga") && ours.has(n);
+  }
 }
 
-/** Whether a live node was drawn from the HTML (it was bound, or is a text node: others' text is rare). */
-function wasOurs(n: Node): boolean {
-  return (
-    n.nodeType == 3 ||
-    (n.nodeType == 1 && !(n as Element).localName.startsWith("erga-") && !(n as Element).hasAttribute("data-erga") && ours.has(n))
-  );
-}
-/** Every live node the mirror ever bound (a WeakSet: a node unbound by a change is still ours to remove). */
+/** Every live element the mirror ever bound (a WeakSet: a node unbound by a change is still ours to remove). */
 const ours = new WeakSet<Node>();
 
 function add(map: Map<number, M.SourceNode[]>, at: number, n: M.SourceNode): void {

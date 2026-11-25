@@ -11,11 +11,11 @@ export const ASSET_PREFIX = "/_erga/";
 
 /** What the build made: the server's only source for the files' addresses. */
 export interface AssetManifest {
-  /** Each file by its name ("page.js", "frame.js", "style.css", "editor.html", "inter.css"): its address ("/_erga/main-1a2b3c4d.js"). */
+  /** Each file by its name ("page.js", "viewer.js", "frame.js", "clipboard.js", "style.css", "editor.html", "inter.css"): its address ("/_erga/main-1a2b3c4d.js"). */
   files: Record<string, string>;
   /** A script's static imports, all of them (the chunks it needs before it runs), by the script's name: what to preload. */
   deps: Record<string, string[]>;
-  /** Every script a document's page may load (frame.js and tools.js), at once or later: the integrity map an editor's page gives the browser. */
+  /** Every script a document's page may load (frame.js, steps.js, tools.js and clipboard.js), at once or later: the integrity map an editor's page gives the browser. */
   frame: string[];
   /** Each script's Subresource Integrity hash ("sha384-..."), by its address. */
   integrity: Record<string, string>;

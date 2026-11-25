@@ -1,5 +1,5 @@
 // ... and as its body starts: opened with ?edit, editing from the first frame, with the editor's controls (inert, and
-// out of sight until its code is in: viewer-edit-boot.ts) and its layout (viewer-layout-early.ts), unmoving until
+// out of sight until its code is in: client/viewer/edit-boot.ts) and its layout (viewer-layout-early.ts), unmoving until
 // it's ready; reloaded in the editor, shown as they were (viewer-editing-head.ts).
 
 import viewerLayoutEarly from "./viewer-layout-early";

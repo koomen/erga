@@ -18,10 +18,10 @@ import { asUser } from "../common/tools";
 /** The editor, once it runs (client/shell/main.ts, window.ergaPage): what this script asks of it. */
 type Editor = { pagePath: string; setEditing(on: boolean): void };
 
-export default function viewerEditBoot(scripts: string[], built: Record<string, string>): void {
+export function mountEditBoot(scripts: string[], built: Record<string, string>): void {
   const body = document.body;
   const editor = () => window.ergaPage as Editor | undefined;
-  /** The page the viewer shows (viewer-nav.ts owns it). */
+  /** The page the viewer shows (client/viewer/nav.ts owns it). */
   const shown = () => document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || "";
   // Viewing, its room is woken ahead (prefetch): asking for its details opens it.
   const base = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')!.content;

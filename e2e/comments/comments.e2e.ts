@@ -437,7 +437,7 @@ journey("comments in the viewer", () => {
     ).toBeUndefined();
     const page = tab.page;
     tab.strict = true;
-    // A page with comments asks for a key to them as it starts (client/inline/viewer-comment.ts).
+    // A page with comments asks for a key to them as it starts (client/viewer/comment.ts).
     page.on("request", (r) => void (r.url().includes("/api/key") && keys.push(r.url())));
     // (Someone signed in has their agent in the viewer: its pane stays closed here, so the comments have their room.)
     await agentClosed(page);

@@ -47,6 +47,8 @@ export interface Served extends Opened, Open {
   calls: EditorCalls;
   /** What a tab hears first ({ type: "hello" }): the document's details as the person sees them, and its tree. */
   hello: (person: Person, canEdit: boolean) => Promise<Hello>;
+  /** Sets the document's title from a shell tab and broadcasts the new name. */
+  setTitle: (title: string) => Promise<boolean>;
 }
 
 export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Served> {
@@ -84,6 +86,7 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
       // A participant's run of calls is one version, and where its next diff_versions starts from ("last_turn").
       cutVersion: () =>
         this.history.cutSoon("turn").then(async (v) => (v ?? (await Effect.runPromise(this.history.versions.latest)))?.id ?? null),
+      setTitle: (title) => (this.opened ? this.opened.setTitle(title) : Promise.resolve(false)),
     });
     this.history = new History({
       deps,
@@ -124,7 +127,7 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
         ),
       changedAfterQuiet: () => void this.readInfo().then((info) => info && deps.viewChanged?.(info.id)),
       info: () => this.readInfo(),
-      // (`by`: who changed it last, for the pill that tells a reader who writes: client/inline/viewer-live.ts.)
+      // (`by`: who changed it last, for the pill that tells a reader who writes: client/viewer/live.ts.)
       tell: (ver, paths) => this.opened && this.participants.tellAll({ type: "view", ver, paths, by: this.lastAuthor ?? undefined }),
     });
   }
@@ -213,11 +216,11 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
     });
     // A title that a tab set in the room (the title's card: client/shell/naming.ts) goes to the directory, and every tab
     // hears the new name. One at a time. As the room opens too: for a title that the directory did not take.
-    let titling = Promise.resolve();
-    const takeTitle = () =>
+    let titling: Promise<boolean> = Promise.resolve(true);
+    const takeTitle = (): Promise<boolean> =>
       (titling = titling.then(async () => {
         const want = room.title;
-        if (want === undefined) return;
+        if (want === undefined) return true;
         const r = await Effect.runPromise(
           Effect.result(
             Effect.gen(function* () {
@@ -227,9 +230,13 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
             })
           )
         );
-        if (r._tag == "Failure") deps.log(`couldn't rename ${info.id}: ${r.failure.message}`);
+        if (r._tag == "Failure") {
+          deps.log(`couldn't rename ${info.id}: ${r.failure.message}`);
+          return false;
+        }
+        return true;
       }));
-    room.onTitle(takeTitle);
+    room.onTitle(() => void takeTitle());
     void takeTitle();
     return {
       ...opened,
@@ -237,6 +244,10 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
       handler: http.handler,
       calls: http.calls,
       hello: http.hello,
+      setTitle: (title) => {
+        room.setTitle(title);
+        return takeTitle();
+      },
       renamed: http.renamed,
       flush: () => Effect.runPromise(room.flush).then(() => room.saved),
       text: (path) => room.text(path),

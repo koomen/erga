@@ -13,7 +13,7 @@
    circle's animation there but paused, the browser at times stopped giving the pointer to the document's page after a
    reload at a phone's width: every move went to the viewer, for good (e2e/shell/panels.e2e.ts failed in 1 whole run of
    4; without them, in 0 of 8). The cause in the browser is not known. tests/unsaved.test.ts holds this. */
-:root {
+:root, :host {
   /* The bars' bottom edge, from the window's top: a sticky header on a page that scrolls under the bars sticks here. */
   --bars-top: max(8px, env(safe-area-inset-top)); --bars-height: 42px; --bars-bottom: calc(var(--bars-top) + var(--bars-height));
   --glass-pg: var(--band, var(--bg, #fff)); --glass-tint: 0; --glass-sh: 1;
@@ -22,7 +22,7 @@
   --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(255, 255, 255, 0.6);
   --glass-shadow: 0 2px 8px rgba(0, 0, 0, calc(0.05 * var(--glass-sh))), 0 0.5px 1px rgba(0, 0, 0, calc(0.06 * var(--glass-sh)));
 }
-html.page-white { --glass-tint: 0.035; --glass-sh: 0.5; }
+html.page-white, :host(.page-white) { --glass-tint: 0.035; --glass-sh: 0.5; }
 .erga-bar {
   top: var(--bars-top); height: var(--bars-height); box-sizing: border-box; border-radius: 14px; border: 0.5px solid rgba(0, 0, 0, 0.07);
   -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
@@ -31,24 +31,26 @@ html.page-white { --glass-tint: 0.035; --glass-sh: 0.5; }
 }
 /* The menus out of the bars (New document, your avatar's, a document's pages): glass at 90%. (html: over their own sheets'
    look, which come later on the page.) */
-html :is(.erga-new-menu, .erga-tree-card), .erga-bar .erga-account-menu {
+html :is(.erga-new-menu, .erga-tree-card), :host :is(.erga-new-menu, .erga-tree-card), .erga-bar .erga-account-menu {
   -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border: 0.5px solid rgba(0, 0, 0, 0.07);
   background: var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 90%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), var(--glass-shadow);
 }
-html .erga-new-menu { --nm-ring: rgba(0, 0, 0, 0.08); }
-html.page-dark body :is(.erga-bar, .erga-new-menu, .erga-account-menu, .erga-tree-card, .save-card) {
+html .erga-new-menu, :host .erga-new-menu { --nm-ring: rgba(0, 0, 0, 0.08); }
+html.page-dark body :is(.erga-bar, .erga-new-menu, .erga-account-menu, .erga-tree-card, .save-card),
+:host(.page-dark) :is(.erga-bar, .erga-new-menu, .erga-account-menu, .erga-tree-card, .save-card) {
   border-color: rgba(255, 255, 255, 0.12); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
-html.page-dark body .erga-bar { background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 55%), color-mix(in srgb, var(--glass-pg) 70%, transparent); }
-html.page-dark body :is(.erga-new-menu, .erga-bar .erga-account-menu, .erga-tree-card) { background: color-mix(in srgb, #1c1c1f 92%, transparent); }
-html.page-dark body .erga-new-menu { --nm-ring: rgba(255, 255, 255, 0.1); }
+html.page-dark body .erga-bar, :host(.page-dark) .erga-bar { background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 55%), color-mix(in srgb, var(--glass-pg) 70%, transparent); }
+html.page-dark body :is(.erga-new-menu, .erga-bar .erga-account-menu, .erga-tree-card),
+:host(.page-dark) :is(.erga-new-menu, .erga-bar .erga-account-menu, .erga-tree-card) { background: color-mix(in srgb, #1c1c1f 92%, transparent); }
+html.page-dark body .erga-new-menu, :host(.page-dark) .erga-new-menu { --nm-ring: rgba(255, 255, 255, 0.1); }
 
 /* The controls' tones on the page's colour: dark text on a light page, light on a dark one. */
-html.page-light body :is(.erga-bar, .chrome) {
+html.page-light body :is(.erga-bar, .chrome), :host(.page-light) :is(.erga-bar, .chrome) {
   --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46; --caret: #3b7cf0;
 }
-html.page-dark body :is(.erga-bar, .chrome) {
+html.page-dark body :is(.erga-bar, .chrome), :host(.page-dark) :is(.erga-bar, .chrome) {
   --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2; --caret: #6aa1ff;
 }
 
@@ -82,7 +84,7 @@ html.page-dark body :is(.erga-bar, .chrome) {
 .erga-bar .erga-account-who { font-size: 12.5px; }
 .erga-bar .erga-account-who b { font-size: 13.5px; }
 .erga-bar .erga-account-menu a { padding: 6px 10px; line-height: 1.55; }
-html.page-dark .erga-bar .erga-account-menu a { color: #cacad2; }
+html.page-dark .erga-bar .erga-account-menu a, :host(.page-dark) .erga-bar .erga-account-menu a { color: #cacad2; }
 .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
   transition: color 150ms ease, background-color 150ms ease; }
 /* A hidden one (the zoom's level at 100%) takes no room: also on a published site, which has no client/style.css. */
@@ -116,7 +118,7 @@ button.erga-view-button { margin: 0; padding: 0; border: 0; background-color: tr
 .save-state.fading .save-mark { animation: erga-save-fade 400ms ease-out forwards; }
 @keyframes erga-save-fade { to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .save-state.fading .save-mark { animation: none; display: none; } }
-html.page-dark body .save-state { --bad: #ff6b5e; }
+html.page-dark body .save-state, :host(.page-dark) .save-state { --bad: #ff6b5e; }
 .save-mark { position: relative; display: grid; place-items: center; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 7px;
   background: transparent; color: var(--chrome); font: inherit; cursor: default; }
 .save-mark:focus-visible { outline: 2px solid var(--caret, #3b7cf0); outline-offset: 1px; }
@@ -145,7 +147,7 @@ html.page-dark body .save-state { --bad: #ff6b5e; }
    text would show through the card's words.) */
 .erga-bar .save-card { border: 0.5px solid rgba(0, 0, 0, 0.07); background: var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 97%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), var(--glass-shadow); }
-html.page-dark body .erga-bar .save-card { background: color-mix(in srgb, #1c1c1f 97%, transparent); }
+html.page-dark body .erga-bar .save-card, :host(.page-dark) .erga-bar .save-card { background: color-mix(in srgb, #1c1c1f 97%, transparent); }
 .save-state[data-at="error"]:is(.open, .over, :focus-within) .save-card { visibility: visible; opacity: 1; transition-delay: 0s; }
 .save-card p { margin: 0; }
 .save-card p + .save-title { margin-top: 8px; }
@@ -163,11 +165,11 @@ html.page-dark body .erga-bar .save-card { background: color-mix(in srgb, #1c1c1
 .quick, .quick-inner { display: contents; }
 @media (max-width: 759.98px) {
   .quick { display: grid; grid-template-columns: 0fr; transition: grid-template-columns 420ms cubic-bezier(0.45, 0, 0.15, 1); }
-  body.quick-open .quick { grid-template-columns: 1fr; }
+  body.quick-open .quick, :host(.quick-open) .quick { grid-template-columns: 1fr; }
   .quick-inner { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: clip; }
   .quick-inner > * { flex-shrink: 0; }
   .me-slot { transition: margin 420ms cubic-bezier(0.45, 0, 0.15, 1); }
-  body:not(.quick-open) .me-slot { margin-left: 0; }
+  body:not(.quick-open) .me-slot, :host(:not(.quick-open)) .me-slot { margin-left: 0; }
   .erga-bar-l { max-width: var(--nav-room, none); overflow: hidden; justify-content: flex-end; }
   .erga-bar-l > * { flex: none; }
 }

@@ -1,5 +1,5 @@
-// The globals the inline scripts of a document's page make for each other (server/pages/viewer.ts puts them in the
-// page): the document's frame, the address with ?edit or without, the band's colour, and the editor's start.
+// The globals shared across a document's page (inline head scripts, client/viewer/viewer.ts and client/shell/main.ts):
+// the document's frame, the address with ?edit or without, the band's colour, and the editor's start.
 
 /** The document's frame (#frame, the page on its pages origin), whether a message came from it, and sending to it. */
 interface ErgaFrames {
@@ -29,7 +29,7 @@ declare var ergaEditAddress: () => boolean;
 declare var ergaWithEdit: (path: string, on: boolean) => string;
 /** The address of the page shown now: the document's, and its page's. */
 declare var ergaPageAddress: () => string;
-/** Shows `path` as the page shown (the meta erga-page, its one owner): the address and its entry follow (viewer-nav.ts). */
+/** Shows `path` as the page shown (the meta erga-page, its one owner): the address and its entry follow (client/viewer/nav.ts). */
 declare var ergaShowPage: (path: string) => void;
 /** Sets the band's colour, or the one remembered for document `id`, and the controls' tone to suit; answers the tone. */
 declare var ergaBand: (id: string, color?: string) => string;

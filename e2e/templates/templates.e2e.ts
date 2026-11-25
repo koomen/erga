@@ -266,8 +266,8 @@ journey("the Slides template: a deck of two slides", () => {
         const r = document.getElementById("frame")!.getBoundingClientRect();
         return {
           scale: (window as any).ergaFrames.scale() as number,
-          bottom: Math.round(r.bottom - innerHeight),
-          right: Math.round(r.right - innerWidth),
+          bottom: Math.round(r.bottom - innerHeight) || 0,
+          right: Math.round(r.right - innerWidth) || 0,
         };
       });
       return {

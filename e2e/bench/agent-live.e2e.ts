@@ -52,11 +52,11 @@ test("two edits reach the open page without a reload and the disk; the agent's b
   expect(await ed.eval<boolean>(`!!document.querySelector(".msg-assistant")?.textContent.trim()`), "and a reply").toBe(true);
   expect(await ed.eval<boolean>(`[...document.querySelectorAll(":is(#people, #me) .agent-badge")].some((e) => /agent/.test(e.dataset.tip))`), "its badge on its owner's avatar").toBe(true);
   // (No caret of its own on the page: e2e/agent/turn.e2e.ts.)
-  const before = await ed.eval<string>(`ergaPage.state.doc.toString()`);
+  const before = await ed.source();
   expect(await ed.eval<string>(`document.getElementById("agent-undo").getAttribute("aria-disabled")`)).toBe("false");
   await ed.eval(`document.getElementById("agent-undo").click()`);
-  await expect.poll(() => ed.eval<string>(`ergaPage.state.doc.toString()`)).not.toBe(before);
-  const undone = await ed.eval<string>(`ergaPage.state.doc.toString()`);
+  await expect.poll(() => ed.source()).not.toBe(before);
+  const undone = await ed.source();
   expect(undone.includes("Notes from the field") && undone.includes("Buy seeds"), undone.slice(0, 400)).toBe(false);
   const log = await (await fetch(`${ed.address}/api/agent`)).json() as { log?: { items: unknown[] } };
   expect(log.log?.items.length ?? 0, "the server keeps the transcript").toBeGreaterThanOrEqual(2);

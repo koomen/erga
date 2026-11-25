@@ -4,7 +4,7 @@
 // its own on the page's <html> (an erga- element: the editor's walks and the steps' pictures pass it by), in Erga's
 // viewer (window.__ergaReader) and in a page served as it is alike. It shows the step the agent asks for
 // (window.ergaStepTo); the agent's pictures leave the bar out (client/page-tools/capture.ts). Full screen is the
-// viewer's (client/inline/viewer-full.ts): it says when it's on, and the bar's way out asks it to leave.
+// viewer's (client/viewer/full.ts): it says when it's on, and the bar's way out asks it to leave.
 
 import type {} from "../../../client/common/reader-api";
 import type { StepShown } from "../../../shared/view-page";
@@ -332,11 +332,11 @@ export function mountSteps(): void {
     if (!shell || e.source != parent || e.origin != shell || !e.data) return;
     if (e.data.type == "erga-full") full(e.data.on === true);
     // (The editor's shell starts after the page: it hears of the bar with its first word.)
-    else if (e.data.type == "erga-mode") {
+    else if (e.data.type == "erga-mode" || e.data.type == "erga-sync") {
       look();
       tellBar();
     }
-    // An arrow pressed in the viewer, outside its text (client/inline/viewer-full.ts): as if pressed here.
+    // An arrow pressed in the viewer, outside its text (client/viewer/full.ts): as if pressed here.
     else if (e.data.type == "erga-arrow" && steps) go({ by: e.data.key == "ArrowLeft" ? -1 : 1 });
   });
   addEventListener("resize", look);

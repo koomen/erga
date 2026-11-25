@@ -7,16 +7,20 @@
 // address the frame opened with. Code that loads the frame again takes the address from `ergaFrames.src()`, never a
 // copy made at load.
 
-export default function viewerNav(): void {
+export function mountNav(): void {
   const meta = (name: string) => document.querySelector<HTMLMetaElement>('meta[name="' + name + '"]');
   const suffix = (file: string) => {
     let s = file.replace(/\.html$/i, "");
     s = s == "index" ? "" : s.replace(/\/index$/, "");
     return s ? "/" + s.split("/").map(encodeURIComponent).join("/") : "";
   };
+  const tellAddress = () => {
+    const addr = meta("erga-address")?.content;
+    if (addr) ergaFrames.send({ type: "erga-address", address: location.origin + addr });
+  };
   window.ergaPageAddress = () => meta("erga-address")!.content + (meta("erga-page") ? suffix(meta("erga-page")!.content) : "");
   // The page shown has one owner, the meta erga-page; the rest follows it here: the address, its entry in the history
-  // (ergaPage: which page the entry is for, client/inline/viewer-edit-boot.ts and client/shell/main.ts read it), and the
+  // (ergaPage: which page the entry is for, client/viewer/edit-boot.ts and client/shell/main.ts read it), and the
   // pencil's link. The editor, opening another page in place, says so here too (client/shell/main.ts, swapTo).
   window.ergaShowPage = (path) => {
     let m = meta("erga-page");
@@ -75,9 +79,11 @@ export default function viewerNav(): void {
   // And back: the tab's hash changed by itself (typed in the address bar, Back, a link to it), so the page goes there.
   addEventListener("hashchange", () => ergaFrames.send({ type: "erga-hash", hash: location.hash }));
   // The page's script says it is up (reader.ts): it learns the document's public address, for the links in a copy.
+  // (Now too, in case the page said hello before this module loaded.)
+  tellAddress();
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e) || e.data?.type != "erga-hello") return;
-    ergaFrames.send({ type: "erga-address", address: location.origin + meta("erga-address")!.content });
+    tellAddress();
   });
   // A link that leaves the document (reader.ts): a new tab (tab: "new"), or the whole tab when its author set it
   // to open in this one (target="_self"), on the reader's click only. (A tab the page opened itself would have its sandbox.)

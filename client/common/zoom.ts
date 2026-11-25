@@ -1,7 +1,7 @@
 // Zooming the document, not Erga: ⌘+ and ⌘− (Ctrl on other systems), ⌘0, a pinch on the trackpad (a wheel with
 // ctrlKey; Safari's gesture events) and Ctrl with the mouse wheel would zoom the whole window, the bars and the agent
 // too. The viewer takes them instead, wherever they happen (the shell, the frame, the page), keeps the zoom (zoomStep:
-// one state, one function) and draws the page's frame at it (client/inline/viewer-zoom.ts; viewer-band.css,
+// one state, one function) and draws the page's frame at it (client/viewer/zoom.ts; viewer-band.css,
 // html.erga-zoomed). Viewing, at rest the page is laid out again for its place at the level, as the browser's own zoom
 // does: its frame is `level` times smaller than its place, and drawn that much larger, so it fills the place and
 // nothing is cut off. Editing, the page keeps the width it has at 100%, the layout its readers get, and is only
@@ -49,7 +49,7 @@ export type ZoomAim = { type: "erga-zoom-aim"; x: number; y: number; to: number;
 /** A part of the page's window, across: px of the page, from its left edge. */
 export type Shows = { left: number; right: number };
 
-/** The viewer's word to the page on the zoom (client/inline/viewer-zoom.ts), viewing and editing alike. */
+/** The viewer's word to the page on the zoom (client/viewer/zoom.ts), viewing and editing alike. */
 export type Zoomed = {
   type: "erga-zoomed";
   /** The level the page's frame is drawn at. */

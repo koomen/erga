@@ -8,9 +8,9 @@
 // presence in the room carries it, so the viewer knows its own page's caret), how
 // much of the window's bottom the viewer's alerts take (`notes`, in px: the editor's own notes sit over them; when it
 // changes, the viewer says "erga-notes" with the new height), and what the tests set (`timescale`, `check`). `comment`: for a person who may comment and not edit (a commenter:
-// client/inline/viewer-comment.ts sends it): the comments alone, on a page that nothing here changes.
+// client/viewer/comment.ts sends it): the comments alone, on a page that nothing here changes.
 
-import type { Author } from "../../../document/model/content";
+import type { Author } from "../../../shared/author";
 
 export type EditMode =
   | {

@@ -6,9 +6,9 @@
 import * as M from "../../../shared/manuscript";
 import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { ChangeSet, Text } from "@codemirror/state";
-import type { Page } from "./rules";
+import { editableAt, inlineAt, placeholderDrops, undoOf, type Page, type Step } from "./rules";
 import type { Change } from "./lists";
-import { attrOf, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn, type InlineStyle } from "./source";
+import { attrOf, dropped, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn, type InlineStyle } from "./source";
 
 export type Segment = { u: M.Unit; from: number; to: number };
 
@@ -262,4 +262,103 @@ export function applyLink(
   const replaced = !!edit.url && !!text && text != textIn(page.units, textFrom, textTo);
   if (replaced) changes.push({ from: textFrom, to: textTo, insert: escapeHtmlText(text!) });
   return { changes, text: { from: textFrom, to: textTo, replaced } };
+}
+
+/** Stored styles toggled at a caret for the text typed next: each style explicitly turned on or off. */
+export type StoredStyles = Map<InlineStyle, boolean>;
+
+/**
+ * Toggles `style` in the stored styles for a caret at `pos`: returns the updated map, or why the caret can't store
+ * styles there.
+ */
+export function toggleStoredStyle(
+  page: Page,
+  pos: number,
+  style: InlineStyle,
+  current: StoredStyles | null
+): { styles: StoredStyles } | { why: string } {
+  const u = M.unitAt(page.units, pos);
+  if (!u || !page.editable(u) || !editableAt(u, pos)) return { why: "Put the caret in the text first." };
+  if (u.tag == "pre") return { why: "Text in a code block can't be styled." };
+  const styles = new Map(current ?? undefined);
+  const on = styles.get(style) ?? inlineAt(u, pos).some((e) => STYLE_TAGS[style].includes(e.tag));
+  styles.set(style, !on);
+  return { styles };
+}
+
+/**
+ * Text typed where a style key stored styles (toggleStoredStyle): in a new element of each style turned on (the caret
+ * stays in it, so the next keys go there too); out of the element of a style turned off (past its end tag at its end,
+ * before its open tag at its start, else between its two halves). Null if none of the stored styles change anything.
+ */
+export function typeWithStored(page: Page, pos: number, text: string, styles: StoredStyles): Step | null {
+  const u = M.unitAt(page.units, pos);
+  if (!u || !page.editable(u) || !styles.size) return null;
+  const src = page.src,
+    stack = inlineAt(u, pos);
+  let at = pos,
+    before = "",
+    after = "",
+    open = "",
+    close = "";
+  const tags = (l: M.ElementNode[]) => l.map((e) => ({ tag: e.tag, open: src.slice(e.from, e.openTo) }));
+  for (const [style, on] of styles) {
+    const i = stack.findIndex((e) => STYLE_TAGS[style].includes(e.tag));
+    if (on && i < 0) {
+      open += `<${STYLE_TAGS[style][0]}>`;
+      close = `</${STYLE_TAGS[style][0]}>` + close;
+    } else if (!on && i >= 0 && at == pos) {
+      const e = stack[i],
+        inner = tags(stack.slice(i + 1));
+      const onlyTags = (a: number, b: number) => !src.slice(a, b).replace(/<[^>]*>/g, "");
+      if (onlyTags(pos, e.closeFrom)) at = e.to;
+      else if (onlyTags(e.openTo, pos)) at = e.from;
+      if (at != pos) [before, after] = [M.openTags(inner), M.closeTags(inner)];
+      else {
+        before = M.closeTags(tags(stack.slice(i))) + M.openTags(inner);
+        after = M.closeTags(inner) + M.openTags(tags(stack.slice(i)));
+      }
+    }
+  }
+  if (at == pos && !before && !open) return null;
+  const head = before + open + escapeHtmlText(text);
+  const drops = placeholderDrops(src, [u], pos, pos, true);
+  const changes: Change[] = [{ from: at, insert: head + close + after }, ...drops];
+  return {
+    changes,
+    selection: { anchor: at + head.length - dropped(drops, at) },
+    userEvent: "input.type",
+    undo: undoOf(src, ChangeSet.of(changes, src.length), "input.type"),
+  };
+}
+
+/**
+ * Text typed or pasted at a caret at either end of a link: the part next to the link goes into it, and from a space on
+ * it's plain text. So a space at a link's end ends the link, and one at its start goes before it. Null where the caret
+ * isn't at a link's end.
+ */
+export function typeAtLinkEdge(page: Page, pos: number, text: string, userEvent = "input.type"): Step | null {
+  const u = M.unitAt(page.units, pos);
+  if (!u || u.tag == "pre" || !page.editable(u) || !editableAt(u, pos)) return null;
+  const el = enclosing(u, ["a"], pos, pos) ?? linkEnding(u, pos);
+  if (!el) return null;
+  const end = pos == el.closeFrom || pos == el.to,
+    start = pos == el.from || pos == el.openTo;
+  if (!end && !start) return null;
+  const join = end ? /^\S*/.exec(text)![0] : /\S*$/.exec(text)![0];
+  const plain = end ? text.slice(join.length) : text.slice(0, text.length - join.length);
+  const [inside, outside] = end ? [el.closeFrom, el.to] : [el.openTo, el.from];
+  const changes: Change[] = [];
+  if (plain) changes.push({ from: outside, insert: escapeHtmlText(plain) });
+  if (join) changes.push({ from: inside, insert: escapeHtmlText(join) });
+  if (!changes.length) return null;
+  changes.sort((a, b) => a.from - b.from);
+  const set = ChangeSet.of(changes, page.src.length);
+  const caret = set.mapPos(end ? (plain ? outside : inside) : join ? inside : outside, 1);
+  return {
+    changes,
+    selection: { anchor: caret },
+    userEvent,
+    undo: undoOf(page.src, set, userEvent),
+  };
 }

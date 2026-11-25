@@ -7,6 +7,8 @@
 //                      year and never asks again (_headers): the scripts (ES modules, split in chunks that
 //                      load when they're needed), the stylesheet, the editor's page and the typeface
 //     main-<h>.js        page.js: the page editor's shell (main.ts), which the viewer adds when you edit
+//     viewer-<h>.js      viewer.js: the viewer's post-frame behaviour (client/viewer/viewer.ts), on every document's page
+//     clipboard-<h>.js   clipboard.js: a reader's copy out of a document's page (client/reader/clipboard.ts), on each document's own origin
 //     tools-<h>.js       tools.js: Erga's page tools (client/page-tools/tools.ts: the live page's tools: page_log,
 //                        page_input), on each document's own origin too, built with frame.js
 //     frame-<h>.js       frame.js: the editor itself (frame.ts), which runs on each document's own origin, loaded
@@ -52,9 +54,11 @@ const DIR = ASSET_PREFIX.slice(1, -1);
 /** The scripts, by name, and their sources. */
 export const ENTRIES: Record<string, string> = {
   "page.js": "client/shell/main.ts",
+  "viewer.js": "client/viewer/viewer.ts",
   "frame.js": "libs/text/ui/frame.ts",
   "steps.js": "libs/steps/ui/library.ts",
   "tools.js": "client/page-tools/tools.ts",
+  "clipboard.js": "client/reader/clipboard.ts",
   "settings.js": "client/pages/settings.ts",
   "pages-tree.js": "client/pages/pages-tree.ts",
   "agent.js": "client/agent/person-agent.ts",
@@ -70,17 +74,6 @@ export const HEADERS = `${ASSET_PREFIX}*
   Cross-Origin-Resource-Policy: cross-origin
   X-Content-Type-Options: nosniff
 `;
-
-/**
- * The frame's build: @codemirror/view and @lezer/common as an inert stand-in (libs/text/ui/frame-view.ts). The frame has
- * no CodeMirror view and no syntax tree (bridge.ts), but CodeMirror's history and language modules import both.
- */
-export const FRAME_VIEW: import("bun").BunPlugin = {
-  name: "erga:frame-view",
-  setup(b) {
-    b.onResolve({ filter: /^(@codemirror\/view|@lezer\/common)$/ }, () => ({ path: join(ROOT, "libs/text/ui/frame-view.ts") }));
-  },
-};
 
 const sha = (bytes: Uint8Array, alg = "sha256") => new Bun.CryptoHasher(alg as "sha256").update(bytes);
 const hashOf = (bytes: Uint8Array) => sha(bytes).digest("hex").slice(0, 10);
@@ -173,10 +166,17 @@ async function build(): Promise<void> {
   // share is one chunk. In both, what a script imports later (import()) is a chunk of its own.
   const files: Record<string, string> = {};
   const imports = new Map<string, { path: string; kind: string }[]>();
-  const scripts = async (names: string[], plugins: import("bun").BunPlugin[]) => {
+  const scripts = async (names: string[]) => {
     const result = await Bun.build({
-      entrypoints: names.map((n) => join(ROOT, ENTRIES[n])), outdir: at, splitting: true, format: "esm", target: "browser", minify: true, sourcemap: "none",
-      naming: { entry: "[name]-[hash].[ext]", chunk: "chunk-[hash].[ext]" }, metafile: true, plugins,
+      entrypoints: names.map((n) => join(ROOT, ENTRIES[n])),
+      outdir: at,
+      splitting: true,
+      format: "esm",
+      target: "browser",
+      minify: true,
+      sourcemap: "none",
+      naming: { entry: "[name]-[hash].[ext]", chunk: "chunk-[hash].[ext]" },
+      metafile: true,
     } as Bun.BuildConfig);
     if (!result.success) { for (const l of result.logs) console.error(l); process.exit(1); }
     const meta = (result as unknown as { metafile: { outputs: Record<string, { imports: { path: string; kind: string }[]; entryPoint?: string }> } }).metafile;
@@ -188,12 +188,9 @@ async function build(): Promise<void> {
       if (name) files[name] = url;
     }
   };
-  const PAGE_SCRIPTS = ["frame.js", "steps.js", "tools.js"];
-  await scripts(PAGE_SCRIPTS, [FRAME_VIEW]);
-  await scripts(
-    Object.keys(ENTRIES).filter((n) => !PAGE_SCRIPTS.includes(n)),
-    []
-  );
+  const PAGE_SCRIPTS = ["frame.js", "steps.js", "tools.js", "clipboard.js"];
+  await scripts(PAGE_SCRIPTS);
+  await scripts(Object.keys(ENTRIES).filter((n) => !PAGE_SCRIPTS.includes(n)));
   for (const name of Object.keys(ENTRIES)) if (!files[name]) throw new Error(`the build made no ${name}`);
   /** The scripts `url` imports, and theirs: only the static ones, or the later ones too. */
   const closure = (url: string, later: boolean) => {
@@ -249,7 +246,10 @@ async function build(): Promise<void> {
     editor = editor.replace(from, () => to);
   };
   swap(`<link rel="stylesheet" href="/fonts/inter.css">`, `<style id="erga-fonts">${fontCss}</style>`);
-  swap(`<link rel="stylesheet" href="/bars.css">`, `<style>${readFileSync(join(ROOT, "client/inline/bars.css"), "utf8")}</style>`);
+  swap(
+    `<link rel="stylesheet" href="/bars.css">`,
+    `<style id="erga-bars">${readFileSync(join(ROOT, "client/inline/bars.css"), "utf8")}</style>`
+  );
   swap(`<link rel="stylesheet" href="/editor.css">`, `<style>${readFileSync(join(ROOT, "client/styles/editor.css"), "utf8")}</style>`);
   swap(`<link rel="stylesheet" href="/glass.css">`, `<style>${readFileSync(join(ROOT, "client/styles/glass.css"), "utf8")}</style>`);
   swap(`<link rel="stylesheet" href="/style.css">`, `<link rel="stylesheet" href="${files["style.css"]}">`);
@@ -264,7 +264,7 @@ async function build(): Promise<void> {
     frame: [...new Set(PAGE_SCRIPTS.flatMap((n) => closure(files[n], true)))],
     integrity: Object.fromEntries([...made].filter(([u]) => u.endsWith(".js")).sort(([a], [b]) => a.localeCompare(b)).map(([u, b]) => [u, integrityOf(b)])),
     fonts: { css: fontCss, preload: latin, page: pageFontCss },
-    shell: editorShell(editor, new TextDecoder().decode(style)),
+    shell: editorShell(editor),
   };
 
   // Into place: the files, then the manifest that names them, then what neither this build nor the last one names.
@@ -291,15 +291,18 @@ async function build(): Promise<void> {
 }
 
 /**
- * The editor's shell as the server puts it into a document's page (server/pages/viewer.ts): its styles as one sheet
- * (the stylesheet's rules, then the page's own), and its controls (the page's body without the frame, which the
- * viewer has, and without the scripts). No file to fetch and no stylesheet to wait for.
+ * The editor's shell as the server puts it into a document's page (server/pages/viewer.ts): the editor's own styles
+ * (editor.css and glass.css — style.css and bars.css are already on the viewer's page), and its controls (the page's
+ * body without the frame, which the viewer has, and without the scripts). No file to fetch and no stylesheet to wait for.
  */
-export function editorShell(editor: string, styleCss: string): { style: string; body: string } {
+export function editorShell(editor: string): { style: string; body: string } {
   const head = editor.slice(0, editor.indexOf("</head>")), body = /<body[^>]*>([\s\S]*)<\/body>/.exec(editor)?.[1];
   if (body == null) throw new Error("client/editor.html has no <body>");
-  const own = [...head.matchAll(/<style(?![^>]*id="erga-fonts")[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
-  const css = [styleCss, ...own].join("\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\n\s+/g, "\n");
+  const own = [...head.matchAll(/<style(?![^>]*id="erga-(?:fonts|bars)")[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
+  const css = own
+    .join("\n")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\n\s+/g, "\n");
   if (/<\/style/i.test(css)) throw new Error("the editor's styles hold </style>");
   const controls = body.replace(/<iframe id="frame"[^>]*><\/iframe>/, "").replace(/<script\b[\s\S]*?<\/script>/g, "").replace(/<!--[\s\S]*?-->/g, "").trim();
   if (/<\/template/i.test(controls)) throw new Error("the editor's controls hold </template>");

@@ -39,13 +39,15 @@ export interface Peer {
 }
 
 export interface PageEditorConfig {
-  /** The page's window: the editor runs in it, on the page as the pages origin served it. */
-  win: Window;
+  /** The page's window: the editor runs in it, on the page as the pages origin served it (omitted in headless tests). */
+  win?: Window | null;
   /** The digest of the text the page was made from (shared/page-html.ts): the editor takes the page only if its text is the same. */
-  source: string;
+  source?: string;
   state: EditorState;
   /** Where the document's relative URLs resolve, e.g. "/doc/". */
-  base: string;
+  base?: string;
+  /** Run without mounting onto a browser window (for unit tests that drive editing directly on source or a fake DOM). */
+  headless?: boolean;
   onUpdate?: (u: PageUpdate) => void;
   /** Unhandled keydowns inside the page (for app-level shortcuts). */
   onKey?: (e: KeyboardEvent) => boolean;
@@ -79,7 +81,7 @@ export interface PageEditorConfig {
    * loads again. `view`: the text on the window's top line (its source position in the text now, and how far down the
    * window its line is), for the page that comes to show it there again (restoreView).
    */
-  onReload: (view: { pos: number; top: number } | null) => void;
+  onReload?: (view: { pos: number; top: number } | null) => void;
 }
 
 /**
@@ -93,8 +95,14 @@ export interface LinkInfo {
   inside: boolean;
   rect: { left: number; top: number; width: number; bottom: number } | null;
 }
+
 /**
  * A change to a link (setLink): an empty url takes it off; text and self, when given, replace its own. `at` is the
  * selection the link bar opened on, which the change applies to even if the caret has moved since (a click elsewhere).
  */
-export interface LinkEdit { url: string; text?: string; self?: boolean; at?: { anchor: number; head: number } }
+export interface LinkEdit {
+  url: string;
+  text?: string;
+  self?: boolean;
+  at?: { anchor: number; head: number };
+}

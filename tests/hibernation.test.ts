@@ -22,7 +22,8 @@ import { type DocumentDeps } from "../document/life/document";
 import { DocumentHost } from "../document/api/host";
 import { MemoryStorage } from "../document/store/storage";
 import type { Participants, Tab, TabSocket } from "../document/room/participants";
-import { authorOf, authors, colorFor, files, introduce, type Author } from "../document/model/content";
+import { authorOf, authors, files, introduce } from "../document/model/content";
+import { colorFor, type Author } from "../shared/author";
 import { decodeStart } from "../shared/room-socket";
 import { Directory } from "../server/directory/index.ts";
 import { descriptionKey } from "../agents/models";
@@ -43,6 +44,7 @@ const syncMessage = (write: (e: Encoder) => void) => {
 class FakeTab implements TabSocket {
   readonly doc = new Y.Doc();
   closed: number | null = null;
+  binary: Uint8Array[] = [];
   presence: Uint8Array[] = [];
   events: unknown[] = [];
   constructor(
@@ -59,6 +61,7 @@ class FakeTab implements TabSocket {
   }
   send(m: string | Uint8Array): void {
     if (typeof m == "string") { this.events.push(JSON.parse(m)); return; }
+    this.binary.push(m);
     const d = new Decoder(m);
     const type = d.readUint();
     if (type == 1) { this.presence.push(m); return; }
@@ -131,6 +134,30 @@ class World {
       tab,
       syncMessage((e) => writeSyncStep1(e, tab.doc))
     );
+    await this.settle();
+    return tab;
+  }
+
+  /** A shell tab connects (?events=1&shell=1): JSON hello, events and presence only, never Yjs sync. */
+  async connectShell(person = { id: "ada", name: "Ada" }, opts: { readOnly?: boolean; who?: Tab["who"] } = {}): Promise<FakeTab> {
+    await Effect.runPromise(
+      this.document.admit(
+        new Request("http://doc/api/room?events=1&shell=1", {
+          headers: { "x-erga-person": JSON.stringify(person), "x-erga-access": opts.readOnly ? "view" : "edit" },
+        })
+      )
+    );
+    const tab = new FakeTab(this, {
+      id: crypto.randomUUID(),
+      readOnly: !!opts.readOnly,
+      epoch: null,
+      person,
+      events: true,
+      shell: true,
+      ...(opts.who ? { who: opts.who } : {}),
+    });
+    this.sockets.add(tab);
+    expect(this.tabs.join(tab, tab.tab)).toBe(true);
     await this.settle();
     return tab;
   }
@@ -468,4 +495,107 @@ test("the server names each tab's presence and name tag from its socket: a tab t
 
   aw.destroy();
   adas.destroy();
+});
+
+test("a shell tab (?shell=1) gets zero binary Yjs frames, receives hello, JSON presence, events, and survives hibernation", async () => {
+  const dir = new Directory(memory(), { admins: ["ada"] });
+  await dir.add({ id: "shell123", owner: "ada", title: "Shell Doc", created: Date.now(), expires: null });
+  const w = new World(dir);
+  await Effect.runPromise(
+    w.document.create(
+      "ada",
+      "shell123",
+      {
+        "index.html": '<!doctype html><link rel="stylesheet" href="style.css"><p>Hi</p>',
+        "plain.html": '<!doctype html><a href="https://example.com">External</a><p>Plain</p>',
+      },
+      "index.html",
+      { expires: null }
+    )
+  );
+  const shell = await w.connectShell({ id: "ada", name: "Ada" }, { who: { login: "ada" } });
+  const a = await w.connect(false, { id: "ada", name: "Ada" });
+  const bo = await w.connect(false, { id: "bo", name: "Bo" });
+
+  // Hello arrives with relative-link metadata on pages, and zero binary frames ever hit the shell socket.
+  await until(() => shell.events.some((e) => (e as { type?: string }).type == "hello"));
+  const hello = shell.events.find((e) => (e as { type?: string }).type == "hello") as {
+    type: string;
+    tree: { entries: { path: string; relative?: boolean }[] };
+  };
+  expect(hello.tree.entries.find((e) => e.path == "index.html")?.relative).toBe(true);
+  expect(hello.tree.entries.find((e) => e.path == "plain.html")?.relative).toBe(false);
+  expect(shell.binary).toEqual([]);
+
+  // Edits from full Yjs tabs do not send binary frames to the shell tab.
+  a.type(a.text()!.indexOf("Hi"), "hello ");
+  await w.settle();
+  expect(bo.text()).toContain("hello Hi");
+  expect(shell.binary).toEqual([]);
+
+  // Awareness updates on the room broadcast plain JSON presence snapshots to the shell tab.
+  const boAw = new Awareness(bo.doc);
+  boAw.setLocalState({
+    user: { user: "bo", name: "Bo", color: colorFor("bo"), kind: "person" },
+    cursor: { path: "index.html", anchor: { type: null, tname: "files" }, head: null },
+    active: 12345,
+    tab: "bo-tab",
+  });
+  w.deliver(bo, awareness([...encodeAwarenessUpdate(boAw, [bo.doc.clientID])]));
+  await w.settle();
+  const lastPresence = [...shell.events].reverse().find((e) => (e as { type?: string }).type == "presence") as {
+    type: "presence";
+    list: { client: number; user: Author; cursorPath?: string | null; activeAt?: number; tab?: string }[];
+  };
+  expect(lastPresence.list).toContainEqual({
+    client: bo.doc.clientID,
+    user: { user: "bo", name: "Bo", color: colorFor("bo"), kind: "person" },
+    cursorPath: "index.html",
+    activeAt: 12345,
+    tab: "bo-tab",
+  });
+  expect(shell.binary).toEqual([]);
+
+  // User-targeted events (tabsOf / tell) and broadcast events (tellAll) reach the shell tab.
+  expect(w.tabs.tabsOf("ada")).toEqual([shell]);
+  w.tabs.tell("ada", { type: "open", path: "plain.html" });
+  w.tabs.tellAll({ type: "publishing" });
+  expect(shell.events).toContainEqual({ type: "open", path: "plain.html" });
+  expect(shell.events).toContainEqual({ type: "publishing" });
+
+  // Idle hibernation: document closes; binary awareness relayed while closed skips the shell tab.
+  await until(() => !w.document.isOpen());
+  const says = (state: object) => {
+    const here = new Encoder();
+    here.writeUint(1);
+    here.writeUint(7);
+    here.writeUint(1);
+    here.writeString(JSON.stringify(state));
+    return awareness([...here.toBytes()]);
+  };
+  w.deliver(a, says({ user: { name: "Ada" }, cursor: null }));
+  await w.settle();
+  expect(shell.binary).toEqual([]);
+  expect(w.document.isOpen()).toBe(false);
+
+  // Wake in a fresh object: shell tab re-attaches, gets a new hello and presence, still zero binary frames.
+  const hellosBefore = shell.events.filter((e) => (e as { type?: string }).type == "hello").length;
+  w.boot();
+  a.type(0, "<!-- wake -->");
+  await w.settle();
+  await until(() => shell.events.filter((e) => (e as { type?: string }).type == "hello").length > hellosBefore);
+  expect(shell.binary).toEqual([]);
+  expect(shell.closed).toBeNull();
+
+  // Shell title rename: sets title in the room, broadcasts { type: "name" }, and replies with title-ack.
+  await Effect.runPromise(w.tabs.message(shell, JSON.stringify({ type: "title", id: 7, title: "Field notes" })));
+  expect(shell.events).toContainEqual({ type: "title-ack", id: 7, ok: true });
+  expect(shell.events).toContainEqual(expect.objectContaining({ type: "name", name: expect.objectContaining({ title: "Field notes" }) }));
+
+  // Permissions change: role downgrade closes with 4408 (reconnect), unshare closes with 4403.
+  const viewer = await w.connectShell({ id: "bo", name: "Bo" }, { readOnly: true, who: { login: "bo" } });
+  await w.tabs.permissionsChanged(async (who) => (who.login == "ada" ? "viewer" : null));
+  expect(shell.closed).toBe(4408);
+  expect(viewer.closed).toBe(4403);
+  boAw.destroy();
 });

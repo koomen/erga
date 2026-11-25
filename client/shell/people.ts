@@ -1,6 +1,6 @@
 // Presence: the avatars of who's here, and your own avatar's account menu. (The page's editor draws everyone's carets.)
 
-import type { Presence } from "../../libs/text/ui/collab";
+import type { ShellPresence } from "./shell-room";
 import { $, type Shell } from "./shell";
 import { safeAvatar } from "../../shared/avatars";
 import { quickLink } from "../common/quick-search";
@@ -9,7 +9,7 @@ export function mountPeople(shell: Shell) {
 
   // The avatars at the top say who's here and what each agent is doing. A person with several
   // tabs open is shown by the one they used last, and your own other tabs
-  // not at all (Collab.shown).
+  // not at all (ShellRoom.shown).
   // The others' stack (client/styles/editor.css, .people): its faces' size and overlap, and how many show at rest.
   // (On a phone, two: the breadcrumbs need the room.)
   const FACE = 26,
@@ -24,18 +24,26 @@ export function mountPeople(shell: Shell) {
     // One avatar per person: everyone else in a stack left of the buttons' bar, you
     // at its far right. A person's agent, once it has done
     // something, is a small badge on their avatar that spins while it works.
-    const persons = new Map<string, Presence>(), agents = new Map<string, Presence>();
-    for (const p of shell.collab.shown()) {
+    const persons = new Map<string, ShellPresence>(),
+      agents = new Map<string, ShellPresence>();
+    for (const p of shell.socket.shown(shell.me.user)) {
       if (p.user.kind == "agent") {
-        if (!p.busy && !p.cursor) continue;
+        if (!p.busy && !p.cursorPath) continue;
         const prev = agents.get(p.user.user);
         if (!prev || (p.busy && !prev.busy)) agents.set(p.user.user, p);
       } else if (p.user.kind == "person") persons.set(p.user.user, p);
     }
-    const all: { p: Presence; here: boolean }[] = [{ p: { client: -1, user: shell.me } as Presence, here: true }, ...[...persons.values()].map((p) => ({ p, here: true }))];
+    const all: { p: ShellPresence; here: boolean }[] = [
+      { p: { client: -1, user: shell.me }, here: true },
+      ...[...persons.values()].map((p) => ({ p, here: true })),
+    ];
     // An agent keeps working with its person's tabs closed: show them, faded, to carry it.
     for (const [user, a] of agents) {
-      if (user != shell.me.user && !persons.has(user)) all.push({ p: { client: -2, user: { user, name: a.user.name.replace(/[’']s agent$/, ""), color: a.user.color, kind: "person" } } as Presence, here: false });
+      if (user != shell.me.user && !persons.has(user))
+        all.push({
+          p: { client: -2, user: { user, name: a.user.name.replace(/[’']s agent$/, ""), color: a.user.color, kind: "person" } },
+          here: false,
+        });
     }
     people.textContent = meSlot.textContent = "";
     for (const { p, here } of all) {
@@ -155,8 +163,8 @@ export function mountPeople(shell: Shell) {
     set("account-out", accountLinks!.signOut);
   }
   /** A participant with no caret in this page's text says so (the page's editor shows the others' where they are). */
-  function sayNoCaret(b: HTMLElement, p: Presence, none: string) {
-    if (shell.collab.positions(p)) return;
+  function sayNoCaret(b: HTMLElement, p: ShellPresence, none: string) {
+    if (shell.socket.hasCaret(p, shell.pagePath)) return;
     b.setAttribute("aria-disabled", "true");
     b.dataset.tip += none;
   }

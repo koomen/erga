@@ -1,9 +1,10 @@
 // The document's title and address, the naming card that renames it, and the pages card with its tree.
 
 import { treeFiles } from "./tree-files";
+import type { Hello } from "../../document/api/api";
 import type { DocName } from "../../document/model/names";
-import { files, roomInfo } from "../../document/model/content";
-import { pageUrl, slugify, titleOf } from "../../document/model/pages";
+import { pageUrl, slugify } from "../../document/model/pages";
+import { keepWrite } from "../common/offline";
 import { live } from "../live/client";
 import { runTool } from "../common/tools";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";
@@ -21,26 +22,81 @@ export function mountNaming(shell: Shell) {
   // (replaceState: the old one still leads here). The editor itself talks to
   // the host at /d/<id> (BASE), which a rename never changes.
   //
-  // A title that is set is in the room (roomInfo's "title": document/room/room.ts), and the card writes it in this
-  // tab's replica, as an edit: it shows at once, the browser keeps it until the room has it (a reload, no connection:
-  // libs/text/ui/collab.ts, `keep`), and the server names the document by it. So the title that the replica has is the
-  // one to show, before the server's name says the same.
+  // A title submitted here shows at once, is kept in localStorage until rename_document succeeds (surviving offline
+  // reloads, cleared on sign-out in client/common/offline.ts), and flushes as soon as the socket is up.
   const titleBtn = $("doc-title"), naming = $("naming");
   // The pages card (below: togglePages) and its tree, once opened.
   const pagesCard = $("pages");
   let tree: TreeHandle | null = null;
   const namingForm = $("naming-form") as HTMLFormElement, namingStatus = $("naming-status");
   const titleIn = $("naming-title") as HTMLInputElement, slugIn = $("naming-slug") as HTMLInputElement;
-  const room = roomInfo(shell.collab.doc);
+  const TITLE_KEY = `erga:title:${BASE}${shell.as}`;
+  type PendingTitle = { title: string; docId: string };
+  let signedOut = false;
+  let pending: PendingTitle | null = (() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(TITLE_KEY) ?? "null") as PendingTitle | null;
+      return v && typeof v.title == "string" && typeof v.docId == "string" ? v : null;
+    } catch {
+      return null;
+    }
+  })();
+  let inflight: Promise<boolean> | null = null;
+  function savePending(p: PendingTitle | null) {
+    const clear = () => {
+      try {
+        localStorage.removeItem(TITLE_KEY);
+      } catch {
+        /* no storage */
+      }
+    };
+    if (!p) {
+      clear();
+      return;
+    }
+    if (signedOut) return;
+    // Write synchronously so an immediate reload before the server answers never loses the new title;
+    // keepWrite still verifies this origin is not signed out and deletes it if sign-out happened elsewhere.
+    try {
+      localStorage.setItem(TITLE_KEY, JSON.stringify(p));
+    } catch {
+      /* no storage */
+    }
+    void keepWrite(
+      async () => {},
+      async () => clear()
+    ).then((kept) => {
+      if (!kept) clear();
+    });
+  }
+  async function flushTitle(): Promise<boolean> {
+    if (!pending) return true;
+    if (!shell.socket.connected) return false;
+    if (inflight) return inflight;
+    const sending = pending;
+    const run = shell.socket.sendTitle(sending.title).then(
+      (ok) => {
+        if (ok && pending === sending) {
+          pending = null;
+          savePending(null);
+        }
+        return pending === null;
+      },
+      () => false
+    );
+    inflight = run.finally(() => {
+      if (inflight === run) inflight = null;
+    });
+    return inflight;
+  }
   function showName(n: DocName) {
-    const set = room.get("title");
-    if (set) n = { ...n, title: set, titleSet: true };
+    if (pending) n = { ...n, title: pending.title || n.title, titleSet: !!pending.title };
     shell.docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
     titleBtn.setAttribute("aria-label", shell.pages > 1 ? `${n.title}: its pages` : `${n.title}: rename`);
     titleBtn.title = `${location.host}${n.address}`;
-    // The tab's title is the page's own, if it has one (client/inline/viewer-nav.ts); else the document's.
+    // The tab's title is the page's own, if it has one (client/viewer/nav.ts); else the document's.
     document.querySelector<HTMLMetaElement>('meta[name="erga-title"]')?.setAttribute("content", n.title);
     document.title = document.documentElement.dataset.pageTitle || n.title;
     tree?.setRootTitle(n.title);
@@ -51,16 +107,13 @@ export function mountNaming(shell: Shell) {
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
     if (location.pathname != at) window.history.replaceState(window.history.state, "", at + location.search + location.hash);
   }
-  /** This page's address in the viewer (without the query): the pencil goes there, or to its editor while viewing (viewer-edit-boot.ts). */
+  /** This page's address in the viewer (without the query): the pencil goes there, or to its editor while viewing (client/viewer/edit-boot.ts). */
   function viewHref(address: string) {
     const at = pageUrl(address, shell.pagePath);
     $("btn-edit").setAttribute("href", ergaWithEdit(at, !document.body.classList.contains("erga-editing")));
     return at;
   }
   if (shell.info.docName) showName(shell.info.docName);
-  room.observe((e) => {
-    if (e.keysChanged.has("title") && shell.docName) showName(shell.docName);
-  });
   let slugTouched = false;
   const sayNaming = (text: string, error = false) => { namingStatus.textContent = text; namingStatus.classList.toggle("error", error); };
   const namingHint = () => sayNaming(!titleIn.value.trim() ? "Empty, the title follows the page's first heading."
@@ -129,8 +182,11 @@ export function mountNaming(shell: Shell) {
     const was = shell.docName,
       typed = { title: titleIn.value, slug: slugIn.value, slugTouched };
     if ("title" in patch) {
-      room.set("title", patch.title!);
+      pending = { title: patch.title!, docId: was.id };
+      savePending(pending);
+      showName(was);
       shell.unsaved.edit();
+      void flushTitle();
     }
     toggleNaming(false);
     if (!("slug" in patch)) return;
@@ -204,7 +260,10 @@ export function mountNaming(shell: Shell) {
         current: shell.pagePath,
         hasRelativeLinks,
         initial: kept(),
-        onChange: keep,
+        onChange: (a) => {
+          keep(a);
+          shell.treeEntries = a.entries as Hello["tree"]["entries"];
+        },
         onRenameRoot: () => toggleNaming(true),
         files: treeFiles(shell, () => tree),
         navigate: (url, o) => { if (o.replace || !o.path || !shell.swapPage(o.path)) shell.goTo(url, o.replace); },
@@ -229,17 +288,13 @@ export function mountNaming(shell: Shell) {
   titleBtn.addEventListener("pointerenter", ready);
   titleBtn.addEventListener("focus", ready);
   titleBtn.addEventListener("pointerdown", ready);
-  /** A page's title from its text, as the room has it, by the document's title rule (titleOf). */
+  /** A page's title from the last tree snapshot. */
   function pageTitle(path: string): string | null {
-    const text = files(shell.collab.doc).get(path)?.toString();
-    return text ? titleOf(text) : null;
+    return shell.treeEntries.find((e) => e.path == path)?.title ?? null;
   }
-  /** Whether a document links to its styles, scripts or images by relative paths (a move may break those): read from the room. */
+  /** Whether a document links to its styles, scripts or images by relative paths (a move may break those), from tree entries. */
   function hasRelativeLinks(path: string): boolean | undefined {
-    const text = files(shell.collab.doc).get(path)?.toString();
-    if (text == null) return undefined;
-    const refs = [...text.matchAll(/\b(?:src|href|poster|data)\s*=\s*["']?([^"'\s>]+)|url\(\s*["']?([^"')]+)/gi)].map((m) => m[1] ?? m[2]);
-    return refs.some((r) => !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\{)/i.test(r));
+    return shell.treeEntries.find((e) => e.path == path)?.relative;
   }
   function togglePages(force?: boolean) {
     const open = typeof force == "boolean" ? force : pagesCard.hidden;
@@ -262,21 +317,25 @@ export function mountNaming(shell: Shell) {
     const t = e.target as Element;
     if (!pagesCard.hidden && !pagesCard.contains(t) && !titleBtn.contains(t) && !t.closest?.(".et-menu")) togglePages(false);
   });
-  // A file coming or going in the room (another tab, an agent) reads the tree again; a page's text changing may change its title.
-  let treeTimer = 0, treeStale = false;
-  files(shell.collab.doc).observeDeep((events) => {
-    if (!tree || pagesCard.hidden) return;
-    treeStale ||= events.some((ev) => ev.target == files(shell.collab.doc) && [...ev.changes.keys.values()].some((c) => c.action != "update"));
-    clearTimeout(treeTimer);
-    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh({ quiet: true }); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
-  });
   // ?pages opens it straight away (a link to "this document's pages"), as does following this page to where it moved
   // while it was open (goTo): it stays open across the move.
   const reopen = (() => { try { const v = sessionStorage.getItem("erga:pages-open"); sessionStorage.removeItem("erga:pages-open"); return v == BASE; } catch { return false; } })();
   if ((reopen || new URLSearchParams(location.search).has("pages")) && shell.editor.state.editing)
     requestAnimationFrame(() => togglePages(true));
   pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
-  return { showName, viewHref, toggleNaming, togglePages, setPages, tree: () => tree };
+  return {
+    showName,
+    viewHref,
+    toggleNaming,
+    togglePages,
+    setPages,
+    flushTitle,
+    hasPending: () => !!pending,
+    signedOut: () => {
+      signedOut = true;
+    },
+    tree: () => tree,
+  };
 }
 
 export type Naming = ReturnType<typeof mountNaming>;

@@ -1,6 +1,6 @@
 // Share: the document with people (its owner only), and with an external agent (a prompt to copy).
 
-import { colorFor } from "../../document/model/content";
+import { colorFor } from "../../shared/author";
 import { showCopied } from "../common/copied";
 import { shareList } from "../common/share-list";
 import { BASE, $, type Shell } from "./shell";

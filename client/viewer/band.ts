@@ -27,7 +27,7 @@ type Look = {
   backgroundRepeat: string;
 };
 
-export default function viewerBand(): void {
+export function mountBand(): void {
   const id = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content;
   // The page's canvas (pages/reader.ts, canvas), behind the frame, reaching out from it over the band and the room beside
   // the page, and scrolled with the page. Its layers are placed against the page's root box (the <i>'s content box), as
@@ -152,7 +152,7 @@ export default function viewerBand(): void {
     roomSaid = said;
     ergaFrames.send(room);
   }
-  // (Now too: a page that was up before this script heard its hello waits for the room, client/inline/reader.ts.)
+  // (Now too: a page that was up before this module heard its hello waits for the room, client/inline/reader.ts.)
   tellRoom(true);
   new MutationObserver(() => tellRoom()).observe(root, { attributes: true, attributeFilter: ["style", "class"] });
   addEventListener("resize", () => tellRoom());

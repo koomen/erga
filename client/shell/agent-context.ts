@@ -5,7 +5,7 @@
 // with the page's HTML near the caret and the keys pressed last.
 
 import { isMac } from "../common/app-keys";
-import { type FeedbackContext, lookSteps, type Pressed, pressedWith, sourceNear } from "../../shared/feedback-context";
+import { type FeedbackContext, lookSteps, type Pressed, pressedWith } from "../../shared/feedback-context";
 import { pageReport } from "../../shared/page-report";
 import { plural } from "../../shared/time";
 import type { Shell } from "./shell";
@@ -36,16 +36,14 @@ function viewContext(shell: Shell): string {
   return `Their window shows the page${w && h ? ` at ${w}×${h} CSS pixels` : ""}, in ${scheme} mode.`;
 }
 function caretContext(shell: Shell): string {
-  const s = shell.currentState();
-  const sel = s.selection.main;
-  const line = s.doc.lineAt(sel.from);
-  if (!sel.empty) {
-    const endLine = s.doc.lineAt(sel.to).number;
-    const text = s.sliceDoc(sel.from, sel.to);
-    return `The user has selected lines ${line.number}-${endLine} of ${shell.pagePath}:\n${text.length > 4000 ? text.slice(0, 4000) + "\n[...]" : text}`;
+  const latest = shell.latestContext?.path == shell.pagePath ? shell.latestContext.context : null;
+  if (!latest) return `The user's caret is on line 1 of ${shell.pagePath}: `;
+  if (latest.selected != null) {
+    const text = latest.selected.length > 4000 ? latest.selected.slice(0, 4000) + "\n[...]" : latest.selected;
+    return `The user has selected lines ${latest.line}-${latest.endLine} of ${shell.pagePath}:\n${text}`;
   }
-  const text = line.text.length > 400 ? line.text.slice(0, 400) + "[...]" : line.text;
-  return `The user's caret is on line ${line.number} of ${shell.pagePath}: ${text}`;
+  const text = latest.lineText.length > 400 ? latest.lineText.slice(0, 400) + "[...]" : latest.lineText;
+  return `The user's caret is on line ${latest.line} of ${shell.pagePath}: ${text}`;
 }
 
 /** The keys pressed last in the page, oldest first (the page says each: client/inline/reader.ts). */
@@ -56,13 +54,14 @@ export function keyPressed(key: Pressed): void {
 
 /** What a feedback keeps of the page, if the agent sends one for the message that this goes with. */
 export function feedbackContext(shell: Shell): FeedbackContext {
-  const s = shell.currentState();
+  const latest = shell.latestContext?.path == shell.pagePath ? shell.latestContext.context : null;
+  const near = latest?.near ?? { html: "", htmlFrom: 1, line: 1, column: 1 };
   const w = shell.frame.clientWidth,
     h = shell.frame.clientHeight;
   return {
     page: new URL(shell.addressOf(shell.pagePath), location.href).pathname,
     file: shell.pagePath,
-    ...sourceNear(s.doc.toString(), s.selection.main.head),
+    ...near,
     keys: lookSteps(pressed, isMac),
     view: `${w}×${h} CSS pixels, ${matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"} mode`,
     problems: shell.alerts.said(),

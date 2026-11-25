@@ -12,7 +12,8 @@ import { FileStore, StateStore, StoreError } from "../document/store/storage";
 import { joinLocal } from "./helpers/join-local";
 import * as Effect from "effect/Effect";
 import { Workspace, type Cursor, type WorkspaceError } from "../document/room/workspace";
-import { assets, authorOf, files, introduce, roomInfo, type Author } from "../document/model/content";
+import { assets, authorOf, files, introduce, roomInfo } from "../document/model/content";
+import type { Author } from "../shared/author";
 import { until } from "./helpers/until";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */

@@ -132,14 +132,14 @@ export async function wordAndEnd(ed: Editor, selector: string, word: string) {
 
 /**
  * The document's zoom, in the page: how much larger than its own size it is drawn; 0 while the page is not laid out
- * for it yet (its window is about to get its new size, client/inline/viewer-zoom.ts). A page that fits itself keeps
+ * for it yet (its window is about to get its new size, client/viewer/zoom.ts). A page that fits itself keeps
  * its layout.
  */
 export const SETTLED_ZOOM = `(() => { const z = window.__ergaReader?.zoomed; if (!z) return 1; return z.keep == "all" || (z.zoom == z.lay.h && (z.keep == "width" || Math.abs(innerWidth - z.shows.right) <= 1)) ? z.zoom : 0; })()`;
 
 /**
  * The document's zoom, once the page is laid out for it (SETTLED_ZOOM) and its window has its frame's height: the
- * viewer gives the frame its size a screen frame after its scale (client/inline/viewer-zoom.ts, the trap), and a page
+ * viewer gives the frame its size a screen frame after its scale (client/viewer/zoom.ts, the trap), and a page
  * moves its text as its window gets another height.
  */
 export async function zoom(ed: Editor) {

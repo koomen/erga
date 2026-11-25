@@ -22,7 +22,6 @@
 
 import type { ReaderConfig } from "../../shared/page-html";
 import type { ToolAsk } from "../common/reader-api";
-import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
 import { TOP_ROOM, topRoom, type Seat } from "../common/top-room";
 import { readView, showView, viewOf, type View } from "../common/page-view";
@@ -30,7 +29,7 @@ import { isAppShortcut, isMac } from "../common/app-keys";
 import { catchZoomGestures, zoomKey, type ZoomAim, type Zoomed } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
 
-/** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
+/** The page's canvas, as it goes to the viewer (client/viewer/band.ts draws it). */
 type Canvas = {
   color: string;
   image: string;
@@ -56,11 +55,8 @@ export default function reader(C: ReaderConfig): void {
       P.postMessage(m, C.shell);
     } catch {}
   }
-  function editing() {
-    return root.hasAttribute("data-erga-editing");
-  }
-  // The Document LLM API (client/common/page-llm.ts): each ask goes to the viewer, which calls Erga as the visitor
-  // (client/inline/viewer-llm.ts) and answers it. A viewer that never answers: off, or an error.
+  const editing = () => root.hasAttribute("data-erga-editing");
+  // Document LLM API (client/common/page-llm.ts): proxied via viewer (client/viewer/viewer.ts).
   let llmId = 0;
   const llmWaits = new Map<number, (a: LlmAnswer) => void>();
   window.ergaLLM = makeErgaLLM(
@@ -89,29 +85,22 @@ export default function reader(C: ReaderConfig): void {
         );
       })
   );
-  // The viewer's own keys, pressed here. Reading, ⌘K (Ctrl+K off a Mac) opens the viewer's quick search
-  // (client/common/quick-search.ts). Editing, each of the viewer's shortcuts goes to it (client/common/app-keys.ts),
-  // which the editor in the page leaves be; Escape stays the editor's too (the focus off the text).
+  // Viewer shortcuts pressed in the frame: print, edit toggle, zoom, quick search, and editor app shortcuts.
   addEventListener(
     "keydown",
     (e) => {
       if (e.isComposing) return;
-      // Print (⌘P; Ctrl+P off a Mac): this page alone, whole. The browser's own would print the viewer around it, with
-      // Erga's bars and only the part of the page on the screen.
       if ((isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "p") {
         e.preventDefault();
         print();
         return;
       }
-      // The editor, opened or closed (⌘⇧E; Ctrl+Shift+E off a Mac): the viewer does it, for whoever may edit (viewer-edit-boot.ts).
       if ((isMac ? e.metaKey : e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() == "e") {
         e.preventDefault();
         e.stopPropagation();
         tell({ type: "erga-edit-key" });
         return;
       }
-      // A zoom key, viewing and editing: the viewer zooms the document (client/inline/viewer-zoom.ts). ⌘0 at 100% is the browser's (it puts back a tab that its own menu zoomed), and
-      // so is ⌘0 on a window the browser has zoomed itself, for its own way back.
       const zoomed = zoomKey(e, isMac);
       if (zoomed && !e.defaultPrevented && !zoomedSaid()?.off) {
         if (zoomed == "reset" && (zoomedSaid()?.zoom ?? 1) == 1 && !zoomsSaid) return;
@@ -120,8 +109,6 @@ export default function reader(C: ReaderConfig): void {
         return;
       }
       if (editing()) {
-        // The key itself too, for a feedback's context (client/shell/agent-context.ts): never one typed in a field of
-        // the page's own (a password box), which is no text of the document.
         const keys = { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey };
         tell({ type: "erga-activity", kind: "key", ...(inField(e) ? {} : { keys }) });
         if (!isAppShortcut(e, isMac)) return;
@@ -129,17 +116,13 @@ export default function reader(C: ReaderConfig): void {
         tell({ type: "erga-key", keys });
         return;
       }
-      const mod = isMac ? e.metaKey : e.ctrlKey;
-      if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() != "k") return;
+      if (!(isMac ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() != "k") return;
       e.preventDefault();
       tell({ type: "erga-quick-search" });
     },
     true
   );
-  /** An event in a field of the page's own: what is typed there is no text of the document. */
   const inField = (e: Event) => e.target instanceof Element && e.target.matches("input, textarea, select");
-  // Editing: text that the page takes (a phone's keyboard and a composition give no keydown that names it), for a
-  // feedback's context.
   addEventListener(
     "beforeinput",
     (e) => {
@@ -147,24 +130,15 @@ export default function reader(C: ReaderConfig): void {
     },
     true
   );
-  // Editing: the page's focus, for the viewer. Viewing and editing: a zoom gesture on the page (a pinch, ctrl with the
-  // wheel), for the viewer, which sets the zoom (client/inline/viewer-zoom.ts); whether the page zooms itself
-  // (window.ergaZoom: a canvas's camera), as the viewer's zoom goes to it then.
   addEventListener("focus", () => editing() && tell({ type: "erga-activity", kind: "focus" }), true);
-  /** The viewer's last word on the zoom (erga-zoomed), null before the first. */
   const zoomedSaid = () => (window.__ergaReader?.zoomed ?? null) as Zoomed | null;
-  /** The browser has the whole window zoomed (its own pinch): a pinch stays the browser's (client/common/zoom.ts, the trap). */
   const pinched = () => zoomedSaid()?.pinched === true;
   catchZoomGestures(
     window,
     (by, e) => tell({ type: "erga-zoom", zoom: by, x: e.clientX, y: e.clientY }),
     (by) => !zoomedSaid()?.off && !(pinched() && (!by || "by" in by))
   );
-  // The document's zoom (client/common/zoom.ts): at rest, the viewer lays this page out for its place at the level (its
-  // window that much smaller, and drawn that much larger). The page's point that the zoom is about (the pinch's, or the
-  // middle for a key) stays where it is on the screen: the viewer says it (erga-zoom-aim) before the window gets its new
-  // size, and as the window has it, before the browser paints (a ResizeObserver's time, on a box of the window's size),
-  // the page scrolls that point to its place. A page at its top that a key zooms stays at its top.
+  // Zoom anchor (client/common/zoom.ts): keep the zoomed point fixed across layout resize.
   let aim: { el: Element; part: number; to: number; w: number } | null = null;
   const view = document.createElement("erga-view");
   view.style.cssText = "all: initial; position: fixed; inset: 0; visibility: hidden; pointer-events: none";
@@ -182,9 +156,7 @@ export default function reader(C: ReaderConfig): void {
   }
   new ResizeObserver(keepAim).observe(view);
   addEventListener("resize", keepAim);
-  // A page that fits itself (a deck), drawn larger than its place: the wheel moves around in its picture (the viewer
-  // moves it: erga-pan), not in the page, which has nowhere to scroll. One that keeps its width (editing), wider than
-  // its place: the wheel across moves it across; down, the page scrolls as always.
+  // Panning a zoomed page that keeps all or width of its layout.
   addEventListener(
     "wheel",
     (e) => {
@@ -197,13 +169,9 @@ export default function reader(C: ReaderConfig): void {
       e.preventDefault();
       tell({ type: "erga-pan", dx, dy: z.keep == "all" ? dy : 0 });
     },
-    // (First: before a deck's own wheel, which steps it.)
     { passive: false, capture: true }
   );
-  // A touch screen: two fingers on the page zoom the document, as a pinch on a trackpad does (the viewer, erga-zoom),
-  // and one finger moves around in a page that fits itself, drawn larger (erga-pan). The browser keeps only the page's
-  // scroll (touch-action, below), so the page never zooms the whole window; a pinch on the bars is still the browser's.
-  // A page that zooms itself (a canvas's camera) has its own touches.
+  // Touch pinch-to-zoom and single-finger pan when zoomed.
   let span = 0,
     finger: { x: number; y: number } | null = null;
   const apart = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
@@ -228,7 +196,6 @@ export default function reader(C: ReaderConfig): void {
           tell({ type: "erga-zoom", zoom: { by: d / span }, x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
         span = d;
       } else if (t.length == 1 && finger && z && z.keep != "none" && z.zoom > 1) {
-        // (Keeping its width, the page scrolls down itself.)
         if (z.keep == "all") e.preventDefault();
         tell({ type: "erga-pan", dx: (finger.x - t[0].clientX) * z.zoom, dy: z.keep == "all" ? (finger.y - t[0].clientY) * z.zoom : 0 });
         finger = { x: t[0].clientX, y: t[0].clientY };
@@ -363,8 +330,31 @@ export default function reader(C: ReaderConfig): void {
     roomDirty = true;
     soon();
   };
-  const styles = new MutationObserver(dirty);
+  const isErga = (n: Node) => n.nodeType == 1 && (n as Element).hasAttribute("data-erga");
+  const styles = new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type == "childList") {
+        if ([...r.addedNodes, ...r.removedNodes].some((n) => !isErga(n))) return dirty();
+      } else {
+        const el = r.target.nodeType == 1 ? (r.target as Element) : r.target.parentElement;
+        if (!el?.hasAttribute("data-erga")) return dirty();
+      }
+    }
+  });
   styles.observe(root, { attributes: true, attributeFilter: ["style", "class"] });
+  let observedHead: Element | null = null,
+    observedBody: Element | null = null;
+  const watchTargets = () => {
+    if (document.head && document.head !== observedHead) {
+      observedHead = document.head;
+      styles.observe(observedHead, { childList: true, subtree: true, characterData: true, attributes: true });
+    }
+    if (document.body && document.body !== observedBody) {
+      observedBody = document.body;
+      styles.observe(observedBody, { attributes: true, attributeFilter: ["style", "class"] });
+    }
+  };
+  watchTargets();
   addEventListener("resize", dirty);
   addEventListener("load", dirty);
   // (The page's own scripts have run: window.ergaInset is there, if the page has one. The seat is said again: the one
@@ -372,17 +362,19 @@ export default function reader(C: ReaderConfig): void {
   document.addEventListener("DOMContentLoaded", () => {
     parsed = true;
     seatSaid = null;
+    watchTargets();
     dirty();
   });
   // (At once as the page is parsed, before its deferred scripts and the editor run and measure it.)
   document.addEventListener("readystatechange", () => {
+    watchTargets();
     dirty();
     keepRoom();
   });
   function keepRoom() {
     if (!roomDirty || !ready()) return;
     roomDirty = false;
-    if (document.head) styles.observe(document.head, { childList: true, subtree: true, characterData: true, attributes: true });
+    watchTargets();
     const inset = (window as Window & { ergaInset?: unknown }).ergaInset,
       seat = room.update(typeof inset == "function");
     // The room got another height (the zoom): a page scrolled down stays where it is on the screen (as the zoom lays the
@@ -776,7 +768,7 @@ export default function reader(C: ReaderConfig): void {
     hash: string | null = null,
     push = false;
   // The page's place (its #hash) behaves as at the top of the tab: a new place (location.hash =, a link to "#x",
-  // pushState of a hash) is a new entry in the tab's history (viewer-nav.ts), and never one in the frame's, so Back
+  // pushState of a hash) is a new entry in the tab's history (client/viewer/nav.ts), and never one in the frame's, so Back
   // goes through the page's places. replaceState stays a replace.
   const doc = (u: string | URL) => new URL(String(u), location.href).href.split("#")[0];
   history.pushState = function (state: unknown, title: string, url?: string | URL | null) {
@@ -832,9 +824,25 @@ export default function reader(C: ReaderConfig): void {
       if (keeping || moving(root) || moving(document.body)) soon();
     } catch {}
   }
-  // The page's content, attributes and styles; its size; a stylesheet or a picture that loaded (a load doesn't bubble:
-  // heard on its way down); a transition or an animation that starts; the window's size and colour scheme; its hash.
-  new MutationObserver(soon).observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+  // Only what can change the background, canvas or top room: style/link elements added or changed anywhere in the
+  // document, or root/body/head changes (watched by `styles` above) — never characterData or unrelated body edits.
+  const hasStyle = (nodes: NodeList) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n.nodeType != 1 || isErga(n)) continue;
+      const el = n as Element;
+      if (el.localName == "style" || el.localName == "link" || (el.childElementCount > 0 && el.querySelector("style, link"))) return true;
+    }
+    return false;
+  };
+  new MutationObserver((records) => {
+    const hadBody = !!observedBody;
+    watchTargets();
+    if (!hadBody && observedBody) return dirty();
+    for (const r of records) {
+      if ((r.target.nodeName == "STYLE" && !isErga(r.target)) || hasStyle(r.addedNodes) || hasStyle(r.removedNodes)) return dirty();
+    }
+  }).observe(root, { childList: true, subtree: true });
   new ResizeObserver(soon).observe(root);
   document.addEventListener("readystatechange", soon);
   document.addEventListener("load", soon, true);
@@ -853,21 +861,6 @@ export default function reader(C: ReaderConfig): void {
   }
   addEventListener("dragover", stopFileDrop);
   addEventListener("drop", stopFileDrop);
-  // A copy out of the page (the editor has its own): its text with basic formatting only, never the page's fonts and
-  // colours, its links and pictures as they work elsewhere, and Markdown as the plain text (clipboard-html.ts). Not
-  // when the page wrote the clipboard itself (it stopped the browser's copy), nor out of a field.
-  addEventListener("copy", (e) => {
-    const field = document.activeElement;
-    if (editing() || e.defaultPrevented || !e.clipboardData || (field && /^(INPUT|TEXTAREA)$/.test(field.tagName))) return;
-    let out = null;
-    try {
-      out = copyOf(window, placeOf(window, C));
-    } catch {}
-    if (!out) return;
-    e.preventDefault();
-    e.clipboardData.setData("text/plain", out.text);
-    e.clipboardData.setData("text/html", out.html);
-  });
   // An image that fails to load, with a size in its element: its file may be on its way (an upload's element comes
   // before its bytes: libs/text/ui/pending.ts draws it for an editor). It keeps its place meanwhile: an empty picture
   // of that size, by a style of the page's own (never a change of its elements), until it loads after all.
@@ -908,7 +901,7 @@ export default function reader(C: ReaderConfig): void {
       if (e.data.mode != "view") load();
       if (e.data.mode == "edit") zooms(true);
     }
-    // The viewer's word on the zoom (client/inline/viewer-zoom.ts): kept for the editor, which hears it after too.
+    // The viewer's word on the zoom (client/viewer/zoom.ts): kept for the editor, which hears it after too.
     else if (type == "erga-zoomed") {
       window.__ergaReader!.zoomed = e.data;
       if (!view.isConnected) root.append(view);
@@ -936,7 +929,7 @@ export default function reader(C: ReaderConfig): void {
     else if (type == "erga-print") print();
     // The viewer's frame has the focus: this page takes it (client/inline/viewer-frames.ts).
     else if (type == "erga-focus") focus();
-    // The viewer says that stylesheets changed (client/inline/viewer-live.ts): in place, and whether that worked.
+    // The viewer says that stylesheets changed (client/viewer/live.ts): in place, and whether that worked.
     else if (type == "erga-restyle" && Array.isArray(e.data.paths) && typeof e.data.files == "string") {
       const ok = e.data.files.indexOf(location.origin + "/") == 0 && e.data.paths.every((p: unknown) => typeof p == "string");
       void (ok ? restyle(e.data.paths, e.data.files) : Promise.resolve(false)).then((done) =>
@@ -952,9 +945,21 @@ export default function reader(C: ReaderConfig): void {
         bars = e.data.px;
         zoomRoom();
       }
-      room.inset = { top: side(i.top), right: side(i.right), bottom: side(i.bottom), left: side(i.left) };
+      const next = { top: side(i.top), right: side(i.right), bottom: side(i.bottom), left: side(i.left) };
+      const changed = !roomGiven || (["top", "right", "bottom", "left"] as const).some((k) => next[k] != room.inset[k]);
+      room.inset = next;
       roomGiven = true;
-      dirty();
+      if (changed) dirty();
+    }
+    // Viewer module booted after this page started: resend visual, hash, nav and head state.
+    else if (type == "erga-sync") {
+      band = seatSaid = zoomsSaid = scrolled = hash = null;
+      canvasSaid = headSaid = "";
+      zooms(true);
+      if (document.readyState != "loading") {
+        sayHead();
+        check();
+      } else dirty();
     }
     // The tab's address got another hash (typed, Back, a link): the page's place follows, and the page gets its
     // hashchange. location.replace adds no entry to the frame's history, and `hash` keeps the frame from saying it back.

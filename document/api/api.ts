@@ -97,7 +97,7 @@ export interface Hello {
   type: "hello";
   info: DocInfo;
   tree: {
-    entries: { path: string; type: string; title?: string }[];
+    entries: { path: string; type: string; title?: string; relative?: boolean }[];
     canEdit: boolean;
     moved: { from: string; to: string }[] /** How many pages it has (more than one: the title opens them). */;
     pages: number;
@@ -264,7 +264,7 @@ export const ACTIONS: readonly Action[] = [
     domain: "document",
     tool: "page_log",
   },
-  // Full screen (client/inline/viewer-full.ts): nothing an agent could do with it.
+  // Full screen (client/viewer/full.ts): nothing an agent could do with it.
   {
     method: "UI",
     path: "/d/<id>#fullscreen",

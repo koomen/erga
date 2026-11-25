@@ -3,12 +3,13 @@
 // own, manuscript.ts, headOf), or, in a page that has it so, a <p> first in it (`<li><p>text</p><ul>…</ul></li>`).
 // Tab and Shift+Tab change only tags, and the spaces that indent the lines. Every edit that changes a
 // list's structure is here, as a function of the source: Enter, Tab and Shift+Tab, Backspace at a to-do's checkbox,
-// the join of an item with lists in it, and the tidy-up after any edit. Each gives the changes that make it, in one
-// transaction (one undo step), and changes only the items it moves, so another person typing in other items keeps
-// what they type. The author's HTML stays as written: attributes, classes, and how the list is laid out on its lines.
+// the join of an item with lists in it, and the list-structure helpers that keep every edit valid in one pass. Each
+// gives the changes that make it, in one transaction (one undo step), and changes only the items it moves, so another
+// person typing in other items keeps what they type. The author's HTML stays as written: attributes, classes, and how
+// the list is laid out on its lines.
 
 import * as M from "../../../shared/manuscript";
-import { ChangeSet, EditorSelection, type SelectionRange, Text, type Transaction } from "@codemirror/state";
+import { ChangeSet, EditorSelection, type SelectionRange } from "@codemirror/state";
 import { attrOf, CONTENT_TAG, emptyIn, setAttr, textIn, TODO_BOX, TODO_ITEM, todoBox } from "./source";
 
 export type Change = { from: number; to?: number; insert?: string };
@@ -78,9 +79,11 @@ export function enterItem(src: string, units: M.Unit[], u: M.Unit, pos: number):
     const i = items.indexOf(li);
     const at = indentOf(src, list);
     // The item goes, with the line break and spaces before it; the caret goes into the paragraph, before its <br>.
-    const before = src.slice(0, li.from).replace(/\s*$/, "").length;
+    const before = trimEnd(src, li.from);
     const para = "<p><br></p>";
     const leave = (changes: Change[], anchor: number): ListEdit => ({ changes, selection: { anchor }, userEvent: "input" });
+    // The only item: the whole list becomes a paragraph, so no empty list is left behind.
+    if (items.length == 1) return leave([{ from: list.from, to: list.to, insert: para }], list.from + 3);
     // The last item: a paragraph after the list.
     if (i == items.length - 1)
       return leave(
@@ -211,10 +214,10 @@ export function carryLists(src: string, prev: M.Unit, next: M.Unit): { gone: M.E
     before = siblings[siblings.indexOf(li) - 1];
   const rest = (e: M.ElementNode, to: string) => reindent(src.slice(e.from, e.to), indentOf(src, e), to);
   if (!before || before.tag != "li" || !closed(src, before)) {
-    // First in its list: its lists' items take its place.
+    // First in its list: its lists' items take its place (if it has none, let joinBlocks remove the item/list cleanly).
     const at = indentOf(src, li);
     const lifted = item.lists.flatMap(elements).map((e) => `\n${at}${rest(e, at)}`);
-    return { gone: li, after: "", changes: [{ from: li.to, insert: lifted.join("") }] };
+    return lifted.length ? { gone: li, after: "", changes: [{ from: li.to, insert: lifted.join("") }] } : null;
   }
   const last = elements(before).at(-1);
   if (prev.node == before || (prev.node.parent == before && !isList(last))) {
@@ -376,98 +379,56 @@ export function indentItems(
   };
 }
 
+/** Position of the last non-whitespace character before `pos` (for joining a list before its close tag). */
+export const trimEnd = (src: string, pos: number) => src.slice(0, pos).replace(/\s*$/, "").length;
+
+/** Whether two lists can join into one: same tag, closed, and identical open tags ignoring `start` and `id`. */
+export function compatibleLists(src: string, a: M.ElementNode, b: M.ElementNode): boolean {
+  if (!isList(a) || a.tag != b.tag || !closed(src, a) || !closed(src, b)) return false;
+  const open = (e: M.ElementNode) => setAttr(setAttr(src.slice(e.from, e.openTo), "start", null), "id", null);
+  return open(a) == open(b);
+}
+
 /**
- * The tidy-up after an edit that changed a list's tags (`tr`): changes in rounds, each on the source after the round
- * before. Only what the edit did is tidied; the page's own lists stay as they are (its script may fill an empty one).
- * 1. A list the edit took the last item out of goes: it shows nothing, and nothing can go in it.
- * 2. Two lists of the same kind that the edit brought together (it took out what was between, or it put one of them
- *    there) are one list again (the first keeps its attributes).
- * 3. An item whose last nested list the edit (or round 1) took out has its text out of the <p> it needed beside it.
+ * Adjacent compatible plain lists immediately before and/or after `node` in its parent, with nothing but whitespace
+ * between them (ignoring `start` and `id`, as the editor writes lists).
  */
-export function tidy(tr: Transaction): Change[][] {
-  const old = tr.startState.doc;
-  let ranges: { from: number; to: number; gone: string }[] = [];
-  let structural = false;
-  tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
-    const gone = old.sliceString(fromA, toA);
-    if (/<\/?(li|ul|ol)\b/i.test(gone) || /<\/?(li|ul|ol)\b/i.test(inserted.toString())) structural = true;
-    ranges.push({ from: fromB, to: toB, gone });
-  });
-  // (Or it took something out from between the end of one list and the start of another: round 2.)
-  const doc = tr.newDoc;
-  const between = (r: { from: number; to: number; gone: string }) =>
-    r.gone.includes("<") &&
-    /<\/(ul|ol)\s*>\s*$/i.test(doc.sliceString(Math.max(0, r.from - 100), r.from)) &&
-    /^\s*<(ul|ol)\b/i.test(doc.sliceString(r.to, r.to + 100));
-  if (!structural && !ranges.some(between)) return [];
-  let src = doc.toString();
-  const rounds: Change[][] = [];
-  // Where a list was taken out, for round 3.
-  let unlisted = ranges.filter((r) => /<(ul|ol)\b/i.test(r.gone)).map((r) => r.from);
-  const apply = (changes: Change[]) => {
-    if (!changes.length) return;
-    changes.sort((a, b) => a.from - b.from);
-    const set = ChangeSet.of(changes, src.length);
-    src = set.apply(Text.of(src.split("\n"))).toString();
-    ranges = ranges.map((r) => ({ ...r, from: set.mapPos(r.from, -1), to: set.mapPos(r.to, 1) }));
-    unlisted = unlisted.map((p) => set.mapPos(p, -1));
-    rounds.push(changes);
-  };
-  // 1. Lists left empty, where the edit took out an <li>, each with the line it was on.
-  const emptied: Change[] = [];
-  for (const m of src.matchAll(/<(ul|ol)\b[^>]*>(\s*)<\/\1\s*>/gi)) {
-    const inner = m.index + m[0].indexOf(">") + 1,
-      end = inner + m[2].length;
-    if (!ranges.some((r) => /<\/?li\b/i.test(r.gone) && inner <= r.from && r.to <= end)) continue;
-    const gap = /[ \t]*\n?[ \t]*$/.exec(src.slice(0, m.index))![0];
-    emptied.push({ from: m.index - gap.length, to: m.index + m[0].length });
-    unlisted.push(m.index - gap.length);
-  }
-  apply(emptied);
-  // 2. A list's end and the start of another of the same kind, where the edit took something out between.
-  const lists: M.ElementNode[] = [];
-  const walk = (e: M.ElementNode) => {
-    for (const c of elements(e)) {
-      if (isList(c)) lists.push(c);
-      walk(c);
-    }
-  };
-  walk(M.parseHtml(src));
-  const joins: Change[] = [];
-  for (const a of lists) {
-    const b = a.parent && elements(a.parent)[elements(a.parent).indexOf(a) + 1];
-    if (!b || b.tag != a.tag || src.slice(a.to, b.from).trim() || !closed(src, a)) continue;
-    // (Or the edit put one of the two there: items pasted right before a list, "- " right after one.)
-    const made = (e: M.ElementNode) => ranges.some((r) => r.from <= e.from && e.to <= r.to);
-    if (!ranges.some((r) => r.gone.includes("<") && a.closeFrom <= r.from && r.to <= b.from) && !made(a) && !made(b)) continue;
-    // (The second half of a list that Enter split has no id, and a number to start at: see enterItem.)
-    const open = (e: M.ElementNode) => setAttr(setAttr(src.slice(e.from, e.openTo), "start", null), "id", null);
-    if (open(a) != open(b)) continue;
-    joins.push({ from: src.slice(0, a.closeFrom).replace(/\s*$/, "").length, to: b.openTo });
-    // A list the edit put before the page's own takes its open tag: the author's list keeps its id and attributes.
-    if (made(a) && !made(b)) joins.unshift({ from: a.from, to: a.openTo, insert: src.slice(b.from, b.openTo) });
-  }
-  apply(joins);
-  // 3. An item with nothing in it but one plain <p>, where the edit took a list out of it.
-  if (unlisted.length) {
-    const unwrap: Change[] = [];
-    const items: M.ElementNode[] = [];
-    const find = (e: M.ElementNode) => {
-      for (const c of elements(e)) {
-        if (c.tag == "li" && unlisted.some((p) => c.openTo <= p && p <= c.closeFrom)) items.push(c);
-        find(c);
-      }
-    };
-    find(M.parseHtml(src));
-    for (const li of items) {
-      const kids = elements(li),
-        p = kids[0];
-      if (kids.length != 1 || p.tag != "p" || src.slice(p.from, p.openTo) != "<p>" || !closed(src, p) || !closed(src, li)) continue;
-      if (li.children.some((c) => c.kind == "text" && /\S/.test(src.slice(c.from, c.to)))) continue;
-      if (src.slice(li.openTo, p.from).trim()) continue;
-      unwrap.push({ from: p.from, to: p.openTo }, { from: p.closeFrom, to: li.closeFrom });
-    }
-    apply(unwrap);
-  }
-  return rounds;
+export function listNeighbors(
+  src: string,
+  node: M.ElementNode,
+  tag: "ul" | "ol"
+): { prev: M.ElementNode | null; next: M.ElementNode | null } {
+  const parent = node.parent;
+  if (!parent) return { prev: null, next: null };
+  const kids = elements(parent);
+  const i = kids.indexOf(node);
+  const ok = (e: M.ElementNode | undefined, gapFrom: number, gapTo: number) =>
+    e &&
+    e.tag == tag &&
+    closed(src, e) &&
+    !src.slice(gapFrom, gapTo).trim() &&
+    setAttr(setAttr(src.slice(e.from, e.openTo), "start", null), "id", null) == `<${tag}>`
+      ? e
+      : null;
+  const prev = i > 0 ? ok(kids[i - 1], kids[i - 1].to, node.from) : null;
+  const next = i >= 0 && i + 1 < kids.length ? ok(kids[i + 1], node.to, kids[i + 1].from) : null;
+  return { prev, next };
+}
+
+/**
+ * If `p` is a plain `<p>` that becomes the sole content of its parent `<li>` once `removed` elements go, returns the
+ * range changes that unwrap it (`open` removes `<p>`, and `[closeFrom, closeTo)` removes `</p>` through `</li>`).
+ */
+export function unwrapItemP(
+  src: string,
+  p: M.ElementNode,
+  removed: Set<M.ElementNode>
+): { open: Change; closeFrom: number; closeTo: number } | null {
+  const li = p.parent;
+  if (p.tag != "p" || li?.tag != "li" || src.slice(p.from, p.openTo) != "<p>" || !closed(src, p) || !closed(src, li)) return null;
+  const left = elements(li).filter((c) => !removed.has(c));
+  if (left.length != 1 || left[0] != p) return null;
+  if (li.children.some((c) => c.kind == "text" && /\S/.test(src.slice(c.from, c.to)))) return null;
+  if (src.slice(li.openTo, p.from).trim()) return null;
+  return { open: { from: p.from, to: p.openTo }, closeFrom: p.closeFrom, closeTo: li.closeFrom };
 }

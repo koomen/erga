@@ -9,7 +9,7 @@
 // Trap: a Person's edit is on its own replica at once, and in the room a moment later. A check of the room, of a tab
 // or of another Person waits for it (until, converged).
 
-import type { Author } from "../../document/model/content";
+import type { Author } from "../../shared/author";
 import { editor, TIMESCALE, type Editor } from "../helpers/editor";
 import { agentClosed, until, type Tab } from "../helpers/fixtures";
 import { Replica, roomUrl } from "../helpers/room";

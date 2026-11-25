@@ -68,7 +68,7 @@ const buttonsBar = (actions: string, corner: string, editor = false, save = edit
  */
 const SAVE_MARK = `<div class="save-state gone" id="save-state" data-at="saved"><button type="button" class="save-mark" aria-label="Saved" aria-expanded="false" aria-controls="save-card"><svg viewBox="0 0 16 16" aria-hidden="true"><path class="save-check" d="m3.5 8.5 3 3 6-7"/><g class="save-ring"><circle class="save-track" cx="8" cy="8" r="5"/><path d="M8 3a5 5 0 0 1 5 5"/></g><g class="save-dots"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></g><path class="save-x" d="m4.25 4.25 7.5 7.5m0-7.5-7.5 7.5"/></svg></button><div class="save-card" id="save-card" role="status"></div></div>`;
 
-/** The document's zoom, while it isn't 100%: its level, which opens the zoom's menu (client/inline/viewer-zoom.ts). */
+/** The document's zoom, while it isn't 100%: its level, which opens the zoom's menu (client/viewer/zoom.ts). */
 const ZOOM_BUTTON = `<button type="button" class="erga-view-button icon-btn zoom-btn" id="btn-zoom" aria-haspopup="menu" aria-controls="zoom-menu" aria-expanded="false" hidden></button>`;
 
 /** The editor's own page actions (Share, Document settings): they open out of the pencil when editing starts, and close back into it. */
@@ -79,7 +79,7 @@ const EDIT_GROUP = `<div class="edit-group" id="edit-group"><div class="edit-gro
  * the document (signed out: erga › the document; a published site: erga), and the buttons with who you are (`corner`).
  * Full screen only where there's a frame to fill the screen (`full`). The editor's own actions (Share, Document
  * settings) are folded into the pencil until someone edits; Clone is the New menu's last item. With more than one page, the title opens them
- * (the card after the bars: client/inline/viewer-tree.ts). An agent sees no breadcrumbs.
+ * (the card after the bars: client/viewer/tree.ts). An agent sees no breadcrumbs.
  */
 export function barsHtml(o: {
   session: Session | null;
@@ -111,7 +111,7 @@ export function barsHtml(o: {
   return `${s?.agent ? "" : crumbsBar(s, "", steps, editor, o.title == null)}${card}${buttonsBar(actions, o.corner, editor)}`;
 }
 
-/** The viewer's Full screen button, as the editor's (client/editor.html, #btn-full): the page's frame fills the screen (client/inline/viewer-full.ts), where it can. */
+/** The viewer's Full screen button, as the editor's (client/editor.html, #btn-full): the page's frame fills the screen (client/viewer/full.ts), where it can. */
 export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-full-button" aria-label="Full screen" data-tip="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 9.25v-3.5a1 1 0 0 1 1-1h3.5M14.75 4.75h3.5a1 1 0 0 1 1 1v3.5M19.25 14.75v3.5a1 1 0 0 1-1 1h-3.5M9.25 19.25h-3.5a1 1 0 0 1-1-1v-3.5"/></svg></button>`;
 
 /**

@@ -92,14 +92,18 @@ export const localLibraries = (html: string, shell: string) =>
 export const pageOf = (text: string, head: string) => insertHead(text, head);
 
 /**
- * Erga's head of a page the pages origin made (what `pageOf` put first in its <head>): its scripts, each a <script
- * data-erga> whose text holds no "</script" (inline.ts, jsonInScript). Null if it has none.
+ * Erga's head of a page the pages origin made (what `pageOf` put first in its <head>): its scripts and styles, each a
+ * <script data-erga> or <style data-erga> whose text holds no closing tag (inline.ts, jsonInScript). Null if it has none.
  */
 export function headIn(served: string): string | null {
   const head = /<head(\s[^>]*)?>/i.exec(served),
     doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(served);
   const at = head ? head.index + head[0].length : doctype ? doctype[0].length : 0;
-  return /^(?:<script\b[^>]*\bdata-erga\b[^>]*>[\s\S]*?<\/script>)+/i.exec(served.slice(at))?.[0] ?? null;
+  return (
+    /^(?:<script\b[^>]*\bdata-erga\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*\bdata-erga\b[^>]*>[\s\S]*?<\/style>)+/i.exec(
+      served.slice(at)
+    )?.[0] ?? null
+  );
 }
 
 /**
@@ -108,15 +112,26 @@ export function headIn(served: string): string | null {
  * offline: libs/text/ui/offline-page.ts). Null if the head names no text.
  */
 export function pageAgain(head: string, text: string): string | null {
-  const src = /"src":"[^"]*"/;
-  if (!src.test(head)) return null;
-  return pageOf(
-    text,
-    head.replace(src, () => `"src":${JSON.stringify(sourceDigest(text))}`)
+  let replaced = false;
+  const next = head.replace(
+    /(<script\b(?![^>]*\btype\s*=\s*["']?importmap\b)[^>]*\bdata-erga\b[^>]*>)([\s\S]*?)(<\/script>)/gi,
+    (whole, open: string, body: string, close: string) => {
+      if (replaced) return whole;
+      const updated = body.replace(/([{,]"prefix":"(?:[^"\\]|\\.)*",)"src":"(?:[^"\\]|\\.)*"/, (_, before: string) => {
+        replaced = true;
+        return `${before}"src":${JSON.stringify(sourceDigest(text))}`;
+      });
+      return open + updated + close;
+    }
   );
+  return replaced ? pageOf(text, next) : null;
 }
 
 /** Whether a page brings its editor: it imports erga/text itself (<script src=".../erga/text/editor.js">), or has its own. */
-export const bringsEditor = (html: string) =>
-  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/text\/editor\.js\b/i.test(html) ||
-  /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);
+export function bringsEditor(html: string): boolean {
+  const clean = html.replace(/<!--[\s\S]*?(?:-->|$)/g, "");
+  return (
+    /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/text\/editor\.js\b/i.test(clean) ||
+    /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(clean)
+  );
+}

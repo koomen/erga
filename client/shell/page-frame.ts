@@ -24,6 +24,15 @@ const PAGE_KEY = "page/";
 /** What "edit" says, but the notes and the tests' settings, which this adds. */
 export type EditWord = Omit<Exclude<EditMode, { mode: "view" }>, "type" | "mode" | "notes" | "timescale" | "check">;
 
+/** Caret and selection context reported by the page editor for agent prompts and feedback. */
+export interface PageContext {
+  line: number;
+  endLine: number;
+  selected?: string;
+  lineText: string;
+  near: { html: string; htmlFrom: number; line: number; column: number };
+}
+
 export interface PageFrameConfig {
   /** The frame now: a load of the page again puts a new one in its place (client/inline/viewer-frames.ts). */
   frame: () => HTMLIFrameElement;
@@ -35,14 +44,16 @@ export interface PageFrameConfig {
   told: () => Word;
   /** What "edit" says now, with `key`: where the document is, who this tab is, the page and this tab's mark. */
   edit: (key: string) => EditWord;
-  /** The viewer shows the page that the editor is on (viewing, a link goes to another: client/inline/viewer-nav.ts). */
+  /** The viewer shows the page that the editor is on (viewing, a link goes to another: client/viewer/nav.ts). */
   here: () => boolean;
   onKey: (keys: Keys) => void;
   /** A press on the page. */
   onPress: () => void;
   /** The pointer moved over the page, in the viewer's coordinates. */
   onPointer: (x: number, y: number) => void;
-  onActivity: (kind: "focus" | "key") => void;
+  onActivity: (kind: "focus" | "key" | "edit") => void;
+  /** The page editor's latest caret/selection context, for the agent and feedback. */
+  onContext: (path: string, context: PageContext) => void;
   /** A key pressed in the page, or text typed there with no key (not in a field of the page's own): for a feedback's context. */
   onPressed: (key: Pressed) => void;
   /** A link on the page to another of the document's pages was followed (its path in the document). */
@@ -202,9 +213,38 @@ export function mountPageFrame(c: PageFrameConfig) {
         return;
       }
       case "erga-activity":
-        if (m.kind == "focus" || m.kind == "key") c.onActivity(m.kind as "focus" | "key");
+        if (m.kind == "focus" || m.kind == "key" || m.kind == "edit") c.onActivity(m.kind as "focus" | "key" | "edit");
         if (m.kind == "key" && keysOf(m.keys)) c.onPressed(keysOf(m.keys)!);
         return;
+      case "erga-context": {
+        if (typeof m.path != "string" || m.path.length >= 1000 || !m.context || typeof m.context != "object") return;
+        const ctx = m.context as Record<string, unknown>;
+        const near = ctx.near as Record<string, unknown> | undefined;
+        if (
+          !num(ctx.line) ||
+          !num(ctx.endLine) ||
+          typeof ctx.lineText != "string" ||
+          !near ||
+          typeof near.html != "string" ||
+          !num(near.htmlFrom) ||
+          !num(near.line) ||
+          !num(near.column)
+        )
+          return;
+        c.onContext(m.path, {
+          line: Math.max(1, Math.floor(ctx.line)),
+          endLine: Math.max(1, Math.floor(ctx.endLine)),
+          ...(typeof ctx.selected == "string" ? { selected: ctx.selected.slice(0, 4100) } : {}),
+          lineText: ctx.lineText.slice(0, 450),
+          near: {
+            html: near.html.slice(0, 4100),
+            htmlFrom: Math.max(1, Math.floor(near.htmlFrom)),
+            line: Math.max(1, Math.floor(near.line)),
+            column: Math.max(1, Math.floor(near.column)),
+          },
+        });
+        return;
+      }
       case "erga-typed":
         if (typeof m.text == "string" && m.text) c.onPressed({ text: m.text.slice(0, 200) });
         return;
@@ -259,6 +299,10 @@ export function mountPageFrame(c: PageFrameConfig) {
     /** The files on their way from anyone, as the room says (the page's own socket doesn't hear it). */
     uploadsOf(files: Record<string, Pending>) {
       if (active()) post({ type: "erga-uploads-of", files });
+    },
+    /** Asks the page editor to remove a cancelled upload's element from the document's HTML files. */
+    removeUpload(path: string) {
+      post({ type: "erga-upload-remove", path });
     },
   };
 }

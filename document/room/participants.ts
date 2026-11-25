@@ -46,7 +46,8 @@ import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, type AwarenessC
 import { PING, PONG } from "../../shared/room-socket.ts";
 import { later, stop } from "../life/later.ts";
 import type { Asker, Person, Role } from "../model/access.ts";
-import { colorFor, files, sameAuthor, type Author } from "../model/content.ts";
+import { files } from "../model/content.ts";
+import { colorFor, sameAuthor, type Author } from "../../shared/author.ts";
 import type { StoreError } from "../store/storage.ts";
 import { isAwareness, presenceAs, type Connection, type Participant, type Room } from "./room.ts";
 import { Workspace } from "./workspace.ts";
@@ -159,10 +160,43 @@ export type Tab = {
   events: boolean;
   /** A viewer's page: it hears what every tab hears, first the version to show, and never joins the room. */
   watch?: boolean;
+  /** The editor's shell (?shell=1): hears hello, events, and JSON presence — never joins Yjs sync. */
+  shell?: boolean;
   who?: Asker;
   /** It hears that the document's comments changed (?comments=1: the page's editor, libs/text/ui/comments.ts). */
   comments?: boolean;
 };
+
+/** One participant in a shell tab's JSON presence list (client/shell/shell-room.ts). */
+export interface ShellPresence {
+  client: number;
+  user: Author;
+  busy?: boolean;
+  activity?: string | null;
+  cursorPath?: string | null;
+  activeAt?: number;
+  tab?: string;
+}
+
+/** Plain JSON snapshot of everyone currently present in `awareness`, for shell sockets. */
+function presenceOf(awareness: Awareness): ShellPresence[] {
+  const out: ShellPresence[] = [];
+  for (const [client, s] of awareness.getStates()) {
+    if (!s?.user) continue;
+    const cursor = s.cursor as { path?: unknown; anchor?: unknown } | null | undefined;
+    const cursorPath = typeof cursor?.path == "string" && cursor.anchor != null ? cursor.path : null;
+    out.push({
+      client,
+      user: s.user as Author,
+      ...(typeof s.busy == "boolean" ? { busy: s.busy } : {}),
+      ...(s.activity !== undefined ? { activity: (s.activity as string | null) ?? null } : {}),
+      cursorPath,
+      ...(typeof s.active == "number" ? { activeAt: s.active } : {}),
+      ...(typeof s.tab == "string" ? { tab: s.tab } : {}),
+    });
+  }
+  return out;
+}
 
 export interface TabSocket {
   send(message: string | Uint8Array): void;
@@ -200,6 +234,8 @@ export interface ParticipantsHost {
   left(): void;
   /** Cuts a version (if the document changed since the last one), and answers the version it's at then. */
   cutVersion(): Promise<string | null>;
+  /** Sets the document's title from a shell tab's rename card (client/shell/naming.ts). */
+  setTitle(title: string): Promise<boolean>;
 }
 
 /** A socket call that may find it closed already: nothing to do then. */
@@ -234,6 +270,7 @@ export class Participants<S extends TabSocket = TabSocket> {
     room.tell = (message, except) => {
       for (const e of this.all.values()) for (const conn of e.tabs.values()) if (conn !== except) conn.send(message);
     };
+    room.awareness.on("update", () => this.broadcastPresence(room));
   }
 
   /** The document opened (again): every socket joins it; one holding another history is closed (the tab reloads). */
@@ -265,6 +302,16 @@ export class Participants<S extends TabSocket = TabSocket> {
     // A watcher (a viewer's page): first the version to show; it never joins the room.
     if (tab.watch) {
       this.host.greet((ver) => json({ type: "view", ver }));
+      return true;
+    }
+    // The editor's shell (?shell=1): hears hello, its user's events, and JSON presence — never joins Yjs sync.
+    if (tab.shell) {
+      this.of(tab.person, null, this.mine(tab.person.id).length ? undefined : !tab.readOnly);
+      if (tab.events) {
+        void this.host.hello(tab.person, !tab.readOnly).then(json, () => {});
+        this.host.joined(json);
+      }
+      json({ type: "presence", list: presenceOf(room.awareness) });
       return true;
     }
     if (tab.epoch && tab.epoch != room.epoch) return false;
@@ -321,11 +368,28 @@ export class Participants<S extends TabSocket = TabSocket> {
       const tab = self.sockets.tabOf(socket);
       if (!tab) return;
       if (typeof data == "string") {
-        if (data == PING) quietly(() => socket.send(PONG));
+        if (data == PING) {
+          quietly(() => socket.send(PONG));
+          return;
+        }
+        if (tab.shell && !tab.readOnly) {
+          let msg: { type?: unknown; id?: unknown; title?: unknown } | null = null;
+          try {
+            msg = JSON.parse(data);
+          } catch {
+            return;
+          }
+          if (msg?.type == "title" && typeof msg.id == "number" && typeof msg.title == "string") {
+            if (!self.host.isOpen() && !(yield* self.host.reopen())) return quietly(() => socket.close(4404, "document deleted"));
+            self.host.activity();
+            const ok = yield* Effect.promise(() => self.host.setTitle(msg.title as string));
+            quietly(() => socket.send(JSON.stringify({ type: "title-ack", id: msg.id, ok })));
+          }
+        }
         return;
       }
-      // A watcher only listens.
-      if (tab.watch) return;
+      // A watcher or shell tab only listens.
+      if (tab.watch || tab.shell) return;
       let conn = self.connOf(tab);
       if (!conn) {
         // Presence while the document is closed: to the other tabs, with the name of its socket, and nothing opens.
@@ -401,11 +465,19 @@ export class Participants<S extends TabSocket = TabSocket> {
       if (this.sockets.tabOf(socket)?.comments) quietly(() => socket.send(JSON.stringify({ type: "comments" })));
   }
 
+  private broadcastPresence(room: Room): void {
+    if (this.open?.room !== room) return;
+    const shells = this.sockets.all().filter((s) => this.sockets.tabOf(s)?.shell);
+    if (!shells.length) return;
+    const text = JSON.stringify({ type: "presence", list: presenceOf(room.awareness) });
+    for (const socket of shells) quietly(() => socket.send(text));
+  }
+
   private relay(from: S, id: string, data: Uint8Array): void {
     for (const socket of this.sockets.all()) {
       if (socket === from) continue;
       const tab = this.sockets.tabOf(socket);
-      if (tab && tab.id != id) quietly(() => socket.send(data));
+      if (tab && tab.id != id && !tab.watch && !tab.shell) quietly(() => socket.send(data));
     }
   }
 

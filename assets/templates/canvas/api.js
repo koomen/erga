@@ -4,8 +4,9 @@
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const frame = (n) => `.canvas > section:nth-of-type(${n})`;
-/** How many frames the page has, as written. */
-const countOf = (html) => (html.match(/<section\b[^>]*\bclass\s*=\s*["'][^"']*\bframe\b/gi) ?? []).length;
+/** How many frames the page has, as written (ignoring HTML comments). */
+const countOf = (html) =>
+  (html.replace(/<!--[\s\S]*?(?:-->|$)/g, "").match(/<section\b[^>]*\bclass\s*=\s*["'][^"']*\bframe\b/gi) ?? []).length;
 const PX = (what) => ({ type: "number", description: what });
 
 export default {

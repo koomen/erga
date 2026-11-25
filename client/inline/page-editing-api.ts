@@ -1,13 +1,17 @@
 // `ergaEditor`, for the page's own script (server/pages/reader.ts puts it in a document's page): whether the editor is
 // on it now (`editing`, and data-erga-editing on its <html>, which the editor sets and takes off: libs/text/ui/frame.ts), with
-// the event erga-editing on the window as it changes, and `call(edit, input)` for one of the page's own edits (its API:
+// the event erga-editing on the window as it changes, `call(edit, input)` for one of the page's own edits (its API:
 // document/api/page-api.ts, agents/document/PROMPT.md, "A page's own edits"), which waits for the editor (window.__ergaCall:
-// libs/text/ui/render.ts).
+// libs/text/ui/render.ts), and `cleanClone(el)` for a copy of an element without the editor's own elements or attributes.
 
 type CallWindow = Window & {
   __ergaCallQueue?: [unknown, unknown, (r: unknown) => void][];
   __ergaCall?: (edit: unknown, input: unknown) => Promise<unknown>;
-  ergaEditor?: { readonly editing: boolean; call(edit: string, input?: unknown): Promise<unknown> };
+  ergaEditor?: {
+    readonly editing: boolean;
+    call(edit: string, input?: unknown): Promise<unknown>;
+    cleanClone<T extends Element>(el: T): T;
+  };
 };
 
 export default function pageEditingApi(): void {
@@ -23,5 +27,16 @@ export default function pageEditingApi(): void {
         if (w.__ergaCall) void w.__ergaCall(edit, input ?? {}).then(done);
         else q.push([edit, input ?? {}, done]);
       }),
+    cleanClone: <T extends Element>(el: T): T => {
+      const copy = el.cloneNode(true) as T;
+      for (const e of [copy, ...copy.querySelectorAll("*")]) {
+        if (e != copy && e.localName.startsWith("erga-")) {
+          e.remove();
+          continue;
+        }
+        for (const a of [...e.attributes]) if (a.name.startsWith("data-erga") || a.name == "contenteditable") e.removeAttribute(a.name);
+      }
+      return copy;
+    },
   });
 }

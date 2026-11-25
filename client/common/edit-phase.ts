@@ -1,4 +1,4 @@
-// The viewer's way into the editor and back (client/inline/viewer-edit-boot.ts does what this says): one state, and what
+// The viewer's way into the editor and back (client/viewer/edit-boot.ts does what this says): one state, and what
 // each event makes of it. The editor's code loads once (`load`), and its socket opens with it: as the pointer or the
 // focus comes to the pencil (`warm`), else the first time in. From then on it keeps running, hidden while viewing, so
 // each way in is immediate. No IO here.

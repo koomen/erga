@@ -162,7 +162,7 @@ const MOVES = `(window.__moves ??= (addEventListener("mousemove", () => window._
  * drew which process is under a point. Just after the frame came, showed again or got another size, a press or the
  * wheel on the page goes to the viewer, on its frame element: the page hears nothing, and loses the focus. A move that
  * the page hears says that the browser has the page there. (After a zoom the browser's record of the frame's place
- * stayed old for good, when the viewer changed the frame's scale and size at once: client/inline/viewer-zoom.ts, the
+ * stayed old for good, when the viewer changed the frame's scale and size at once: client/viewer/zoom.ts, the
  * trap.)
  */
 export async function pointerOnPage(page: Page, x: number, y: number) {

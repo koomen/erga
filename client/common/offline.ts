@@ -57,6 +57,18 @@ async function offlineEvent(event: "sign-in" | "sign-out"): Promise<void> {
   for (const effect of offlineStep(await offlineState(), event).effects) await EFFECTS[effect]?.();
 }
 
+/** Deletes the shell's offline metadata (cached hello and pending title renames) from localStorage. */
+function clearLocal(): void {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith("erga:hello:") || k.startsWith("erga:title:"))) localStorage.removeItem(k);
+    }
+  } catch {
+    /* no storage */
+  }
+}
+
 /** What sign-in and sign-out do (a writer does `write` and `undo`: keepWrite). */
 const EFFECTS: Partial<Record<OfflineEffect, () => Promise<unknown>>> = {
   mark: () =>
@@ -65,8 +77,9 @@ const EFFECTS: Partial<Record<OfflineEffect, () => Promise<unknown>>> = {
       (r) => r.result.close()
     ),
   unmark: () => idb(() => indexedDB.deleteDatabase(SIGNED_OUT)),
-  clear: () =>
-    Promise.all([
+  clear: () => {
+    clearLocal();
+    return Promise.all([
       deleteKept(),
       typeof caches == "undefined" ? null : caches.delete(OFFLINE_CACHE).catch(() => false),
       navigator.serviceWorker
@@ -75,7 +88,8 @@ const EFFECTS: Partial<Record<OfflineEffect, () => Promise<unknown>>> = {
           Promise.all(rs.filter((r) => (r.active ?? r.waiting ?? r.installing)?.scriptURL.endsWith(WORKER_PATH)).map((r) => r.unregister()))
         )
         .catch(() => null),
-    ]),
+    ]);
+  },
 };
 
 /**

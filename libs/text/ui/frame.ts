@@ -15,7 +15,7 @@
 // an edit here (the replica kept in IndexedDB, the page in the copy) runs at once, and joins what comes meanwhile.
 
 import { EditorState, Transaction, type Extension } from "@codemirror/state";
-import { history, historyField } from "@codemirror/commands";
+import { history, historyField } from "./history";
 import { PageEditor, type HeldInput, type TypingAgent } from "./editor";
 import { LOADING_AGAIN, signsDark } from "./drop";
 import { pageAlerts } from "./alerts";
@@ -23,6 +23,7 @@ import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
 import { clampZoom, type Shows, type Zoomed } from "../../../client/common/zoom";
+import { elementOf } from "../../../client/common/uploads";
 import { Collab } from "./collab";
 import { mountControls, noteOnPage, type Controls } from "./controls";
 import { mountComments, type Comments } from "./comments";
@@ -35,8 +36,10 @@ import type { EditMode } from "./mode";
 import { step, type Editing, type FrameEvent, type State } from "./frame-state";
 import { changesBetween } from "../../../document/model/merge";
 import { baseName, encodePath } from "../../../document/model/pages";
-import { assets, authors, colorFor, files, roomInfo, type Author } from "../../../document/model/content";
+import { assets, authors, files, roomInfo, stamp } from "../../../document/model/content";
+import { colorFor, type Author } from "../../../shared/author";
 import type { UploadsMessage } from "../../../shared/room-socket";
+import { sourceNear } from "../../../shared/feedback-context";
 import { sourceDigest } from "../../../shared/page-html";
 import { sleep } from "../../../shared/time";
 import { isAppShortcut, isMac } from "../../../client/common/app-keys";
@@ -55,11 +58,7 @@ declare global {
   }
 }
 
-/**
- * What the editor's state needs: the history (undo). No language: the frame has no CodeMirror view to highlight (its
- * build has an inert stand-in for the view's module: libs/text/ui/frame-view.ts), and the page editor parses the page
- * itself.
- */
+/** What the editor's state needs: the lean undo/redo history (history.ts). */
 performance.mark("erga:frame-js");
 const docExtensions: Extension[] = [history()];
 
@@ -68,6 +67,7 @@ if (!window.__ergaReader) throw new Error("erga/text runs in a document's page o
 const reader = window.__ergaReader.config;
 /** The shell's origin (the app's): the only one this frame takes its word from. */
 const SHELL = reader.shell;
+const tell = (m: unknown) => window.parent?.postMessage(m, SHELL);
 /** The document's files, under this origin (the token in the address opens them). */
 const BASE = reader.prefix;
 /** This page's own folder there: where its relative links and assets resolve. */
@@ -141,8 +141,23 @@ window.addEventListener("message", (e: MessageEvent) => {
     for (const path of placed.keys()) if (!files.some((f) => f.path == path)) placed.delete(path);
     pending.setOwn(files);
     for (const path of Array.isArray(e.data.landed) ? (e.data.landed as string[]) : []) pending.arrived(path);
-  }
-  else if (e.data?.type == "erga-comments") {
+  } else if (e.data?.type == "erga-upload-remove" && typeof e.data.path == "string") {
+    const me = editing()?.me;
+    const path = e.data.path;
+    placed.delete(path);
+    if (collab && me) {
+      const doc = collab.doc;
+      doc.transact(() => {
+        for (const [pg, text] of files(doc)) {
+          if (!/\.html?$/i.test(pg)) continue;
+          const at = elementOf(text.toString(), "../".repeat(pg.split("/").length - 1) + encodePath(path));
+          if (!at) continue;
+          text.delete(at.from, at.to - at.from);
+          stamp(doc, me);
+        }
+      });
+    }
+  } else if (e.data?.type == "erga-comments") {
     commentsShown = e.data.show !== false;
     comments?.show(commentsShown);
   }
@@ -180,7 +195,7 @@ function send(e: FrameEvent) {
   }
 }
 
-/** The viewer's word on the zoom (client/inline/viewer-zoom.ts): the level, and the part of the page in sight. */
+/** The viewer's word on the zoom (client/viewer/zoom.ts): the level, and the part of the page in sight. */
 function setZoom(m: Zoomed) {
   const next = clampZoom(m.zoom);
   if (next == zoom && m.shows.left == shows.left && m.shows.right == shows.right) return;
@@ -291,6 +306,22 @@ async function start(run: number) {
   send({ type: "loaded", run });
 }
 
+/** Exposed on the page's window while joined (in both edit and standby modes) for e2e inspection. */
+const frameHandle = {
+  get page() {
+    return page;
+  },
+  get collab() {
+    return collab;
+  },
+  get zoom() {
+    return zoom;
+  },
+  get reloading() {
+    return state.phase == "reloading";
+  },
+};
+
 /** The page's own socket and replica, in the room. */
 function join(run: number) {
   const m = editing()!;
@@ -306,7 +337,7 @@ function join(run: number) {
     onEvent: (msg) => {
       if (msg.type == "comments") void comments?.refresh();
     },
-    // (Standing by, the page is the viewer's to show: it loads each change itself, client/inline/viewer-live.ts.)
+    // (Standing by, the page is the viewer's to show: it loads each change itself, client/viewer/live.ts.)
     onRemote: (changes, author) => {
       if (!page) return;
       page.applyExternal(changes, typingAgent(author));
@@ -336,6 +367,7 @@ function join(run: number) {
   if (signedOut) c.signedOut();
   // (No presence yet: the editor brings it as it goes on the page.)
   c.join(m.me, m.path, null);
+  window.ergaFrame = frameHandle;
   void ready(c, run);
 }
 
@@ -461,15 +493,22 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
             window.parent?.postMessage({ type: "erga-upload-act", path, action: "gone" }, SHELL);
           }
       }
-      if (u.docChanged || u.selectionSet) queueCursor();
+      if (u.docChanged && !u.remote) tell({ type: "erga-activity", kind: "edit" });
+      if (u.docChanged || u.selectionSet) {
+        queueCursor();
+        queueContext(u.state);
+      }
       // A presentation's pictures of its steps are out of date once its text changes (libs/steps).
       if (u.docChanged) {
         // (The page in the copy and the page's colours read the whole document: when the typing pauses, pause.ts.)
         whenPaused.ask();
         dispatchEvent(new Event("ergaedit"));
+        const isUndoRedo = !u.remote && !!page?.lastUndoRedo;
+        if (u.remote || isUndoRedo) dispatchEvent(new CustomEvent("erga-edited", { detail: { remote: !!u.remote, undo: isUndoRedo } }));
       }
       // (The editor takes the page as it's made: once it's this frame's.)
-      if (u.rendered)
+      if (u.rendered) {
+        sendContext(u.state);
         queueMicrotask(() => {
           if (!page) return;
           // A commenter has the comments alone: no caret, no style bar, and a "Comment" button at the selection.
@@ -535,12 +574,13 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
             unwatch.push(() => removeEventListener("ergaplaced", shown));
           }
           wasFull = false;
-          // (The viewer stops its own reloads of the page: this shows each change in place. client/inline/viewer-live.ts.)
+          // (The viewer stops its own reloads of the page: this shows each change in place. client/viewer/live.ts.)
           if (m.comment) window.parent.postMessage({ type: "erga-commenting" }, SHELL);
           // (The keys held meanwhile go in now, whether or not it has the focus yet.)
           page.handOver();
           focus = false;
         });
+      }
       controls?.queue();
       comments?.queue();
       if (u.docChanged || u.selectionSet) slash?.update(page?.slashText() ?? null);
@@ -591,15 +631,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
   });
   // The page's own API, imported before the person's first edit asks for it.
   warm(apiCode(m.path, text, (p) => files(c.doc).get(p)?.toString()));
-  window.ergaFrame = {
-    page,
-    get zoom() {
-      return zoom;
-    },
-    get reloading() {
-      return state.phase == "reloading";
-    },
-  };
+  window.ergaFrame = frameHandle;
 }
 
 /** Files dropped or pasted can't go in: an alert says why. */
@@ -833,10 +865,16 @@ function stop() {
   rest();
   collab?.close();
   collab = null;
+  window.ergaFrame = undefined;
 }
 
 /** The editor stops, its state kept for the way back in; the page stays as it is. */
 function stopEditor() {
+  if (contextTimer) {
+    clearTimeout(contextTimer);
+    contextTimer = 0;
+  }
+  contextAt = 0;
   if (page) {
     kept = page.state;
     // What the page shows now: this text, if the editor has shown all of it.
@@ -848,7 +886,40 @@ function stopEditor() {
   unsaved = null;
   darkObserver?.disconnect();
   page = null;
-  window.ergaFrame = undefined;
+}
+
+const CONTEXT_MS = 150;
+let contextTimer = 0,
+  contextAt = 0;
+/** Posts the current caret/selection and nearby HTML context to the shell (for agent context and feedback). */
+function sendContext(s = page?.state) {
+  if (contextTimer) {
+    clearTimeout(contextTimer);
+    contextTimer = 0;
+  }
+  const m = editing();
+  if (!s || !m) return;
+  contextAt = Date.now();
+  const sel = s.selection.main,
+    startLine = s.doc.lineAt(sel.from),
+    endLine = s.doc.lineAt(sel.to);
+  tell({
+    type: "erga-context",
+    path: m.path,
+    context: {
+      line: startLine.number,
+      endLine: endLine.number,
+      ...(sel.empty ? {} : { selected: s.sliceDoc(sel.from, sel.to).slice(0, 4001) }),
+      lineText: startLine.text.slice(0, 401),
+      near: sourceNear(s.doc.toString(), sel.head),
+    },
+  });
+}
+function queueContext(s?: EditorState) {
+  if (contextTimer) return;
+  const wait = CONTEXT_MS - (Date.now() - contextAt);
+  if (wait <= 0) sendContext(s);
+  else contextTimer = window.setTimeout(() => sendContext(), wait);
 }
 
 // This tab's caret, for everyone else, at most once a frame. It stays where you left it when you switch away, as a
@@ -902,13 +973,15 @@ function watchPage() {
   on(d, "keydown", () => collab?.activate(), true);
   on(win, "focus", () => (collab?.activate(), controls?.queue()), true);
   // (The focus went to the window around the page: its comment box, say. The style bar waits: controls.ts.)
-  on(win, "blur", () => controls?.queue());
+  on(win, "blur", () => (controls?.queue(), sendContext()));
   on(d, "scroll", () => (controls?.queue(), comments?.queue()), { passive: true });
   // The style bar follows selected text that moves another way: a scroll in an element, a pan of the page's own (moves.ts).
-  watchMoves(d, win, () => {
-    if (page && d.getSelection()?.isCollapsed === false) controls?.queue();
-  });
-  on(d, "selectionchange", () => (controls?.queue(), comments?.queue(), keyed && caretAcross()));
+  unwatch.push(
+    watchMoves(d, win, () => {
+      if (page && d.getSelection()?.isCollapsed === false) controls?.queue();
+    })
+  );
+  on(d, "selectionchange", () => (controls?.queue(), comments?.queue(), keyed && caretAcross(), sendContext()));
   // (A key moved it: the caret the editor puts as it starts, or a click's, moves nothing.)
   on(d, "keydown", () => ((keyed = true), win.setTimeout(() => (keyed = false), 300)), { capture: true });
   on(win, "resize", () => (controls?.queue(), comments?.queue()));

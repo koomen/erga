@@ -1,7 +1,7 @@
 // The editor's layout as this browser keeps it, put on the page as its body starts (opened with ?edit,
 // viewer-editing-body.ts), so the first frame already has the document where it stays: the agent open or not
 // on this document (client/common/agent-panel.ts, panelOpen), its side and width (client/agent/layout.ts: KEY, geometry, and mountLayout's variables;
-// tests/layout.test.ts checks the two agree), and the document's zoom (client/inline/viewer-zoom.ts), which the frame takes
+// tests/layout.test.ts checks the two agree), and the document's zoom (client/viewer/zoom.ts), which the frame takes
 // (client/inline/viewer-band.css, html.erga-zoomed).
 
 import { pageDoc, panelOpen } from "../common/agent-panel";

@@ -265,7 +265,7 @@ journey("a deck that changes on disk and by an agent while the person types", ()
     // (The old page has handed its state over, and asked for the new one: it stays until the new one comes.)
     await until(() => load.asked() > 0, 5000, "the page asks for the new page");
     ed.write(ed.disk().replace("The arrows move between slides.", "The arrows move between slides, and the disk edits."));
-    await until(() => ed.eval<boolean>(`ergaPage.collab.current().includes("the disk edits")`), DISK_MS, "the shell has the edit on disk");
+    await until(() => ed.frame<boolean>(`ergaFrame.collab.current().includes("the disk edits")`), DISK_MS, "the room has the edit on disk");
     // The person types on while the page loads.
     await ed.type(" two");
     // (From now on the page loads at once, and the viewer waits as long as it does.)

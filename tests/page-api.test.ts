@@ -182,6 +182,11 @@ describe("the templates' add_image, which puts a dropped image on the page", () 
     );
     expect(slides.apply(deck, "add_image", { slide: 2, file })).toEqual({ refused: "There's no slide 2: the deck has slides 1 to 1." });
     expect(slides.apply(deck, "add_image", { slide: 1 })).toEqual({ refused: "file.src is the image's address from the page." });
+    const commented = `<body>\n<!-- <section class="slide"><h2>Old</h2></section> -->\n<section class="slide" data-layout="content">\n  <h2>One</h2>\n</section>\n<!-- <section class="slide"><h2>Draft</h2></section>\n</body>`;
+    expect(slides.apply(commented, "delete_slide", { slide: 1 })).toEqual({ refused: "A deck keeps at least one slide." });
+    expect(slides.apply(commented, "add_image", { slide: 2, file })).toEqual({
+      refused: "There's no slide 2: the deck has slides 1 to 1.",
+    });
   });
 
   test("canvas: at a point of the canvas, or in a frame, which it then moves with; several images step down and right", async () => {
@@ -200,6 +205,10 @@ describe("the templates' add_image, which puts a dropped image on the page", () 
     });
     expect(canvas.apply(page, "add_image", { frame: 0, x: "a", y: 0, file })).toEqual({ refused: "x and y are numbers of px." });
     expect(canvas.apply(page, "move_frame", {})).toEqual({ refused: 'The canvas has no edit "move_frame".' });
+    const commented = `<body>\n<div class="canvas">\n  <!-- <section class="frame"><h2>Old</h2></section> -->\n  <section class="frame"><h2>One</h2></section>\n</div>\n</body>`;
+    expect(canvas.apply(commented, "add_image", { frame: 2, x: 0, y: 0, file })).toEqual({
+      refused: "frame is a frame's number, 1 to 1, or 0 for the canvas.",
+    });
   });
 });
 

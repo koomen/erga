@@ -1,4 +1,4 @@
-// Who writes, as a reader's page says it (client/inline/viewer-live.ts): the pill's one state, and what moves it. The
+// Who writes, as a reader's page says it (client/viewer/live.ts): the pill's one state, and what moves it. The
 // document tells the page each change with its author (at most every 2 s). While changes come, the pill says who
 // writes; QUIET_MS after the last one it says "Updated now", and DONE_MS later it goes.
 //

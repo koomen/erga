@@ -30,7 +30,10 @@ const KEPT = `(async () => ({
   worker: (await navigator.serviceWorker.getRegistrations()).some((r) => (r.active ?? r.waiting ?? r.installing)?.scriptURL.endsWith("/erga-sw.js")),
 }))()`;
 const ALL = { copy: true, replicas: true, worker: true };
+/** The app origin keeps no Yjs replicas in IndexedDB (only the pages origin does). */
+const APP = { copy: true, replicas: false, worker: true };
 const NONE = { copy: false, replicas: false, worker: false };
+const SHELL_KEYS = `Object.keys(localStorage).filter((k) => k.startsWith("erga:hello:") || k.startsWith("erga:title:"))`;
 
 /** Every socket a page of the tab opens, in each frame: to close them as a lost connection does. (e2e/look.ts has the same, for its step offline.) */
 const watchSockets = (page: Page) =>
@@ -52,7 +55,7 @@ async function goOffline(ed: Editor) {
   await until(
     async () => {
       for (const f of ed.page.frames()) await f.evaluate(`(window.__sockets ?? []).forEach((s) => s.close())`).catch(() => {});
-      return !(await ed.eval<boolean>(`ergaPage.collab.connected`));
+      return !(await ed.eval<boolean>(`ergaPage.room.connected`));
     },
     10_000,
     "the tab's socket closed"
@@ -277,7 +280,8 @@ journey("offline, and back; then sign-out", () => {
   // Before, the tab that stayed open kept its copy and its replica again as soon as it typed.
   test("sign-out in another tab: this tab types on, and keeps nothing more in either origin", async ({ tab }) => {
     await soon(() => ed.frame(KEPT)).toEqual(ALL);
-    await soon(() => ed.eval(KEPT)).toEqual(ALL);
+    await soon(() => ed.eval(KEPT)).toEqual(APP);
+    expect((await ed.eval<string[]>(SHELL_KEYS)).length).toBeGreaterThan(0);
     // Tab B signs out.
     const b = await tab.page.context().newPage();
     await b.goto(`${new URL(ed.address).origin}/auth/logout`);
@@ -288,13 +292,15 @@ journey("offline, and back; then sign-out", () => {
     );
     await b.close();
     await soon(async () => ({ app: await ed.eval(KEPT), pages: await ed.frame(KEPT) })).toEqual({ app: NONE, pages: NONE });
+    expect(await ed.eval<string[]>(SHELL_KEYS)).toEqual([]);
 
     // Tab A types: the edit reaches the room, and nothing goes into this browser's storage again.
     await ed.clickEnd("main p");
     await ed.type(" Jam.");
     await until(() => ed.disk().includes(" Milk. Eggs. Bread. Jam.</p>"), DISK_MS, "the edit on disk");
-    await until(async () => (await ed.source()).includes("Jam."), 10_000, "the shell's replica has the edit");
+    await until(async () => (await ed.source()).includes("Jam."), 10_000, "the editor has the edit");
     expect({ app: await ed.eval(KEPT), pages: await ed.frame(KEPT) }, "each origin keeps nothing").toEqual({ app: NONE, pages: NONE });
+    expect(await ed.eval<string[]>(SHELL_KEYS)).toEqual([]);
     withoutOffline(tab);
     // This tab is signed out: the server refuses what its shell asks for (401), at any time from now, and the browser
     // logs each refusal. The next step, signed in again, takes them out, and fails for any other error of this step.
@@ -335,7 +341,7 @@ journey("offline, and back; then sign-out", () => {
     await other.clickEnd("h1");
     await other.type("!");
     await soon(() => other.frame(KEPT)).toEqual(ALL);
-    await soon(() => other.eval(KEPT)).toEqual(ALL);
+    await soon(() => other.eval(KEPT)).toEqual(APP);
     const here = await other.frame<{ origin: string; urls: string[]; rooms: string[] }>(`(async () => {
       const c = await caches.open("erga-offline-v1");
       const urls = (await c.keys()).map((r) => r.url);
@@ -358,7 +364,7 @@ journey("offline, and back; then sign-out", () => {
       "This document was deleted."
     );
     // The shell's connection has ended (shared/socket-phase.ts: it never comes back by itself), and every room socket of the page is closed.
-    await soon(() => other.eval<string>(`ergaPage.collab.status`)).toBe("gone");
+    await soon(() => other.eval<string>(`ergaPage.socket.status`)).toBe("gone");
     await soon(() =>
       other.frame<number[]>(`(window.__sockets ?? []).filter((w) => w.url.includes("/api/room")).map((w) => w.readyState)`)
     ).toEqual([3]);
@@ -370,9 +376,10 @@ journey("offline, and back; then sign-out", () => {
   test("sign-out deletes every offline copy in this browser: the app's origin's and the document's pages origin's", async ({ tab }) => {
     const pages = await other.frame<string>(`location.origin`);
     expect({ app: await other.eval(KEPT), pages: await other.frame(KEPT) }, "before, each origin keeps its copy").toEqual({
-      app: ALL,
+      app: APP,
       pages: ALL,
     });
+    expect((await other.eval<string[]>(SHELL_KEYS)).length).toBeGreaterThan(0);
     // Sign out, from the account menu's link.
     await other.eval(`location.assign("/auth/logout")`);
     await until(
@@ -381,6 +388,7 @@ journey("offline, and back; then sign-out", () => {
       "signed out, on the homepage"
     );
     await soon(() => other.eval(KEPT)).toEqual(NONE);
+    expect(await other.eval<string[]>(SHELL_KEYS)).toEqual([]);
     // The pages origin, in a frame of this page as the editor's was.
     await other.eval(
       `new Promise((r) => { const f = document.createElement("iframe"); f.id = "probe"; f.src = ${JSON.stringify(`${pages}/erga-sw.js`)}; f.onload = r; document.body.append(f); })`

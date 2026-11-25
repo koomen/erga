@@ -47,7 +47,8 @@ export const editorReady = (page: Page) =>
 export const viewerBack = (page: Page) =>
   until(
     async () =>
-      (await page.evaluate(() => !document.body.classList.contains("erga-editing"))) && (await inPage<boolean>(page, "!window.ergaFrame")),
+      (await page.evaluate(() => !document.body.classList.contains("erga-editing"))) &&
+      (await inPage<boolean>(page, "!window.ergaFrame?.page")),
     10_000,
     "the viewer is back"
   );

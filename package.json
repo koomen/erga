@@ -21,7 +21,6 @@
     "look": "bun e2e/look.ts"
   },
   "dependencies": {
-    "@codemirror/commands": "6.11.1",
     "@codemirror/state": "6.7.6",
     "@earendil-works/pi-ai": "1.5.0",
     "@effect/ai-anthropic": "4.1.0",

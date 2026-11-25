@@ -1,7 +1,7 @@
 // A page's live socket and its owner: a WebSocket to this server that connects again after a failure. The phase is
 // shared/socket-phase.ts's; this keeps it and does what it asks: connect, wait before the next try (backoff), close,
 // and tell live.ts (client.ts: the corner's "Reconnecting…") that the connection is up, down or gone. The viewer
-// (client/inline/viewer-live.ts), the live lists (client/common/live-rows.ts) and the agent panel
+// (client/viewer/live.ts), the live lists (client/common/live-rows.ts) and the agent panel
 // (client/agent/person-agent.ts) each give it an address and what to do with what comes.
 
 import { asUser } from "../common/tools";
@@ -73,6 +73,8 @@ export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
       : undefined;
     ws.onopen = () => {
       opened = true;
+      // Prime workerd hibernatable WebSockets with a client frame so server-initiated close codes (4403/4404) flush.
+      if (o.ping && ws.readyState == WebSocket.OPEN) ws.send(PING);
       if (socket == ws) go({ type: "opened" });
     };
     ws.onmessage = (e) => {

@@ -70,6 +70,7 @@ export function readerPage(
   const head =
     (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
     `<script data-erga>${readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, worker: o.worker, ...(editor ? { editor } : {}) })}</script>` +
+    `<script type="module" src="${asset("clipboard.js")}" crossorigin data-erga></script>` +
     // The templates' typefaces, by name, and the one of Erga's controls, from Erga's own files (at the origin `fonts`):
     // a page asks no other site for them.
     (pageFonts(o.fonts) ? `<style data-erga>${pageFonts(o.fonts)}</style>` : "") +
@@ -79,7 +80,7 @@ export function readerPage(
   return pageOf(html, head);
 }
 
-/** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
+/** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js and clipboard.js name it). */
 export const readerVersion = () =>
   versionOf(
     readerScript({ shell: "", prefix: "", src: "", worker: true }) +
@@ -88,6 +89,7 @@ export const readerVersion = () =>
       EDITING_API +
       LIVE_WATCH +
       asset("frame.js") +
+      asset("clipboard.js") +
       pageFonts("")
   );
 

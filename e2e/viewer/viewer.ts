@@ -53,7 +53,7 @@ export const viewing = async (page: Page) =>
   (await page.evaluate(() => !document.body.classList.contains("erga-editing")).catch(() => false)) &&
   !!(await inDoc<boolean>(
     page,
-    `!window.ergaFrame && !document.querySelector('[contenteditable], [data-erga-editing], style[data-erga="page"]')`
+    `!window.ergaFrame?.page && !document.querySelector('[contenteditable], [data-erga-editing], style[data-erga="page"]')`
   ));
 
 /** Signs `login` in on the dev server (/auth/github?as=): the session's cookie, for requests as that person. */

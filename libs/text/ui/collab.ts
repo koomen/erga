@@ -49,8 +49,8 @@ import {
   roomInfo,
   stamp,
   stateVector,
-  type Author,
 } from "../../../document/model/content";
+import type { Author } from "../../../shared/author";
 import { changesBetween, rebaseOnce } from "../../../document/model/merge";
 import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";

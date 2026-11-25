@@ -10,8 +10,6 @@
 // one (the page's edit key can do as much), never more: "Raise the limit" acts only from the card's own button.
 
 import { sha256Hex } from "../../shared/bytes";
-import { assets, files, stamp } from "../../document/model/content";
-import { encodePath } from "../../document/model/pages";
 import { ms } from "../../libs/text/ui/timescale";
 import type { Pending } from "../../shared/room-socket";
 import { DISMISS, type Raise } from "../common/alerts";
@@ -198,22 +196,11 @@ export function mountUploads(shell: Shell) {
 
   /** The files whose elements the page's editor says left the text (Undo): there is none to take out. */
   const gone = new Set<string>();
+  const filePaths = () => shell.treeEntries.filter((e) => e.type != "folder").map((e) => e.path);
+  const hasFile = (path: string) => shell.treeEntries.some((e) => e.type != "folder" && e.path == path);
   /** A cancelled file: its element leaves each page that shows it, and its write, if one waits, waits no more. */
   function remove(id: string, waiting = waits.delete(id)) {
-    const doc = shell.collab.doc;
-    // (This replica may still have the element the person's Undo took out: taken out here too, the line break beside
-    // it would go with it.)
-    if (!gone.delete(id))
-      doc.transact(() => {
-        for (const [page, text] of files(doc)) {
-          if (!/\.html?$/i.test(page)) continue;
-          // (From the page's folder: a page in blog/ reaches images/ as ../images/.)
-          const at = U.elementOf(text.toString(), "../".repeat(page.split("/").length - 1) + encodePath(id));
-          if (!at) continue;
-          text.delete(at.from, at.to - at.from);
-          stamp(doc, shell.me);
-        }
-      });
+    if (!gone.delete(id)) shell.page.removeUpload(id);
     forget(id);
     // Its write waits no more. (Only a write that waits: a file the server refused may have the path of a file or a
     // folder that is there, and that one stays.)
@@ -271,8 +258,7 @@ export function mountUploads(shell: Shell) {
       first.delete(path);
       const key = U.agentKey(path);
       // (In the document's files now: it came. Else it was taken back.)
-      if (raised.delete(key))
-        shell.alerts.end(key, assets(shell.collab.doc).has(path) || files(shell.collab.doc).has(path) ? "1 file uploaded" : undefined);
+      if (raised.delete(key)) shell.alerts.end(key, hasFile(path) ? "1 file uploaded" : undefined);
     }
   }
   /** An agent's file whose write waited to its end: its bytes never came. */
@@ -369,10 +355,7 @@ export function mountUploads(shell: Shell) {
      * name there (or with -2, -3 before its extension), a dropped folder's files in the folder. Answers their paths.
      */
     addIn(dir: string, list: File[]): string[] {
-      const doc = shell.collab.doc;
-      const taken = new Set(
-        [...files(doc).keys(), ...assets(doc).keys(), ...state.files.map((u) => u.id), ...Object.keys(others)].map((p) => p.toLowerCase())
-      );
+      const taken = new Set([...filePaths(), ...state.files.map((u) => u.id), ...Object.keys(others)].map((p) => p.toLowerCase()));
       const named = list.slice(0, 50).map((file) => ({ file, path: placeIn(dir, file, taken) }));
       start(named);
       return named.map((f) => f.path);
@@ -423,7 +406,7 @@ export function mountUploads(shell: Shell) {
       const now = Date.now();
       for (const [p, at] of arrivedAt) if (now - at > 10_000) arrivedAt.delete(p);
       if ([...own, ...arrivedAt.keys(), ...Object.keys(others)].includes(path)) return "yes";
-      return assets(shell.collab.doc).has(path) || files(shell.collab.doc).has(path) ? "no" : "maybe";
+      return hasFile(path) ? "no" : "maybe";
     },
   };
   window.ergaUploads = { addIn: api.addIn };

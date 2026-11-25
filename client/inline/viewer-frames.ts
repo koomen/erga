@@ -25,7 +25,7 @@ export default function viewerFrames(pages: string): void {
       if (w) w.postMessage(m, pages);
     },
     // The address of the page the frame shows: the document's files (meta erga-pages) and the page (meta erga-page,
-    // which viewer-nav.ts moves as a link in the frame goes to another page).
+    // which client/viewer/nav.ts moves as a link in the frame goes to another page).
     src: () => {
       const meta = (name: string) => document.querySelector<HTMLMetaElement>('meta[name="' + name + '"]')?.content ?? "";
       return meta("erga-pages") + meta("erga-page").split("/").map(encodeURIComponent).join("/");

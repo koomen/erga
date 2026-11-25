@@ -2,12 +2,11 @@
 // is, the document and the page it edits, the page editor, and each part's own calls. A part reads what another
 // part keeps through here at the moment it needs it, so the parts can mount in any order the page allows.
 
-import type { EditorState } from "@codemirror/state";
-import type { PageFrame } from "./page-frame";
+import type { PageContext, PageFrame } from "./page-frame";
 import type { Editor } from "./editor";
-import type { Collab } from "../../libs/text/ui/collab";
-import type { Author } from "../../document/model/content";
-import type { DocInfo } from "../../document/api/api";
+import type { ShellRoom } from "./shell-room";
+import type { Author } from "../../shared/author";
+import type { DocInfo, Hello } from "../../document/api/api";
 import type { DocName } from "../../document/model/names";
 import type { Settings } from "../pages/settings";
 import type { Naming } from "./naming";
@@ -39,7 +38,8 @@ export const store = {
 };
 
 export interface Shell {
-  collab: Collab;
+  /** The shell's lightweight JSON-only room socket (hello, events, presence — no Yjs replica). */
+  socket: ShellRoom;
   /** Who this tab is, as the host attributes edits and the agent. */
   me: Author;
   /** The query that says who this tab is in local development (?user=Ada), or "". */
@@ -54,8 +54,12 @@ export interface Shell {
   pages: number;
   /** Whether you may make pages here (the hello's tree: an editor's, and not a single file opened from disk). */
   canMakePages: boolean;
+  /** The document's file tree entries, from hello and kept up to date by tree events and pages-tree refreshes. */
+  treeEntries: Hello["tree"]["entries"];
+  /** The page editor's last reported caret/selection context, for the agent and feedback (erga-context). */
+  latestContext: { path: string; context: PageContext } | null;
   docName: DocName | null;
-  /** Which of the document's pages this tab edits (its replica's: collab.pagePath). */
+  /** Which of the document's pages this tab edits. */
   readonly pagePath: string;
   page: PageFrame;
   /**
@@ -71,8 +75,6 @@ export interface Shell {
   goTo: (url: string, replace?: boolean) => void;
   openPage: (path: string) => void;
   swapPage: (path: string, push?: boolean) => boolean;
-  /** The text and the caret as a state, made afresh: the text whole (for the agent's look, not for each key). */
-  currentState: () => EditorState;
 
   naming: Naming;
   room: Room;
@@ -81,7 +83,7 @@ export interface Shell {
   sharing: Sharing;
   toast: Toast;
   alerts: Alerts;
-  /** The shell's own edits of the room (the title), watched until the server has them (libs/text/ui/unsaved.ts). */
+  /** Pending title renames made here, watched until the server has them (libs/text/ui/unsaved.ts). */
   unsaved: { edit(): void };
   /** The save mark, left of the buttons' bar: each copy of the room tells it how far its edits are (client/common/save-mark.ts). */
   save: SaveMark;

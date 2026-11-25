@@ -5,11 +5,11 @@
 // editor use), so it shows at once and is read again behind.
 
 import { runTool } from "../common/tools";
-import type { mountTree, TreeHandle } from "../pages/pages-tree";
+import type { mountTree as mountPagesTree, TreeHandle } from "../pages/pages-tree";
 
-type Initial = Parameters<typeof mountTree>[1]["initial"];
+type Initial = Parameters<typeof mountPagesTree>[1]["initial"];
 
-export default function viewerTree(script: string, id: string, base: string, query: string): void {
+export function mountTree(script: string, id: string, base: string, query: string): void {
   // (The title is in a meta, not an argument: it follows the first heading, and the page's build is its scripts.)
   const title = document.querySelector<HTMLMetaElement>('meta[name="erga-title"]')?.content ?? "";
   const button = document.querySelector<HTMLButtonElement>(".erga-tree-btn");

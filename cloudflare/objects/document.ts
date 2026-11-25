@@ -250,19 +250,22 @@ export class DocumentObject extends DurableObject<Env> {
     if (allowed instanceof Response) return allowed;
     request = allowed;
     const watch = url.searchParams.get("watch") == "view";
+    const shell = !watch && url.searchParams.get("shell") == "1";
     const opened = watch ? null : await run(this.document.admit(request));
     if (!watch && !opened) return new Response("No such document", { status: 404 });
     const tab: Tab = {
       id: crypto.randomUUID(),
       readOnly: request.headers.get("x-erga-access") != "edit",
-      epoch: url.searchParams.get("epoch") || null,
+      epoch: shell ? null : url.searchParams.get("epoch") || null,
       person: personOf(request.headers),
-      events: url.searchParams.get("events") == "1" || watch,
+      events: url.searchParams.get("events") == "1" || watch || shell,
       // Whom it's for, as the app said: when the permissions change, whether they may still (Participants.permissionsChanged).
       ...(askerFrom(request.headers) ? { who: askerFrom(request.headers)! } : {}),
-      // A viewer's page (?watch=view, client/inline/viewer-live.ts): it hears what it shows change, never joins the room,
+      // A viewer's page (?watch=view, client/viewer/live.ts): it hears what it shows change, never joins the room,
       // and opens no closed document (Participants.watch).
       ...(watch ? { watch: true } : {}),
+      // The editor's shell (?shell=1, client/shell/shell-room.ts): hears hello, events and JSON presence only, never joins Yjs sync.
+      ...(shell ? { shell: true } : {}),
       ...(url.searchParams.get("comments") == "1" ? { comments: true } : {}),
     };
     const [client, server] = Object.values(new WebSocketPair());

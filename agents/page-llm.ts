@@ -1,6 +1,6 @@
 // The Document LLM API: a document's script calls a model as its viewer, where its author turned the API on
 // (share_document llm_api). The page's script has window.ergaLLM (client/inline/reader.ts), which asks the viewer
-// around it (client/inline/viewer-llm.ts), which calls this with the visitor's session. A published site's page, on its
+// around it (client/viewer/viewer.ts), which calls this with the visitor's session. A published site's page, on its
 // domain itself, calls it directly (server/sites/).
 //
 // The routes are ROUTES, below: /api/llm, and the same on a custom domain, for the document published there only.

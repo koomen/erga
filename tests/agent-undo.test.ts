@@ -5,7 +5,8 @@
 
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
-import { authorOf, files, introduce, type Author } from "../document/model/content";
+import { authorOf, files, introduce } from "../document/model/content";
+import type { Author } from "../shared/author";
 import type { Room } from "../document/room/room";
 import { joinLocal } from "./helpers/join-local";
 import { VIA } from "../shared/attribution";

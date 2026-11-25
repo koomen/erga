@@ -15,8 +15,9 @@ function slideHtml(layout, title, points) {
     : `<section class="slide" data-layout="content">\n  <h2>${t}</h2>\n  <ul>\n${(points.length ? points : ["A point"]).map((p) => `    <li>${esc(p)}</li>\n`).join("")}  </ul>\n</section>`;
 }
 
-/** How many slides the page has, as written. */
-const countOf = (html) => (html.match(/<section\b[^>]*\bclass\s*=\s*["'][^"']*\bslide\b/gi) ?? []).length;
+/** How many slides the page has, as written (ignoring HTML comments). */
+const countOf = (html) =>
+  (html.replace(/<!--[\s\S]*?(?:-->|$)/g, "").match(/<section\b[^>]*\bclass\s*=\s*["'][^"']*\bslide\b/gi) ?? []).length;
 
 const SLIDE = { type: "integer", minimum: 1, description: "The slide's number, from 1, in the deck's order." };
 const LAYOUT = { type: "string", enum: LAYOUTS, description: "title: a heading and a line; content: a heading and points." };

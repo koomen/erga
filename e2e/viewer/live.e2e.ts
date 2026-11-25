@@ -177,9 +177,14 @@ journey("a reader's open page shows an agent's change", () => {
     expect(made.ok, made.error).toBe(true);
     const own = JSON.parse(textOf(made.result)) as { id: string; address: string };
     await page.goto(`${s.root}${own.address}#place`);
-    // (With its stylesheet. The files' address of someone who can edit has no version in it.)
+    // (With its stylesheet, and the viewer's band and seat applied. The files' address of someone who can edit has no version in it.)
     const at = `performance.getEntriesByType("resource").some((r) => r.name.endsWith("/style.css")) && document.readyState == "complete" ? location.pathname : null`;
     expect(await until(() => inDoc<string>(page, at), 10_000, "the page with its stylesheet")).toMatch(/^\/t\/[^/]+\/index\.html$/);
+    await until(
+      () => page.evaluate(() => !document.documentElement.classList.contains("erga-band-wait")),
+      10_000,
+      "the page shows in its seat"
+    );
     return own;
   };
   /** The mouse's wheel, over a point of the document's page. */

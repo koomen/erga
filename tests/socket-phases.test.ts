@@ -1,5 +1,5 @@
 // The phase of a page's live connection, with no socket (shared/socket-phase.ts): one step function, with the rules
-// of the editor's room (libs/text/ui/collab.ts), the viewer's (client/inline/viewer-live.ts) and the live lists'
+// of the editor's room (libs/text/ui/collab.ts), the viewer's (client/viewer/live.ts) and the live lists'
 // (client/common/live-rows.ts; the agent panel's are the same).
 
 import { expect, test } from "bun:test";

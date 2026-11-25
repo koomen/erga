@@ -41,7 +41,7 @@ journey("a document that is slow to open", () => {
   const h1More = () => docFrame(page)!.evaluate(() => document.getElementById("more")!.textContent);
   /** Where that heading is, down the page, before the eye. */
   let at = 0;
-  /** Each version of the document that the viewer heard (client/inline/viewer-live.ts). */
+  /** Each version of the document that the viewer heard (client/viewer/live.ts). */
   const heard: string[] = [];
   /** Each of the page's frames whose editor has the room's start (GET /api/start). */
   const started = new Set<Frame>();
@@ -54,7 +54,7 @@ journey("a document that is slow to open", () => {
    */
   const rested = async () => {
     await until(
-      async () => (await page.evaluate<string>("ergaPage.collab.current()")).includes(">X</h2>"),
+      async () => (await fetch(`${ed.address}/doc/index.html`).then((r) => r.text())).includes(">X</h2>"),
       5000,
       "the room has the last edit"
     );
@@ -115,11 +115,15 @@ journey("a document that is slow to open", () => {
     await ed.type(" Milk");
     await soon(() => ed.textOf("h1")).toBe("A page like the homepage Milk");
     expect(await ed.caretIn("h1")).toBe(true);
-    // The socket opens: the shell's replica, which only the room feeds, gets the text.
+    // The socket opens: the room receives the text typed while connecting.
     await until(() => own.length > 0, 5000, "the page's editor asks for its socket");
     expect(own.length).toBe(1);
     own[0]();
-    await until(async () => (await ed.source()).includes("homepage Milk</h1>"), 10_000, "the text reaches the room");
+    await until(
+      async () => (await fetch(`${ed.address}/doc/index.html`).then((r) => r.text())).includes("homepage Milk</h1>"),
+      10_000,
+      "the text reaches the room"
+    );
   });
 
   test("a scrolling page: its first line starts below the bars; scrolled, its text goes under them; the room is not in its HTML", async () => {
@@ -175,7 +179,7 @@ journey("a document that is slow to open", () => {
 
   test("the eye, down the page: every frame the tab paints shows the page where it was", async () => {
     at = await more();
-    await soon(() => page.evaluate<number>("ergaPage.collab.others().length")).toBe(1);
+    await soon(() => page.evaluate<number>("ergaPage.socket.others().length")).toBe(1);
     const out = await views(page, async () => {
       await page.locator("#btn-edit").click();
       await soon(() => viewing(page)).toBe(true);
@@ -185,7 +189,7 @@ journey("a document that is slow to open", () => {
     await rested();
     expect(await more(), "the eye does not move the page").toBeCloseTo(at, 0);
     // The page's editor stays in the room, for the pencil; nobody there sees a person who views.
-    await soon(() => page.evaluate<number>("ergaPage.collab.others().length")).toBe(0);
+    await soon(() => page.evaluate<number>("ergaPage.socket.others().length")).toBe(0);
   });
 
   // Before, the page asked for its build after the connection came back, the build was another after any edit, and
@@ -204,8 +208,8 @@ journey("a document that is slow to open", () => {
     await page.evaluate(`new Promise((r) => setTimeout(r, 0))`);
     expect(said.filter((t) => t.includes("a new release"))).toEqual([]);
     expect(await page.evaluate<boolean>(`window.__before === true`)).toBe(true);
-    // (Viewing: the shell's replica of the room, and the page as it is.)
-    expect(await page.evaluate<string>("ergaPage.collab.current()")).toContain("homepage Milk</h1>");
+    // (Viewing: the page editor's standby replica, and the page as it is.)
+    expect(await docFrame(page)!.evaluate<string>("ergaFrame.collab.current()")).toContain("homepage Milk</h1>");
     expect(await h1More()).toBe("X");
   });
 
@@ -223,7 +227,7 @@ journey("a document that is slow to open", () => {
     page.off("request", asked);
     expect(starts, "it asks the room for nothing").toEqual([]);
     // (And the room sees the person edit again.)
-    await soon(() => page.evaluate<number>("ergaPage.collab.others().length")).toBe(1);
+    await soon(() => page.evaluate<number>("ergaPage.socket.others().length")).toBe(1);
     expect(back, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
     expect(await more(), "the pencil does not move the page").toBeCloseTo(at, 0);
     expect(await page.evaluate<boolean>(`window.__before === true`)).toBe(true);

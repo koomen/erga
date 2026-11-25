@@ -7,10 +7,9 @@
 // in the page itself (frame.ts: its window has `ergaFrame`). Expressions for the
 // page are strings evaluated in the page's frame.
 //
-// Trap: the page's editor has its own socket and replica of the room (libs/text/ui/frame.ts), apart from the shell's.
-// An edit typed on the page reaches the shell's replica only through the room, a moment later. A test that reads the
-// shell's text waits for it (`ed.source()`); one that reads the editor's selection reads the frame's
-// (`ed.selection()`). The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before
+// Trap: only the page's editor holds a Yjs replica of the room (libs/text/ui/frame.ts); the shell holds a lightweight
+// JSON-only socket (client/shell/shell-room.ts). `ed.source()` reads the frame's replica directly; `ed.selection()`
+// reads the frame's selection. The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before
 // it clicks. The editor's own controls are in a shadow root on the page: a test reaches them with `ed.controls`, never
 // in the shell's document. An agent's edit is in the page's text at once (its typing is only an effect,
 // libs/text/ui/marks.ts): a test that reads the page's text sees all of it.
@@ -228,23 +227,18 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** The file on disk. */
     disk: () => readFileSync(doc.file, "utf8"),
     write: (text: string) => writeFileSync(doc.file, text),
-    /**
-     * The document's text as the shell's replica of the room has it, once it has the page editor's (the editor's own
-     * replica sends its edits to the room, and the room to the shell). The text returned is the one that was compared:
-     * after an undo the shell can be two edits behind and still equal the editor's, and a second read gave the text
-     * between.
-     */
+    /** The document's text as the page editor's replica of the room has it. */
     async source(): Promise<string> {
-      const shell = () => page.evaluate("ergaPage.collab.current()") as Promise<string>;
-      let same: string | null = null;
-      await until(async () => {
-        const mine = await ed.frame<string | null>("window.ergaFrame?.page ? ergaFrame.page.state.doc.toString() : null").catch(() => null);
-        const theirs = await shell();
-        if (mine != null && mine != theirs) return false;
-        same = theirs;
-        return true;
-      }, 3000).catch(() => {});
-      return same ?? shell();
+      return (await until(
+        () =>
+          ed
+            .frame<string | null>(
+              "window.ergaFrame?.page ? ergaFrame.page.state.doc.toString() : (window.ergaFrame?.collab ? ergaFrame.collab.current() : null)"
+            )
+            .catch(() => null),
+        5000,
+        "the page editor's source"
+      ))!;
     },
     /**
      * In the editor's own controls on the page (libs/text/ui/controls.ts: the style bar, the link bar, the note):

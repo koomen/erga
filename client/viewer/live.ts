@@ -13,7 +13,7 @@ import { liveSocket } from "../live/socket";
 import { DELETED_NOTE } from "../../shared/room-socket";
 import { DONE_MS, QUIET_MS, writerName, writerStep, writerText, type WriterEvent, type WriterPhase } from "../common/writer-phase";
 
-export default function viewerLive(base: string): void {
+export function viewerLive(base: string): void {
   // (The version is in a meta, not an argument: the page's build is its scripts, server/live.ts.)
   const ver = document.querySelector<HTMLMetaElement>('meta[name="erga-ver"]')!.content;
   let shown = ver,
@@ -23,7 +23,7 @@ export default function viewerLive(base: string): void {
     asks = 0,
     last = 0,
     timer: ReturnType<typeof setTimeout> | undefined;
-  // (erga-commenting: a commenter's page shows each change in place itself, viewer-comment.ts.)
+  // (erga-commenting: a commenter's page shows each change in place itself, client/viewer/comment.ts.)
   const editing = () => document.body.classList.contains("erga-editing") || document.body.classList.contains("erga-commenting");
   /** Loads the version wanted, if it isn't the one shown: now, or once the last load is 2 s old. */
   function show() {
@@ -41,7 +41,7 @@ export default function viewerLive(base: string): void {
     if (pages) pages.content = pages.content.replace(/\/@[^/]+\/$/, "/@" + wanted + "/");
     // With no new entry in the tab's history (Back would show the old version of the same page). ?erga-v: a new
     // address for each version (the trap above).
-    const reload = () => window.ergaFrames.reload("?erga-v=" + shown);
+    const reload = () => ergaFrames.reload("?erga-v=" + shown);
     const paths = changed ? [...changed] : [];
     changed = new Set();
     // Stylesheets only: the page takes their new rules in place (client/inline/reader.ts, restyle), and keeps its view
@@ -54,11 +54,11 @@ export default function viewerLive(base: string): void {
       if (!ok) reload();
     };
     const heard = (e: MessageEvent) => {
-      if (window.ergaFrames.from(e) && e.data?.type == "erga-restyled" && e.data.id === id) done(e.data.ok === true);
+      if (ergaFrames.from(e) && e.data?.type == "erga-restyled" && e.data.id === id) done(e.data.ok === true);
     };
     const late = setTimeout(() => done(false), 3000);
     addEventListener("message", heard);
-    window.ergaFrames.send({ type: "erga-restyle", id, paths, files: pages.content });
+    ergaFrames.send({ type: "erga-restyle", id, paths, files: pages.content });
   }
   document.addEventListener("visibilitychange", show);
   // Who writes (an experiment): a small pill at the top of the page while changes come, then "Updated now", then gone
@@ -80,7 +80,7 @@ export default function viewerLive(base: string): void {
     pill.textContent = text ?? "";
     pill.classList.toggle("on", writing.at == "writing");
   }
-  liveSocket({
+  const sock = liveSocket({
     name: "view",
     path: base + "/api/room?watch=view",
     // A deleted document, or one no longer theirs to open, never comes back.
@@ -103,5 +103,16 @@ export default function viewerLive(base: string): void {
         /* not ours */
       }
     },
-  }).start();
+  });
+  // While editing or commenting, the editor's own socket keeps the page live: close ?watch=view and reopen it on exit.
+  let active = false;
+  function sync() {
+    const want = !editing();
+    if (want == active) return;
+    active = want;
+    if (want) sock.start();
+    else sock.stop();
+  }
+  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  sync();
 }

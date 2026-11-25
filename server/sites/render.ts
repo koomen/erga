@@ -244,20 +244,6 @@ export function siteHeader(o: {
   });
   // The font goes outside the shadow root: a font declared inside one isn't used. Its family has a name of Erga's own
   // (Erga Inter, client/fonts/inter.css), so its rules never take the text of a page that has an Inter of its own.
-  return `${crumbsFont(session, true)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("site-controls")}</style><div class="band"></div>${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}<style>${SHADOW_BARS}</style></template></erga-controls>${inlineScript("site-controls")}`;
+  // client/inline/bars.css includes :host selectors alongside html/body/:root, so it works directly inside the shadow root.
+  return `${crumbsFont(session, true)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("site-controls")}</style><div class="band"></div>${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}<style>${inlineStyle("bars")}</style></template></erga-controls>${inlineScript("site-controls")}`;
 }
-
-/**
- * The bars' look (client/inline/bars.css) inside the controls' shadow root, where the page's <html> and <body> can't be
- * named: what it says of them, said of the host (the script gives it the page's tone, page-dark or page-light, and
- * quick-open).
- */
-export const SHADOW_BARS = inlineStyle("bars")
-  .replace(/html\.(page-[a-z]+) body(?= )/g, ":host(.$1)")
-  .replace(/html\.(page-[a-z]+)/g, ":host(.$1)")
-  .replace(/\bhtml /g, ":host ")
-  .replace(/:root/g, ":host")
-  .replace(/body\.quick-open/g, ":host(.quick-open)")
-  .replace(/body:not\(\.quick-open\)/g, ":host(:not(.quick-open))");
-if (/\b(html|body)\b|:root/.test(SHADOW_BARS))
-  throw new Error("client/inline/bars.css names the page's <html> or <body> in a way SHADOW_BARS doesn't turn into the host");

@@ -118,7 +118,7 @@ journey("a restart, a kill, and a kill that loses the history", () => {
   // Was a bug (erga.dev, 22 November, around a deploy): the tab's page had no copy at ?edit, where the pencil had taken
   // the tab, and Erga's worker failed the load (the browser's error page).
   test("while the server is down, a person types on: the page keeps the text; the other person's tab, in by the pencil, loads again and opens the editor from the browser's copy", async () => {
-    await until(() => a.eval<boolean>("!ergaPage.collab.connected"), 5000, "Ada's page sees that the server is gone");
+    await until(() => a.eval<boolean>("!ergaPage.room.connected"), 5000, "Ada's page sees that the server is gone");
     await a.clickEnd("h1");
     await a.type(" offline");
     await expect.poll(() => a.textOf("h1")).toBe("Launch notes offline");
@@ -199,7 +199,7 @@ journey("a restart, a kill, and a kill that loses the history", () => {
     await s.halt("SIGKILL");
     rmSync(join(s.state, "v3"), { recursive: true, force: true });
     await until(
-      async () => !cy.connected && (await b.eval<boolean>("!ergaPage.collab.connected")),
+      async () => !cy.connected && (await b.eval<boolean>("!ergaPage.room.connected")),
       5000,
       "Bo's page and the third person see that the server is gone"
     );

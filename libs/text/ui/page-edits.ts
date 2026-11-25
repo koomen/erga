@@ -32,8 +32,16 @@ export function warm(code: string | null): void {
   if (code != null) void load(code).catch(() => {});
 }
 
-/** One edit of the page's own, on its text `html`: the change, or why not. Waits only for promises already settled. */
-export async function runPageEdit(code: string, html: string, edit: string, input: unknown): Promise<Planned | { error: string }> {
+const EDIT_TIMEOUT_MS = 5000;
+
+/** One edit of the page's own, on its text `html`: the change, or why not. Fails if `apply` doesn't settle within `timeoutMs`. */
+export async function runPageEdit(
+  code: string,
+  html: string,
+  edit: string,
+  input: unknown,
+  timeoutMs = EDIT_TIMEOUT_MS
+): Promise<Planned | { error: string }> {
   let api: Api | undefined;
   try {
     api = (await load(code)).default;
@@ -44,11 +52,24 @@ export async function runPageEdit(code: string, html: string, edit: string, inpu
     return { error: "the page's API module has no default export: export default { name, edits, apply }" };
   if (typeof api.apply != "function") return { error: "the page's API module's default export has no apply(html, edit, input)" };
   let answer: unknown;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const pending = api.apply(html, edit, input);
+    const raw =
+      pending instanceof Promise || (pending != null && typeof (pending as PromiseLike<unknown>).then == "function")
+        ? await Promise.race([
+            pending,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs} ms`)), timeoutMs);
+            }),
+          ])
+        : pending;
     // (As the sandbox answers: JSON, so the page's answer is plain data.)
-    answer = JSON.parse(JSON.stringify((await api.apply(html, edit, input)) ?? null));
+    answer = JSON.parse(JSON.stringify(raw ?? null));
   } catch (e) {
     return { error: `the page's API failed: ${(e as Error).message}` };
+  } finally {
+    clearTimeout(timer);
   }
   const r = changesOf(html, edit, answer);
   return "refused" in r ? { error: r.refused } : r;

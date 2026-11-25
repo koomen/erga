@@ -1,13 +1,12 @@
 // The room: the connection's state, and the events on the document's socket.
 
-import type { RoomStatus, SocketEvent } from "../../libs/text/ui/collab";
+import type { RoomStatus, SocketEvent } from "./shell-room";
 import type { Hello } from "../../document/api/api";
 import type { DocName } from "../../document/model/names";
 import type { LogEvent } from "../../shared/agent-log";
 import type { LiveRequest } from "../../shared/live-page";
 import { live } from "../live/client";
 import type { Shell } from "./shell";
-import { esc } from "../../shared/html";
 import { DELETED_NOTE, type UploadsMessage } from "../../shared/room-socket";
 
 export function mountRoom(shell: Shell) {
@@ -43,11 +42,13 @@ export function mountRoom(shell: Shell) {
       deleted?: string;
       path?: string;
       pages?: number;
+      entries?: Hello["tree"]["entries"];
     };
     if (msg.type == "hello") {
       const h = m as Hello;
       // The body's erga-listening class: this tab hears its agent (and open_page counts it). Tests wait on it.
       document.body.classList.add("erga-listening");
+      shell.treeEntries = h.tree.entries;
       if (h.info.docName && shell.docName) shell.naming.showName(h.info.docName);
       if (greeted) {
         shell.docSettings?.event("versions");
@@ -66,6 +67,7 @@ export function mountRoom(shell: Shell) {
     else if (msg.type == "access") shell.sharing?.accessChanged();
     else if (msg.type == "uploads") shell.uploads.heard((m as unknown as UploadsMessage).files);
     else if (msg.type == "tree") {
+      if (Array.isArray(msg.entries)) shell.treeEntries = msg.entries;
       if (msg.pages != null) shell.naming.setPages(msg.pages);
       treeChanged(msg);
       shell.docSettings?.event("tree");

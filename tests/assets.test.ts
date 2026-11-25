@@ -17,14 +17,24 @@ import { respond } from "../server/http.ts";
 import { person, server } from "./helpers/app";
 
 const MANIFEST: AssetManifest = {
-  files: { "page.js": "/_erga/main-aaaa1111.js", "frame.js": "/_erga/frame-bbbb2222.js", "style.css": "/_erga/style-cccc3333.css", "editor.html": "/_erga/editor-dddd4444.html", "inter.css": "/_erga/inter-eeee5555.css" },
+  files: {
+    "page.js": "/_erga/main-aaaa1111.js",
+    "viewer.js": "/_erga/viewer-vvvv2222.js",
+    "frame.js": "/_erga/frame-bbbb2222.js",
+    "clipboard.js": "/_erga/clipboard-cccc1111.js",
+    "style.css": "/_erga/style-cccc3333.css",
+    "editor.html": "/_erga/editor-dddd4444.html",
+    "inter.css": "/_erga/inter-eeee5555.css",
+  },
   deps: { "page.js": ["/_erga/chunk-ffff6666.js"], "frame.js": ["/_erga/chunk-gggg7777.js"] },
-  frame: ["/_erga/frame-bbbb2222.js", "/_erga/chunk-gggg7777.js", "/_erga/chunk-hhhh8888.js"],
+  frame: ["/_erga/frame-bbbb2222.js", "/_erga/chunk-gggg7777.js", "/_erga/chunk-hhhh8888.js", "/_erga/clipboard-cccc1111.js"],
   integrity: {
     "/_erga/frame-bbbb2222.js": "sha384-frame",
     "/_erga/chunk-gggg7777.js": "sha384-chunk",
     "/_erga/chunk-hhhh8888.js": "sha384-later",
+    "/_erga/clipboard-cccc1111.js": "sha384-clip",
     "/_erga/main-aaaa1111.js": "sha384-main",
+    "/_erga/viewer-vvvv2222.js": "sha384-viewer",
   },
   fonts: {
     css: "@font-face{font-family:'Erga Inter';font-display:swap;src:url(/_erga/fonts/inter-latin-normal-iiii9999.woff2) format('woff2')}",
@@ -62,11 +72,13 @@ test("an editor's page names the editor's half on its own origin, with the integ
     "/_erga/frame-bbbb2222.js": "sha384-frame",
     "/_erga/chunk-gggg7777.js": "sha384-chunk",
     "/_erga/chunk-hhhh8888.js": "sha384-later",
+    "/_erga/clipboard-cccc1111.js": "sha384-clip",
   });
   // A document's page calls only its own origin: nothing in it names the app's origin but the viewer's (`shell`).
   expect(page.replace('"shell":"https://erga.test"', "")).not.toContain("https://erga.test");
   expect(page.indexOf('type="importmap"')).toBeLessThan(page.indexOf('src="app.js"'));
   const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(page)![1]);
+  expect(page).toContain('<script type="module" src="/_erga/clipboard-cccc1111.js" crossorigin data-erga></script>');
   // erga/text at its one address, its build and first chunk preloaded (each pinned by the map).
   expect(config.editor).toMatchObject({
     src: "/erga/text/editor.js",
@@ -97,9 +109,11 @@ test("an editor's page names the editor's half on its own origin, with the integ
     )![1];
   expect(fontsOf(fontsAt(open, "https://erga.test"))).toContain("src:url(https://erga.test/_erga/fonts/literata-llll0000.woff2)");
   expect(fontsOf(fontsAt(gated, "https://erga.test"))).toContain("src:url(/_erga/fonts/literata-llll0000.woff2)");
-  // Another frame build is another version of what goes in a page: a page kept by its ETag never names a script that's gone.
+  // Another frame or clipboard build is another version of what goes in a page: a page kept by its ETag never names a script that's gone.
   const before = readerVersion();
   useAssets({ ...MANIFEST, files: { ...MANIFEST.files, "frame.js": "/_erga/frame-zzzz0000.js" } });
+  expect(readerVersion()).not.toBe(before);
+  useAssets({ ...MANIFEST, files: { ...MANIFEST.files, "clipboard.js": "/_erga/clipboard-zzzz0000.js" } });
   expect(readerVersion()).not.toBe(before);
   useAssets(MANIFEST);
 });
@@ -183,5 +197,6 @@ test("a file has an ETag, is checked each time, and is a 304 with no body when u
   expect(viewer).not.toMatch(/\/_erga\/editor-[a-z0-9]+\.html","fetch"/);
   expect(viewer).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js"(,"\/_erga\/chunk-[a-z0-9]+\.js")*\]/);
   expect(viewer).toMatch(/rel:\s*"modulepreload"/);
-  expect(viewer).toContain('"/api/start"');
+  expect(viewer).toContain("shell=1");
+  expect(viewer).toContain('id="erga-viewer" type="module" src="/_erga/viewer');
 });

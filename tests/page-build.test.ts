@@ -42,6 +42,10 @@ test("someone who may edit, reading: the document's frame starts before the edit
     /<link rel="stylesheet" href="[^"]*style/.test(html),
   ];
   expect(parts(pageOf("Plans", "l1", { editing: false, agent: true }))).toEqual([true, false]);
+  expect(parts(pageOf("Plans", "l1", { editing: false, agent: false }))).toEqual([true, false]);
   // Opened with ?edit, the editor's parts come first: its first frame has them.
   expect(parts(pageOf("Plans", "l1", { editing: true, agent: true }))).toEqual([false, true]);
+  expect(parts(pageOf("Plans", "l1", { editing: true, agent: false }))).toEqual([false, true]);
+  // The document's title meta is emitted once, in <head>.
+  expect(pageOf("Plans", "l1", { editing: false, agent: true }).match(/name="erga-title"/g)).toHaveLength(1);
 });

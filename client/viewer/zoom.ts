@@ -46,7 +46,7 @@ import {
   type Zoomed,
 } from "../common/zoom";
 
-export default function viewerZoom(): void {
+export function mountZoom(): void {
   const root = document.documentElement;
   const KEY = `erga:zoom:v1:${document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content}`;
   let saved = 1;
@@ -337,7 +337,7 @@ export default function viewerZoom(): void {
   sizes.observe(frame());
   window.visualViewport?.addEventListener("resize", draw);
   addEventListener("erga-full", draw);
-  // Into the editor or out of it (viewer-edit-boot.ts): the level stays, the layout changes. (Only then: the body's
+  // Into the editor or out of it (client/viewer/edit-boot.ts): the level stays, the layout changes. (Only then: the body's
   // classes change often, as the bars fade, and keep() reads the layout.)
   let wasEditing = editing();
   new MutationObserver(() => wasEditing != editing() && ((wasEditing = editing()), keep())).observe(document.body, {

@@ -147,7 +147,7 @@ export function makeHttp(opts: HostOptions) {
   room.onTree(() => {
     const now = pageCount(room.paths());
     if (now != pages) opts.pagesChanged?.((pages = now));
-    sendAll({ type: "tree", pages });
+    sendAll({ type: "tree", pages, entries: entries() });
   });
   /** The latest moves, for a tab that missed one while it was loading (its hello, ls). */
   const moves: { from: string; to: string }[] = [];
@@ -385,13 +385,26 @@ export function makeHttp(opts: HostOptions) {
   // ---------------------------------------------------------- storage and files
 
   const badPath = HttpServerResponse.text("Bad path", { status: 400 });
-  /** The tree, each page with its title (its first heading, else its <title>) and its head's details when it has them. */
+  /** Whether a page links to its styles, scripts or images by relative paths (a move may break those). */
+  const hasRelativeRefs = (text: string): boolean => {
+    for (const m of text.matchAll(/\b(?:src|href|poster|data)\s*=\s*["']?([^"'\s>]+)|url\(\s*["']?([^"')]+)/gi)) {
+      const r = m[1] ?? m[2];
+      if (r && !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\{)/i.test(r)) return true;
+    }
+    return false;
+  };
+  /** The tree, each page with its title (its first heading, else its <title>), its head's details, and whether it has relative links. */
   const entries = () => treeEntries(room.paths(), room.folderPaths()).map((e) => {
     const text = e.type == "page" ? room.text(e.path) : null;
     if (text == null) return e;
     const title = titleOf(text),
       head = headOf(text);
-    return { ...e, ...(title ? { title } : {}), ...(Object.keys(head).length ? { head } : {}) };
+    return {
+      ...e,
+      ...(title ? { title } : {}),
+      ...(Object.keys(head).length ? { head } : {}),
+      relative: hasRelativeRefs(text),
+    };
   });
   /** What a tab hears first: the document's details as its person sees them, its tree (`canEdit`: theirs to change), and the room's epoch. */
   const helloFor = async (user: { id: string; name: string }, canEdit: boolean): Promise<Hello> => ({
@@ -509,7 +522,7 @@ export function makeHttp(opts: HostOptions) {
 
 /** A document's file tree, as ls answers it. */
 export interface TreeState {
-  entries: { path: string; type: string; title?: string }[];
+  entries: { path: string; type: string; title?: string; relative?: boolean }[];
   moved: { from: string; to: string }[];
   single: boolean;
 }

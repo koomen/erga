@@ -24,15 +24,8 @@ function picture(slide, { width, height }) {
   if (!slide) return null;
   const w = Math.round(Math.min(width, (height * 16) / 9)),
     h = Math.round((w * 9) / 16);
-  const copy = slide.cloneNode(true);
-  for (const e of [copy, ...copy.querySelectorAll("*")]) {
-    if (e.localName.startsWith("erga-")) {
-      e.remove();
-      continue;
-    }
-    for (const a of [...e.attributes])
-      if (a.name.startsWith("data-erga") || a.name == "contenteditable" || a.name == "hidden") e.removeAttribute(a.name);
-  }
+  const copy = window.ergaEditor?.cleanClone ? window.ergaEditor.cleanClone(slide) : slide.cloneNode(true);
+  copy.removeAttribute("hidden");
   const box = document.createElement("div");
   const css = document.createElement("style");
   css.textContent =
@@ -102,23 +95,21 @@ window.ergaDrop = ({ files, final }) => {
 
 // ---------------------------------------------------------------- in the editor
 
-const editing = () => document.documentElement.hasAttribute("data-erga-editing");
+const editing = () => !!window.ergaEditor?.editing;
 const slideOf = (n) => (n && (n.nodeType == 1 ? n : n.parentElement))?.closest("body > section.slide") ?? null;
 
-// The slide with the caret shows after a change to the slides: after an undo or a redo, the caret is where the change
-// was. Not when the editor only puts its caret back (the page takes the focus again after a step).
-let changed = -Infinity;
-new MutationObserver((records) => {
-  if (
-    records.some(
-      (r) => slideOf(r.target) || [...r.addedNodes, ...r.removedNodes].some((n) => n.nodeType == 1 && n.matches?.("section.slide"))
-    )
-  )
-    changed = performance.now();
-}).observe(document.body, { childList: true, characterData: true, subtree: true });
-document.addEventListener("selectionchange", () => {
+/** Shows the slide holding the caret, if it isn't the one shown. */
+function followCaret() {
   const slide = slideOf(document.getSelection()?.focusNode);
-  if (editing() && slide?.hidden && performance.now() - changed < 100) show(slides().indexOf(slide));
+  if (!slide) return;
+  const i = slides().indexOf(slide);
+  if (i >= 0 && (i != at || slide.hidden)) show(i);
+}
+
+// The slide with the caret shows after an undo or a redo: the caret is where the change was.
+// Not when the editor only puts its caret back (the page takes the focus again after a step).
+addEventListener("erga-edited", (e) => {
+  if (e.detail?.undo) followCaret();
 });
 
 // The bar: over the slide while the caret is in one, in a shadow root of its own on <html>, outside the deck's text.
@@ -179,20 +170,12 @@ root.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-act]");
   if (b) act(b.dataset.act);
 });
-// ⌘⇧Enter (Ctrl+Shift+Enter elsewhere): a new slide after this one, its title selected to type over. The key goes no
-// further than the document. The editor must see it first, as the person's own key (it makes the page's edits only
-// after one), so this listens after the editor's listeners, each time the editor comes on.
+// ⌘⇧Enter (Ctrl+Shift+Enter elsewhere): a new slide after this one, its title selected to type over.
 const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-function onKey(e) {
-  if (e.key != "Enter" || !e.shiftKey || e.altKey || !(mac ? e.metaKey : e.ctrlKey) || bar.hidden) return;
+addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || e.key != "Enter" || !e.shiftKey || e.altKey || !(mac ? e.metaKey : e.ctrlKey) || bar.hidden) return;
   e.preventDefault();
   e.stopPropagation();
   act("add");
-}
-addEventListener("erga-editing", () =>
-  setTimeout(() => {
-    document.removeEventListener("keydown", onKey, true);
-    if (editing()) document.addEventListener("keydown", onKey, true);
-  })
-);
+});
 place();

@@ -1,7 +1,8 @@
 // The shell's wait for the room's hello (main.ts). A document can be slow to open: the server can wait seconds on its
 // database before it answers. The welcome then says that the document is still opening, and after a minute it also
-// offers a reload, but the wait goes on. Only the server's word that there's no such document ends it: the start's
-// 404 (GET /api/start). A socket that never gets in says nothing either way (the browser gives no status for it).
+// offers a reload, but the wait goes on. Only the server's word that there's no such document ends it (404 from
+// /api/doc when the socket is refused). A socket that never gets in says nothing either way (the browser gives no
+// status for it).
 
 import type { Hello } from "../../document/api/api";
 import { ms } from "../../libs/text/ui/timescale";
@@ -26,16 +27,16 @@ function say(lines: string[], reload = false): void {
 
 /**
  * The room's first hello, however long it takes; null if there's none to wait for (the welcome says why):
- * `missing`, the host said there's no such document; or the room refused the socket, and the host didn't say that.
+ * `checkMissing` is called only if `hello` rejects, to distinguish a deleted/missing document (404) from a refusal.
  */
-export async function awaitHello(hello: Promise<Hello>, missing: Promise<boolean>): Promise<Hello | null> {
+export async function awaitHello(hello: Promise<Hello>, checkMissing: () => Promise<boolean>): Promise<Hello | null> {
   const opening = "The document is still opening.";
   const slow = setTimeout(() => say([opening, "The server is slow to answer. This page waits for it."]), ms(SLOW_MS));
   const stuck = setTimeout(() => say([opening, "The server hasn't answered for a minute."], true), ms(STUCK_MS));
-  const first = await new Promise<Hello | "missing" | "refused">((resolve) => {
-    hello.then(resolve, () => void missing.then((m) => resolve(m ? "missing" : "refused")));
-    void missing.then((m) => m && resolve("missing"));
-  });
+  const first = await hello.then(
+    (h): Hello | "missing" | "refused" => h,
+    () => checkMissing().then((m) => (m ? "missing" : "refused"))
+  );
   clearTimeout(slow);
   clearTimeout(stuck);
   if (first == "missing") say(["Nothing to edit here.", `Open one from <a href="/documents">your documents</a>.`]);

@@ -80,7 +80,8 @@ import {
   mapAwarenessUpdate,
 } from "../../shared/yjs-protocol.ts";
 import { rebase } from "../model/merge";
-import { applyChanges, assets, authors, files, folders, isTextPath, roomInfo, sameAuthor, type Author } from "../model/content";
+import { applyChanges, assets, authors, files, folders, isTextPath, roomInfo } from "../model/content";
+import { sameAuthor, type Author } from "../../shared/author.ts";
 import { TEXT_MAX, type BlobRef } from "../store/blobs";
 import { FileStore, StateStore, StoreError } from "../store/storage";
 import { parentOf } from "../model/pages";

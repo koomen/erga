@@ -54,7 +54,7 @@ import { pageToken } from "../sites/index.ts";
 const HALF_HOUR = 1_800_000;
 import { sha256 } from "../../shared/bytes.ts";
 import { addressOf, HOME_OWNER } from "../../document/model/names.ts";
-import { colorFor } from "../../document/model/content.ts";
+import { colorFor } from "../../shared/author.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -331,7 +331,7 @@ async function render(
   const dir = platform.directory;
   const canEdit = !!session && !session.agent && roleMay(d.role, "edit");
   const editing = canEdit && url.searchParams.has("edit");
-  // Someone who may comment and not edit: the comments alone, on the page (client/inline/viewer-comment.ts).
+  // Someone who may comment and not edit: the comments alone, on the page (client/viewer/comment.ts).
   const canComment = !canEdit && !!session && !session.agent && roleMay(d.role, "comment");
   // Send feedback, in the menu on the avatar: while the setting is on.
   const [admin, feedback, feedbackContext] = session

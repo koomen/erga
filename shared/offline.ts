@@ -33,7 +33,7 @@ export function keptAddress(url: string): string {
 
 /**
  * The same page's other address, of a kept address (keptAddress): with ?edit where it has none, without it where it has.
- * The pencil changes a tab's address, never its page (client/inline/viewer-edit-boot.ts): a tab opened in the viewer and
+ * The pencil changes a tab's address, never its page (client/viewer/edit-boot.ts): a tab opened in the viewer and
  * loaded again in the editor has the viewer's copy only. That copy is the page too: at ?edit it opens its editor.
  */
 export function pencilAddress(kept: string): string {

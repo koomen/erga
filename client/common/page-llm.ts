@@ -1,6 +1,6 @@
 // window.ergaLLM, the Document LLM API: a model that a document's script calls as its signed-in visitor (agents/page-llm.ts has the route and the
 // limits). The page in the viewer's frame asks the viewer by postMessage (client/inline/reader.ts), which calls the
-// route with the visitor's session (client/inline/viewer-llm.ts); a published site's page, on its domain itself, calls it itself
+// route with the visitor's session (client/viewer/viewer.ts); a published site's page, on its domain itself, calls it itself
 // (client/inline/site-llm.ts). Both answer through `llmFetch`, which shows the sign-in dialog there
 // (client/common/sign-in-dialog.ts) when someone signed out asks: the page needs no code of its own for it.
 //

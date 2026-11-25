@@ -1,4 +1,4 @@
-// The glass bars' buttons (server/pages/bars.ts), on a document's page (client/inline/viewer-bars.ts), on a published site
+// The glass bars' buttons (server/pages/bars.ts), on a document's page (client/viewer/viewer.ts), on a published site
 // (client/inline/site-controls.ts) and on the app's own pages (client/inline/page-bars.ts): the quick actions on a phone, as the editor's (quick.ts), and Share
 // with an agent (agent-menu.ts). `root`: the page, or a published site's shadow root; `on`: what carries quick-open.
 

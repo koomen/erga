@@ -13,7 +13,7 @@ export default function viewerBandHead(): void {
       if (color === undefined) {
         const b = JSON.parse(localStorage.getItem(key) || "null");
         color = b && typeof b.bg == "string" ? (b.bg as string) : "";
-        // And the page's seat last time (its frame below the band, or over the whole window: viewer-band.ts).
+        // And the page's seat last time (its frame below the band, or over the whole window: client/viewer/band.ts).
         const seat = localStorage.getItem("erga:seat:v1:" + id);
         root.classList.toggle("erga-fills", seat == "below");
         root.classList.toggle("erga-whole", seat == "whole");
