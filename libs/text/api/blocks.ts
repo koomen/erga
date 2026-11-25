@@ -15,7 +15,7 @@
 import * as M from "../../../shared/manuscript";
 import { escapeAttr } from "../../../shared/html";
 import { ChangeSet } from "@codemirror/state";
-import { attrOf, emptyIn, HEADING, placeholderBr, setAttr, unitsIn } from "./source";
+import { attrOf, contentIn, emptyIn, HEADING, placeholderBr, setAttr, unitsIn } from "./source";
 import { elements, itemOf, type Change, type ListEdit } from "./lists";
 
 /** One indent step of Tab in a paragraph, a heading or a quote, as Google Docs steps (and as a list's own indent). */
@@ -128,6 +128,105 @@ export function leaveCode(src: string, units: M.Unit[], u: M.Unit): ListEdit | n
   if (u.tag != "pre" || units[u.id + 1]) return null;
   const insert = `\n${M.lineIndent(src, u.from)}`;
   return edit(src, [{ from: u.to, insert: insert + EMPTY_P }], u.to, "input", u.to + insert.length + 3);
+}
+
+/** Elements that show nothing on the page, skipped when finding the document's last element. */
+const UNSEEN = new Set(["script", "style", "template", "noscript", "link", "meta", "base", "source", "track", "param", "col", "colgroup"]);
+/** Document flow containers to walk into when finding the document's last element. */
+const FLOW = new Set(["main", "article", "section", "div"]);
+
+/**
+ * The last visible element of the document (inside <body>, walking into plain flow containers like <main> and <section>
+ * that hold visible children), and the container that holds it. `canEnter` lets the DOM caller skip styled cards or
+ * hidden wrappers; without it, every non-unit flow container that isn't marked data-erga-noedit is entered.
+ */
+export function documentEnd(
+  src: string,
+  tree: M.ElementNode,
+  units: M.Unit[],
+  canEnter: (el: M.ElementNode) => boolean = () => true
+): { container: M.ElementNode; last: M.ElementNode | null } {
+  const unitEls = new Set(units.map((u) => u.node));
+  const findBody = (n: M.ElementNode): M.ElementNode | null => {
+    if (n.tag == "body") return n;
+    for (const c of n.children)
+      if (c.kind == "element") {
+        const hit = findBody(c);
+        if (hit) return hit;
+      }
+    return null;
+  };
+  let container = findBody(tree) ?? tree;
+  const lastVisible = (el: M.ElementNode): M.ElementNode | null => {
+    for (let i = el.children.length - 1; i >= 0; i--) {
+      const c = el.children[i];
+      if (c.kind == "element" && !UNSEEN.has(c.tag)) return c;
+    }
+    return null;
+  };
+  for (;;) {
+    const last = lastVisible(container);
+    if (
+      last &&
+      FLOW.has(last.tag) &&
+      !last.selfClosing &&
+      !unitEls.has(last) &&
+      !M.noEdit(src, last) &&
+      canEnter(last) &&
+      lastVisible(last)
+    ) {
+      container = last;
+      continue;
+    }
+    return { container, last };
+  }
+}
+
+/**
+ * A click in the empty space below the document's last element: if the last element is already an empty, editable
+ * paragraph (or div), places the caret in it; otherwise creates an empty paragraph (`<p><br></p>`) at the end of the
+ * document and places the caret in it.
+ */
+export function clickBelow(
+  src: string,
+  tree: M.ElementNode,
+  units: M.Unit[],
+  opts: { editable?: (u: M.Unit) => boolean; canEnter?: (el: M.ElementNode) => boolean } = {}
+): ListEdit & { undo: "type" | "own" } {
+  const editable = opts.editable ?? (() => true);
+  const { container, last } = documentEnd(src, tree, units, opts.canEnter);
+  if (last) {
+    let trailingText: M.TextNode | null = null;
+    for (let i = container.children.length - 1; i >= 0; i--) {
+      const c = container.children[i];
+      if (c.from < last.to) break;
+      if (c.kind == "text" && /\S/.test(src.slice(c.from, c.to))) {
+        trailingText = c;
+        break;
+      }
+    }
+    if (!trailingText && (last.tag == "p" || last.tag == "div")) {
+      const u = units.find((x) => x.node == last);
+      if (u && editable(u) && !contentIn(src, u, u.contentFrom, u.contentTo)) {
+        const br = placeholderBr(src, u);
+        return { changes: [], selection: { anchor: br ? br.from : M.textStart(u) }, userEvent: "select", undo: "type" };
+      }
+    }
+    const at = trailingText ? trailingText.to : last.to;
+    const prefix = `\n${M.lineIndent(src, last.from)}`;
+    return { ...edit(src, [{ from: at, insert: prefix + EMPTY_P }], at, "input", at + prefix.length + 3), undo: "own" };
+  }
+  const firstUnseen = container.children.find((c): c is M.ElementNode => c.kind == "element" && UNSEEN.has(c.tag));
+  const close = container.tag == "body" ? /<\/body\b[^>]*>/i.exec(src.slice(container.openTo)) : null;
+  const closeAt = close ? container.openTo + close.index : container.closeFrom;
+  let at = firstUnseen && firstUnseen.from < closeAt ? firstUnseen.from : closeAt;
+  while (at > container.openTo && (src[at - 1] == " " || src[at - 1] == "\t")) at--;
+  const baseIndent = container.tag == "#root" ? "" : M.lineIndent(src, container.from);
+  const indent = container.tag == "#root" ? "" : `${baseIndent}  `;
+  const lead = at > container.openTo && src[at - 1] == "\n" ? "" : "\n";
+  const trail = src[at] == "\n" ? "" : `\n${at == closeAt ? baseIndent : ""}`;
+  const insert = `${lead}${indent}${EMPTY_P}${trail}`;
+  return { ...edit(src, [{ from: at, insert }], at, "input", at + lead.length + indent.length + 3), undo: "own" };
 }
 
 /**

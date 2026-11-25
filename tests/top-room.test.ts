@@ -2,7 +2,12 @@
 // (client/common/top-room.ts).
 
 import { expect, test } from "bun:test";
-import { insetOf, seatOf } from "../client/common/top-room";
+import { BOTTOM_ROOM, insetOf, seatOf } from "../client/common/top-room";
+
+test("bottom editing room reserves roughly a couple hundred pixels", () => {
+  expect(BOTTOM_ROOM).toBeGreaterThanOrEqual(180);
+  expect(BOTTOM_ROOM).toBeLessThanOrEqual(300);
+});
 
 test("a page that takes the inset itself has the whole window; one that fills the window is below the band; a scrolling page is under the bars", () => {
   expect(seatOf(false, false)).toBe("under");

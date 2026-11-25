@@ -142,16 +142,27 @@ journey("everyday editing in a page of plain blocks", () => {
   /** What the page shows now, with no caret: each step changes it, and puts the caret in. */
   let now = PAGE;
 
-  // The click put no caret anywhere, and the keys typed after it were lost.
-  test("a click under the last block puts the caret at the end of the last block", async ({ tab }) => {
+  // Clicking below the last element creates a new paragraph at the end, or reuses an existing empty paragraph there.
+  test("a click below the last block appends a paragraph, or places the caret in a trailing empty paragraph", async ({ tab }) => {
     ed = await openEditor(tab, s, "editing");
     await ed.clickEnd("h1");
     await ed.idle();
     const last = await ed.rectOf("#last", 0.3);
     await ed.click(last.x, last.y + 200);
+    await ed.shows(`${now}\n\n|`);
+    expect(await ed.source()).toContain(`<p id="last">Last paragraph.</p>\n  <p><br></p>`);
+    // Clicking below again when the end is already an empty paragraph reuses it instead of adding another.
+    await ed.clickEnd("h1");
+    await ed.click(last.x, last.y + 200);
+    await ed.shows(`${now}\n\n|`);
+    expect(await ed.count("#last ~ p")).toBe(1);
     await ed.press("X");
-    await ed.shows(now.replace("Last paragraph.", "Last paragraph.X|"));
-    now = now.replace("Last paragraph.", "Last paragraph.X");
+    await ed.shows(`${now}\n\nX|`);
+    // Undo takes back the typed text, then the appended paragraph.
+    await ed.press("ControlOrMeta+z");
+    await ed.shows(`${now}\n\n|`);
+    await ed.press("ControlOrMeta+z");
+    await expect.poll(() => ed.count("#last ~ p")).toBe(0);
   });
 
   // The click put no caret, or put it in another block.
@@ -163,8 +174,8 @@ journey("everyday editing in a page of plain blocks", () => {
     await ed.click(right.x + 100, right.y);
     await ed.press("Y");
     now = now.replace("## Section", "## XSection");
-    await ed.shows(now.replace("Last paragraph.X", "Last paragraph.XY|"));
-    now = now.replace("Last paragraph.X", "Last paragraph.XY");
+    await ed.shows(now.replace("Last paragraph.", "Last paragraph.Y|"));
+    now = now.replace("Last paragraph.", "Last paragraph.Y");
   });
 
   // Cmd+B with no selection only said "Select some text to style first."
@@ -174,11 +185,11 @@ journey("everyday editing in a page of plain blocks", () => {
     await ed.type("bold");
     await ed.press("ControlOrMeta+b");
     await ed.type(" plain");
-    await ed.shows(now.replace("Last paragraph.XY", "Last paragraph.XY bold plain|"));
-    now = now.replace("Last paragraph.XY", "Last paragraph.XY bold plain");
+    await ed.shows(now.replace("Last paragraph.Y", "Last paragraph.Y bold plain|"));
+    now = now.replace("Last paragraph.Y", "Last paragraph.Y bold plain");
     expect(await weight(ed, "#last", "bold")).toBeGreaterThanOrEqual(600);
     expect(await weight(ed, "#last", "plain")).toBeLessThan(600);
-    expect(await ed.source()).toContain(`<p id="last">Last paragraph.XY <strong>bold</strong> plain</p>`);
+    expect(await ed.source()).toContain(`<p id="last">Last paragraph.Y <strong>bold</strong> plain</p>`);
   });
 
   // Pete's decision: the first Backspace makes the heading a paragraph, as Notion and Typora do (it joined at once).
@@ -225,7 +236,7 @@ journey("everyday editing in a page of plain blocks", () => {
 
       code line one code line two
 
-      Last paragraph.XY bold plain
+      Last paragraph.Y bold plain
     `);
   });
 

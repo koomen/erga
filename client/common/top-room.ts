@@ -31,6 +31,9 @@ export function insetOf(band: number, left: number, right: number, scale: number
 /** The bars' height, and so the room: the band's (--band-h, client/inline/viewer-band.css) without a notch. */
 export const TOP_ROOM = 56;
 
+/** Empty space kept below a scrolling page while editing, so the last line stays clear of the window's bottom edge. */
+export const BOTTOM_ROOM = 240;
+
 /**
  * Whether the page fills its window and doesn't scroll: nothing overflows the window, and the window hides what would,
  * or the body is as tall as the window (a page laid out to the window, as a deck is, rather than a column of text).
@@ -54,15 +57,16 @@ export function fillsWindow(d: Document): boolean {
 
 /**
  * The room on `d`'s page: `update` measures the page again, sets the rule and answers the page's seat (`insets`: the
- * page takes the inset itself). `room` is the room at the top of a page under the bars; `inset`, what the viewer's bars
- * and panel cover of a frame over the whole window.
+ * page takes the inset itself). `room` is the room at the top of a page under the bars; `bottom`, the empty space kept
+ * below a scrolling page while editing; `inset`, what the viewer's bars and panel cover of a frame over the whole window.
  */
-export function topRoom(d: Document): { update(insets: boolean): Seat; room: number; inset: Inset } {
+export function topRoom(d: Document): { update(insets: boolean): Seat; room: number; bottom: number; inset: Inset } {
   const style = d.createElement("style");
   style.setAttribute("data-erga", "room");
   (d.head || d.documentElement).append(style);
   const out = {
     room: TOP_ROOM,
+    bottom: BOTTOM_ROOM,
     inset: { top: 0, right: 0, bottom: 0, left: 0 },
     update(insets: boolean) {
       if (insets) {
@@ -84,8 +88,10 @@ export function topRoom(d: Document): { update(insets: boolean): Seat; room: num
       if (seat == "under") {
         const cs = w.getComputedStyle(d.documentElement),
           pad = parseFloat(cs.paddingTop) || 0,
-          scroll = parseFloat(cs.scrollPaddingTop) || 0;
-        text = `html { padding-top: ${pad + out.room}px !important; scroll-padding-top: ${scroll + out.room}px !important; }`;
+          scroll = parseFloat(cs.scrollPaddingTop) || 0,
+          editing = d.documentElement.hasAttribute("data-erga-editing") && out.bottom > 0,
+          padBottom = editing ? (parseFloat(cs.paddingBottom) || 0) + out.bottom : 0;
+        text = `html { padding-top: ${pad + out.room}px !important; scroll-padding-top: ${scroll + out.room}px !important;${editing ? ` padding-bottom: ${padBottom}px !important;` : ""} }`;
       }
       if (had) {
         style.disabled = false;

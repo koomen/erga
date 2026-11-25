@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { ChangeSet, Text } from "@codemirror/state";
 import * as M from "../shared/manuscript";
 import { keys, parse, show, walk } from "./helpers/page-keys";
-import { leaveCode } from "../libs/text/api/blocks";
+import { clickBelow, leaveCode } from "../libs/text/api/blocks";
 import { textIn } from "../libs/text/api/source";
 import { slashItems } from "../libs/text/ui/slash";
 
@@ -628,4 +628,73 @@ test("/ makes a table of 3 by 3, a divider and a code block; Tab in a table's la
   expect(slashItems(ed.slashText()!).map((i) => i.kind)).toEqual(["code"]);
   ed.slashBlock("code");
   expect(ed.key("let x = 1;").text).toBe(`${table.replace("|", "")}\n<hr>\n<pre><code>let x = 1;|</code></pre>`);
+});
+
+// ---------------------------------------------------------------- clicking below the document's last element
+
+/** Runs `clickBelow` on `src` and returns the marked HTML (with `|`), whether any change was made, and its undo mode. */
+function below(src: string, opts?: Parameters<typeof clickBelow>[3]) {
+  const { tree, units } = M.analyzeHtml(src);
+  const step = clickBelow(src, tree, units, opts);
+  const next = step.changes.length
+    ? ChangeSet.of(step.changes, src.length)
+        .apply(Text.of(src.split("\n")))
+        .toString()
+    : src;
+  const at = step.selection.anchor;
+  return { text: show(next, { anchor: at, head: at }), changed: step.changes.length > 0, undo: step.undo };
+}
+
+test("clicking below a non-empty last element creates a new paragraph after it and places the caret in it", () => {
+  expect(below("<body>\n  <h1>Title</h1>\n  <p>Last.</p>\n</body>")).toEqual({
+    text: "<body>\n  <h1>Title</h1>\n  <p>Last.</p>\n  <p>|<br></p>\n</body>",
+    changed: true,
+    undo: "own",
+  });
+  // Inside flow wrappers (<main>, <section>), and skipping trailing <script>:
+  expect(
+    below(
+      '<body>\n<main class="page">\n  <h1>Untitled</h1>\n  <section>\n    <p>Start writing here.</p>\n  </section>\n</main>\n<script></script>\n</body>'
+    )
+  ).toEqual({
+    text: '<body>\n<main class="page">\n  <h1>Untitled</h1>\n  <section>\n    <p>Start writing here.</p>\n    <p>|<br></p>\n  </section>\n</main>\n<script></script>\n</body>',
+    changed: true,
+    undo: "own",
+  });
+  // After non-paragraph blocks (list, quote, code, rule, image paragraph, div unit, empty spacer div):
+  expect(below("<ul>\n  <li>One</li>\n  <li><br></li>\n</ul>").text).toBe("<ul>\n  <li>One</li>\n  <li><br></li>\n</ul>\n<p>|<br></p>");
+  expect(below("<blockquote>\n  <p>Quoted.</p>\n</blockquote>").text).toBe("<blockquote>\n  <p>Quoted.</p>\n</blockquote>\n<p>|<br></p>");
+  expect(below("<pre><code>x = 1</code></pre>").text).toBe("<pre><code>x = 1</code></pre>\n<p>|<br></p>");
+  expect(below("<p><br></p>\n<hr>").text).toBe("<p><br></p>\n<hr>\n<p>|<br></p>");
+  expect(below('<p><img src="a.png"></p>').text).toBe('<p><img src="a.png"></p>\n<p>|<br></p>');
+  expect(below("<div>Hello</div>").text).toBe("<div>Hello</div>\n<p>|<br></p>");
+  expect(below('<div style="height: 300px"></div>').text).toBe('<div style="height: 300px"></div>\n<p>|<br></p>');
+  // Does not descend into data-erga-noedit or containers rejected by canEnter (styled cards):
+  expect(below("<div data-erga-noedit>\n  <p>Locked</p>\n</div>").text).toBe(
+    "<div data-erga-noedit>\n  <p>Locked</p>\n</div>\n<p>|<br></p>"
+  );
+  expect(below('<section class="card">\n  <p>In card</p>\n</section>', { canEnter: () => false }).text).toBe(
+    '<section class="card">\n  <p>In card</p>\n</section>\n<p>|<br></p>'
+  );
+  // Empty body (with or without a trailing script):
+  expect(below("<body>\n</body>").text).toBe("<body>\n  <p>|<br></p>\n</body>");
+  expect(below("<body>\n  <script></script>\n</body>").text).toBe("<body>\n  <p>|<br></p>\n  <script></script>\n</body>");
+});
+
+test("clicking below an existing empty paragraph places the caret in it without creating another", () => {
+  for (const [src, want] of [
+    ["<body>\n  <p>One</p>\n  <p><br></p>\n</body>", "<body>\n  <p>One</p>\n  <p>|<br></p>\n</body>"],
+    ["<body>\n  <p></p>\n</body>", "<body>\n  <p>|</p>\n</body>"],
+    ["<body>\n  <p>   </p>\n</body>", "<body>\n  <p>|   </p>\n</body>"],
+    ["<body>\n  <p><strong><br></strong></p>\n</body>", "<body>\n  <p><strong>|<br></strong></p>\n</body>"],
+    ["<body>\n  <div><br></div>\n</body>", "<body>\n  <div>|<br></div>\n</body>"],
+  ]) {
+    expect(below(src)).toEqual({ text: want, changed: false, undo: "type" });
+  }
+  // A locked empty paragraph is not reused: a new editable paragraph is created after it.
+  expect(below("<p><br></p>", { editable: () => false })).toEqual({
+    text: "<p><br></p>\n<p>|<br></p>",
+    changed: true,
+    undo: "own",
+  });
 });

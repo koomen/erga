@@ -23,7 +23,7 @@
 import type { ReaderConfig } from "../../shared/page-html";
 import type { ToolAsk } from "../common/reader-api";
 import { linkTarget, placeOf } from "../common/link-target";
-import { TOP_ROOM, topRoom, type Seat } from "../common/top-room";
+import { BOTTOM_ROOM, TOP_ROOM, topRoom, type Seat } from "../common/top-room";
 import { readView, showView, viewOf, type View } from "../common/page-view";
 import { isAppShortcut, isMac } from "../common/app-keys";
 import { catchZoomGestures, zoomKey, type ZoomAim, type Zoomed } from "../common/zoom";
@@ -208,10 +208,12 @@ export default function reader(C: ReaderConfig): void {
   let bars = TOP_ROOM,
     lay = 1;
   function zoomRoom() {
-    const px = Math.round((bars / lay) * 100) / 100;
-    if (px == room.room) return;
+    const px = Math.round((bars / lay) * 100) / 100,
+      bottom = Math.round((BOTTOM_ROOM / lay) * 100) / 100;
+    if (px == room.room && bottom == room.bottom) return;
     roomShift += px - room.room;
     room.room = px;
+    room.bottom = bottom;
     dirty();
     keepRoom();
   }
@@ -357,6 +359,11 @@ export default function reader(C: ReaderConfig): void {
   watchTargets();
   addEventListener("resize", dirty);
   addEventListener("load", dirty);
+  // Entering or leaving the editor adds or removes the empty space reserved at the bottom of a scrolling page.
+  addEventListener("erga-editing", () => {
+    dirty();
+    keepRoom();
+  });
   // (The page's own scripts have run: window.ergaInset is there, if the page has one. The seat is said again: the one
   // said before them was `early`, a guess that the viewer takes only for a page it never saw.)
   document.addEventListener("DOMContentLoaded", () => {

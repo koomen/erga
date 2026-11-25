@@ -47,7 +47,7 @@ import { tableRow } from "./markdown";
 import { copy, cut, paste } from "./clipboard";
 import { isMac } from "../../../client/common/app-keys";
 import { TEXT_ATTR } from "../../../shared/page-html";
-import { leaveCode } from "../api/blocks";
+import { clickBelow, documentEnd, leaveCode } from "../api/blocks";
 import { blockRange, editableAt, placeholderDrops } from "../api/rules";
 
 /** The selection moves a held arrow, Home or End key makes, if the editor doesn't take the key itself. */
@@ -330,20 +330,99 @@ function mousedown(ed: EditorCore, e: MouseEvent): void {
     // A press in the selection would drag its text, which the editor doesn't do (dragstart): it starts a new one.
     const sel = ed.doc!.getSelection();
     if (!e.shiftKey && sel && !sel.isCollapsed && ours(ed, e)) sel.removeAllRanges();
-    // A click next to the text (in the margin, under the last block) puts the caret in the nearest unit, as a document
-    // does: the browser would put it nowhere, and the keys typed next would be lost.
-    const beside = !e.shiftKey && e.detail <= 1 && !ours(ed, e) ? caretBeside(ed, e) : null;
-    if (beside != null) {
-      e.preventDefault();
-      ed.leftText = false;
-      dispatch(ed, { selection: { anchor: beside }, userEvent: "select" });
-      return;
+    // A click in the empty space below the document's last element places the caret in a trailing empty paragraph or
+    // creates one; a click beside text puts the caret in the nearest unit so typed keys aren't lost.
+    if (!e.shiftKey && e.detail <= 1 && !ours(ed, e)) {
+      const below = !ed.readOnly ? belowEnd(ed, e) : null;
+      if (below) {
+        e.preventDefault();
+        ed.leftText = false;
+        take(ed, below);
+        return;
+      }
+      const beside = caretBeside(ed, e);
+      if (beside != null) {
+        e.preventDefault();
+        ed.leftText = false;
+        dispatch(ed, { selection: { anchor: beside }, userEvent: "select" });
+        return;
+      }
     }
   }
   // Inside manuscript the browser doesn't follow links; a Cmd-click opens one in a new tab (frame.ts, on the click),
   // and leaves the caret where it was.
   if (!ours(ed, e)) return;
   if ((isMac ? e.metaKey : e.ctrlKey) && (e.target as Element).closest?.("a[href]")) e.preventDefault();
+}
+
+/** Whether `c` is a plain, unstyled flow box (not positioned, bordered or painted as a card or widget). */
+function isFlowBox(c: CSSStyleDeclaration): boolean {
+  return (
+    ["static", "relative"].includes(c.position) &&
+    c.borderStyle == "none" &&
+    c.backgroundImage == "none" &&
+    c.backgroundColor == "rgba(0, 0, 0, 0)"
+  );
+}
+
+/** Whether `t` is empty space in the page's text flow (not a control, widget, no-edit region or custom cursor). */
+function emptyFlowSpace(ed: EditorCore, t: Element): boolean {
+  if (!t?.querySelectorAll || t.localName.startsWith("erga-")) return false;
+  if (t.closest(`a[href], button, input, textarea, select, label, [data-erga], [${M.NO_EDIT_ATTR}]`)) return false;
+  const own = t.closest("[contenteditable]");
+  if (own && own != ed.host) return false;
+  const c = ed.doc!.defaultView!.getComputedStyle(t);
+  if (!["auto", "default", "text"].includes(c.cursor)) return false;
+  const root = t == ed.doc!.documentElement || t == ed.doc!.body;
+  return root || isFlowBox(c);
+}
+
+/**
+ * A click in the empty space below the document's last element: reuses a trailing empty paragraph or appends a new one
+ * (blocks.ts, clickBelow). Null for clicks beside/above content, in non-scrolling full-window pages (slides, canvas),
+ * or outside plain flow space.
+ */
+function belowEnd(ed: EditorCore, e: MouseEvent): ReturnType<typeof clickBelow> | null {
+  const doc = ed.doc,
+    win = ed.win;
+  if (!doc || !win || !ed.tree || !ed.mirror || ed.rendering) return null;
+  const t = e.target as Element;
+  if (!emptyFlowSpace(ed, t)) return null;
+  // Full-window non-scrolling pages (canvas, slides, pan boards) have no document bottom to append a paragraph to.
+  if (typeof (win as Window & { ergaInset?: unknown }).ergaInset == "function") return null;
+  const rootY = win.getComputedStyle(doc.documentElement).overflowY;
+  const bodyY = rootY == "visible" && doc.body ? win.getComputedStyle(doc.body).overflowY : rootY;
+  if (bodyY == "hidden" || bodyY == "clip") return null;
+  const canEnter = (node: M.ElementNode): boolean => {
+    const dom = ed.mirror?.nodeOf(node) as Element | undefined;
+    if (!dom) return false;
+    const r = dom.getBoundingClientRect();
+    if (!r.width && !r.height) return false;
+    const cs = win.getComputedStyle(dom);
+    if (!isFlowBox(cs) || cs.boxShadow != "none") return false;
+    if (cs.overflowY == "hidden" || cs.overflowY == "clip") return false;
+    if (cs.display.includes("flex") && !cs.flexDirection.startsWith("column")) return false;
+    return true;
+  };
+  const html = src(ed);
+  const { last } = documentEnd(html, ed.tree, ed.units, canEnter);
+  const root = t == doc.documentElement || t == doc.body;
+  if (last) {
+    const lastDom = ed.mirror.nodeOf(last) as Element | undefined;
+    if (!lastDom) return null;
+    const r = lastDom.getBoundingClientRect();
+    if ((!r.width && !r.height) || e.clientY <= r.bottom) return null;
+    if (!root && !t.contains(lastDom)) return null;
+    for (const el of doc.querySelectorAll(`[${TEXT_ATTR}]`)) {
+      const box = el.getBoundingClientRect();
+      if ((box.width || box.height) && e.clientY <= box.bottom) return null;
+    }
+  } else if (!root) {
+    return null;
+  }
+  const step = clickBelow(html, ed.tree, ed.units, { editable: (u) => verify(ed, u), canEnter });
+  // A click on an unfocused page (dismissing a popover or switching windows) focuses the page without mutating it.
+  return step.changes.length && !doc.hasFocus() ? null : step;
 }
 
 /**
@@ -353,21 +432,7 @@ function mousedown(ed: EditorCore, e: MouseEvent): void {
  */
 function caretBeside(ed: EditorCore, e: MouseEvent): number | null {
   const t = e.target as Element;
-  if (!t?.querySelectorAll || t.closest(`a[href], button, input, textarea, select, label, [${M.NO_EDIT_ATTR}]`)) return null;
-  const own = t.closest("[contenteditable]");
-  if (own && own != ed.host) return null;
-  // Only empty space in the text's flow: not a box the page draws or pans (a widget's border, a board with a grab cursor).
-  const c = ed.doc!.defaultView!.getComputedStyle(t);
-  if (!["auto", "default", "text"].includes(c.cursor)) return null;
-  const root = t == ed.doc!.documentElement || t == ed.doc!.body;
-  if (
-    !root &&
-    (!["static", "relative"].includes(c.position) ||
-      c.borderStyle != "none" ||
-      c.backgroundImage != "none" ||
-      c.backgroundColor != "rgba(0, 0, 0, 0)")
-  )
-    return null;
+  if (!emptyFlowSpace(ed, t)) return null;
   let best: { el: Element; r: DOMRect } | null = null,
     bd = Infinity;
   for (const el of t.querySelectorAll(`[${TEXT_ATTR}]`)) {

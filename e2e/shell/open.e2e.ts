@@ -132,7 +132,8 @@ journey("a document that is slow to open", () => {
     const h1 = await ed.frame<number>(`${F}.querySelector("h1").getBoundingClientRect().top`);
     expect(h1, "the first line starts below the bars").toBeGreaterThan(b.bottom);
     expect(await ed.frame<string>(`getComputedStyle(${F}.documentElement).paddingTop`)).toBe("56px");
-    expect(await ed.source(), "the room is not in the page's HTML").not.toMatch(/padding-top|data-erga/);
+    expect(await ed.frame<string>(`getComputedStyle(${F}.documentElement).paddingBottom`)).toBe("240px");
+    expect(await ed.source(), "the room is not in the page's HTML").not.toMatch(/padding-top|padding-bottom|data-erga/);
     // The wheel over the page: its text moves under the bars, where they show it through their glass.
     const under = () =>
       ed.frame<boolean>(
@@ -188,6 +189,7 @@ journey("a document that is slow to open", () => {
     // (The page of the last edit, if the viewer loads it now: it has the same view.)
     await rested();
     expect(await more(), "the eye does not move the page").toBeCloseTo(at, 0);
+    expect(await docFrame(page)!.evaluate<string>(`getComputedStyle(document.documentElement).paddingBottom`)).toBe("0px");
     // The page's editor stays in the room, for the pencil; nobody there sees a person who views.
     await soon(() => page.evaluate<number>("ergaPage.socket.others().length")).toBe(0);
   });
@@ -632,5 +634,6 @@ journey("a deck in the editor", () => {
       return { below: b.frame >= b.bottom, toTheEnd: b.height == (await slides.eval<number>(`innerHeight`)) - b.frame };
     }).toEqual({ below: true, toTheEnd: true });
     expect(await slides.frame<string>(`getComputedStyle(${F}.documentElement).paddingTop`)).toBe("0px");
+    expect(await slides.frame<string>(`getComputedStyle(${F}.documentElement).paddingBottom`)).toBe("0px");
   });
 });

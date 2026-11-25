@@ -46,6 +46,7 @@ Steps, one argument each, in order:
                        Shift+Enter, ControlOrMeta+z (undo), ControlOrMeta+Shift+z (redo), ...
   <key>*<n>            presses it n times: Backspace*3
   click:<selector>     clicks at the end of the element's text (a CSS selector in the page)
+  below:<selector>     clicks in the empty space below the element (a CSS selector in the page)
   triple:<selector>    clicks three times in the element's text: the browser selects its block
   tap:<selector>       clicks a control of Erga's window around the page: tap:#btn-settings opens the settings
   bar:<selector>       clicks a control of the editor's own bar on the page (over a selection): bar:#type opens the type menu
@@ -442,7 +443,7 @@ try {
       )
       .catch(() => {});
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|triple|tap|bar|shot|say|ask|wait|shows|open):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|below|triple|tap|bar|shot|say|ask|wait|shows|open):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
     else if (step == "offline") {
       await page.context().setOffline(true);
@@ -486,6 +487,13 @@ try {
     } else if (verb == "click") {
       await ed.clickEnd(rest);
       // (A click where the caret can't go: a widget, a part not editable by hand.)
+      await ed.idle().catch(() => ed.settle());
+    } else if (verb == "below") {
+      const at = await ed.frame<{ x: number; y: number }>(
+        `(() => { const el = document.querySelector(${JSON.stringify(rest)}); el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); return { x: r.left + r.width * 0.3, y: Math.min(innerHeight - 20, r.bottom + 120) }; })()`
+      );
+      const f = await ed.frameAt();
+      await ed.click(f.x + at.x, f.y + at.y);
       await ed.idle().catch(() => ed.settle());
     } else if (verb == "triple") {
       const at = await ed.rectOf(rest, 0.3);
