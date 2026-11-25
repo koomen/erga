@@ -29,8 +29,8 @@ export interface ChatOptions {
   verbs: Record<string, [string, string]>;
   /** The tooltip on a call an outside agent made (the share button's), as "External agent:". */
   externalTip?: string;
-  /** The person's click on Approve or Deny, for the tool call `id` that waits for it. */
-  answer?: (id: string, approve: boolean) => void;
+  /** The person's click on a choice button (Approve/Deny/Always allow), for the tool call `id` that waits for it. */
+  answer?: (id: string, approve: boolean, choice?: string) => void;
   /** The alt text of a picture a tool returned. */
   imageAlt?: string;
 }
@@ -106,7 +106,17 @@ export function chat(opts: ChatOptions): Chat {
                 : `<details><summary><span class="cut">${esc(a.cut)}… </span><span class="all">Show all ${a.text.length.toLocaleString("en-US")} characters</span><span class="less">Show less</span></summary><div>${esc(a.text)}</div></details>`
             }</div>`
         );
-        el.innerHTML = `<span>${says ? `Your agent asks to:<span class="detail">${esc(says)}</span>` : "Your agent asks to run:"}<div class="call"><div class="head">${esc(head)}</div>${lines.join("")}</div></span><span class="ask-acts"><button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button></span>`;
+        const hasAlways = !!item.choices?.some((c) => c.kind == "always");
+        const acts = item.choices?.length
+          ? item.choices
+              .map((c, idx) => {
+                const ans = c.kind == "deny" ? "deny" : "approve";
+                const primary = c.kind == "always" || (!hasAlways && ans == "approve" && idx == item.choices!.length - 1);
+                return `<button type="button"${primary ? ' class="run"' : ""} data-answer="${ans}" data-call="${esc(item.id)}" data-choice="${esc(c.id)}">${esc(c.label)}</button>`;
+              })
+              .join("")
+          : `<button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button>`;
+        el.innerHTML = `<span>${says ? `Your agent asks to:<span class="detail">${esc(says)}</span>` : "Your agent asks to run:"}<div class="call"><div class="head">${esc(head)}</div>${lines.join("")}</div></span><span class="ask-acts">${acts}</span>`;
       } else {
         el.classList.add(item.status);
         el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${esc(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${esc(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;
@@ -153,7 +163,7 @@ export function chat(opts: ChatOptions): Chat {
     const b = (e.target as Element).closest<HTMLButtonElement>("button[data-answer]");
     if (!b || !e.isTrusted) return;
     for (const x of b.parentElement!.querySelectorAll("button")) x.disabled = true;
-    opts.answer?.(b.dataset.call ?? "", b.dataset.answer == "approve");
+    opts.answer?.(b.dataset.call ?? "", b.dataset.answer == "approve", b.dataset.choice || undefined);
   });
 
   // "Working…", the log's last line while the agent works with nothing else to show for it.

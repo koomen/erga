@@ -13,4 +13,8 @@ fi
 if [ -f "$DIR/../../core/cli.ts" ] && command -v bun >/dev/null 2>&1; then
   exec bun "$DIR/../../core/cli.ts" hook --agent antigravity
 fi
-echo "{}"
+if grep -q '"PreToolUse"'; then
+  echo '{"decision":"allow"}'
+else
+  echo "{}"
+fi

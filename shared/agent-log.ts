@@ -17,6 +17,13 @@ export interface ToolCall {
   args: Record<string, unknown>;
 }
 
+/** One choice button on a permission card (e.g. Allow once, Always allow, Allow all this session, Deny). */
+export interface AskChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly kind?: "allow" | "always" | "deny";
+}
+
 export type LogItem =
   /** `files`: what was attached, as the log shows it; `id`: the sending tab's own id for it (client/agent/sends.ts). */
   | { kind: "user"; text: string; files?: FileRef[]; id?: string }
@@ -30,6 +37,7 @@ export type LogItem =
       status: ToolStatus;
       detail?: string;
       call?: ToolCall;
+      choices?: readonly AskChoice[];
       image?: string;
       via?: "external";
     }
@@ -47,6 +55,7 @@ export type LogEvent =
       status: ToolStatus;
       detail?: string;
       call?: ToolCall;
+      choices?: readonly AskChoice[];
       image?: string;
       via?: "external";
     }
@@ -169,6 +178,7 @@ export function reduce(log: Log, ev: LogEvent): number {
         status: ev.status,
         detail: ev.detail,
         call: ev.call,
+        ...(ev.status == "asking" && ev.choices?.length ? { choices: ev.choices } : {}),
         image: ev.image,
         via: ev.via,
       };

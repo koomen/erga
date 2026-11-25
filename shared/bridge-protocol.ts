@@ -108,6 +108,7 @@ export type ToBridge =
       doc: string | null;
       id: string;
       approve: boolean;
+      choice?: string;
     }
   | {
       type: "model";
@@ -179,7 +180,13 @@ const ToBridgeSchema = Schema.fromJsonString(
     }),
     Schema.Struct({ type: Schema.Literal("abort"), doc: Schema.NullOr(Schema.String) }),
     Schema.Struct({ type: Schema.Literal("reset"), doc: Schema.NullOr(Schema.String) }),
-    Schema.Struct({ type: Schema.Literal("answer"), doc: Schema.NullOr(Schema.String), id: Schema.String, approve: Schema.Boolean }),
+    Schema.Struct({
+      type: Schema.Literal("answer"),
+      doc: Schema.NullOr(Schema.String),
+      id: Schema.String,
+      approve: Schema.Boolean,
+      choice: Schema.optionalKey(Schema.String),
+    }),
     Schema.Struct({ type: Schema.Literal("model"), doc: Schema.NullOr(Schema.String), model: Schema.String }),
   ])
 );

@@ -5,7 +5,11 @@
 // `session/request_permission` prompts into normalized DriverEvents.
 
 import type { Subprocess } from "bun";
+import type { AskChoice } from "../../shared/agent-log.ts";
 import type { AgentDriver, AgentHandle, DriverEvent, LocalAttachment, ModelOption, OpenSessionOptions } from "../core/driver.ts";
+
+/** Synthetic choice id that approves the current prompt and auto-approves the rest of the session. */
+export const ALLOW_SESSION_CHOICE = "__erga_allow_session__";
 
 export interface AcpDriverConfig {
   readonly id: string;
@@ -14,8 +18,16 @@ export interface AcpDriverConfig {
   readonly args: readonly string[];
   /** Optional CLI flag for adding extra directories (e.g. "--add-dir" for `agy acp`). */
   readonly addDirFlag?: string;
+  /** Optional CLI flag for maximally permissive auto-approval (e.g. "--dangerously-skip-permissions"). */
+  readonly autoApproveFlag?: string;
   /** Optional extra flags (e.g. "--sandbox"). */
   readonly extraArgs?: readonly string[];
+}
+
+export interface AcpPermissionOption {
+  readonly optionId: string;
+  readonly name?: string;
+  readonly kind?: string;
 }
 
 interface PendingRpc {
@@ -27,7 +39,7 @@ interface PendingPermission {
   rpcId: string | number;
   toolName: string;
   path: string | null;
-  options: { optionId: string; name?: string; kind?: string }[];
+  options: readonly AcpPermissionOption[];
 }
 
 interface AcpSessionResult {
@@ -36,20 +48,77 @@ interface AcpSessionResult {
     currentModelId?: string;
     availableModels?: { modelId: string; name?: string }[];
   };
+  modes?: {
+    currentModeId?: string;
+    availableModes?: { id: string; name?: string }[];
+  };
 }
 
 /** Pulls a short path or target label from a tool call's arguments for the Erga panel. */
 export function extractToolPath(name: string, args: Record<string, unknown> | undefined): string | null {
   if (!args) return null;
-  for (const key of ["Path", "path", "TargetFile", "AbsolutePath", "FilePath", "file_path", "document", "url", "Query"]) {
+  if (name == "run_command" || name == "bash") {
+    const cmd = args.CommandLine ?? args.command ?? args.toolSummary;
+    if (typeof cmd == "string" && cmd.trim()) return cmd.trim().slice(0, 140);
+  }
+  for (const key of [
+    "Path",
+    "path",
+    "TargetFile",
+    "AbsolutePath",
+    "FilePath",
+    "file_path",
+    "DirectoryPath",
+    "SearchPath",
+    "document",
+    "url",
+    "Url",
+    "Query",
+    "query",
+    "Pattern",
+    "ToolName",
+    "toolSummary",
+    "Description",
+  ]) {
     const v = args[key];
     if (typeof v == "string" && v.trim()) return v.trim().slice(0, 140);
   }
-  if (name == "run_command" || name == "bash") {
-    const cmd = args.CommandLine ?? args.command;
-    if (typeof cmd == "string" && cmd.trim()) return cmd.trim().slice(0, 140);
-  }
   return null;
+}
+
+/** Converts ACP `session/request_permission` options into panel choice buttons, plus a session-wide allow-all option. */
+export function permissionChoices(options: readonly AcpPermissionOption[]): AskChoice[] {
+  const mapped: AskChoice[] = options.map((o) => {
+    const isDeny = o.kind?.includes("reject") || o.optionId == "deny" || o.optionId == "reject";
+    const isAlways = !isDeny && (o.kind?.includes("always") || o.optionId.includes("always"));
+    const rawName = o.name?.trim();
+    const label = isDeny
+      ? rawName || (o.kind == "reject_always" ? "Always deny" : "Deny")
+      : isAlways
+        ? rawName || "Always allow"
+        : rawName && rawName.toLowerCase() != "allow"
+          ? rawName
+          : "Allow once";
+    return { id: o.optionId, label, kind: isDeny ? "deny" : isAlways ? "always" : "allow" };
+  });
+  const rank = (k: AskChoice["kind"]) => (k == "deny" ? 0 : k == "allow" ? 1 : 2);
+  mapped.sort((a, b) => rank(a.kind) - rank(b.kind));
+  if (mapped.some((c) => c.kind != "deny") && !mapped.some((c) => c.id == ALLOW_SESSION_CHOICE)) {
+    mapped.push({ id: ALLOW_SESSION_CHOICE, label: "Allow all (session)", kind: "always" });
+  }
+  return mapped;
+}
+
+function pickAllowOption(options: readonly AcpPermissionOption[]): AcpPermissionOption | undefined {
+  return (
+    options.find((o) => o.kind?.includes("always") && !o.kind.includes("reject")) ??
+    options.find((o) => o.kind?.includes("allow") || o.optionId == "allow") ??
+    options[0]
+  );
+}
+
+function pickDenyOption(options: readonly AcpPermissionOption[]): AcpPermissionOption | undefined {
+  return options.find((o) => o.kind?.includes("reject") || o.optionId == "deny") ?? options.at(-1);
 }
 
 class AcpHandle implements AgentHandle {
@@ -62,6 +131,8 @@ class AcpHandle implements AgentHandle {
   private _sessionId = "";
   private _models: ModelOption[] = [];
   private _model: string | null = null;
+  private availableModes: string[] = [];
+  private autoApproveSession = false;
 
   constructor(
     private readonly proc: Subprocess<"pipe", "pipe", "pipe">,
@@ -144,7 +215,12 @@ class AcpHandle implements AgentHandle {
     this._sessionId = res.sessionId;
     this._model = res.models?.currentModelId ?? null;
     this._models = (res.models?.availableModels ?? []).map((m) => ({ id: m.modelId, label: m.name || m.modelId }));
+    this.availableModes = (res.modes?.availableModes ?? []).map((m) => m.id);
+    this.autoApproveSession = Boolean(opts.autoApprove);
 
+    if (opts.mode && this.availableModes.includes(opts.mode)) {
+      await this.setMode(opts.mode).catch(() => {});
+    }
     if (opts.model && this._models.some((m) => m.id == opts.model)) {
       await this.setModel(opts.model).catch(() => {});
     }
@@ -191,13 +267,23 @@ class AcpHandle implements AgentHandle {
     this.write({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: this._sessionId } });
   }
 
-  async answer(callId: string, approve: boolean): Promise<boolean> {
+  async answer(callId: string, approve: boolean, choice?: string): Promise<boolean> {
     const perm = this.permissions.get(callId);
     if (!perm) return false;
     this.permissions.delete(callId);
-    const pick = approve
-      ? (perm.options.find((o) => o.kind?.includes("allow") || o.optionId == "allow") ?? perm.options[0])
-      : (perm.options.find((o) => o.kind?.includes("reject") || o.optionId == "deny") ?? perm.options.at(-1));
+    let pick: AcpPermissionOption | undefined;
+    let granted = approve;
+    if (choice == ALLOW_SESSION_CHOICE) {
+      this.autoApproveSession = true;
+      if (this.availableModes.includes("auto")) void this.setMode("auto").catch(() => {});
+      pick = pickAllowOption(perm.options);
+      granted = true;
+    } else if (choice) {
+      pick = perm.options.find((o) => o.optionId == choice) ?? (approve ? pickAllowOption(perm.options) : pickDenyOption(perm.options));
+      granted = !(pick?.kind?.includes("reject") || pick?.optionId == "deny" || !approve);
+    } else {
+      pick = approve ? pickAllowOption(perm.options) : pickDenyOption(perm.options);
+    }
     if (!pick) {
       this.write({ jsonrpc: "2.0", id: perm.rpcId, result: { outcome: { outcome: "cancelled" } } });
     } else {
@@ -208,10 +294,21 @@ class AcpHandle implements AgentHandle {
       id: callId,
       name: perm.toolName,
       path: perm.path,
-      status: approve ? "running" : "error",
-      ...(approve ? {} : { detail: "Denied" }),
+      status: granted ? "running" : "error",
+      ...(granted ? {} : { detail: "Denied" }),
     });
     return true;
+  }
+
+  private async setMode(modeId: string): Promise<boolean> {
+    if (!this._sessionId) return false;
+    return this.request("session/set_mode", { sessionId: this._sessionId, modeId })
+      .then(() => true)
+      .catch(() =>
+        this.request("session/set_config_option", { sessionId: this._sessionId, configId: "mode", value: modeId })
+          .then(() => true)
+          .catch(() => false)
+      );
   }
 
   async setModel(modelId: string): Promise<boolean> {
@@ -332,9 +429,20 @@ class AcpHandle implements AgentHandle {
       const callId = tc.toolCallId || `perm-${msg.id}`;
       const name = tc.name || "tool";
       const args = tc.args ?? tc.rawInput ?? {};
-      const path = extractToolPath(name, args);
+      const path = extractToolPath(name, args) ?? (tc.title && tc.title != name ? tc.title.slice(0, 140) : null);
       const options = params.options ?? [];
+      if (this.autoApproveSession) {
+        const pick = pickAllowOption(options);
+        this.write({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { outcome: pick ? { outcome: "selected", optionId: pick.optionId } : { outcome: "cancelled" } },
+        });
+        this.emit({ t: "tool", id: callId, name, path, status: "running" });
+        return;
+      }
       this.permissions.set(callId, { rpcId: msg.id, toolName: name, path, options });
+      const choices = permissionChoices(options);
       this.emit({
         t: "tool",
         id: callId,
@@ -343,6 +451,7 @@ class AcpHandle implements AgentHandle {
         status: "asking",
         detail: tc.title || `${name}${path ? ` ${path}` : ""}`,
         call: { tool: name, args },
+        ...(choices.length ? { choices } : {}),
       });
     }
   }
@@ -364,7 +473,8 @@ class AcpHandle implements AgentHandle {
       if (!id) return;
       const name = String(u.name ?? this.activeTools.get(id)?.name ?? "tool");
       const args = (u.args ?? u.rawInput) as Record<string, unknown> | undefined;
-      const path = extractToolPath(name, args) ?? this.activeTools.get(id)?.path ?? null;
+      const title = typeof u.title == "string" && u.title.trim() && u.title.trim() != name ? u.title.trim().slice(0, 140) : null;
+      const path = extractToolPath(name, args) ?? title ?? this.activeTools.get(id)?.path ?? null;
       const rawStatus = String(u.status ?? "in_progress");
       // When waiting for permission, session/request_permission handles the `asking` card.
       if (rawStatus == "pending" && this.permissions.has(id)) return;
@@ -389,6 +499,7 @@ export function createAcpDriver(cfg: AcpDriverConfig, log?: (line: string) => vo
     label: cfg.label,
     async open(opts: OpenSessionOptions): Promise<AgentHandle> {
       const args = [...cfg.args, ...(cfg.extraArgs ?? [])];
+      if (opts.autoApprove && cfg.autoApproveFlag && !args.includes(cfg.autoApproveFlag)) args.push(cfg.autoApproveFlag);
       if (cfg.addDirFlag) {
         for (const dir of opts.addDirs ?? []) {
           if (dir && dir != opts.cwd) args.push(cfg.addDirFlag, dir);

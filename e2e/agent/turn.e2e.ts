@@ -803,6 +803,11 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
             status: "asking",
             detail: "Run local command",
             call: { tool: "run_command", args: { CommandLine: "echo ok" } },
+            choices: [
+              { id: "deny", label: "Deny", kind: "deny" },
+              { id: "allow", label: "Allow once", kind: "allow" },
+              { id: "__erga_allow_session__", label: "Allow all (session)", kind: "always" },
+            ],
           },
         });
       } else if (msg.type == "answer" && msg.id == "bridge-call-1" && msg.approve) {
@@ -835,12 +840,15 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
     );
     await tab.page.fill("#agent-input", "");
     await say(tab.page, "Update the heading");
-    const approve = tab.page.locator("#agent-log .msg-tool.asking").getByRole("button", { name: "Approve" });
-    await until(() => approve.isVisible(), 5_000, "local bridge permission card shows Approve");
-    await approve.click();
+    const card = tab.page.locator("#agent-log .msg-tool.asking");
+    const allowSession = card.getByRole("button", { name: "Allow all (session)" });
+    await until(() => allowSession.isVisible(), 5_000, "local bridge permission card shows real choices");
+    expect(await card.locator(".ask-acts button").allTextContents()).toEqual(["Deny", "Allow once", "Allow all (session)"]);
+    await allowSession.click();
     await answered(tab.page, "Updated from local Antigravity.", 5_000);
     await expect.poll(() => ed.textOf("h1")).toBe("Edited by local bridge");
     expect(received.map((m) => m.type)).toEqual(["prompt", "answer"]);
+    expect(received[1]).toMatchObject({ type: "answer", id: "bridge-call-1", approve: true, choice: "__erga_allow_session__" });
   } finally {
     bridge.stop();
     await sync.stop();

@@ -17,8 +17,14 @@ import * as Y from "yjs";
 import { activeBridge, bridgeStep, EMPTY_BRIDGES, localScopeOf, panelOptions } from "../agents/person/bridge.ts";
 import { PersonAgents } from "../agents/person/sessions.ts";
 import type { ChatSql } from "../agents/chat-store.ts";
-import { createAcpDriver } from "../bridge/drivers/acp.ts";
-import { AntigravityTranscriptMirror, parseTranscriptStep, unwrapUserRequest } from "../bridge/drivers/antigravity.ts";
+import { ALLOW_SESSION_CHOICE, createAcpDriver, permissionChoices } from "../bridge/drivers/acp.ts";
+import {
+  antigravityHookEvents,
+  AntigravityTranscriptMirror,
+  parseTranscriptStep,
+  unwrapUserRequest,
+  type LiveAntigravitySession,
+} from "../bridge/drivers/antigravity.ts";
 import type { DriverEvent } from "../bridge/core/driver.ts";
 import { copyIntoManaged, ErgaDaemon } from "../bridge/core/daemon.ts";
 import { cachedToken, saveToken } from "../bridge/core/auth.ts";
@@ -183,9 +189,9 @@ test("PersonAgents enables panel with no API keys when a local bridge connects, 
       },
     })
   );
-  const ans = await agents.agentControl("pete", "doc1", "approve", "call-1");
+  const ans = await agents.agentControl("pete", "doc1", "approve", "call-1", "allow_always");
   expect(ans.ok).toBe(true);
-  expect(toBridge[1]).toEqual({ type: "answer", doc: "doc1", id: "call-1", approve: true });
+  expect(toBridge[1]).toEqual({ type: "answer", doc: "doc1", id: "call-1", approve: true, choice: "allow_always" });
 
   bridge.message(JSON.stringify({ type: "event", doc: "doc1", ev: { t: "text", delta: "Updated!" } }));
   bridge.message(JSON.stringify({ type: "event", doc: "doc1", ev: { t: "busy", busy: false } }));
@@ -805,6 +811,318 @@ test("ErgaDaemon.openDocument with nonBlockingAuth returns a device-code URL and
     if (prevToken === undefined) delete process.env.ERGA_TOKEN;
     else process.env.ERGA_TOKEN = prevToken;
     server.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------- 9. Permission choices & session auto-approve
+
+test("permissionChoices exposes real ACP choices plus Allow all (session), and AcpDriver honors Allow all (session)", async () => {
+  expect(
+    permissionChoices([
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "deny", name: "Deny", kind: "reject_once" },
+    ])
+  ).toEqual([
+    { id: "deny", label: "Deny", kind: "deny" },
+    { id: "allow", label: "Allow once", kind: "allow" },
+    { id: ALLOW_SESSION_CHOICE, label: "Allow all (session)", kind: "always" },
+  ]);
+
+  expect(
+    permissionChoices([
+      { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+      { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
+      { optionId: "reject_once", name: "Deny", kind: "reject_once" },
+    ])
+  ).toEqual([
+    { id: "reject_once", label: "Deny", kind: "deny" },
+    { id: "allow_once", label: "Allow once", kind: "allow" },
+    { id: "allow_always", label: "Always allow", kind: "always" },
+    { id: ALLOW_SESSION_CHOICE, label: "Allow all (session)", kind: "always" },
+  ]);
+
+  const dir = mkdtempSync(join(tmpdir(), "erga-acp-choices-"));
+  const mockScript = join(dir, "mock-acp-choices.ts");
+  writeFileSync(
+    mockScript,
+    `
+const out = (m: object) => process.stdout.write(JSON.stringify(m) + "\\n");
+const reader = Bun.stdin.stream().getReader();
+const dec = new TextDecoder();
+let buf = "";
+let pendingPromptId: number | null = null;
+const modesSet: string[] = [];
+
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  buf += dec.decode(value, { stream: true });
+  const lines = buf.split("\\n");
+  buf = lines.pop() ?? "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const m = JSON.parse(line);
+    if (m.method === "initialize") {
+      out({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+    } else if (m.method === "session/new") {
+      out({ jsonrpc: "2.0", id: m.id, result: { sessionId: "s-choices", modes: { currentModeId: "default", availableModes: [{ id: "default" }, { id: "auto" }] } } });
+    } else if (m.method === "session/set_mode") {
+      modesSet.push(m.params?.modeId);
+      out({ jsonrpc: "2.0", id: m.id, result: {} });
+    } else if (m.method === "session/prompt") {
+      pendingPromptId = m.id;
+      out({ jsonrpc: "2.0", id: "p-1", method: "session/request_permission", params: { sessionId: "s-choices", toolCall: { toolCallId: "tc-1", name: "run_command", title: "echo 1", args: { CommandLine: "echo 1" } }, options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "deny", name: "Deny", kind: "reject_once" }] } });
+    } else if (m.id === "p-1" && m.result) {
+      // Immediately ask for a second permission to prove Allow all (session) auto-approves without prompting again.
+      out({ jsonrpc: "2.0", id: "p-2", method: "session/request_permission", params: { sessionId: "s-choices", toolCall: { toolCallId: "tc-2", name: "run_command", title: "echo 2", args: { CommandLine: "echo 2" } }, options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "deny", name: "Deny", kind: "reject_once" }] } });
+    } else if (m.id === "p-2" && m.result) {
+      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s-choices", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "modes=" + modesSet.join(",") + " second=" + m.result.outcome?.optionId } } } });
+      out({ jsonrpc: "2.0", id: pendingPromptId, result: { stopReason: "end_turn" } });
+    } else if (m.method === "session/close") {
+      out({ jsonrpc: "2.0", id: m.id, result: {} });
+    }
+  }
+}
+`
+  );
+
+  try {
+    const driver = createAcpDriver({ id: "mock-acp", label: "Mock ACP", command: process.execPath, args: [mockScript] });
+    const handle = await driver.open({ cwd: dir });
+    const asks: DriverEvent[] = [];
+    const replies: string[] = [];
+    handle.onEvent((ev) => {
+      if (ev.t == "tool" && ev.status == "asking") {
+        asks.push(ev);
+        void handle.answer(ev.id, true, ALLOW_SESSION_CHOICE);
+      }
+      if (ev.t == "text") replies.push(ev.delta);
+    });
+    await handle.prompt({ text: "Run two commands" });
+    await handle.close();
+
+    // Only the first tool asked; the second was auto-approved and ACP mode switched to auto.
+    expect(asks.length).toBe(1);
+    expect(asks[0].t == "tool" && asks[0].choices?.map((c) => c.label)).toEqual(["Deny", "Allow once", "Allow all (session)"]);
+    expect(replies.join("")).toBe("modes=auto second=allow");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------- 10. Live Antigravity session injection & hooks
+
+test("antigravityHookEvents translates PreToolUse, PostToolUse, and Stop into real-time DriverEvents", () => {
+  expect(
+    antigravityHookEvents({
+      hookEventName: "PreToolUse",
+      stepIdx: 4,
+      toolCall: { id: "call-4", name: "edit_file", args: { Path: "/tmp/index.html" } },
+    })
+  ).toEqual([{ t: "tool", id: "call-4", name: "edit_file", path: "/tmp/index.html", status: "running" }]);
+
+  expect(
+    antigravityHookEvents({
+      hookEventName: "PostToolUse",
+      stepIdx: 4,
+      toolCall: { id: "call-4", name: "edit_file", args: { Path: "/tmp/index.html" } },
+    })
+  ).toEqual([{ t: "tool", id: "call-4", name: "edit_file", path: "/tmp/index.html", status: "done" }]);
+
+  expect(antigravityHookEvents({ hookEventName: "Stop", fullyIdle: true, continuationActive: false })).toEqual([
+    { t: "busy", busy: false },
+    { t: "turn_done" },
+  ]);
+});
+
+test("ErgaDaemon routes prompts directly into an attached live Antigravity session without spawning ACP, streams hooks, and honors Stop", async () => {
+  const serverDoc = new Y.Doc();
+  serverDoc.transact(() => {
+    roomInfo(serverDoc).set("epoch", "ep-live");
+    const t = new Y.Text();
+    t.insert(0, "<h1>Live</h1>");
+    files(serverDoc).set("index.html", t);
+  });
+
+  const fromBridge: Record<string, unknown>[] = [];
+  let bridgeWs: Bun.ServerWebSocket<{ path: string }> | null = null;
+  const server = Bun.serve<{ path: string }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req, srv) {
+      const url = new URL(req.url);
+      if (url.pathname == "/d/doc1/api/doc") {
+        return Response.json({ docName: { id: "doc1", owner: "pete", slug: "live", title: "Live" } });
+      }
+      if (url.pathname == "/d/doc1/api/start") {
+        return new Response(new Uint8Array(encodeStart({ type: "hello", epoch: "ep-live" }, Y.encodeStateAsUpdate(serverDoc))));
+      }
+      if (url.pathname == "/d/doc1/api/room" || url.pathname == "/api/agent/bridge") {
+        if (srv.upgrade(req, { data: { path: url.pathname } })) return undefined;
+        return new Response("upgrade failed", { status: 400 });
+      }
+      return new Response("not found", { status: 404 });
+    },
+    websocket: {
+      open(ws) {
+        if (ws.data.path == "/d/doc1/api/room") {
+          const e = new Encoder();
+          e.writeUint(0);
+          writeSyncStep1(e, serverDoc);
+          ws.send(e.toBytes());
+        } else {
+          bridgeWs = ws;
+        }
+      },
+      message(ws, data) {
+        if (ws.data.path == "/api/agent/bridge" && typeof data == "string") {
+          fromBridge.push(JSON.parse(data) as Record<string, unknown>);
+          return;
+        }
+        if (ws.data.path != "/d/doc1/api/room" || typeof data == "string") return;
+        const d = new Decoder(new Uint8Array(data));
+        if (d.readUint() == 0) {
+          const reply = new Encoder();
+          reply.writeUint(0);
+          readSyncMessage(d, reply, serverDoc, ws);
+          if (reply.length > 1) ws.send(reply.toBytes());
+        }
+      },
+    },
+  });
+
+  const root = mkdtempSync(join(tmpdir(), "erga-live-attach-"));
+  const transcript = join(root, "transcript_full.jsonl");
+  writeFileSync(transcript, "");
+  const prevHome = process.env.ERGA_HOME;
+  const prevToken = process.env.ERGA_TOKEN;
+  process.env.ERGA_HOME = root;
+  delete process.env.ERGA_TOKEN;
+
+  const origin = `http://127.0.0.1:${server.port}`;
+  saveToken({ origin, clientName: "Antigravity", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
+
+  let acpSpawned = 0;
+  const sentLive: { session: LiveAntigravitySession; text: string }[] = [];
+  const daemon = new ErgaDaemon(
+    {
+      id: "antigravity",
+      label: "Antigravity",
+      open: async () => {
+        acpSpawned++;
+        throw new Error("ACP must not be spawned when a live session is attached");
+      },
+    },
+    {
+      liveMessenger: {
+        send: async (session, text) => {
+          sentLive.push({ session, text });
+        },
+        check: async () => "running",
+      },
+    }
+  );
+
+  try {
+    // 1. Open doc with live Antigravity LS credentials -> liveAttached is true, CSRF is never exposed in status().
+    const opened = await daemon.openDocument({
+      origin,
+      document: "/d/doc1",
+      cwd: root,
+      conversationId: "conv-live-1",
+      lsAddress: "localhost:55555",
+      csrfToken: "secret-csrf-never-persisted",
+      transcriptPath: transcript,
+    });
+    expect(opened.ok).toBe(true);
+    if (opened.ok) expect(opened.liveAttached).toBe(true);
+    expect(JSON.stringify(daemon.status())).not.toContain("secret-csrf");
+    expect(daemon.status().mounts[0].liveAttached).toBe(true);
+
+    // 2. Browser sends prompt -> injected straight into live session; zero ACP processes spawned!
+    await until(() => bridgeWs != null);
+    bridgeWs!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "Add a sentence", context: "Open: /pete/live" }));
+    await until(() => sentLive.length == 1);
+    expect(acpSpawned).toBe(0);
+    expect(sentLive[0].session.conversationId).toBe("conv-live-1");
+    expect(sentLive[0].session.lsAddress).toBe("localhost:55555");
+    expect(sentLive[0].text).toContain("Add a sentence");
+
+    // 3. Hooks stream PreToolUse -> PostToolUse -> PostInvocation (thinking + reply) -> Stop cleanly without duplicate tool calls.
+    expect(
+      await daemon.handleHook({
+        hookEventName: "PreToolUse",
+        conversationId: "conv-live-1",
+        cwd: root,
+        transcriptPath: transcript,
+        stepIdx: 1,
+        toolCall: { id: "tc-live-1", name: "edit_file", args: { Path: join(root, "index.html") } },
+      })
+    ).toEqual({ decision: "allow" });
+
+    expect(
+      await daemon.handleHook({
+        hookEventName: "PostToolUse",
+        conversationId: "conv-live-1",
+        cwd: root,
+        transcriptPath: transcript,
+        stepIdx: 1,
+        toolCall: { id: "tc-live-1", name: "edit_file", args: { Path: join(root, "index.html") } },
+      })
+    ).toEqual({});
+
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        thinking: "Adding sentence now",
+        tool_calls: [{ name: "edit_file", args: { Path: join(root, "index.html") } }],
+        content: "Sentence added in live session.",
+      }) + "\n"
+    );
+    await daemon.handleHook({ hookEventName: "PostInvocation", conversationId: "conv-live-1", cwd: root, transcriptPath: transcript });
+    await daemon.handleHook({
+      hookEventName: "Stop",
+      conversationId: "conv-live-1",
+      cwd: root,
+      transcriptPath: transcript,
+      fullyIdle: true,
+      continuationActive: false,
+    });
+
+    await until(() => fromBridge.some((m) => m.type == "turn_done"));
+    const evs = fromBridge.filter((m) => m.type == "event").map((m) => m.ev as Record<string, unknown>);
+    expect(evs.some((e) => e.t == "tool" && e.id == "tc-live-1" && e.status == "running")).toBe(true);
+    expect(evs.some((e) => e.t == "tool" && e.id == "tc-live-1" && e.status == "done")).toBe(true);
+    // Transcript tool_calls skipped because hooks already streamed tc-live-1!
+    expect(evs.some((e) => e.t == "tool" && String(e.id).startsWith("local-"))).toBe(false);
+    expect(evs.some((e) => e.t == "thinking" && e.delta == "Adding sentence now")).toBe(true);
+    expect(evs.some((e) => e.t == "text" && e.delta == "Sentence added in live session.")).toBe(true);
+    expect(evs.some((e) => e.t == "busy" && e.busy == false)).toBe(true);
+
+    // 4. Browser abort tells the next hook to stop the live session cleanly.
+    bridgeWs!.send(JSON.stringify({ type: "abort", doc: "doc1" }));
+    await until(() => fromBridge.filter((m) => m.type == "event" && (m.ev as { t?: string; busy?: boolean }).busy === false).length >= 2);
+    expect(await daemon.handleHook({ hookEventName: "PreToolUse", conversationId: "conv-live-1", cwd: root })).toEqual({
+      decision: "deny",
+      reason: "Stopped from Erga browser panel.",
+    });
+    expect(await daemon.handleHook({ hookEventName: "PostInvocation", conversationId: "conv-live-1", cwd: root })).toEqual({
+      terminationBehavior: "terminate",
+    });
+    expect(await daemon.handleHook({ hookEventName: "Stop", conversationId: "conv-live-1", cwd: root, fullyIdle: true })).toEqual({});
+    expect(acpSpawned).toBe(0);
+  } finally {
+    await daemon.stop();
+    if (prevHome === undefined) delete process.env.ERGA_HOME;
+    else process.env.ERGA_HOME = prevHome;
+    if (prevToken === undefined) delete process.env.ERGA_TOKEN;
+    else process.env.ERGA_TOKEN = prevToken;
+    server.stop(true);
+    serverDoc.destroy();
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -3,10 +3,11 @@
 // coordinates all three capabilities:
 //   (1) Local Yjs rooms mirrored to disk (YjsDiskSync)
 //   (2) Shared OAuth authentication for Erga API / MCP
-//   (3) Outbound WebSocket to /api/agent/bridge + AgentDriver sessions (e.g. `agy acp`)
-//       so the user can interact with the local agent directly from Erga's browser pane.
+//   (3) Outbound WebSocket to /api/agent/bridge: routes prompts directly into an
+//       attached live terminal session (when present, no second process spawned)
+//       or falls back to an AgentDriver subprocess (e.g. `agy acp`) for headless runs.
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ignored } from "../../document/model/pages.ts";
@@ -25,7 +26,17 @@ import {
 import { ErgaBridgeClient } from "./bridge-client.ts";
 import type { AgentDriver, AgentHandle, DriverEvent, LocalAttachment, McpServerSpec } from "./driver.ts";
 import { managedDocDir, YjsDiskSync, type SyncStatus } from "./yjs-sync.ts";
-import { AntigravityTranscriptMirror, findAntigravitySession } from "../drivers/antigravity.ts";
+import {
+  antigravityHookEvents,
+  AntigravityTranscriptMirror,
+  defaultLiveAntigravityMessenger,
+  defaultTranscriptPath,
+  findAntigravitySession,
+  recordAntigravitySession,
+  type AntigravityHookPayload,
+  type LiveAntigravityMessenger,
+  type LiveAntigravitySession,
+} from "../drivers/antigravity.ts";
 
 export interface MountedDoc {
   origin: string;
@@ -51,6 +62,14 @@ interface ActiveThread {
   sessionId: string;
 }
 
+interface ActiveLiveTurn {
+  origin: string;
+  doc: string;
+  poll: ReturnType<typeof setInterval> | null;
+  sawRunning: boolean;
+  idlePolls: number;
+}
+
 export interface OpenDocRequest {
   origin?: string;
   document?: string;
@@ -63,9 +82,24 @@ export interface OpenDocRequest {
   cwd?: string;
   conversationId?: string;
   transcriptPath?: string;
+  /** Documented Antigravity live language server address (kept in daemon RAM only). */
+  lsAddress?: string;
+  /** Documented Antigravity CSRF token for `lsAddress` (kept in daemon RAM only). */
+  csrfToken?: string;
+  appDataDir?: string;
   label?: string;
-  /** When true (MCP calls), returns a device-code URL immediately instead of blocking on login. */
+  /** When true (MCP / agent calls), returns a device-code URL immediately instead of blocking on login. */
   nonBlockingAuth?: boolean;
+}
+
+export interface AttachLiveRequest {
+  conversationId: string;
+  lsAddress: string;
+  csrfToken: string;
+  cwd?: string;
+  transcriptPath?: string;
+  appDataDir?: string;
+  docId?: string;
 }
 
 export interface NeedsAuthResult {
@@ -89,6 +123,8 @@ export interface OpenDocSuccess {
   url: string;
   dir: string;
   copiedFrom?: string;
+  liveAttached: boolean;
+  attachCommand?: string;
   note: string;
   files: string[];
   connected: boolean;
@@ -115,21 +151,32 @@ export class ErgaDaemon {
   private bridges = new Map<string, ErgaBridgeClient>();
   private threads = new Map<string, ActiveThread>();
   private pendingLogins = new Map<string, { pending: PendingDeviceAuth; abort: AbortController }>();
+  /** In-memory live session handles keyed by conversationId (never written to disk or returned in /status). */
+  private liveSessions = new Map<string, LiveAntigravitySession>();
+  /** Conversations with an in-flight browser-injected turn waiting for Stop or idle poll. */
+  private activeLiveTurns = new Map<string, ActiveLiveTurn>();
+  /** Conversations where the user clicked Stop in the browser pane (consumed on next hook). */
+  private abortingConversations = new Set<string>();
   private defaultCwd: string;
   private bridgeId: string;
+  private live: LiveAntigravityMessenger;
 
   constructor(
     private readonly driver: AgentDriver,
     private readonly opts: {
       defaultOrigin?: string;
       defaultCwd?: string;
+      autoApprove?: boolean;
+      mode?: string | null;
       mcpSpec?: (origin: string) => McpServerSpec;
+      liveMessenger?: LiveAntigravityMessenger;
       log?: (line: string) => void;
     } = {}
   ) {
     this.defaultCwd = opts.defaultCwd ?? process.cwd();
     const host = (process.env.HOSTNAME || "local").replace(/[^a-zA-Z0-9-]+/g, "").slice(0, 24) || "local";
     this.bridgeId = `${driver.id}-${host}`;
+    this.live = opts.liveMessenger ?? defaultLiveAntigravityMessenger;
   }
 
   private log(msg: string): void {
@@ -144,7 +191,7 @@ export class ErgaDaemon {
     return `${normalizeOrigin(origin)}\n${doc ?? ""}`;
   }
 
-  /** Starts the local Unix-socket RPC server. */
+  /** Starts the local Unix-socket RPC server (owner-only 0600 permissions). */
   startSocket(socketPath = daemonSocketPath(this.driver.id)): void {
     mkdirSync(ergaHome(), { recursive: true });
     if (existsSync(socketPath)) rmSync(socketPath, { force: true });
@@ -152,8 +199,60 @@ export class ErgaDaemon {
       unix: socketPath,
       fetch: (req) => this.handleRpc(req),
     });
+    try {
+      chmodSync(socketPath, 0o600);
+    } catch {
+      /* ignore on platforms without chmod on sockets */
+    }
     writeFileSync(join(ergaHome(), `daemon.${this.driver.id}.pid`), `${process.pid}\n`);
     this.log(`listening on ${socketPath}`);
+  }
+
+  /** Registers an already-running Antigravity CLI session in daemon RAM and attaches matching mounted docs. */
+  attachLiveSession(req: AttachLiveRequest): { ok: true; conversationId: string; liveAttached: true; attachedDocs: string[] } {
+    const cwd = req.cwd || this.defaultCwd;
+    const discovered = findAntigravitySession({ conversationId: req.conversationId, cwd });
+    const transcriptPath = req.transcriptPath ?? discovered?.transcriptPath ?? defaultTranscriptPath(req.conversationId, req.appDataDir);
+    const live: LiveAntigravitySession = {
+      conversationId: req.conversationId,
+      lsAddress: req.lsAddress,
+      csrfToken: req.csrfToken,
+      cwd,
+      transcriptPath,
+    };
+    this.liveSessions.set(req.conversationId, live);
+    recordAntigravitySession({ conversationId: req.conversationId, cwd, ...(transcriptPath ? { transcriptPath } : {}) });
+
+    const attachedDocs: string[] = [];
+    for (const m of this.mounts.values()) {
+      const matches = req.docId ? m.docId == req.docId : m.conversationId == req.conversationId || m.cwd == cwd || !m.conversationId;
+      if (!matches) continue;
+      m.conversationId = req.conversationId;
+      m.cwd = cwd;
+      this.ensureMirror(m, transcriptPath);
+      const b = this.bridges.get(m.origin);
+      if (b) {
+        const folderLabel = basename(cwd);
+        const label = folderLabel && cwd != m.dir ? `${this.driver.label} (${folderLabel})` : this.driver.label;
+        b.bind(m.docId, { label, sessionId: m.conversationId, cwd: m.cwd });
+      }
+      attachedDocs.push(m.docId);
+    }
+    this.log(`attached live session ${req.conversationId} (${attachedDocs.length} doc(s))`);
+    return { ok: true, conversationId: req.conversationId, liveAttached: true, attachedDocs };
+  }
+
+  private ensureMirror(mounted: MountedDoc, transcriptPath: string | null): void {
+    if (this.driver.id != "antigravity" || !transcriptPath) return;
+    if (mounted.transcriptPath == transcriptPath && mounted.mirror) return;
+    mounted.mirror?.stop();
+    mounted.transcriptPath = transcriptPath;
+    mounted.mirror = new AntigravityTranscriptMirror(transcriptPath, (evs) => {
+      const b = this.bridges.get(mounted.origin);
+      if (!b) return;
+      for (const ev of evs) this.forwardDriverEvent(b, mounted.docId, ev);
+    });
+    mounted.mirror.start(false);
   }
 
   /** Connects the global bridge to `origin` so every Erga doc sees this local agent. */
@@ -164,7 +263,6 @@ export class ErgaDaemon {
       if (!client.connected) await client.start();
       return client;
     }
-    // Ensure we have an OAuth token before opening the bridge socket.
     const tok = await getAccessToken(origin, this.driver.label, { interactive: opts.interactive !== false, log: (s) => this.log(s) });
     if (!tok) throw new Error(`Not signed in to ${origin}.`);
     client = new ErgaBridgeClient({
@@ -230,7 +328,19 @@ export class ErgaDaemon {
       : { origin: normalizeOrigin(req.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN), ref: "" };
     const origin = parsed.origin;
 
-    // Authenticate (non-blocking device-code prompt for MCP, interactive login for CLI).
+    // Register live session handle immediately (even if auth is pending) so it stays ready after approval.
+    if (this.driver.id == "antigravity" && req.conversationId && req.lsAddress && req.csrfToken) {
+      const cwd = req.cwd ?? this.defaultCwd;
+      const tp = req.transcriptPath ?? defaultTranscriptPath(req.conversationId, req.appDataDir);
+      this.liveSessions.set(req.conversationId, {
+        conversationId: req.conversationId,
+        lsAddress: req.lsAddress,
+        csrfToken: req.csrfToken,
+        cwd,
+        transcriptPath: tp,
+      });
+    }
+
     const existingTok = await getAccessToken(origin, this.driver.label, { interactive: false });
     if (!existingTok) {
       if (req.nonBlockingAuth) return this.startAuth(origin);
@@ -284,12 +394,19 @@ export class ErgaDaemon {
       docUrl = `${origin}/${owner}/${slug}`;
     }
 
-    // Discover the calling interactive Antigravity session if not explicitly supplied.
     const discovered =
       this.driver.id == "antigravity" ? findAntigravitySession({ conversationId: req.conversationId, cwd: req.cwd }) : null;
     const conversationId = req.conversationId ?? discovered?.conversationId ?? null;
-    const transcriptPath = req.transcriptPath ?? discovered?.transcriptPath ?? null;
-    const sessionCwd = req.cwd ?? discovered?.cwd ?? this.defaultCwd;
+    const liveFromMap = conversationId
+      ? this.liveSessions.get(conversationId)
+      : [...this.liveSessions.values()].find((s) => req.cwd && s.cwd == req.cwd);
+    const effectiveConversationId = conversationId ?? liveFromMap?.conversationId ?? null;
+    const transcriptPath =
+      req.transcriptPath ??
+      liveFromMap?.transcriptPath ??
+      discovered?.transcriptPath ??
+      (effectiveConversationId ? defaultTranscriptPath(effectiveConversationId, req.appDataDir) : null);
+    const sessionCwd = req.cwd ?? liveFromMap?.cwd ?? discovered?.cwd ?? this.defaultCwd;
 
     const key = this.mountKey(origin, docId);
     let mounted = this.mounts.get(key);
@@ -312,16 +429,6 @@ export class ErgaDaemon {
       });
       await sync.start();
 
-      let mirror: AntigravityTranscriptMirror | null = null;
-      if (transcriptPath && this.driver.id == "antigravity") {
-        mirror = new AntigravityTranscriptMirror(transcriptPath, (evs) => {
-          const b = this.bridges.get(origin);
-          if (!b) return;
-          for (const ev of evs) this.forwardDriverEvent(b, docId, ev);
-        });
-        mirror.start(false);
-      }
-
       mounted = {
         origin,
         docId,
@@ -331,27 +438,18 @@ export class ErgaDaemon {
         url: docUrl,
         dir,
         cwd: sessionCwd,
-        conversationId,
-        transcriptPath,
+        conversationId: effectiveConversationId,
+        transcriptPath: null,
         status: "synced",
         sync,
-        mirror,
+        mirror: null,
       };
+      this.ensureMirror(mounted, transcriptPath);
       this.mounts.set(key, mounted);
     } else {
-      // Update session attachment if a newer conversation opened the same doc.
-      if (conversationId) mounted.conversationId = conversationId;
+      if (effectiveConversationId) mounted.conversationId = effectiveConversationId;
       if (sessionCwd) mounted.cwd = sessionCwd;
-      if (transcriptPath && transcriptPath != mounted.transcriptPath && this.driver.id == "antigravity") {
-        mounted.mirror?.stop();
-        mounted.transcriptPath = transcriptPath;
-        mounted.mirror = new AntigravityTranscriptMirror(transcriptPath, (evs) => {
-          const b = this.bridges.get(origin);
-          if (!b) return;
-          for (const ev of evs) this.forwardDriverEvent(b, docId, ev);
-        });
-        mounted.mirror.start(false);
-      }
+      this.ensureMirror(mounted, transcriptPath);
     }
 
     if (req.fromDir) {
@@ -361,15 +459,21 @@ export class ErgaDaemon {
       copiedFrom = src;
     }
 
-    // Connect outbound bridge and bind this document so the browser panel defaults to this local agent.
     const bridge = await this.connectOrigin(origin, { interactive: true });
     const folderLabel = basename(sessionCwd);
     const label = req.label || (folderLabel && sessionCwd != mounted.dir ? `${this.driver.label} (${folderLabel})` : this.driver.label);
     bridge.bind(docId, { label, sessionId: mounted.conversationId, cwd: mounted.cwd });
 
-    const note = copiedFrom
-      ? `Copied files from ${copiedFrom} into the managed Erga directory ${mounted.dir}. Tell the user that live edits happen in ${mounted.dir} and their original folder is untouched.`
-      : `Live Yjs sync active in managed Erga directory ${mounted.dir}. Tell the user where the synced copy lives if they ask.`;
+    const liveAttached = !!(mounted.conversationId && this.liveSessions.has(mounted.conversationId));
+    const attachNote =
+      !liveAttached && this.driver.id == "antigravity"
+        ? " Run `erga-agent attach` via run_command so Erga's browser panel routes prompts directly into THIS running Antigravity session."
+        : "";
+    const note =
+      (copiedFrom
+        ? `Copied files from ${copiedFrom} into the managed Erga directory ${mounted.dir}. Tell the user that live edits happen in ${mounted.dir} and their original folder is untouched.`
+        : `Live Yjs sync active in managed Erga directory ${mounted.dir}. Tell the user where the synced copy lives if they ask.`) +
+      attachNote;
 
     return {
       ok: true,
@@ -381,6 +485,8 @@ export class ErgaDaemon {
       url: docUrl,
       dir: mounted.dir,
       ...(copiedFrom ? { copiedFrom } : {}),
+      liveAttached,
+      ...(!liveAttached && this.driver.id == "antigravity" ? { attachCommand: "erga-agent attach" } : {}),
       note,
       files: mounted.sync.paths(),
       connected: bridge.connected,
@@ -392,6 +498,7 @@ export class ErgaDaemon {
     const key = this.mountKey(origin, docId);
     const mounted = this.mounts.get(key);
     if (!mounted) return false;
+    if (mounted.conversationId) this.clearLiveTurn(mounted.conversationId);
     await mounted.sync.flush().catch(() => {});
     await mounted.sync.stop();
     mounted.mirror?.stop();
@@ -421,6 +528,7 @@ export class ErgaDaemon {
         dir: m.dir,
         cwd: m.cwd,
         conversationId: m.conversationId,
+        liveAttached: !!(m.conversationId && this.liveSessions.has(m.conversationId)),
         status: m.status,
         files: m.sync.paths(),
       })),
@@ -430,6 +538,9 @@ export class ErgaDaemon {
   async stop(): Promise<void> {
     for (const p of this.pendingLogins.values()) p.abort.abort();
     this.pendingLogins.clear();
+    for (const cid of [...this.activeLiveTurns.keys()]) this.clearLiveTurn(cid);
+    this.liveSessions.clear();
+    this.abortingConversations.clear();
     for (const m of [...this.mounts.values()]) {
       await m.sync.flush().catch(() => {});
       await m.sync.stop();
@@ -457,7 +568,6 @@ export class ErgaDaemon {
   private async resolveDocument(origin: string, ref: string): Promise<{ id: string; owner: string; slug: string; title: string }> {
     const clean = ref.replace(/^\/+|\/+$/g, "");
     const parts = clean.split("/");
-    // Direct /d/<id> or bare id, or /<owner>/<slug>
     const docPath =
       parts[0] == "d" && parts[1]
         ? `/d/${parts[1]}/api/doc`
@@ -479,7 +589,6 @@ export class ErgaDaemon {
         return { id, owner, slug, title };
       }
     }
-    // Fallback: ask list_documents via Erga's tool API.
     const listRes = await ergaFetch(
       origin,
       this.driver.label,
@@ -507,14 +616,104 @@ export class ErgaDaemon {
     throw new Error(`Could not find Erga document "${ref}" on ${origin} (status ${res.status}).`);
   }
 
+  // ---------------------------------------------------------------- live turn lifecycle & hooks
+
+  private clearLiveTurn(conversationId: string): void {
+    const active = this.activeLiveTurns.get(conversationId);
+    if (!active) return;
+    if (active.poll) clearInterval(active.poll);
+    this.activeLiveTurns.delete(conversationId);
+  }
+
+  private async finishLiveTurn(conversationId: string, mounted: MountedDoc): Promise<void> {
+    this.clearLiveTurn(conversationId);
+    mounted.mirror?.poke();
+    await mounted.sync.flush().catch(() => {});
+    mounted.sync.setPresence({ busy: false, activity: null });
+    const bridge = this.bridges.get(mounted.origin);
+    if (bridge) {
+      bridge.send({ type: "event", doc: mounted.docId, ev: { t: "busy", busy: false } });
+      bridge.send({ type: "turn_done", doc: mounted.docId });
+    }
+  }
+
+  /** Handles one Antigravity plugin hook callback (`PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`). */
+  async handleHook(payload: AntigravityHookPayload): Promise<Record<string, unknown>> {
+    const evName = payload.hookEventName;
+    const defaultReply = evName == "PreToolUse" ? { decision: "allow" } : {};
+    recordAntigravitySession(payload);
+    const cid = payload.conversationId;
+    if (!cid) return defaultReply;
+
+    // Honor browser Stop requests cleanly on the very next hook point.
+    if (this.abortingConversations.has(cid)) {
+      if (evName == "Stop") {
+        this.abortingConversations.delete(cid);
+      } else if (evName == "PreToolUse") {
+        return { decision: "deny", reason: "Stopped from Erga browser panel." };
+      } else if (evName == "PreInvocation" || evName == "PostInvocation") {
+        return { terminationBehavior: "terminate" };
+      }
+    }
+
+    const matching = [...this.mounts.values()].filter((m) => m.conversationId == cid);
+    if (!matching.length) return defaultReply;
+
+    const translated = antigravityHookEvents(payload);
+    for (const m of matching) {
+      if (payload.transcriptPath) this.ensureMirror(m, payload.transcriptPath);
+      // Do not duplicate events when a standalone ACP turn is actively streaming for this doc.
+      if (this.threads.has(this.threadKey(m.origin, m.docId))) continue;
+      const bridge = this.bridges.get(m.origin);
+      if (!bridge) continue;
+
+      if (evName == "PreInvocation") {
+        m.mirror?.poke();
+        if (payload.invocationNum === 0) {
+          m.sync.setPresence({ busy: true, activity: "thinking" });
+          if (!this.activeLiveTurns.has(cid)) {
+            bridge.send({ type: "event", doc: m.docId, ev: { t: "busy", busy: true } });
+          }
+        }
+      } else if (evName == "PreToolUse" || evName == "PostToolUse") {
+        m.mirror?.setSkipToolCalls(true);
+        for (const ev of translated) {
+          if (ev.t == "tool") {
+            m.sync.setPresence({ busy: true, activity: ev.status == "running" ? ev.name : "working" });
+          }
+          this.forwardDriverEvent(bridge, m.docId, ev);
+        }
+        if (evName == "PostToolUse") m.mirror?.poke();
+      } else if (evName == "PostInvocation") {
+        m.mirror?.poke();
+      } else if (evName == "Stop") {
+        m.mirror?.poke();
+        if (payload.fullyIdle !== false && !payload.continuationActive) {
+          this.clearLiveTurn(cid);
+          await m.sync.flush().catch(() => {});
+          m.sync.setPresence({ busy: false, activity: null });
+          for (const ev of translated) this.forwardDriverEvent(bridge, m.docId, ev);
+        }
+      }
+    }
+    return defaultReply;
+  }
+
   // ---------------------------------------------------------------- browser <-> local agent routing
 
   private async handleBridgeMessage(origin: string, msg: ToBridge): Promise<void> {
     const bridge = this.bridges.get(origin);
     if (!bridge) return;
     const tKey = this.threadKey(origin, msg.doc);
+    const mountedForDoc = msg.doc ? this.mounts.get(this.mountKey(origin, msg.doc)) : undefined;
 
     if (msg.type == "abort") {
+      if (mountedForDoc?.conversationId && this.liveSessions.has(mountedForDoc.conversationId)) {
+        this.abortingConversations.add(mountedForDoc.conversationId);
+        this.clearLiveTurn(mountedForDoc.conversationId);
+        mountedForDoc.sync.setPresence({ busy: false, activity: null });
+        bridge.send({ type: "event", doc: msg.doc, ev: { t: "busy", busy: false } });
+      }
       await this.threads.get(tKey)?.handle.abort();
       return;
     }
@@ -526,14 +725,22 @@ export class ErgaDaemon {
         await existing.handle.close();
         this.threads.delete(tKey);
       }
-      const mounted = msg.doc ? this.mounts.get(this.mountKey(origin, msg.doc)) : undefined;
-      if (mounted) mounted.conversationId = null;
+      if (mountedForDoc) {
+        if (mountedForDoc.conversationId) {
+          this.clearLiveTurn(mountedForDoc.conversationId);
+          this.abortingConversations.delete(mountedForDoc.conversationId);
+        }
+        mountedForDoc.conversationId = null;
+        mountedForDoc.mirror?.stop();
+        mountedForDoc.mirror = null;
+        mountedForDoc.transcriptPath = null;
+      }
       return;
     }
 
     if (msg.type == "answer") {
       const existing = this.threads.get(tKey);
-      if (existing) await existing.handle.answer(msg.id, msg.approve);
+      if (existing) await existing.handle.answer(msg.id, msg.approve, msg.choice);
       return;
     }
 
@@ -544,15 +751,13 @@ export class ErgaDaemon {
 
     if (msg.type == "prompt") {
       try {
-        // Auto-mount the document locally if it isn't mounted yet!
-        let mounted = msg.doc ? this.mounts.get(this.mountKey(origin, msg.doc)) : undefined;
+        let mounted = mountedForDoc;
         if (msg.doc && !mounted) {
           await this.openDocument({ origin, document: `/d/${msg.doc}` });
           mounted = this.mounts.get(this.mountKey(origin, msg.doc));
         }
 
-        const thread = await this.ensureThread(origin, msg.doc, mounted ?? null);
-        // Materialize browser attachments into a local ignored folder so the agent can also inspect them by path.
+        // Materialize browser attachments into a local ignored folder so any agent can inspect them by path.
         const attachments: LocalAttachment[] = [];
         if (msg.files?.length) {
           const baseDir = mounted?.dir ?? this.defaultCwd;
@@ -561,15 +766,36 @@ export class ErgaDaemon {
           for (const f of msg.files) {
             const safeName = `${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
             const abs = join(attDir, safeName);
-            if (f.kind == "image") {
-              await writeFile(abs, Buffer.from(f.data, "base64"));
-            } else {
-              await writeFile(abs, f.data, "utf8");
-            }
+            if (f.kind == "image") await writeFile(abs, Buffer.from(f.data, "base64"));
+            else await writeFile(abs, f.data, "utf8");
             attachments.push({ kind: f.kind, name: f.name, type: f.mimeType, data: f.data, path: abs });
           }
         }
 
+        const live = mounted?.conversationId ? this.liveSessions.get(mounted.conversationId) : undefined;
+        if (live && mounted) {
+          await this.promptLiveSession(origin, bridge, mounted, live, msg.text, msg.context, attachments);
+          return;
+        }
+
+        // Never spawn a competing ACP process against an already-running interactive Antigravity conversation.
+        if (this.driver.id == "antigravity" && mounted?.conversationId) {
+          bridge.send({
+            type: "event",
+            doc: msg.doc,
+            ev: {
+              t: "error",
+              text: "This document is linked to your Antigravity terminal session, but live prompt routing is not attached yet. Run `erga-agent attach` in that terminal (or click + New conversation to start a separate background session).",
+            },
+          });
+          bridge.send({ type: "event", doc: msg.doc, ev: { t: "busy", busy: false } });
+          return;
+        }
+
+        if (!this.threads.has(tKey)) {
+          bridge.send({ type: "event", doc: msg.doc, ev: { t: "thinking", delta: `Starting ${this.driver.label} session…` } });
+        }
+        const thread = await this.ensureThread(origin, msg.doc, mounted ?? null);
         const promptText = this.formatPrompt(msg.text, msg.context, mounted ?? null);
         mounted?.sync.setPresence({ busy: true, activity: "working" });
         mounted?.mirror?.setSuppressed(true);
@@ -589,6 +815,65 @@ export class ErgaDaemon {
     }
   }
 
+  private async promptLiveSession(
+    origin: string,
+    bridge: ErgaBridgeClient,
+    mounted: MountedDoc,
+    live: LiveAntigravitySession,
+    text: string,
+    context: string | null,
+    attachments: readonly LocalAttachment[]
+  ): Promise<void> {
+    this.abortingConversations.delete(live.conversationId);
+    const attLines = attachments.filter((a) => a.path).map((a) => `Attached ${a.kind} "${a.name}" saved at: ${a.path}`);
+    const fullText = attLines.length ? `${text}\n\n${attLines.join("\n")}` : text;
+    const promptText = this.formatPrompt(fullText, context, mounted);
+
+    mounted.sync.setPresence({ busy: true, activity: "working" });
+    mounted.mirror?.setSuppressed(false);
+
+    try {
+      await this.live.send(live, promptText, { title: "Erga browser panel" });
+    } catch (e) {
+      this.liveSessions.delete(live.conversationId);
+      mounted.sync.setPresence({ busy: false, activity: null });
+      const detail = e instanceof Error ? e.message : String(e);
+      bridge.send({
+        type: "event",
+        doc: mounted.docId,
+        ev: {
+          t: "error",
+          text: `Could not reach your live Antigravity terminal session (${detail}). Run \`erga-agent attach\` in a running session, or click + New conversation for a background session.`,
+        },
+      });
+      bridge.send({ type: "event", doc: mounted.docId, ev: { t: "busy", busy: false } });
+      return;
+    }
+
+    // Track the live turn and add a safety poll in case the Stop hook does not fire.
+    this.clearLiveTurn(live.conversationId);
+    const turn: ActiveLiveTurn = { origin, doc: mounted.docId, poll: null, sawRunning: false, idlePolls: 0 };
+    turn.poll = setInterval(() => {
+      void this.live.check(live).then((st) => {
+        if (!this.activeLiveTurns.has(live.conversationId)) return;
+        mounted.mirror?.poke();
+        if (st == "running") {
+          turn.sawRunning = true;
+          turn.idlePolls = 0;
+        } else if (st == "gone") {
+          this.liveSessions.delete(live.conversationId);
+          void this.finishLiveTurn(live.conversationId, mounted);
+        } else {
+          turn.idlePolls++;
+          if (turn.sawRunning || turn.idlePolls >= 3) {
+            void this.finishLiveTurn(live.conversationId, mounted);
+          }
+        }
+      });
+    }, 2_000);
+    this.activeLiveTurns.set(live.conversationId, turn);
+  }
+
   private async ensureThread(origin: string, doc: string | null, mounted: MountedDoc | null): Promise<ActiveThread> {
     const tKey = this.threadKey(origin, doc);
     const existing = this.threads.get(tKey);
@@ -605,10 +890,11 @@ export class ErgaDaemon {
       cwd,
       addDirs,
       mcpServers,
-      resumeId: mounted?.conversationId ?? null,
+      resumeId: null,
       systemPromptAppend,
+      autoApprove: this.opts.autoApprove,
+      mode: this.opts.mode,
     });
-    if (mounted && !mounted.conversationId) mounted.conversationId = handle.sessionId;
 
     const unsub = handle.onEvent((ev) => {
       const bridge = this.bridges.get(origin);
@@ -652,6 +938,13 @@ export class ErgaDaemon {
         const body = (await req.json()) as OpenDocRequest;
         return json(await this.openDocument(body));
       }
+      if (req.method == "POST" && url.pathname == "/attach") {
+        const body = (await req.json()) as AttachLiveRequest;
+        if (!body.conversationId || !body.lsAddress || !body.csrfToken) {
+          return json({ ok: false, error: "Missing conversationId, lsAddress, or csrfToken." }, 400);
+        }
+        return json(this.attachLiveSession(body));
+      }
       if (req.method == "POST" && url.pathname == "/auth/start") {
         const body = (await req.json()) as { origin?: string };
         const origin = normalizeOrigin(body.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN);
@@ -671,11 +964,9 @@ export class ErgaDaemon {
         return json({ ok: true, origin });
       }
       if (req.method == "POST" && url.pathname == "/hook") {
-        const body = (await req.json()) as { conversationId?: string };
-        for (const m of this.mounts.values()) {
-          if (!body.conversationId || m.conversationId == body.conversationId) m.mirror?.poke();
-        }
-        return json({ ok: true });
+        const body = (await req.json()) as AntigravityHookPayload;
+        const hookResponse = await this.handleHook(body);
+        return json({ ok: true, hookResponse });
       }
       if (req.method == "POST" && url.pathname == "/stop") {
         setTimeout(() => void this.stop().then(() => process.exit(0)), 20);
@@ -708,7 +999,12 @@ export async function copyIntoManaged(srcDir: string, dstDir: string, sub = ""):
 }
 
 /** Sends one RPC request to a running local daemon over its Unix socket; null if not running. */
-export async function daemonRpc<T = Record<string, unknown>>(agentId: string, path: string, body?: unknown): Promise<T | null> {
+export async function daemonRpc<T = Record<string, unknown>>(
+  agentId: string,
+  path: string,
+  body?: unknown,
+  timeoutMs = 180_000
+): Promise<T | null> {
   const sock = daemonSocketPath(agentId);
   if (!existsSync(sock)) return null;
   try {
@@ -717,7 +1013,7 @@ export async function daemonRpc<T = Record<string, unknown>>(agentId: string, pa
       headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       unix: sock,
-      signal: AbortSignal.timeout(180_000),
+      signal: AbortSignal.timeout(timeoutMs),
     } as RequestInit & { unix: string });
     return (await res.json()) as T;
   } catch {

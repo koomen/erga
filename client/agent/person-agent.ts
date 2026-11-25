@@ -78,8 +78,18 @@ const VERBS: Record<string, [string, string]> = {
   publish_document: ["Publishing the document", "Published the document"],
   run_command: ["Running command", "Ran command"],
   read_file: ["Reading", "Read"],
+  view_file: ["Reading", "Read"],
   edit_file: ["Editing", "Edited"],
+  replace_file_content: ["Editing", "Edited"],
+  multi_replace_file_content: ["Editing", "Edited"],
   write_file: ["Writing", "Wrote"],
+  write_to_file: ["Writing", "Wrote"],
+  list_dir: ["Listing", "Listed"],
+  find_by_name: ["Finding", "Found"],
+  grep_search: ["Searching", "Searched"],
+  search_web: ["Searching the web", "Searched the web"],
+  read_url_content: ["Reading page", "Read page"],
+  call_mcp_tool: ["Calling tool", "Called tool"],
   erga_open: ["Connecting document", "Connected document"],
   erga_mount: ["Syncing document", "Synced document"],
 };
@@ -95,11 +105,11 @@ const talk = chat({
   verbs: VERBS,
   imageAlt: "The screenshot the agent looked at",
   externalTip: "An agent you shared this page with, working as your agent",
-  answer: async (id, approve) => {
+  answer: async (id, approve, choice) => {
     const r = await call(`/api/agent/${approve ? "approve" : "deny"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id, ...(choice ? { choice } : {}) }),
     }).catch(() => null);
     if (r?.ok) return;
     const a = (await r?.json().catch(() => null)) as { reason?: string } | null;

@@ -462,7 +462,13 @@ export class PersonAgents {
     return emptyLog();
   }
 
-  async agentControl(login: string, doc: string | null, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
+  async agentControl(
+    login: string,
+    doc: string | null,
+    op: "abort" | "reset" | "model" | "approve" | "deny",
+    model?: string,
+    choice?: string
+  ) {
     const scope = scopeOf(login, doc);
     if (op == "model") {
       const wasBridge = activeBridge(this.bridgesOf(login), doc);
@@ -506,7 +512,13 @@ export class PersonAgents {
       }
       if (op == "approve" || op == "deny") {
         if (!model) return { ok: false, reason: "missing call id" };
-        const sent = this.sendBridge(login, active.id, { type: "answer", doc, id: model, approve: op == "approve" });
+        const sent = this.sendBridge(login, active.id, {
+          type: "answer",
+          doc,
+          id: model,
+          approve: op == "approve",
+          ...(choice ? { choice } : {}),
+        });
         return sent ? { ok: true } : { ok: false, reason: "the connected agent disconnected" };
       }
     }

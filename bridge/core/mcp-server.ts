@@ -7,6 +7,7 @@
 // Antigravity (or any future agent) mounts the Yjs room, authenticates once,
 // exposes Erga's full API, and connects Erga's browser agent pane automatically.
 
+import { homedir } from "node:os";
 import { cachedToken, DEFAULT_ORIGIN, ergaFetch, getAccessToken, normalizeOrigin } from "./auth.ts";
 import { daemonRpc, daemonSocketPath, parseDocumentRef } from "./daemon.ts";
 import type { AgentDriver } from "./driver.ts";
@@ -90,11 +91,19 @@ const FALLBACK_API_TOOL: McpToolDef = {
 };
 
 const LOCAL_INSTRUCTIONS = `Erga local bridge is active.
-- When the user asks to edit an Erga document URL (or create a new Erga doc), call erga_open first.
-- If erga_open (or an Erga API tool) returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser (local or remote), then retry once they confirm.
-- erga_open mounts the document's live Yjs room into a local folder AND connects this session to Erga's embedded browser agent pane.
+- When the user asks to edit an Erga document URL (or create a new Erga doc), prefer running \`erga-agent open <url>\` via run_command so the live Yjs room mounts AND Erga's browser panel connects directly to THIS running session without spawning a second agent.
+- If you call erga_open via MCP and it returns liveAttached: false, run \`erga-agent attach\` via run_command so browser prompts route straight into this running session.
+- If erga-agent open, erga_open, or an Erga API tool returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser (local or remote), then retry once they confirm.
 - Edit the mounted document's files directly on disk using your native file tools (read_file, edit_file, write_file, run_command): every edit syncs live via Yjs CRDT with proper agent attribution.
 - Use Erga's MCP tools (page, documents, read, edit, settings, people) for live page screenshots/console (view_page, page_log, page_input, open_page), page API calls (call_edit), comments, version history, publishing, sharing, and unmounted documents.`;
+
+function safeCwd(): string {
+  try {
+    return process.cwd();
+  } catch {
+    return homedir();
+  }
+}
 
 export interface McpServerOptions {
   driver: AgentDriver;
@@ -121,10 +130,10 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
 
   /** Ensures the local background daemon for `opts.driver.id` is running. */
   async function ensureDaemon(): Promise<void> {
-    const alive = await daemonRpc(opts.driver.id, "/status");
+    const alive = await daemonRpc(opts.driver.id, "/status", undefined, 2_000);
     if (alive?.ok) return;
     const child = Bun.spawn([opts.selfCmd.command, ...opts.selfCmd.prefix, "daemon", "--agent", opts.driver.id, "--server", activeOrigin], {
-      cwd: process.cwd(),
+      cwd: safeCwd(),
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
@@ -133,7 +142,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
     child.unref();
     const deadline = Date.now() + 8_000;
     while (Date.now() < deadline) {
-      const ok = await daemonRpc(opts.driver.id, "/status");
+      const ok = await daemonRpc(opts.driver.id, "/status", undefined, 1_000);
       if (ok?.ok) return;
       await Bun.sleep(100);
     }
@@ -239,7 +248,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
               ...(typeof args.slug == "string" ? { slug: args.slug } : {}),
               ...(typeof args.template == "string" ? { template: args.template } : {}),
               ...(typeof args.fromDir == "string" ? { fromDir: args.fromDir } : {}),
-              cwd: process.cwd(),
+              cwd: safeCwd(),
               nonBlockingAuth: true,
               ...(process.env.ANTIGRAVITY_CONVERSATION_ID ? { conversationId: process.env.ANTIGRAVITY_CONVERSATION_ID } : {}),
             });

@@ -32,7 +32,7 @@ const Prompt = Schema.Struct({
   page: Schema.optionalKey(Schema.Unknown),
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
-const AnswerBody = Schema.Struct({ id: Schema.optionalKey(Schema.String) });
+const AnswerBody = Schema.Struct({ id: Schema.optionalKey(Schema.String), choice: Schema.optionalKey(Schema.String) });
 const KeyBody = Schema.Struct({ name: Schema.optionalKey(Schema.String), value: Schema.optionalKey(Schema.String) });
 
 /** The body as JSON, as `schema` has it; else `fallback` (a body that isn't JSON counts as none, as before). */
@@ -99,7 +99,7 @@ const control = (what: "abort" | "reset" | "model" | "approve" | "deny") => (a: 
   Effect.gen(function* () {
     const b = what == "model" ? yield* body(a.request, ModelBody, {}) : {};
     const answered = what == "approve" || what == "deny" ? yield* body(a.request, AnswerBody, {}) : {};
-    const r = yield* call(() => a.h.agentControl(a.me.login, docOf(a.url), what, b.model ?? answered.id));
+    const r = yield* call(() => a.h.agentControl(a.me.login, docOf(a.url), what, b.model ?? answered.id, answered.choice));
     return json(r, r.ok ? 200 : 409);
   });
 

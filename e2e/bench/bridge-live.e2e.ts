@@ -116,7 +116,7 @@ test(
       await until(() => working(ed), 15_000, "panel enters busy state", dump);
       await until(
         async () => {
-          const approve = tab.page.locator("#agent-log .msg-tool.asking").getByRole("button", { name: "Approve" });
+          const approve = tab.page.locator("#agent-log .msg-tool.asking").getByRole("button", { name: /Allow all|Approve/ });
           if (await approve.isVisible().catch(() => false)) await approve.click();
           const hasReply = await ed.eval<boolean>(`!!document.querySelector("#agent-log .msg-assistant")?.textContent?.trim()`);
           return hasReply && !(await working(ed));

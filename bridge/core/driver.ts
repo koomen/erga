@@ -4,7 +4,7 @@
 // normalized DriverEvents that bridge/core/bridge-client.ts forwards as
 // Erga LogEvents.
 
-import type { ToolCall, ToolStatus } from "../../shared/agent-log.ts";
+import type { AskChoice, ToolCall, ToolStatus } from "../../shared/agent-log.ts";
 
 export interface ModelOption {
   readonly id: string;
@@ -41,6 +41,10 @@ export interface OpenSessionOptions {
   readonly model?: string | null;
   /** Extra instructions appended to the agent's system prompt when supported. */
   readonly systemPromptAppend?: string;
+  /** Optional permission/execution mode (e.g. "auto", "accept-edits"). */
+  readonly mode?: string | null;
+  /** When true, auto-approve permission prompts in this spawned session. */
+  readonly autoApprove?: boolean;
 }
 
 /** Normalized real-time events emitted by any local agent driver. */
@@ -56,6 +60,7 @@ export type DriverEvent =
       readonly status: ToolStatus;
       readonly detail?: string;
       readonly call?: ToolCall;
+      readonly choices?: readonly AskChoice[];
       readonly image?: string;
     }
   | { readonly t: "error"; readonly text: string }
@@ -70,8 +75,8 @@ export interface AgentHandle {
   readonly model: string | null;
   prompt(input: { text: string; attachments?: readonly LocalAttachment[] }): Promise<void>;
   abort(): Promise<void>;
-  /** Answers a pending permission/question request (`callId`); returns false if none matches. */
-  answer(callId: string, approve: boolean): Promise<boolean>;
+  /** Answers a pending permission/question request (`callId`), optionally with a specific choice id; returns false if none matches. */
+  answer(callId: string, approve: boolean, choice?: string): Promise<boolean>;
   setModel?(modelId: string): Promise<boolean>;
   onEvent(listener: (ev: DriverEvent) => void): () => void;
   close(): Promise<void>;
