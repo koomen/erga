@@ -138,7 +138,7 @@ function wrong(from: string, to: string, type: boolean): string | null {
 
 test("every import keeps the layers", () => {
   const found: string[] = [];
-  const code = ["shared", "gate", "libs", "document", "server", "agents", "cloudflare", "client", "deploy", "dev"];
+  const code = ["shared", "gate", "libs", "document", "server", "agents", "cloudflare", "client", "deploy", "dev", "bridge"];
   for (const f of files(code)) {
     const from = f.replace(/\.ts$/, "");
     for (const { spec, type } of imports(f)) {

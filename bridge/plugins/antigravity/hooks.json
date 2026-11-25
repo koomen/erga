@@ -1,0 +1,30 @@
+{
+  "erga-session": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "./scripts/erga-hook.sh",
+        "timeout": 5
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/erga-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./scripts/erga-hook.sh",
+        "timeout": 5
+      }
+    ]
+  }
+}

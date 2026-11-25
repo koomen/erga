@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
 import type { Platform } from "../../server/platform.ts";
-import { PANEL, routeFor, SECRET, STREAM, type RouteRow } from "../../shared/routes.ts";
+import { AGENT_SIGN_IN, PANEL, routeFor, SECRET, STREAM, type RouteRow } from "../../shared/routes.ts";
 import { docOf } from "./sessions.ts";
 
 /** Someone signed in, in person (in a browser: for their own agent panel, which is no agent's). */
@@ -54,11 +54,29 @@ export const agentApi: Route = Effect.gen(function* () {
 const agentRoutes = (origin: string): Route =>
   Effect.gen(function* () {
     const { request, url, platform } = yield* ctx;
+    const path = url.pathname.replace(/\/$/, "");
+    // A local agent bridge connects with an agent token (Authorization: Bearer ...) over WebSocket.
+    if (path == "/api/agent/bridge") {
+      const session = yield* call(() => platform.sessionOf(request));
+      if (!session?.agent) return json({ error: "A local agent bridge requires an agent token." }, session ? 403 : 401);
+      if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return json({ error: "Connect with a WebSocket upgrade." }, 426);
+      const headers = new Headers(request.headers);
+      headers.set("x-erga-login", session.login.toLowerCase());
+      headers.set("x-erga-grant-id", session.agent.id);
+      headers.set("x-erga-grant-label", session.agent.label);
+      headers.set("x-erga-only-doc", session.onlyDoc ?? "");
+      headers.set("x-erga-origin", url.origin);
+      const h = platform.personAgent(session.login.toLowerCase());
+      return yield* Effect.map(
+        call(() => h.fetch(new Request(request.url, { headers }))),
+        fromWeb
+      );
+    }
     const me = yield* personOf(platform, request);
     if (!me)
       return json({ error: "Sign in as yourself to talk to your agent." }, (yield* call(() => platform.sessionOf(request))) ? 403 : 401);
     if (request.method != "GET" && request.headers.get("origin") != origin) return json({ error: "Forbidden" }, 403);
-    const found = routeFor(ROUTES, request.method, url.pathname.replace(/\/$/, ""));
+    const found = routeFor(ROUTES, request.method, path);
     if (!found) return json({ error: "Not found" }, 404);
     return yield* found.route.run({ request, url, platform, me, h: platform.personAgent(me.login) });
   });
@@ -148,6 +166,14 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     action: "Your agent's live updates",
     domain: "none",
     exempt: STREAM,
+  },
+  {
+    method: "GET",
+    path: "/api/agent/bridge",
+    run: () => Effect.succeed(json({ error: "Connect with a WebSocket upgrade." }, 426)),
+    action: "A local agent bridges prompts and streamed responses for the person's panel",
+    domain: "none",
+    exempt: AGENT_SIGN_IN,
   },
   {
     method: "GET",

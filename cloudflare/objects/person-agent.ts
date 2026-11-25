@@ -51,8 +51,34 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
   clearConversation(login: string, doc: string | null) {
     return this.agents.clearConversation(login, doc);
   }
-  /** The panel's events: a WebSocket (Upgrade: websocket), else server-sent events. */
+  /** The panel's events: a WebSocket (Upgrade: websocket), else server-sent events; or a local agent bridge socket. */
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname == "/api/agent/bridge") {
+      if (request.headers.get("Upgrade")?.toLowerCase() != "websocket") return new Response("Upgrade required", { status: 426 });
+      const { 0: client, 1: server } = new WebSocketPair();
+      server.accept();
+      const login = request.headers.get("x-erga-login") ?? "";
+      const grantId = request.headers.get("x-erga-grant-id") ?? "";
+      const label = request.headers.get("x-erga-grant-label") || "Agent";
+      const onlyDoc = request.headers.get("x-erga-only-doc") || null;
+      const origin = request.headers.get("x-erga-origin") || url.origin;
+      const handle = this.agents.joinBridge(
+        { login, grantId, label, onlyDoc, origin },
+        (text) => server.send(text),
+        () => {
+          try {
+            server.close(1000, "closed");
+          } catch {
+            /* already closed */
+          }
+        }
+      );
+      server.addEventListener("message", (ev) => handle.message(String(ev.data)));
+      server.addEventListener("close", () => handle.close());
+      server.addEventListener("error", () => handle.close());
+      return new Response(null, { status: 101, webSocket: client });
+    }
     if (request.headers.get("Upgrade")?.toLowerCase() != "websocket") return this.agents.fetch(request);
     const { 0: client, 1: server } = new WebSocketPair();
     server.accept();

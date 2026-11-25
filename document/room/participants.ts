@@ -157,6 +157,8 @@ export type Tab = {
   readOnly: boolean;
   epoch: string | null;
   person: Person;
+  /** How the user acts when this socket belongs to a shared agent (x-erga-via): attributes its Yjs edits and presence. */
+  via?: string;
   events: boolean;
   /** A viewer's page: it hears what every tab hears, first the version to show, and never joins the room. */
   watch?: boolean;
@@ -316,7 +318,7 @@ export class Participants<S extends TabSocket = TabSocket> {
     }
     if (tab.epoch && tab.epoch != room.epoch) return false;
     // A tab that joins as the document wakes brings no request: what its user may do is what its socket says.
-    const e = this.of(tab.person, null, this.mine(tab.person.id).length ? undefined : !tab.readOnly) as Entry;
+    const e = this.of(tab.person, tab.via ?? null, this.mine(tab.person.id).length ? undefined : !tab.readOnly) as Entry;
     // A tab that hears events (an editor's) first hears what it needs to start: the document's details as its user
     // sees them, and its tree (document/api/http.ts, hello). Its user's events come over the same socket, as text.
     if (tab.events) {
@@ -333,7 +335,7 @@ export class Participants<S extends TabSocket = TabSocket> {
 
   /** The connection of a tab that is joined to the room. */
   private connOf(tab: Tab): Connection | undefined {
-    return this.all.get(keyOf(tab.person.id))?.tabs.get(tab.id);
+    return this.all.get(keyOf(tab.person.id, tab.via))?.tabs.get(tab.id);
   }
 
   /**
@@ -395,7 +397,7 @@ export class Participants<S extends TabSocket = TabSocket> {
         // Presence while the document is closed: to the other tabs, with the name of its socket, and nothing opens.
         // Bytes that are no presence close their socket, as the open room does, and reach no other tab.
         if (isAwareness(data) && !self.host.isOpen()) {
-          const presence = presenceAs(data, self.tag(tab.person));
+          const presence = presenceAs(data, self.tag(tab.person, tab.via));
           return presence ? self.relay(socket, tab.id, presence) : quietly(() => socket.close(4400, "malformed message"));
         }
         if (!(yield* self.host.reopen())) return quietly(() => socket.close(4404, "document deleted"));
@@ -414,7 +416,7 @@ export class Participants<S extends TabSocket = TabSocket> {
     const tab = this.sockets.tabOf(socket);
     const conn = tab && this.connOf(tab);
     if (!conn) return;
-    this.all.get(keyOf(tab.person.id))!.tabs.delete(tab.id);
+    this.all.get(keyOf(tab.person.id, tab.via))!.tabs.delete(tab.id);
     conn.close();
     // When the last tab that may edit leaves, what they did is a version.
     if (conn.readOnly) return;
@@ -455,7 +457,7 @@ export class Participants<S extends TabSocket = TabSocket> {
   tabsOf(login: string): S[] {
     return this.sockets.all().filter((socket) => {
       const tab = this.sockets.tabOf(socket);
-      return !!tab && tab.events && !tab.watch && tab.person.id == login;
+      return !!tab && tab.events && !tab.watch && !tab.via && tab.person.id == login;
     });
   }
 

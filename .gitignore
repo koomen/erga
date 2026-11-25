@@ -35,3 +35,5 @@ deploy/builder/deps/
 
 # The instances this clone deploys, bun erga setup's answers and secrets, the jobs (deploy/cli/config.ts, deploy/own/store.ts)
 .erga/
+# Standalone bridge binary and staged plugins (bridge/build.ts)
+dist/

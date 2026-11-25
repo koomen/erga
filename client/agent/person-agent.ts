@@ -37,7 +37,7 @@ interface AgentState {
   reason?: string;
   model?: string | null;
   choice?: string | null;
-  models?: { id: string; label: string; key?: "own" | "server" }[];
+  models?: { id: string; label: string; group?: "local" | "embedded"; key?: "own" | "server"; agent?: string }[];
   log?: Log;
 }
 
@@ -76,6 +76,12 @@ const VERBS: Record<string, [string, string]> = {
   set_sign_in: ["Changing sign-in:", "Changed sign-in:"],
   set_publishing: ["Changing the document's domain", "Changed the document's domain"],
   publish_document: ["Publishing the document", "Published the document"],
+  run_command: ["Running command", "Ran command"],
+  read_file: ["Reading", "Read"],
+  edit_file: ["Editing", "Edited"],
+  write_file: ["Writing", "Wrote"],
+  erga_open: ["Connecting document", "Connected document"],
+  erga_mount: ["Syncing document", "Synced document"],
 };
 
 /** Its host, for someone who may edit it (meta erga-base): the agent's edits there, which Undo takes back. */
@@ -377,7 +383,14 @@ window.addEventListener("erga:agent-shown", () => {
   window.ergaAlerts?.end(TURN_FAILED);
 });
 
-// Which model the agent runs on: a menu when there's a choice, plain text otherwise (as in the editor).
+function swapLog(l: Log) {
+  log.items = l.items;
+  log.busy = l.busy;
+  log.undoable = l.undoable;
+  talk.render();
+}
+
+// Which model or connected local agent the panel talks to: connected agents show in a section above built-in models.
 function renderModel(m: AgentState | null) {
   const el = $("agent-model");
   el.textContent = "";
@@ -386,9 +399,26 @@ function renderModel(m: AgentState | null) {
   const sel = document.createElement("select");
   sel.id = "agent-model-select";
   sel.setAttribute("aria-label", "Model");
-  // A model the person's own key runs says so; the others run on the server's keys.
-  for (const o of m.models) sel.append(new Option(o.key == "own" ? `${o.label} (your key)` : o.label, o.id, false, o.id == m.choice));
-  sel.title = "The model your agent runs on; a switch applies from your next message";
+  const optionFor = (o: NonNullable<AgentState["models"]>[number]) =>
+    new Option(o.key == "own" ? `${o.label} (your key)` : o.label, o.id, false, o.id == m.choice);
+  const locals = m.models.filter((o) => o.group == "local");
+  const embedded = m.models.filter((o) => o.group != "local");
+  if (locals.length) {
+    const lg = document.createElement("optgroup");
+    lg.label = "Connected agents";
+    for (const o of locals) lg.append(optionFor(o));
+    sel.append(lg);
+    if (embedded.length) {
+      const eg = document.createElement("optgroup");
+      eg.label = "Built-in models";
+      for (const o of embedded) eg.append(optionFor(o));
+      sel.append(eg);
+    }
+  } else {
+    // A model the person's own key runs says so; the others run on the server's keys.
+    for (const o of embedded) sel.append(optionFor(o));
+  }
+  sel.title = "The agent or model this panel uses; connected agents keep their own conversation";
   sel.addEventListener("pointerdown", () => sel.classList.add("by-pointer"));
   sel.addEventListener("keydown", () => sel.classList.remove("by-pointer"));
   sel.addEventListener("change", async () => {
@@ -403,6 +433,10 @@ function renderModel(m: AgentState | null) {
       sel.value = m.choice!;
       showHint("Couldn't switch models.");
       return;
+    }
+    if (r.log) {
+      swapLog(r.log);
+      renderBusy();
     }
     showHint(log.busy ? `${sel.selectedOptions[0]?.text}: from your next message` : `Switched to ${sel.selectedOptions[0]?.text}`);
   });
@@ -466,11 +500,24 @@ const events = liveSocket({
   message(e) {
     let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
-    // The model switched, from another tab of the person's. (Heard, as the agent's events are: load() asks again, so
-    // an answer from before the switch never puts the old model back.)
+    // The model or connected local agent changed (a bridge connected/disconnected, or switched in another tab).
     if (m.type == "model") {
       heard++;
-      renderModel({ ...m, enabled: true });
+      if (m.enabled === false) {
+        off = `The agent is off: ${m.reason ?? "the server did not start it"}.`;
+        renderModel(null);
+      } else {
+        off = null;
+        renderModel({ ...m, enabled: true });
+      }
+      if (m.log) swapLog(m.log);
+      window.dispatchEvent(new Event("erga:agent-state"));
+      renderBusy();
+    }
+    if (m.type == "log" && m.log) {
+      heard++;
+      swapLog(m.log);
+      renderBusy();
     }
     if (m.type == "agent" && m.ev) {
       heard++;

@@ -26,7 +26,7 @@ import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document
 import type { Tab } from "../../document/room/participants";
 import { PING, PONG } from "../../shared/room-socket";
 import type { Who } from "../../server/directory/index.ts";
-import { askerFrom, personOf, type Role } from "../../document/model/access";
+import { askerFrom, personOf, viaOf, type Role } from "../../document/model/access";
 import type { NamedRow } from "../../document/model/names";
 import { descriptionKey } from "../../agents/models";
 import { sandboxOf } from "../sandbox";
@@ -253,11 +253,13 @@ export class DocumentObject extends DurableObject<Env> {
     const shell = !watch && url.searchParams.get("shell") == "1";
     const opened = watch ? null : await run(this.document.admit(request));
     if (!watch && !opened) return new Response("No such document", { status: 404 });
+    const via = viaOf(request.headers.get("x-erga-via"));
     const tab: Tab = {
       id: crypto.randomUUID(),
       readOnly: request.headers.get("x-erga-access") != "edit",
       epoch: shell ? null : url.searchParams.get("epoch") || null,
       person: personOf(request.headers),
+      ...(via ? { via } : {}),
       events: url.searchParams.get("events") == "1" || watch || shell,
       // Whom it's for, as the app said: when the permissions change, whether they may still (Participants.permissionsChanged).
       ...(askerFrom(request.headers) ? { who: askerFrom(request.headers)! } : {}),
