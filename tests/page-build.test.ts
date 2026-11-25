@@ -46,6 +46,9 @@ test("someone who may edit, reading: the document's frame starts before the edit
   // Opened with ?edit, the editor's parts come first: its first frame has them.
   expect(parts(pageOf("Plans", "l1", { editing: true, agent: true }))).toEqual([false, true]);
   expect(parts(pageOf("Plans", "l1", { editing: true, agent: false }))).toEqual([false, true]);
+  // The bars' sheets come before the bars: the first paint of a slow page has them (no slide into place as they come).
+  const page = pageOf("Plans", "l1", { editing: false, agent: true });
+  expect(page.indexOf("--bars-height:") < page.indexOf('<div class="erga-view-buttons')).toBe(true);
   // The document's title meta is emitted once, in <head>.
   expect(pageOf("Plans", "l1", { editing: false, agent: true }).match(/name="erga-title"/g)).toHaveLength(1);
 });

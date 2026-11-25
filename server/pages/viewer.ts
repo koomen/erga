@@ -190,8 +190,10 @@ ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</scr
       : {}),
   };
   const viewerScript = `<script id="erga-viewer" type="module" src="${asset("viewer.js")}" data-config="${esc(JSON.stringify(viewerConfig))}"></script>`;
+  // The bars' sheets come before the bars. After them, a slow page painted the bars without them first, and their own
+  // transitions then moved the bars into place (the buttons' bar from 14px to 8px from the edge, your avatar by 2px).
   const after = `
-${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${ZOOM_PARTS}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}">` : ""}${viewerScript}
+${editing ? "" : opening + editingBody}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${ZOOM_PARTS}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}">` : ""}${viewerScript}
 `;
   return { before, after };
 }

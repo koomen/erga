@@ -139,7 +139,8 @@ export function pageBars(
   const mine = !!session && !session.agent;
   const at = (path: string) => link(path, session);
   const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.documents ?? documentsButton(at("/documents"))) : ""}`;
-  return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT, false, !!o.save)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.agent === false ? "" : agentPanel(session)}`;
+  // (The sheets before the bars, as on a document's page: server/pages/viewer.ts.)
+  return `<script>${PAGE_TONE}</script>${NEW_DOC_STYLE}${BARS_STYLE}${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT, false, !!o.save)}${session?.agent ? "" : newDocMenu(at)}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.agent === false ? "" : agentPanel(session)}`;
 }
 
 /**

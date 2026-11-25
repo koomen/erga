@@ -369,18 +369,8 @@ journey("a reader opens a document with several pages", () => {
     await expect.poll(async () => (await styled(page))?.h1).toBe("The blog");
     // (The breadcrumbs keep their end in sight: how far erga shows depends on the title.)
     await expect.poll(() => shown("view")).toEqual(["left", "right", "me"]);
-    // At rest: the same in two looks that follow each other. (On GitHub's machine, which is slower, the first look
-    // had the avatar 3px left of its place in one run of two.)
-    let atRest = (await bars(page, "view")).parts;
-    await until(
-      async () => {
-        const was = JSON.stringify(atRest);
-        atRest = (await bars(page, "view")).parts;
-        return was == JSON.stringify(atRest);
-      },
-      5000,
-      "the bars rest"
-    );
+    // At rest from the first look: the bars paint with their sheets, so nothing slides into place (server/pages/viewer.ts).
+    const atRest = (await bars(page, "view")).parts;
     const me = atRest.me;
     await page.mouse.click((me.l + me.r) / 2, (me.t + me.b) / 2);
     await expect.poll(() => shown("view")).toEqual(["left", "right", "new", "full", "edit", "agent", "documents", "me"]);
