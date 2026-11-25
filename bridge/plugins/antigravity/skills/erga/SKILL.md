@@ -11,7 +11,7 @@ description: >-
 1. Call `erga_open`:
    - Existing document: `erga_open({ document: "<url or /owner/slug>" })`
    - New document: `erga_open({ create: true, title: "<title>" })` (pass `fromDir` to copy files from a local folder into the new document's managed directory)
-   - If the user has not signed in yet, `erga_open` opens Erga's OAuth approval page in their browser.
+   - If the user has not signed in yet, `erga_open` returns `needsAuth: true` with a `verificationUriComplete` URL and `userCode`. Show that URL and code to the user so they can approve in any browser (including on another device when remote), then call `erga_open` again once they confirm.
 2. Note the managed `dir` path returned by `erga_open` (`~/.erga/docs/...`). That folder is live-synced to the Erga document over Yjs. If files were copied from a local project folder, let the user know the synced copy lives in `dir` and their original folder is untouched.
 3. Read and edit files directly in `dir` with native file and shell tools. Binary assets (images, PDFs) written into `dir` upload automatically.
 4. Inspect how the page looks and behaves with Erga's `page` tool (`view_page`, `page_log`, `open_page`) when helpful.

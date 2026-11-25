@@ -43,7 +43,7 @@ function parseFlags(argv: string[]): { cmd: string; pos: string[]; flags: Record
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next != null && !next.startsWith("--") && !["foreground", "create", "help"].includes(key)) {
+      if (next != null && !next.startsWith("--") && !["foreground", "create", "help", "device", "local", "no-open"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
 Usage:
   erga-agent connect [doc-url] [--from <path>] [--server <url>] [--agent antigravity] [--foreground]
   erga-agent mount <doc-url> [--from <path>] [--agent antigravity]
-  erga-agent login [server-url] [--agent antigravity]
+  erga-agent login [server-url] [--device|--local] [--no-open] [--agent antigravity]
   erga-agent mcp [--agent antigravity] [--server <url>]
   erga-agent daemon [--agent antigravity] [--server <url>]
   erga-agent status [--agent antigravity]
@@ -133,7 +133,8 @@ Usage:
 
   if (cmd == "login") {
     const target = pos[0] ? normalizeOrigin(pos[0]) : server;
-    await login(target, driver.label, { log });
+    const mode = flags.device ? "device" : flags.local ? "local" : "auto";
+    await login(target, driver.label, { log, mode, ...(flags["no-open"] ? { open: false } : {}) });
     console.log(`Signed in to ${target} as ${driver.label}.`);
     return;
   }
@@ -181,6 +182,7 @@ Usage:
       daemon.startSocket();
       if (docArg) {
         const res = await daemon.openDocument({ origin: targetOrigin, document: docArg, fromDir, cwd: process.cwd() });
+        if (!res.ok) throw new Error(res.message);
         console.log(`Mounted ${res.url} -> ${res.dir}`);
       } else {
         await daemon.connectOrigin(targetOrigin, { interactive: true });

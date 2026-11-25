@@ -64,9 +64,14 @@ import { DOMAIN_LLM_PATH, domainLlmApi, isPageLlmPath, pageLlmApi } from "../age
 import { serverApi, unauthorized } from "./api.ts";
 import { documentRoutes, ergaAddress, isKeyedOp, isPagesSite, workerHere } from "./documents/index.ts";
 import { domainOf, ERGA, LIVE_FILES, liveDoc, nothing, serveDomain, serveLiveFile, serveRoot, serveSitePath } from "./sites/index.ts";
+import { DEVICE_AUTH, DEVICE_DONE, DEVICE_POLL } from "../gate/core.ts";
 import {
   authorize,
   chooseSignIn,
+  deviceDone,
+  devicePage,
+  devicePoll,
+  deviceStart,
   DOMAIN_ERGA,
   DOMAIN_SIGN_OUT,
   domainPass,
@@ -104,7 +109,7 @@ import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
 import { HttpServerResponse } from "effect/http";
 import { call, fromWeb, html, platform, redirect, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
-import { DEV, routeAt, routeFor, SECRET, SIGN_IN, type RouteRow } from "../shared/routes.ts";
+import { AGENT_SIGN_IN, DEV, routeAt, routeFor, SECRET, SIGN_IN, type RouteRow } from "../shared/routes.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
@@ -238,6 +243,39 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     path: "/oauth/authorize",
     run: authorize,
     action: "Approve or deny an MCP app's request",
+    domain: "none",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
+  // Remote device-code sign-in (server/identity/device.ts): start and poll are unauthenticated POSTs; a signed-in person approves in a browser.
+  {
+    method: "POST",
+    path: DEVICE_AUTH,
+    run: deviceStart,
+    action: "A remote agent starts a device-code sign-in",
+    domain: "none",
+    exempt: AGENT_SIGN_IN,
+  },
+  {
+    method: "POST",
+    path: DEVICE_POLL,
+    run: devicePoll,
+    action: "A remote agent polls for device-code sign-in approval",
+    domain: "none",
+    exempt: AGENT_SIGN_IN,
+  },
+  {
+    method: "GET",
+    path: "/oauth/device",
+    run: devicePage,
+    action: "Verify a remote agent's device code before approving or denying",
+    domain: "none",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
+  {
+    method: "GET",
+    path: DEVICE_DONE,
+    run: deviceDone,
+    action: "Complete a remote agent's device-code approval after the gate signs its code",
     domain: "none",
     exempt: `${SECRET} (it hands a new token to an outside agent)`,
   },

@@ -12,7 +12,16 @@ import { basename, join, resolve } from "node:path";
 import { ignored } from "../../document/model/pages.ts";
 import type { LogEvent } from "../../shared/agent-log.ts";
 import type { ToBridge } from "../../shared/bridge-protocol.ts";
-import { DEFAULT_ORIGIN, ergaFetch, ergaHome, getAccessToken, normalizeOrigin } from "./auth.ts";
+import {
+  DEFAULT_ORIGIN,
+  ergaFetch,
+  ergaHome,
+  getAccessToken,
+  normalizeOrigin,
+  startDeviceLogin,
+  waitForDeviceLogin,
+  type PendingDeviceAuth,
+} from "./auth.ts";
 import { ErgaBridgeClient } from "./bridge-client.ts";
 import type { AgentDriver, AgentHandle, DriverEvent, LocalAttachment, McpServerSpec } from "./driver.ts";
 import { managedDocDir, YjsDiskSync, type SyncStatus } from "./yjs-sync.ts";
@@ -55,6 +64,34 @@ export interface OpenDocRequest {
   conversationId?: string;
   transcriptPath?: string;
   label?: string;
+  /** When true (MCP calls), returns a device-code URL immediately instead of blocking on login. */
+  nonBlockingAuth?: boolean;
+}
+
+export interface NeedsAuthResult {
+  ok: false;
+  needsAuth: true;
+  origin: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresIn: number;
+  message: string;
+}
+
+export interface OpenDocSuccess {
+  ok: true;
+  origin: string;
+  docId: string;
+  owner: string;
+  slug: string;
+  title: string;
+  url: string;
+  dir: string;
+  copiedFrom?: string;
+  note: string;
+  files: string[];
+  connected: boolean;
 }
 
 export function daemonSocketPath(agentId: string): string {
@@ -77,6 +114,7 @@ export class ErgaDaemon {
   private mounts = new Map<string, MountedDoc>();
   private bridges = new Map<string, ErgaBridgeClient>();
   private threads = new Map<string, ActiveThread>();
+  private pendingLogins = new Map<string, { pending: PendingDeviceAuth; abort: AbortController }>();
   private defaultCwd: string;
   private bridgeId: string;
 
@@ -148,27 +186,56 @@ export class ErgaDaemon {
     return client;
   }
 
+  /** Starts (or reuses) a background device-code login for `rawOrigin` and returns the verification prompt. */
+  async startAuth(rawOrigin: string): Promise<NeedsAuthResult> {
+    const origin = normalizeOrigin(rawOrigin);
+    let active = this.pendingLogins.get(origin);
+    if (active && active.pending.expiresAt <= Date.now() + 15_000) {
+      active.abort.abort();
+      this.pendingLogins.delete(origin);
+      active = undefined;
+    }
+    if (!active) {
+      const pending = await startDeviceLogin(origin, this.driver.label);
+      const abort = new AbortController();
+      this.pendingLogins.set(origin, { pending, abort });
+      void waitForDeviceLogin(pending, { signal: abort.signal })
+        .then(
+          () => this.log(`device sign-in approved for ${origin}`),
+          (e) => this.log(`device sign-in ended for ${origin}: ${e instanceof Error ? e.message : e}`)
+        )
+        .finally(() => {
+          if (this.pendingLogins.get(origin)?.abort === abort) this.pendingLogins.delete(origin);
+        });
+      active = { pending, abort };
+    }
+    const { pending } = active;
+    const expiresIn = Math.max(0, Math.round((pending.expiresAt - Date.now()) / 1000));
+    return {
+      ok: false,
+      needsAuth: true,
+      origin,
+      userCode: pending.userCode,
+      verificationUri: pending.verificationUri,
+      verificationUriComplete: pending.verificationUriComplete,
+      expiresIn,
+      message: `Sign in to ${origin}: open ${pending.verificationUriComplete} in any browser (local or remote) and approve code ${pending.userCode}. Then retry your request.`,
+    };
+  }
+
   /** Opens (or creates) an Erga document, mounts its local Yjs room, and binds the browser agent pane. */
-  async openDocument(req: OpenDocRequest): Promise<{
-    origin: string;
-    docId: string;
-    owner: string;
-    slug: string;
-    title: string;
-    url: string;
-    dir: string;
-    copiedFrom?: string;
-    note: string;
-    files: string[];
-    connected: boolean;
-  }> {
+  async openDocument(req: OpenDocRequest): Promise<OpenDocSuccess | NeedsAuthResult> {
     const parsed = req.document
       ? parseDocumentRef(req.document, req.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN)
       : { origin: normalizeOrigin(req.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN), ref: "" };
     const origin = parsed.origin;
 
-    // Authenticate (interactive OAuth on first run if needed).
-    await getAccessToken(origin, this.driver.label, { interactive: true, log: (s) => this.log(s) });
+    // Authenticate (non-blocking device-code prompt for MCP, interactive login for CLI).
+    const existingTok = await getAccessToken(origin, this.driver.label, { interactive: false });
+    if (!existingTok) {
+      if (req.nonBlockingAuth) return this.startAuth(origin);
+      await getAccessToken(origin, this.driver.label, { interactive: true, log: (s) => this.log(s) });
+    }
 
     let docId = "";
     let owner = "";
@@ -305,6 +372,7 @@ export class ErgaDaemon {
       : `Live Yjs sync active in managed Erga directory ${mounted.dir}. Tell the user where the synced copy lives if they ask.`;
 
     return {
+      ok: true,
       origin,
       docId,
       owner,
@@ -360,6 +428,8 @@ export class ErgaDaemon {
   }
 
   async stop(): Promise<void> {
+    for (const p of this.pendingLogins.values()) p.abort.abort();
+    this.pendingLogins.clear();
     for (const m of [...this.mounts.values()]) {
       await m.sync.flush().catch(() => {});
       await m.sync.stop();
@@ -580,7 +650,14 @@ export class ErgaDaemon {
       if (req.method == "GET" && url.pathname == "/status") return json({ ok: true, ...this.status() });
       if (req.method == "POST" && url.pathname == "/open") {
         const body = (await req.json()) as OpenDocRequest;
-        return json({ ok: true, ...(await this.openDocument(body)) });
+        return json(await this.openDocument(body));
+      }
+      if (req.method == "POST" && url.pathname == "/auth/start") {
+        const body = (await req.json()) as { origin?: string };
+        const origin = normalizeOrigin(body.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN);
+        const tok = await getAccessToken(origin, this.driver.label, { interactive: false });
+        if (tok) return json({ ok: true, signedIn: true, origin });
+        return json(await this.startAuth(origin));
       }
       if (req.method == "POST" && url.pathname == "/unmount") {
         const body = (await req.json()) as { origin?: string; docId: string };

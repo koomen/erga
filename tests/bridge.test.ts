@@ -21,7 +21,7 @@ import { createAcpDriver } from "../bridge/drivers/acp.ts";
 import { AntigravityTranscriptMirror, parseTranscriptStep, unwrapUserRequest } from "../bridge/drivers/antigravity.ts";
 import type { DriverEvent } from "../bridge/core/driver.ts";
 import { copyIntoManaged, ErgaDaemon } from "../bridge/core/daemon.ts";
-import { saveToken } from "../bridge/core/auth.ts";
+import { cachedToken, saveToken } from "../bridge/core/auth.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";
 import { authors, files, roomInfo } from "../document/model/content.ts";
 import { Participants, type Tab, type TabSocket } from "../document/room/participants.ts";
@@ -705,10 +705,12 @@ test("ErgaDaemon.openDocument copies fromDir into an already-mounted document", 
 
   try {
     const first = await daemon.openDocument({ origin, document: "/d/doc1" });
-    expect(first.files).toEqual(["index.html"]);
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.files).toEqual(["index.html"]);
 
     const second = await daemon.openDocument({ origin, document: "/d/doc1", fromDir: src });
-    expect(second.copiedFrom).toBe(src);
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.copiedFrom).toBe(src);
     await until(() => files(serverDoc).get("notes.html")?.toString() == "<p>Copied later</p>");
   } finally {
     await daemon.stop();
@@ -718,6 +720,91 @@ test("ErgaDaemon.openDocument copies fromDir into an already-mounted document", 
     else process.env.ERGA_TOKEN = prevToken;
     server.stop(true);
     serverDoc.destroy();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ErgaDaemon.openDocument with nonBlockingAuth returns a device-code URL and saves token in background when approved", async () => {
+  let approved = false;
+  let deviceCalls = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname == "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          authorization_endpoint: `${url.origin}/oauth/authorize`,
+          device_authorization_endpoint: `${url.origin}/oauth/device_authorization`,
+          token_endpoint: `${url.origin}/oauth/token`,
+          registration_endpoint: `${url.origin}/oauth/register`,
+        });
+      }
+      if (url.pathname == "/oauth/device_authorization") {
+        deviceCalls++;
+        return Response.json({
+          device_code: "dev-secret-1",
+          user_code: "BCDF-GHJK",
+          verification_uri: `${url.origin}/oauth/device`,
+          verification_uri_complete: `${url.origin}/oauth/device?user_code=BCDF-GHJK`,
+          expires_in: 600,
+          interval: 1,
+        });
+      }
+      if (url.pathname == "/oauth/device_authorization/poll") {
+        if (!approved) return Response.json({ error: "authorization_pending" }, { status: 400 });
+        return Response.json({ code: "signed-code-1", redirect_uri: `${url.origin}/oauth/device/done` });
+      }
+      if (url.pathname == "/oauth/token") {
+        const body = new URLSearchParams(await req.text());
+        if (body.get("code") == "signed-code-1" && body.get("code_verifier")) {
+          return Response.json({ access_token: "tok-from-device", refresh_token: "ref-1", expires_in: 3600 });
+        }
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const root = mkdtempSync(join(tmpdir(), "erga-daemon-device-"));
+  const prevHome = process.env.ERGA_HOME;
+  const prevToken = process.env.ERGA_TOKEN;
+  process.env.ERGA_HOME = root;
+  delete process.env.ERGA_TOKEN;
+
+  const origin = `http://127.0.0.1:${server.port}`;
+  const daemon = new ErgaDaemon({
+    id: "antigravity",
+    label: "Antigravity",
+    open: async () => {
+      throw new Error("not used");
+    },
+  });
+
+  try {
+    const first = await daemon.openDocument({ origin, document: "/d/doc1", nonBlockingAuth: true });
+    expect(first.ok).toBe(false);
+    if (!first.ok) {
+      expect(first.needsAuth).toBe(true);
+      expect(first.userCode).toBe("BCDF-GHJK");
+      expect(first.verificationUriComplete).toBe(`${origin}/oauth/device?user_code=BCDF-GHJK`);
+    }
+    // Calling again before approval reuses the same pending device code.
+    const repeat = await daemon.openDocument({ origin, document: "/d/doc1", nonBlockingAuth: true });
+    expect(repeat.ok).toBe(false);
+    expect(deviceCalls).toBe(1);
+
+    // Once approved in any browser, background polling saves the token automatically.
+    approved = true;
+    await until(() => cachedToken(origin, "Antigravity")?.accessToken == "tok-from-device");
+    expect(cachedToken(origin, "Antigravity")?.refreshToken).toBe("ref-1");
+  } finally {
+    await daemon.stop();
+    if (prevHome === undefined) delete process.env.ERGA_HOME;
+    else process.env.ERGA_HOME = prevHome;
+    if (prevToken === undefined) delete process.env.ERGA_TOKEN;
+    else process.env.ERGA_TOKEN = prevToken;
+    server.stop(true);
     rmSync(root, { recursive: true, force: true });
   }
 });

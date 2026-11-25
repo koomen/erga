@@ -7,7 +7,7 @@
 // Antigravity (or any future agent) mounts the Yjs room, authenticates once,
 // exposes Erga's full API, and connects Erga's browser agent pane automatically.
 
-import { cachedToken, DEFAULT_ORIGIN, ergaFetch, normalizeOrigin } from "./auth.ts";
+import { cachedToken, DEFAULT_ORIGIN, ergaFetch, getAccessToken, normalizeOrigin } from "./auth.ts";
 import { daemonRpc, daemonSocketPath, parseDocumentRef } from "./daemon.ts";
 import type { AgentDriver } from "./driver.ts";
 
@@ -91,6 +91,7 @@ const FALLBACK_API_TOOL: McpToolDef = {
 
 const LOCAL_INSTRUCTIONS = `Erga local bridge is active.
 - When the user asks to edit an Erga document URL (or create a new Erga doc), call erga_open first.
+- If erga_open (or an Erga API tool) returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser (local or remote), then retry once they confirm.
 - erga_open mounts the document's live Yjs room into a local folder AND connects this session to Erga's embedded browser agent pane.
 - Edit the mounted document's files directly on disk using your native file tools (read_file, edit_file, write_file, run_command): every edit syncs live via Yjs CRDT with proper agent attribution.
 - Use Erga's MCP tools (page, documents, read, edit, settings, people) for live page screenshots/console (view_page, page_log, page_input, open_page), page API calls (call_edit), comments, version history, publishing, sharing, and unmounted documents.`;
@@ -227,7 +228,10 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
             activeOrigin = origin;
             const parsed = typeof args.document == "string" ? parseDocumentRef(args.document, origin) : null;
             await ensureDaemon();
-            const res = await daemonRpc<{ ok?: boolean; error?: string; [k: string]: unknown }>(opts.driver.id, "/open", {
+            const res = await daemonRpc<{ ok?: boolean; needsAuth?: boolean; error?: string; [k: string]: unknown }>(
+              opts.driver.id,
+              "/open",
+              {
               origin: parsed?.origin ?? origin,
               ...(parsed ? { document: parsed.ref } : {}),
               ...(args.create ? { create: true } : {}),
@@ -236,8 +240,12 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
               ...(typeof args.template == "string" ? { template: args.template } : {}),
               ...(typeof args.fromDir == "string" ? { fromDir: args.fromDir } : {}),
               cwd: process.cwd(),
+              nonBlockingAuth: true,
               ...(process.env.ANTIGRAVITY_CONVERSATION_ID ? { conversationId: process.env.ANTIGRAVITY_CONVERSATION_ID } : {}),
             });
+            if (res?.needsAuth) {
+              return ok({ content: [{ type: "text", text: JSON.stringify(res, null, 2) }] });
+            }
             if (!res?.ok) throw new Error(res?.error || "erga_open failed");
             // After signing in, load the full remote Erga toolset and notify the client.
             const hadRemote = !!remoteToolsCache?.length;
@@ -268,8 +276,14 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
           const remoteArgs = name == "erga_api" ? ((args.args ?? {}) as Record<string, unknown>) : args;
           const origin = originForArgs(args);
           activeOrigin = origin;
+          const tok = await getAccessToken(origin, opts.driver.label, { interactive: false });
+          if (!tok) {
+            await ensureDaemon();
+            const auth = await daemonRpc<Record<string, unknown>>(opts.driver.id, "/auth/start", { origin });
+            if (auth?.needsAuth) return ok({ content: [{ type: "text", text: JSON.stringify(auth, null, 2) }] });
+          }
           const hadRemote = !!remoteToolsCache?.length;
-          const answer = await remoteMcp(origin, "tools/call", { name: remoteName, arguments: remoteArgs }, true);
+          const answer = await remoteMcp(origin, "tools/call", { name: remoteName, arguments: remoteArgs }, false);
           if (!hadRemote) {
             const loaded = await loadRemoteCatalog(origin, false);
             if (loaded.length) notifyToolsChanged();

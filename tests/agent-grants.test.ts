@@ -538,3 +538,134 @@ test("a token to paste: made on the page, shown in the answer's header one time;
     .token;
   expect(Math.abs(end(short) - (Date.now() / 1000 + 3600))).toBeLessThan(10);
 });
+
+test("device-code sign-in for remote agents: start, approve in any browser, poll once, trade with PKCE, and deny", async () => {
+  const s = app();
+  const { cookie } = await signIn(s, freshLogin("devauth"));
+  const meta = (await (await s.fetch("/.well-known/oauth-authorization-server")).json()) as Record<string, unknown>;
+  expect(meta.device_authorization_endpoint).toBe(`${ROOT}/oauth/device_authorization`);
+
+  const verifier = b64(crypto.getRandomValues(new Uint8Array(40)).buffer);
+  const challenge = b64(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+
+  // Rejects missing/invalid PKCE challenge.
+  expect(
+    (
+      await s.fetch("/oauth/device_authorization", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: "Antigravity", code_challenge: "short", code_challenge_method: "S256" }),
+      })
+    ).status
+  ).toBe(400);
+
+  const startedRes = await s.fetch("/oauth/device_authorization", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: "Antigravity", code_challenge: challenge, code_challenge_method: "S256" }),
+  });
+  expect(startedRes.status).toBe(200);
+  const started = (await startedRes.json()) as {
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    verification_uri_complete: string;
+    expires_in: number;
+    interval: number;
+  };
+  expect(started.user_code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  expect(started.verification_uri).toBe(`${ROOT}/oauth/device`);
+  expect(started.verification_uri_complete).toBe(`${ROOT}/oauth/device?user_code=${encodeURIComponent(started.user_code)}`);
+
+  const poll = (device_code = started.device_code, client_id = "Antigravity") =>
+    s.fetch("/oauth/device_authorization/poll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_code, client_id }),
+    });
+
+  // Before human approval: authorization_pending.
+  const pending = await poll();
+  expect(pending.status).toBe(400);
+  expect(await pending.json()).toEqual({ error: "authorization_pending" });
+
+  // Signed-out browser goes to sign-in first.
+  const signedOutPage = await s.fetch(`/oauth/device?user_code=${encodeURIComponent(started.user_code)}`, {
+    headers: { ...PAGE, ...signedOut() },
+  });
+  expect(signedOutPage.status).toBe(302);
+  expect(signedOutPage.headers.get("location")).toContain("/auth/sign-in?next=");
+
+  // Blank /oauth/device shows the code-entry form.
+  const entry = await s.fetch("/oauth/device", { headers: { ...PAGE, Cookie: cookie } });
+  expect(entry.status).toBe(200);
+  expect(await entry.text()).toContain('name="user_code"');
+
+  // Opening verification_uri_complete shows the app name, code, and Approve form posting to /oauth/authorize.
+  const verifyPage = await s.fetch(`/oauth/device?user_code=${encodeURIComponent(started.user_code.toLowerCase().replace("-", " "))}`, {
+    headers: { ...PAGE, Cookie: cookie },
+  });
+  expect(verifyPage.status).toBe(200);
+  const html = await verifyPage.text();
+  expect(html).toContain("<b>Antigravity</b> wants to act for you");
+  expect(html).toContain(started.user_code);
+  const actionMatch = /<form method="post" action="([^"]+)"/.exec(html);
+  expect(actionMatch).not.toBeNull();
+  const action = actionMatch![1].replace(/&amp;/g, "&");
+
+  // Approving on /oauth/authorize redirects to /oauth/device/done with the gate-signed PKCE code.
+  const approved = await s.fetch(action, {
+    ...formOf({ answer: "approve" }),
+    headers: { ...formOf({}).headers, Cookie: cookie, Origin: ROOT },
+  });
+  expect(approved.status).toBe(302);
+  const doneUrl = new URL(approved.headers.get("location")!);
+  expect(doneUrl.pathname).toBe("/oauth/device/done");
+  const doneRes = await s.fetch(doneUrl.pathname + doneUrl.search, { headers: { ...PAGE, Cookie: cookie } });
+  expect(doneRes.status).toBe(200);
+  expect(await doneRes.text()).toContain("Approved. You can close this tab");
+
+  // Wrong client_id gets invalid_grant; right client_id gets the one-time PKCE code, and a second poll fails.
+  expect((await poll(started.device_code, "other")).status).toBe(400);
+  const ready = await poll();
+  expect(ready.status).toBe(200);
+  const { code, redirect_uri } = (await ready.json()) as { code: string; redirect_uri: string };
+  expect(redirect_uri).toBe(`${ROOT}/oauth/device/done`);
+  expect((await poll()).status).toBe(400);
+
+  // Trade the code with PKCE verifier at /oauth/token -> working Bearer + refresh token, and an agent can't open /oauth/device.
+  const traded = await s.fetch(
+    "/oauth/token",
+    formOf({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri, client_id: "Antigravity" })
+  );
+  expect(traded.status).toBe(200);
+  const tokens = (await traded.json()) as { access_token: string; refresh_token: string };
+  const who = await tool(s, tokens.access_token, "documents", { op: "whoami" });
+  expect(who.status).toBe(200);
+  expect(who.data.token).toMatchObject({ label: "Antigravity", scope: "documents" });
+  expect((await s.fetch("/oauth/device", { headers: { Authorization: `Bearer ${tokens.access_token}` } })).status).toBe(403);
+
+  // Denying records access_denied for the polling remote agent.
+  const d2 = (await (
+    await s.fetch("/oauth/device_authorization", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: "Antigravity", code_challenge: challenge, code_challenge_method: "S256" }),
+    })
+  ).json()) as typeof started;
+  const page2 = await (
+    await s.fetch(`/oauth/device?user_code=${encodeURIComponent(d2.user_code)}`, { headers: { ...PAGE, Cookie: cookie } })
+  ).text();
+  const action2 = /<form method="post" action="([^"]+)"/.exec(page2)![1].replace(/&amp;/g, "&");
+  const denied = await s.fetch(action2, {
+    ...formOf({ answer: "deny" }),
+    headers: { ...formOf({}).headers, Cookie: cookie, Origin: ROOT },
+  });
+  expect(denied.status).toBe(302);
+  const done2 = new URL(denied.headers.get("location")!);
+  const done2Res = await s.fetch(done2.pathname + done2.search, { headers: { ...PAGE, Cookie: cookie } });
+  expect(await done2Res.text()).toContain("Denied.");
+  const deniedPoll = await poll(d2.device_code, "Antigravity");
+  expect(deniedPoll.status).toBe(400);
+  expect(await deniedPoll.json()).toEqual({ error: "access_denied" });
+});

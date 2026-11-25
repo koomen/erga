@@ -465,13 +465,16 @@ export class PersonAgents {
   async agentControl(login: string, doc: string | null, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
     const scope = scopeOf(login, doc);
     if (op == "model") {
+      const wasBridge = activeBridge(this.bridgesOf(login), doc);
       if (isLocalChoice(model)) {
         const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
         if (!res.ok) return { ok: false, reason: "that connected agent isn't available" };
         this.bridgeStates.set(login, res.state);
         const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-        this.event({ type: "model", ...state }, login, scope);
-        return { ok: true, ...state };
+        const nowBridge = activeBridge(res.state, doc);
+        const payload = wasBridge?.id == nowBridge?.id ? { ...state, log: undefined } : state;
+        this.event({ type: "model", ...payload }, login, scope);
+        return { ok: true, ...payload };
       }
       const s = this.agents.get(scope);
       if (!s) return { ok: false, reason: "the embedded agent isn't configured" };
@@ -479,8 +482,10 @@ export class PersonAgents {
       const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
       this.bridgeStates.set(login, res.state);
       const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-      this.event({ type: "model", ...state }, login, scope);
-      return { ok: true, ...state };
+      // Only send a log replacement when switching scopes (local bridge -> embedded), never between two embedded models.
+      const payload = wasBridge ? state : { ...state, log: undefined };
+      this.event({ type: "model", ...payload }, login, scope);
+      return { ok: true, ...payload };
     }
     const active = activeBridge(this.bridgesOf(login), doc);
     if (active) {

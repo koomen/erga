@@ -37,6 +37,8 @@ form.add .buttons { display: flex; }
 .card { margin: 0 0 24px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
 .card h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
 .card p { margin: 0 0 10px; }
+.card label.field { display: grid; gap: 6px; margin: 12px 0 14px; font-size: 13px; font-weight: 500; color: var(--soft); }
+.card input[type=text] { font: 600 18px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; text-transform: uppercase; width: 12ch; max-width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg-strong); }
 .made, .approve { border-color: var(--caret); }
 .card .buttons { display: flex; align-items: center; gap: 12px; }
 .card button.new, .card button.deny { font: inherit; font-size: 13.5px; font-weight: 550; }

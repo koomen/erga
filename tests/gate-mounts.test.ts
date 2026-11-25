@@ -461,6 +461,7 @@ describe("behind Cloudflare Access", () => {
       "/.well-known/oauth-authorization-server",
       "/oauth/token",
       "/oauth/register",
+      "/oauth/device_authorization",
       "/mcp",
     ]);
     const form = {
@@ -474,10 +475,15 @@ describe("behind Cloudflare Access", () => {
       await open("/.well-known/oauth-authorization-server"),
       await open("/oauth/token", form),
       await open("/oauth/register", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+      await open("/oauth/device_authorization"),
       await open("/mcp", { method: "POST" }),
       await open("/mcp", { method: "POST", headers: { authorization: "Bearer a.forged.token" } }),
-    ]).toEqual([401, 200, 200, 400, 400, 401, 401]);
+    ]).toEqual([401, 200, 200, 400, 400, 401, 401, 401]);
     expect(upstream.seen.length).toBe(before);
+    // POST /oauth/device_authorization passes through as nobody so remote agents can start device sign-in.
+    expect((await whoOf(await handle(new Request(`https://${SHELL}/oauth/device_authorization`, { method: "POST" }), mount))).who).toEqual({
+      kind: "none",
+    });
   });
 });
 

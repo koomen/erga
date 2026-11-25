@@ -107,8 +107,32 @@ async function openBrowser(url: string): Promise<void> {
 
 interface OAuthMeta {
   authorization_endpoint: string;
+  device_authorization_endpoint?: string;
   token_endpoint: string;
   registration_endpoint: string;
+}
+
+export interface PendingDeviceAuth {
+  origin: string;
+  clientName: string;
+  clientId: string;
+  verifier: string;
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresAt: number;
+  intervalMs: number;
+  deviceEndpoint: string;
+  tokenEndpoint: string;
+}
+
+/** True when running over SSH, inside herdr-core, or in a headless Linux shell without a desktop display. */
+export function isRemoteSession(): boolean {
+  if (process.env.ERGA_REMOTE == "1") return true;
+  if (process.env.SSH_CONNECTION || process.env.SSH_TTY || process.env.SSH_CLIENT || process.env.HC_TERMINAL_ID) return true;
+  if (process.platform == "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return true;
+  return false;
 }
 
 async function discover(origin: string): Promise<OAuthMeta> {
@@ -123,6 +147,7 @@ async function discover(origin: string): Promise<OAuthMeta> {
     const j = (await r.json()) as Partial<OAuthMeta>;
     return {
       authorization_endpoint: j.authorization_endpoint ?? fallback.authorization_endpoint,
+      ...(j.device_authorization_endpoint ? { device_authorization_endpoint: j.device_authorization_endpoint } : {}),
       token_endpoint: j.token_endpoint ?? fallback.token_endpoint,
       registration_endpoint: j.registration_endpoint ?? fallback.registration_endpoint,
     };
@@ -158,15 +183,145 @@ async function refresh(entry: StoredToken): Promise<StoredToken | null> {
   return updated;
 }
 
-/** Runs Erga's OAuth 2.1 PKCE login flow in the user's browser and saves the grant. */
+/** Starts an RFC 8628 device-code sign-in (works over SSH, herdr-core, headless servers, and locally). */
+export async function startDeviceLogin(rawOrigin: string, clientName: string): Promise<PendingDeviceAuth> {
+  const origin = normalizeOrigin(rawOrigin);
+  const meta = await discover(origin);
+  const deviceEndpoint = meta.device_authorization_endpoint ?? `${origin}/oauth/device_authorization`;
+  const verifier = b64url(randomBytes(32));
+  const challenge = b64url(createHash("sha256").update(verifier).digest());
+  const clientId =
+    clientName
+      .replace(/[^A-Za-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "Agent";
+
+  const res = await fetch(deviceEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, code_challenge: challenge, code_challenge_method: "S256" }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`Device authorization failed (${res.status}): ${await res.text()}`);
+  const data = (await res.json()) as {
+    device_code?: string;
+    user_code?: string;
+    verification_uri?: string;
+    verification_uri_complete?: string;
+    expires_in?: number;
+    interval?: number;
+  };
+  if (!data.device_code || !data.user_code || !data.verification_uri) {
+    throw new Error("Server returned an incomplete device authorization response.");
+  }
+  return {
+    origin,
+    clientName,
+    clientId,
+    verifier,
+    deviceCode: data.device_code,
+    userCode: data.user_code,
+    verificationUri: data.verification_uri,
+    verificationUriComplete: data.verification_uri_complete || `${data.verification_uri}?user_code=${encodeURIComponent(data.user_code)}`,
+    expiresAt: Date.now() + (data.expires_in ?? 600) * 1000,
+    intervalMs: Math.max(1000, (data.interval ?? 2) * 1000),
+    deviceEndpoint,
+    tokenEndpoint: meta.token_endpoint,
+  };
+}
+
+/** Polls once for approval of `pending`; exchanges the PKCE code for tokens and saves to auth.json when approved. */
+export async function pollDeviceOnce(
+  pending: PendingDeviceAuth
+): Promise<{ status: "pending" } | { status: "approved"; token: StoredToken } | { status: "denied" | "expired" }> {
+  if (Date.now() >= pending.expiresAt) return { status: "expired" };
+  const res = await fetch(`${pending.deviceEndpoint}/poll`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_code: pending.deviceCode, client_id: pending.clientId }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    if (body.error == "authorization_pending" || body.error == "slow_down") return { status: "pending" };
+    if (body.error == "access_denied") return { status: "denied" };
+    return { status: "expired" };
+  }
+  const got = (await res.json()) as { code?: string; redirect_uri?: string };
+  if (!got.code || !got.redirect_uri) return { status: "expired" };
+  const tokBody = new URLSearchParams({
+    grant_type: "authorization_code",
+    code: got.code,
+    redirect_uri: got.redirect_uri,
+    client_id: pending.clientId,
+    code_verifier: pending.verifier,
+  });
+  const tokRes = await fetch(pending.tokenEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: tokBody.toString(),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!tokRes.ok) throw new Error(`Token exchange failed (${tokRes.status}): ${await tokRes.text()}`);
+  const tok = (await tokRes.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
+  if (!tok.access_token) throw new Error("Token exchange returned no access_token.");
+  const entry: StoredToken = {
+    origin: pending.origin,
+    clientName: pending.clientName,
+    clientId: pending.clientId,
+    accessToken: tok.access_token,
+    refreshToken: tok.refresh_token,
+    expiresAt: Date.now() + Math.max(60, (tok.expires_in ?? 3600) - 30) * 1000,
+  };
+  saveToken(entry);
+  return { status: "approved", token: entry };
+}
+
+/** Polls until a pending device-code sign-in is approved, denied, expired, or aborted. */
+export async function waitForDeviceLogin(
+  pending: PendingDeviceAuth,
+  opts: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<StoredToken> {
+  const deadline = Math.min(pending.expiresAt, Date.now() + (opts.timeoutMs ?? 600_000));
+  while (Date.now() < deadline) {
+    if (opts.signal?.aborted) throw new Error("Sign-in canceled.");
+    const step = await pollDeviceOnce(pending);
+    if (step.status == "approved") return step.token;
+    if (step.status == "denied") throw new Error("Authorization denied.");
+    if (step.status == "expired") throw new Error("Device sign-in code expired.");
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, pending.intervalMs);
+      opts.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          resolve();
+        },
+        { once: true }
+      );
+    });
+  }
+  throw new Error("Timed out waiting for browser approval.");
+}
+
+/** Runs Erga's OAuth 2.1 PKCE login flow (device-code by default when supported, else loopback) and saves the grant. */
 export async function login(
   rawOrigin: string,
   clientName: string,
-  opts: { open?: boolean; timeoutMs?: number; log?: (line: string) => void } = {}
+  opts: { open?: boolean; timeoutMs?: number; log?: (line: string) => void; mode?: "auto" | "device" | "local" } = {}
 ): Promise<StoredToken> {
   const origin = normalizeOrigin(rawOrigin);
   const log = opts.log ?? ((s) => console.error(s));
   const meta = await discover(origin);
+  const useDevice = opts.mode == "device" || (opts.mode != "local" && !!meta.device_authorization_endpoint);
+  if (useDevice) {
+    const pending = await startDeviceLogin(origin, clientName);
+    log(`Open this URL in any browser to sign in to ${origin}:\n  ${pending.verificationUriComplete}\n\nCode: ${pending.userCode}`);
+    if (opts.open === true || (opts.open !== false && !isRemoteSession())) {
+      await openBrowser(pending.verificationUriComplete);
+    }
+    return waitForDeviceLogin(pending, { timeoutMs: opts.timeoutMs });
+  }
   const verifier = b64url(randomBytes(32));
   const challenge = b64url(createHash("sha256").update(verifier).digest());
   const state = b64url(randomBytes(16));

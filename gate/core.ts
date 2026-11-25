@@ -204,6 +204,10 @@ const ACCEPT = "/_edge/accept";
 export const SIGN_OUT = "/_edge/sign-out";
 const TOKEN_PATH = "/oauth/token";
 const REGISTER = "/oauth/register";
+/** Device authorization for remote or headless agents (RFC 8628): start and poll are POST-only; browser approves at /oauth/device. */
+export const DEVICE_AUTH = "/oauth/device_authorization";
+export const DEVICE_POLL = `${DEVICE_AUTH}/poll`;
+export const DEVICE_DONE = "/oauth/device/done";
 /** Where an agent's app reads which server signs it in (RFC 9728), and that server's addresses (RFC 8414). */
 export const RESOURCE = "/.well-known/oauth-protected-resource";
 /** The server's health report (Config.health). */
@@ -220,11 +224,11 @@ export const PATTERNS = { edge: [`${EDGE}*`], forms: [TOKEN_PATH, REGISTER], fix
 /**
  * Behind Cloudflare Access: the paths of the shell's host that the Access application must let through with no
  * sign-in (a bypass policy for everyone), because what comes there has no Access proof. The vouch: a frame of the
- * documents' site, and the browser sends no Lax cookie with it. The agents' metadata, registration and token
- * endpoint: an agent's app has no proof before its token. MCP: an agent's app has the gate's token, never an Access
+ * documents' site, and the browser sends no Lax cookie with it. The agents' metadata, registration, device-code and token
+ * endpoints: an agent's app has no proof before its token. MCP: an agent's app has the gate's token, never an Access
  * sign-in. The gate checks its own values on each.
  */
-export const ACCESS_OPEN = [VOUCH, RESOURCE, SERVER, TOKEN_PATH, REGISTER, "/mcp"];
+export const ACCESS_OPEN = [VOUCH, RESOURCE, SERVER, TOKEN_PATH, REGISTER, DEVICE_AUTH, "/mcp"];
 
 /** The header a gate in front proves itself to Erga with: the key that the deploy gave both. Never from outside. */
 export const FRONT = "x-erga-front";
@@ -426,6 +430,7 @@ export async function pass(q: Req, c: Config, p: Port): Promise<Answer> {
     if (who.kind != "person") return isPage(q) ? toSignIn(q, c) : unauthorized(c);
     return asked(q, c) ? forward(who) : respond(400, "This authorization request isn't valid.");
   }
+  if (c.oauth && q.method == "POST" && (q.path == DEVICE_AUTH || q.path == DEVICE_POLL)) return forward(NOBODY);
   if (who.kind == "none" && !c.open) return isPage(q) ? toSignIn(q, c) : unauthorized(c);
   return forward(who, await memberFor(q, c, p, who, now));
 }
@@ -652,7 +657,8 @@ const APP_REDIRECTS = [
   "https://claude.com/api/mcp/auth_callback",
   "https://chatgpt.com/connector_platform_oauth_redirect",
 ];
-const allowedRedirect = (u: string, c: Config) => LOOPBACK.test(u) || APP_REDIRECTS.includes(u) || !!c.redirects?.includes(u);
+const allowedRedirect = (u: string, c: Config) =>
+  LOOPBACK.test(u) || APP_REDIRECTS.includes(u) || u == `${scheme(c)}${c.shell}${DEVICE_DONE}` || !!c.redirects?.includes(u);
 
 /** An authorization request's values, if they are whole: a client, a redirect it may have, a PKCE challenge (S256). */
 function asked(q: Req, c: Config) {
@@ -766,6 +772,7 @@ function metadata(q: Req, c: Config): Answer | null {
       {
         issuer: origin,
         authorization_endpoint: `${origin}/oauth/authorize`,
+        device_authorization_endpoint: `${origin}${DEVICE_AUTH}`,
         token_endpoint: `${origin}${TOKEN_PATH}`,
         registration_endpoint: `${origin}${REGISTER}`,
         response_types_supported: ["code"],

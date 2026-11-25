@@ -12,6 +12,7 @@ export { accountLookup, authOps, signInChoices } from "./settings.ts";
 export { RULE_ABOUT, RULE_ENDS, RULE_LABEL, ruleNow, usernameFacts, type UsernameFacts, whyNot } from "./usernames.ts";
 export { DOMAIN_ERGA, DOMAIN_SIGN_OUT, domainPass, domainSignIn, domainVisitor } from "./domain-pass.ts";
 export { authorize } from "./authorize.ts";
+export { deviceDone, devicePage, devicePoll, deviceStart } from "./device.ts";
 export { tokensRoutes } from "./tokens-page.ts";
 export { cookieName, cookies, setCookie } from "./cookies.ts";
 

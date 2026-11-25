@@ -29,6 +29,38 @@ export const SCOPES: readonly Scope[] = ["document", "documents", "admin"];
 /** The most days a grant lasts: its person approves again after that (the gate's Config.grantDays is the same). */
 export const GRANT_DAYS = 30;
 export const LABEL_MAX = 80;
+/** How long a remote device-code sign-in stays pending (10 minutes). */
+export const DEVICE_TTL_MS = 10 * 60_000;
+/** Suggested seconds between device-code polls. */
+export const DEVICE_INTERVAL_S = 2;
+/** Unambiguous characters for short human-typed device codes (no 0/O/1/I/vowels). */
+const USER_ALPHABET = "BCDFGHJKLMNPQRSTVWXYZ23456789";
+
+/** Normalizes a typed user code ("bcdf-ghjk" or "bcdf ghjk" -> "BCDFGHJK"). */
+export const normalizeUserCode = (raw: string): string => raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+/** Formats an 8-character user code with a middle dash ("BCDF-GHJK"). */
+export const formatUserCode = (raw: string): string => {
+  const clean = normalizeUserCode(raw);
+  return clean.length == 8 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean;
+};
+
+async function sha256Url(text: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export interface DevicePending {
+  userCode: string;
+  approveState: string;
+  clientId: string;
+  challenge: string;
+  expires: number;
+}
+
+export type DevicePollResult = { status: "approved"; code: string } | { status: "pending" | "denied" | "expired" | "invalid" };
 /** last_used is written at most this often, so an agent's request isn't a write every time. */
 const TOUCH_MS = 5 * 60 * 1000;
 
@@ -237,5 +269,96 @@ export class Grants {
     // The changelog's new line, on the open admin pages.
     await this.dir.users.pagesChanged([]);
     return true;
+  }
+
+  // ---------------------------------------------------------------- remote device-code sign-in (device_codes)
+
+  /** Starts a pending device-code sign-in bound to `clientId` and PKCE `challenge` (S256). */
+  async startDevice(
+    clientId: string,
+    challenge: string,
+    now = Date.now()
+  ): Promise<{ deviceCode: string; userCode: string; expiresIn: number; interval: number }> {
+    await this.sql.run("DELETE FROM device_codes WHERE expires < ?1", now);
+    const deviceCode = randomString(32, ALPHABET);
+    const userCode = randomString(8, USER_ALPHABET);
+    const approveState = randomString(32, ALPHABET);
+    const deviceHash = await sha256Url(deviceCode);
+    const expires = now + DEVICE_TTL_MS;
+    await this.sql.run(
+      "INSERT INTO device_codes (device_hash, user_code, approve_state, client_id, challenge, status, code, expires, created) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', NULL, ?6, ?7)",
+      deviceHash,
+      userCode,
+      approveState,
+      clientId,
+      challenge,
+      expires,
+      now
+    );
+    return { deviceCode, userCode: formatUserCode(userCode), expiresIn: DEVICE_TTL_MS / 1000, interval: DEVICE_INTERVAL_S };
+  }
+
+  /** Finds a pending, unexpired device-code sign-in by its short human code. */
+  async findDevice(rawUserCode: string, now = Date.now()): Promise<DevicePending | null> {
+    const clean = normalizeUserCode(rawUserCode);
+    if (!clean) return null;
+    const [row] = await this.sql.all<{
+      user_code: string;
+      approve_state: string;
+      client_id: string;
+      challenge: string;
+      expires: number;
+    }>(
+      "SELECT user_code, approve_state, client_id, challenge, expires FROM device_codes WHERE user_code = ?1 AND status = 'pending' AND expires > ?2",
+      clean,
+      now
+    );
+    return row
+      ? {
+          userCode: row.user_code,
+          approveState: row.approve_state,
+          clientId: row.client_id,
+          challenge: row.challenge,
+          expires: Number(row.expires),
+        }
+      : null;
+  }
+
+  /** Attaches the gate-signed PKCE authorization code (or denial) to a pending device-code sign-in. */
+  async completeDevice(
+    approveState: string,
+    result: { ok: true; code: string } | { ok: false },
+    now = Date.now()
+  ): Promise<"approved" | "denied" | "missing"> {
+    const status = result.ok ? "approved" : "denied";
+    const updated = await this.sql.all<{ status: string }>(
+      "UPDATE device_codes SET status = ?3, code = ?4 WHERE approve_state = ?1 AND status = 'pending' AND expires > ?2 RETURNING status",
+      approveState,
+      now,
+      status,
+      result.ok ? result.code : null
+    );
+    return updated.length ? status : "missing";
+  }
+
+  /** Polls a device-code sign-in by its secret `deviceCode` and consumes an approved code atomically once. */
+  async pollDevice(deviceCode: string, clientId: string, now = Date.now()): Promise<DevicePollResult> {
+    const deviceHash = await sha256Url(deviceCode);
+    const [row] = await this.sql.all<{ client_id: string; status: string; code: string | null; expires: number }>(
+      "SELECT client_id, status, code, expires FROM device_codes WHERE device_hash = ?1",
+      deviceHash
+    );
+    if (!row || row.client_id != clientId) return { status: "invalid" };
+    if (Number(row.expires) <= now) return { status: "expired" };
+    if (row.status == "pending") return { status: "pending" };
+    if (row.status == "denied") return { status: "denied" };
+    if (row.status == "approved" && row.code) {
+      const taken = await this.sql.all<{ device_hash: string }>(
+        "UPDATE device_codes SET status = 'consumed', code = NULL WHERE device_hash = ?1 AND status = 'approved' RETURNING device_hash",
+        deviceHash
+      );
+      if (taken.length) return { status: "approved", code: row.code };
+    }
+    return { status: "invalid" };
   }
 }
