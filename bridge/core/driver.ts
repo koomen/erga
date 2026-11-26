@@ -88,6 +88,27 @@ export interface AgentHandle {
   close(): Promise<void>;
 }
 
+/** The agent's own session in the user's terminal, which takes the browser panel's prompts. It stays in the daemon's memory. */
+export interface LiveSession {
+  readonly conversationId: string;
+  readonly cwd: string;
+  readonly transcriptPath?: string | null;
+  /** The agent's process, where a hook of the session waits for the prompts (`erga-agent wait`). */
+  readonly pid?: number;
+}
+
+/** How a prompt from the browser panel reaches a live session. */
+export interface LiveMessenger {
+  send(session: LiveSession, text: string, opts?: { title?: string }): Promise<void>;
+  check(session: LiveSession): Promise<"running" | "idle" | "gone">;
+}
+
+/** What a hook that waits for the panel's next prompt gets: the prompt, or to ask again (pending), or to end (neither). */
+export interface PromptWait {
+  readonly prompt?: string;
+  readonly pending?: boolean;
+}
+
 /** One call of an agent's plugin hook: the bridge's payload, and the hook's output for the agent. */
 export interface HookCall {
   readonly payload: HookPayload;
@@ -102,11 +123,20 @@ export interface AgentDriver {
   readonly label: string;
   /** How the agent's own session opens a document, where the MCP server's own instructions do not fit it. */
   readonly openHint?: string;
-  /** The environment variable that holds the id of the agent's running session, where it sets one. */
+  /** What the agent's own session must know of the panel's prompts that `live` sends into it. */
+  readonly liveHint?: string;
+  /**
+   * The environment variable that holds the id of the agent's running session, where it sets one. Without it,
+   * the session is the last one whose hook the agent's process ran (sessions.ts).
+   */
   readonly sessionEnv?: string;
   open(opts: OpenSessionOptions): Promise<AgentHandle>;
   /** Reads one payload of the agent's plugin hook. */
   hook?(raw: Record<string, unknown>): HookCall;
+  /** Sends the panel's prompts into the agent's own session in the user's terminal, where the agent has a way. */
+  readonly live?: LiveMessenger;
+  /** A hook of a live session waits a short time here for the panel's next prompt, where `live` gives the prompts to a hook. */
+  waitForPrompt?(session: LiveSession, waiter: number): Promise<PromptWait>;
   /** Asks the user about one tool call of a session this driver opened: the agent's own permission answer. */
   permission?(ask: { session: string; args: Record<string, unknown> }): Promise<Record<string, unknown>>;
 }

@@ -6,7 +6,11 @@ The plugin connects a Claude Code session to an Erga document:
   edits the files there, and each edit shows in the browser at once.
 - The session has Erga's tools (`documents`, `read`, `edit`, `page`).
 - The document's agent panel shows the session's turns. A prompt typed in the
-  panel runs in a second Claude Code session, in the background.
+  panel runs in the same session, and the terminal shows it as hook feedback.
+  When Claude Code asks for a permission, the panel shows a card: answer there
+  or in the terminal.
+- After the session's terminal closes, a prompt typed in the panel runs in a
+  second Claude Code session, in the background.
 
 ## Install
 

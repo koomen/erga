@@ -15,10 +15,12 @@
 //   erga-agent status  [--agent antigravity|claude-code]
 //   erga-agent stop    [--agent antigravity|claude-code]
 //   erga-agent hook    [--agent antigravity|claude-code]
+//   erga-agent wait    [--agent claude-code]
 
 import { defaultOrigin, getAccessToken, login, normalizeOrigin } from "./auth.ts";
-import { daemonRpc, ErgaDaemon, parseDocumentRef } from "./daemon.ts";
-import { BRIDGE_SESSION_ENV, type AgentDriver } from "./driver.ts";
+import { ErgaDaemon } from "./daemon.ts";
+import { daemonRpc, parseDocumentRef } from "./daemon-io.ts";
+import { BRIDGE_SESSION_ENV, type AgentDriver, type PromptWait } from "./driver.ts";
 import { runMcpServer } from "./mcp-server.ts";
 import { recordSession } from "./sessions.ts";
 import { createAntigravityDriver } from "../drivers/antigravity.ts";
@@ -160,7 +162,10 @@ Usage:
         out = call.reply(null);
         recordSession(agentName, call.payload);
         if (call.payload.conversationId) {
-          const res = await daemonRpc<{ ok?: boolean; hookResponse?: Record<string, unknown> }>(agentName, "/hook", call.payload, 2_000);
+          type Answer = { ok?: boolean; hookResponse?: Record<string, unknown> } | null;
+          let res: Answer = await daemonRpc(agentName, "/hook", call.payload, 2_000);
+          // The user may take long to answer a permission on the panel's card: the hook asks again while no answer came.
+          while (res?.hookResponse?.pending) res = await daemonRpc(agentName, "/hook", { ...call.payload, again: true }, 10_000);
           if (res?.hookResponse && typeof res.hookResponse == "object") out = call.reply(res.hookResponse);
         }
       }
@@ -169,6 +174,33 @@ Usage:
     }
     process.stdout.write(JSON.stringify(out) + "\n");
     return;
+  }
+
+  if (cmd == "wait") {
+    // A hook that the agent runs in the background of its own session (Claude Code: asyncRewake). It waits for
+    // the next prompt from the panel of a document that the session has open. Then it writes the prompt to
+    // stderr and ends with code 2: the agent wakes the session with that text. Any other end says nothing.
+    const stdinText = await new Response(Bun.stdin.stream()).text().catch(() => "");
+    const agentPid = process.ppid;
+    let prompt: string | undefined;
+    try {
+      const { conversationId, cwd, transcriptPath } = driverFor(agentName).hook?.(JSON.parse(stdinText || "{}")).payload ?? {};
+      const session = { conversationId, cwd, transcriptPath, pid: agentPid, waiter: process.pid };
+      const own = conversationId && !process.env[BRIDGE_SESSION_ENV];
+      // The daemon reads which session the agent's process runs now.
+      if (own) recordSession(agentName, session);
+      // It ends with the agent, with the document's unmount, and when another hook of the session waits.
+      while (own && process.ppid == agentPid) {
+        const res = await daemonRpc<PromptWait>(agentName, "/wait", session, 10_000);
+        prompt = res?.prompt;
+        if (prompt || !res?.pending) break;
+      }
+    } catch {
+      /* it says nothing */
+    }
+    if (!prompt) return;
+    await Bun.write(Bun.stderr, prompt);
+    process.exit(2);
   }
 
   const driver = driverFor(agentName, log);

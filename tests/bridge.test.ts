@@ -26,7 +26,8 @@ import {
 } from "../bridge/drivers/antigravity.ts";
 import type { DriverEvent } from "../bridge/core/driver.ts";
 import { hookEvents } from "../bridge/core/sessions.ts";
-import { copyIntoManaged, ErgaDaemon } from "../bridge/core/daemon.ts";
+import { ErgaDaemon } from "../bridge/core/daemon.ts";
+import { copyIntoManaged } from "../bridge/core/daemon-io.ts";
 import { cachedToken, saveToken } from "../bridge/core/auth.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";
 import { authors, files, roomInfo } from "../document/model/content.ts";
@@ -1016,7 +1017,7 @@ test("ErgaDaemon routes prompts directly into an attached live Antigravity sessi
     },
     {
       liveMessenger: {
-        send: async (session, text) => {
+        send: async (session: LiveAntigravitySession, text) => {
           sentLive.push({ session, text });
         },
         check: async () => "running",

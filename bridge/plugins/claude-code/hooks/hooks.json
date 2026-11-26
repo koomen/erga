@@ -5,8 +5,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/erga-agent hook --agent claude-code",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["hook", "--agent", "claude-code"],
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["wait", "--agent", "claude-code"],
+            "asyncRewake": true,
+            "timeout": 604800
           }
         ]
       }
@@ -16,8 +24,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/erga-agent hook --agent claude-code",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["hook", "--agent", "claude-code"],
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["wait", "--agent", "claude-code"],
+            "asyncRewake": true,
+            "timeout": 604800
           }
         ]
       }
@@ -27,8 +43,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/erga-agent hook --agent claude-code",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["hook", "--agent", "claude-code"],
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["hook", "--agent", "claude-code"],
+            "timeout": 600
           }
         ]
       }
@@ -38,8 +67,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/erga-agent hook --agent claude-code",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["hook", "--agent", "claude-code"],
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__erga_open",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["wait", "--agent", "claude-code"],
+            "asyncRewake": true,
+            "timeout": 604800
           }
         ]
       }
@@ -49,7 +91,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/erga-agent hook --agent claude-code",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["hook", "--agent", "claude-code"],
             "timeout": 5
           }
         ]
@@ -60,8 +103,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/erga-agent hook --agent claude-code",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["hook", "--agent", "claude-code"],
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
+            "args": ["wait", "--agent", "claude-code"],
+            "asyncRewake": true,
+            "timeout": 604800
           }
         ]
       }

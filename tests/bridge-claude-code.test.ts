@@ -1,17 +1,18 @@
 // Unit tests for the Claude Code side of the local agent bridge (tests/bridge.test.ts has the rest):
 // - The Claude Code driver's stream (bridge/drivers/claude-code.ts), against a mock `claude`
-// - A panel prompt's permission card, through the bridge's own MCP tool and the daemon
+// - A panel prompt in the terminal session (the hook that waits for it), and in a session of the bridge's own
+// - A permission card in the panel: for the terminal session's hook, and for the bridge's own MCP tool
 // - The terminal session's plugin hooks: the panel's events, the session's record, the hook's output
 
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import * as Y from "yjs";
 import { saveToken } from "../bridge/core/auth.ts";
 import { ErgaDaemon } from "../bridge/core/daemon.ts";
 import { BRIDGE_SESSION_ENV, type DriverEvent } from "../bridge/core/driver.ts";
-import { findSession } from "../bridge/core/sessions.ts";
+import { findSession, recordSession } from "../bridge/core/sessions.ts";
 import { ALLOW_SESSION_CHOICE } from "../bridge/drivers/acp.ts";
 import { claudeCodeHook, createClaudeCodeDriver } from "../bridge/drivers/claude-code.ts";
 import { files, roomInfo } from "../document/model/content.ts";
@@ -144,8 +145,16 @@ test("Claude Code driver streams a turn, ends one on abort, and resumes its sess
 });
 
 test("claudeCodeHook turns Claude Code's hook payloads into the bridge's, and never decides for the user", () => {
+  // The plugin starts each hook with no shell (args): only then the hook's parent is Claude Code.
+  const plugin = JSON.parse(readFileSync(resolve(import.meta.dir, "../bridge/plugins/claude-code/hooks/hooks.json"), "utf8")) as {
+    hooks: Record<string, { hooks: { args?: string[] }[] }[]>;
+  };
+  const started = Object.values(plugin.hooks).flatMap((groups) => groups.flatMap((g) => g.hooks));
+  expect(started.every((h) => h.args?.[0] == "hook" || h.args?.[0] == "wait")).toBe(true);
+
   const base = { session_id: "s1", cwd: "/repo", transcript_path: "/t.jsonl" };
-  const session = { conversationId: "s1", cwd: "/repo", transcriptPath: "/t.jsonl" };
+  // The hook is Claude Code's child: its parent's id names the session's process.
+  const session = { conversationId: "s1", cwd: "/repo", transcriptPath: "/t.jsonl", pid: process.ppid };
   const of = (raw: Record<string, unknown>) => claudeCodeHook({ ...base, ...raw });
 
   expect(of({ hook_event_name: "UserPromptSubmit", prompt: "Fix the title" }).payload).toEqual({
@@ -166,6 +175,19 @@ test("claudeCodeHook turns Claude Code's hook payloads into the bridge's, and ne
   // The daemon's answer to an Antigravity hook is an allow: Claude Code must not get it.
   expect(pre.reply({ decision: "allow" })).toEqual({});
   expect(pre.reply(null)).toEqual({});
+  // The user's Stop in the panel ends the call and the turn.
+  expect(pre.reply({ decision: "deny" })).toMatchObject({
+    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny" },
+  });
+
+  // A permission request: only the user's answer on the panel's card decides it.
+  const ask = of({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command: "rm a" } });
+  expect(ask.payload).toMatchObject({ hookEventName: "PermissionRequest", toolCall: { name: "Bash", args: { command: "rm a" } } });
+  expect(ask.reply({ pending: true })).toEqual({});
+  expect(ask.reply({ behavior: "allow" })).toEqual({
+    hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } },
+  });
+  expect(ask.reply({ behavior: "deny" })).toMatchObject({ hookSpecificOutput: { decision: { behavior: "deny" } } });
 
   expect(of({ hook_event_name: "PostToolUseFailure", tool_name: "Bash", tool_use_id: "tu-2", error: "exit 1" }).payload.error).toBe(
     "exit 1"
@@ -177,7 +199,7 @@ test("claudeCodeHook turns Claude Code's hook payloads into the bridge's, and ne
   });
 });
 
-test("Claude Code plugin: the panel shows the terminal session's turns, and a panel prompt asks its permission in the panel", async () => {
+test("Claude Code plugin: the panel shows the terminal session's turns, and a panel prompt runs in that session while its hook waits", async () => {
   const serverDoc = new Y.Doc();
   serverDoc.transact(() => {
     roomInfo(serverDoc).set("epoch", "ep-1");
@@ -243,15 +265,16 @@ test("Claude Code plugin: the panel shows the terminal session's turns, and a pa
     mcpSpec: (o) => ({ name: "erga", command: process.execPath, args: [CLI, "mcp", "--agent", "claude-code", "--server", o] }),
   });
   const events = () => fromBridge.filter((m) => m.type == "event").map((m) => m.ev as DriverEvent);
-  const hook = async (raw: Record<string, unknown>) => {
-    const call = claudeCodeHook({ session_id: "term-1", cwd: work, ...raw });
-    return call.reply(await daemon.handleHook(call.payload));
+  // The hooks of the terminal session, as children of this process (the session's Claude Code).
+  const hook = async (raw: Record<string, unknown>, session = "term-1") => {
+    const call = claudeCodeHook({ session_id: session, cwd: work, ...raw });
+    return call.reply(await daemon.handleHook({ ...call.payload, pid: process.pid }));
   };
 
   try {
     daemon.startSocket();
     // The terminal session opens the document (via `erga-agent open`).
-    const opened = await daemon.openDocument({ origin, document: "/d/doc1", cwd: work, conversationId: "term-1" });
+    const opened = await daemon.openDocument({ origin, document: "/d/doc1", cwd: work, conversationId: "term-1", pid: process.pid });
     expect(opened.ok).toBe(true);
     await until(() => fromBridge.some((m) => m.type == "bind"), "the bind");
     expect(fromBridge.find((m) => m.type == "bind")).toMatchObject({ doc: "doc1", label: "Claude Code (work)", sessionId: "term-1" });
@@ -293,6 +316,78 @@ test("Claude Code plugin: the panel shows the terminal session's turns, and a pa
       detail: "The user denied this in Erga's agent panel.",
     });
     expect(events()).toContainEqual({ t: "text", delta: "Verdict: deny" });
+
+    // A hook of the terminal session waits for the panel (erga-agent wait). A second one ends at once.
+    const session = { conversationId: "term-1", cwd: work, pid: process.pid };
+    const waiter = Bun.spawn([process.execPath, CLI, "wait", "--agent", "claude-code"], {
+      env: { ...process.env },
+      stdin: new Blob([JSON.stringify({ hook_event_name: "Stop", session_id: "term-1", cwd: work })]),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    await until(() => daemon.status().mounts[0].liveAttached, "the hook that waits");
+    expect(await daemon.waitForPrompt(session, 2)).toEqual({});
+
+    // Now a panel prompt runs in the terminal session: the hook ends with code 2 and the prompt.
+    fromBridge.length = 0;
+    panel!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "Add a line", context: null }));
+    expect(await waiter.exited).toBe(2);
+    const woke = await new Response(waiter.stderr).text();
+    expect(woke.startsWith("Erga panel prompt. Your user typed this prompt")).toBe(true);
+    expect(woke).toContain(`Active Erga document: ${origin}/pete/demo`);
+    expect(woke.endsWith("Add a line")).toBe(true);
+
+    // The session asks a permission in its terminal: the panel shows a card, and the hook takes the panel's answer.
+    const bash = { tool_name: "Bash", tool_input: { command: "rm a" } };
+    await hook({ hook_event_name: "PreToolUse", tool_use_id: "tu-20", ...bash });
+    const request = claudeCodeHook({ session_id: "term-1", cwd: work, hook_event_name: "PermissionRequest", ...bash });
+    expect(await daemon.handleHook(request.payload)).toEqual({ pending: true });
+    panel!.send(JSON.stringify({ type: "answer", doc: "doc1", id: "tu-20", approve: true }));
+    expect(await daemon.handleHook({ ...request.payload, again: true })).toEqual({ behavior: "allow" });
+    expect(await daemon.handleHook({ ...request.payload, again: true })).toEqual({});
+    await hook({ hook_event_name: "PostToolUse", tool_use_id: "tu-20", ...bash });
+
+    // The session works, and no hook waits: the next panel prompt goes to the session's next hook.
+    panel!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "One more", context: null }));
+    expect((await daemon.waitForPrompt(session, 3)).prompt?.endsWith("One more")).toBe(true);
+    await hook({ hook_event_name: "Stop", last_assistant_message: "Both are done." });
+    await until(() => fromBridge.some((m) => m.type == "turn_done"), "the live turn's end");
+    const rm = { id: "tu-20", name: "Bash", path: "rm a" };
+    expect(events()).toEqual([
+      { t: "tool", ...rm, status: "running" },
+      { t: "tool", ...rm, status: "asking", detail: "Bash rm a", call: { tool: "Bash", args: { command: "rm a" } } },
+      { t: "tool", ...rm, status: "running" },
+      { t: "tool", ...rm, status: "done" },
+      { t: "text", delta: "Both are done." },
+      { t: "busy", busy: false },
+    ]);
+
+    // The user's Stop in the panel denies the permission that the session asks, and ends its next tool call, until its turn ends.
+    expect(await daemon.handleHook(request.payload)).toEqual({ pending: true });
+    panel!.send(JSON.stringify({ type: "abort", doc: "doc1" }));
+    await until(() => events().filter((e) => e.t == "busy").length == 2, "the stop");
+    expect(await daemon.handleHook({ ...request.payload, again: true })).toEqual({ behavior: "deny" });
+    expect(await hook({ hook_event_name: "PreToolUse", tool_use_id: "tu-21", ...bash })).toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny" },
+    });
+    await hook({ hook_event_name: "Stop" });
+    expect(await hook({ hook_event_name: "PreToolUse", tool_use_id: "tu-22", ...bash })).toEqual({});
+
+    // /clear: Claude Code's process goes on in a new session. Its document goes with it, and a hook of the old session ends.
+    await hook({ hook_event_name: "SessionStart" }, "term-2");
+    expect(daemon.status().mounts[0].conversationId).toBe("term-2");
+    expect(await daemon.waitForPrompt(session, 4)).toEqual({});
+
+    // The terminal session's process ended: the prompt runs in the session of the bridge's own again.
+    const ended = Bun.spawn(["true"]);
+    await ended.exited;
+    recordSession("claude-code", { conversationId: "term-2", cwd: work, pid: ended.pid });
+    await daemon.openDocument({ origin, document: "/d/doc1", cwd: work, pid: ended.pid });
+    void daemon.waitForPrompt({ conversationId: "term-2", cwd: work, pid: ended.pid }, 5);
+    fromBridge.length = 0;
+    panel!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "Run it again", context: null }));
+    await until(() => events().some((e) => e.t == "tool" && e.id == "tu-1" && e.status == "asking"), "the bridge's own session");
+    expect(daemon.status().mounts[0].liveAttached).toBe(false);
   } finally {
     await daemon.stop();
     restore();
@@ -321,6 +416,9 @@ test("erga-agent hook records a Claude Code session and prints no decision; a se
   try {
     expect(await run("mine", {})).toBe("{}");
     expect(findSession("claude-code", { conversationId: "mine" })?.cwd).toBe("/repo/mine");
+    // Claude Code's process names its session: the one whose hook it ran. Another process gets no guess.
+    expect(findSession("claude-code", { pid: process.pid })?.conversationId).toBe("mine");
+    expect(findSession("claude-code", { pid: 1, cwd: "/repo/mine" })).toBeNull();
     expect(await run("bridge", { [BRIDGE_SESSION_ENV]: "bridge" })).toBe("{}");
     expect(findSession("claude-code", { cwd: "/repo/bridge" })).toBeNull();
     expect(findSession("claude-code", { conversationId: "bridge" })).toBeNull();

@@ -7,15 +7,18 @@
 //   (2) The user's own terminal session reports its turns through the plugin's
 //       hooks (plugins/claude-code/hooks/hooks.json), which claudeCodeHook turns
 //       into the bridge's HookPayload: the panel shows them.
-//
-// Claude Code does not speak ACP itself, and its channels (the documented way
-// to send a message into a running terminal session) are a research preview
-// that an organization's policy can turn off: so a panel prompt never runs in
-// the terminal session.
+//   (3) While a terminal session has a document open, a panel prompt runs in
+//       that session (PanelPrompts). Claude Code has no call that sends a
+//       prompt into a running session, and an organization's policy can turn
+//       its channels off. So a hook of the session waits for the prompt
+//       (`erga-agent wait`, with asyncRewake): when the hook ends with code 2,
+//       Claude Code wakes the session and gives it what the hook wrote.
+//       (1) stays for a document that no terminal session has open.
 //
 // Trap: a hook's output is a decision for Claude Code. `{}` decides nothing.
 // Never answer a PreToolUse hook with an allow: it skips the user's own
-// permission prompt in their terminal.
+// permission prompt in their terminal. A PermissionRequest hook gets an allow
+// only from the user's own answer on the panel's card.
 
 import {
   BRIDGE_SESSION_ENV,
@@ -23,9 +26,12 @@ import {
   type AgentDriver,
   type AgentHandle,
   type HookCall,
+  type LiveMessenger,
+  type LiveSession,
   type LocalAttachment,
   type ModelOption,
   type OpenSessionOptions,
+  type PromptWait,
 } from "../core/driver.ts";
 import type { HookPayload } from "../core/sessions.ts";
 import { ALLOW_SESSION_CHOICE, permissionChoices } from "./acp.ts";
@@ -307,10 +313,99 @@ class ClaudeCodeHandle extends DriverEvents implements AgentHandle {
   }
 }
 
+/** One wait of a hook holds this long: less than the time after which the daemon's server ends a quiet request. */
+const HOLD_MS = 5_000;
+/** A hook that asked this long ago waits no more. */
+const WAITER_GONE_MS = HOLD_MS + 3_000;
+
+/** What the session reads before a panel prompt (mcp-server.ts gives it LIVE_HINT, which names these first words). */
+const PANEL_PROMPT = `Erga panel prompt. Your user typed this prompt in the agent panel of an Erga document that this session opened. Do it as a prompt that they typed here. The panel shows your last message of the turn as the answer.\n\n`;
+
+const LIVE_HINT = `- After \`erga-agent open\`, a prompt that the user types in the document's agent panel comes to this session as hook feedback that starts with "Erga panel prompt". The user typed it, signed in to Erga: do it as a prompt typed here. The panel shows your last message of the turn as the answer.`;
+
+function alive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface Waiting {
+  /** Prompts that no hook took yet. */
+  queue: string[];
+  /** The hook that waits (its process id), its session, and when it last asked. */
+  waiter: number;
+  session: string;
+  asked: number;
+  /** Ends the wait that holds now. */
+  give: ((prompt: string | null) => void) | null;
+}
+
+/**
+ * The panel's prompts for the user's terminal sessions: a hook of each session takes them (`erga-agent wait`).
+ * They are kept by Claude Code's process: after /clear the process goes on in a new session.
+ */
+class PanelPrompts implements LiveMessenger {
+  private processes = new Map<number, Waiting>();
+
+  private of(session: LiveSession): Waiting {
+    const pid = session.pid ?? 0;
+    let s = this.processes.get(pid);
+    if (!s) this.processes.set(pid, (s = { queue: [], waiter: 0, session: "", asked: 0, give: null }));
+    return s;
+  }
+
+  /** A prompt goes to the hook that waits. With none (the session works), the session's next hook takes it. */
+  async send(session: LiveSession, text: string): Promise<void> {
+    if (!alive(session.pid)) throw new Error("its Claude Code process ended");
+    const s = this.of(session);
+    if (s.give) s.give(text);
+    else s.queue.push(text);
+  }
+
+  /** Only the Stop hook tells that a turn ended: a session that lives counts as running. */
+  async check(session: LiveSession): Promise<"running" | "gone"> {
+    return alive(session.pid) ? "running" : "gone";
+  }
+
+  wait(session: LiveSession, waiter: number): Promise<PromptWait> {
+    const s = this.of(session);
+    // One hook waits for each session: Claude Code starts more of them, and each of those ends at once.
+    if (s.session == session.conversationId && s.waiter != waiter && Date.now() - s.asked < WAITER_GONE_MS) return Promise.resolve({});
+    s.give?.(null);
+    s.waiter = waiter;
+    s.session = session.conversationId;
+    s.asked = Date.now();
+    return new Promise((resolve) => {
+      const give = (prompt: string | null) => {
+        clearTimeout(timer);
+        s.give = null;
+        // A hook that got a prompt ends: the session's next hook takes its place.
+        s.asked = prompt ? 0 : Date.now();
+        resolve(prompt ? { prompt: PANEL_PROMPT + prompt } : { pending: true });
+      };
+      const timer = setTimeout(() => give(null), HOLD_MS);
+      timer.unref?.();
+      s.give = give;
+      const queued = s.queue.shift();
+      if (queued) give(queued);
+    });
+  }
+}
+
 /** Turns one payload of a Claude Code hook (its stdin JSON) into the bridge's HookPayload. */
 export function claudeCodeHook(raw: Record<string, unknown>): HookCall {
   const str = (v: unknown) => (typeof v == "string" && v ? v : undefined);
-  const base: HookPayload = { conversationId: str(raw.session_id), cwd: str(raw.cwd), transcriptPath: str(raw.transcript_path) };
+  // The hook is a child of Claude Code (hooks.json starts it with no shell): its parent's id names the session's process.
+  const base: HookPayload = {
+    conversationId: str(raw.session_id),
+    cwd: str(raw.cwd),
+    transcriptPath: str(raw.transcript_path),
+    pid: process.ppid,
+  };
   const toolCall = { id: str(raw.tool_use_id), name: str(raw.tool_name), args: (raw.tool_input ?? {}) as Record<string, unknown> };
   const event = raw.hook_event_name;
   // What Claude Code itself puts in a prompt (a background task's notice) is not what the user typed.
@@ -324,22 +419,41 @@ export function claudeCodeHook(raw: Record<string, unknown>): HookCall {
           ? { ...base, hookEventName: "PostToolUse", toolCall }
           : event == "PostToolUseFailure"
             ? { ...base, hookEventName: "PostToolUse", toolCall, error: str(raw.error) ?? "Failed" }
-            : event == "Stop"
-              ? { ...base, hookEventName: "Stop", reply: str(raw.last_assistant_message) }
-              : { ...base, hookEventName: str(event) };
-  return { payload, reply: () => ({}) };
+            : event == "PermissionRequest"
+              ? { ...base, hookEventName: "PermissionRequest", toolCall }
+              : event == "Stop"
+                ? { ...base, hookEventName: "Stop", reply: str(raw.last_assistant_message) }
+                : { ...base, hookEventName: str(event) };
+  const reply = (answer: Record<string, unknown> | null): Record<string, unknown> => {
+    // The user pressed Stop in the panel: the call does not run, and Claude Code ends the turn.
+    if (event == "PreToolUse" && answer?.decision == "deny") {
+      const why = "The user pressed Stop in Erga's agent panel. End the turn now.";
+      return { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: why } };
+    }
+    // The user's own answer on the panel's card. Without one, the prompt in the terminal decides.
+    if (event == "PermissionRequest" && typeof answer?.behavior == "string") {
+      const decision = answer.behavior == "allow" ? { behavior: "allow" } : deny("The user denied this in Erga's agent panel.");
+      return { hookSpecificOutput: { hookEventName: event, decision } };
+    }
+    return {};
+  };
+  return { payload, reply };
 }
 
-/** Creates the Claude Code AgentDriver (`claude -p`, stream-json). */
+/** Creates the Claude Code AgentDriver: `claude -p` with stream-json, and the panel's prompts for the terminal sessions. */
 export function createClaudeCodeDriver(log?: (line: string) => void): AgentDriver {
   const command = process.env.CLAUDE_BIN || "claude";
   const handles = new Map<string, ClaudeCodeHandle>();
+  const prompts = new PanelPrompts();
   return {
     id: "claude-code",
     label: "Claude Code",
     sessionEnv: "CLAUDE_CODE_SESSION_ID",
     openHint:
       '- When the user asks to edit an Erga document URL (or create a new Erga doc), run `"${CLAUDE_PLUGIN_ROOT}/bin/erga-agent" open --agent claude-code "<url>"` to mount the live Yjs room in a local folder and connect this session to Erga\'s browser panel.',
+    liveHint: LIVE_HINT,
+    live: prompts,
+    waitForPrompt: (session, waiter) => prompts.wait(session, waiter),
     async open(opts: OpenSessionOptions): Promise<AgentHandle> {
       const handle: ClaudeCodeHandle = new ClaudeCodeHandle(command, opts, () => handles.delete(handle.sessionId), log);
       handles.set(handle.sessionId, handle);

@@ -12,12 +12,14 @@ export interface RecordedSession {
   conversationId: string;
   cwd: string;
   transcriptPath?: string;
+  /** The agent's process that runs the session, where its hooks tell it. */
+  pid?: number;
   updatedAt: number;
 }
 
 /** One call of an agent's plugin hook, in the bridge's shape. */
 export interface HookPayload {
-  /** SessionStart, PreInvocation (a turn starts), PreToolUse, PostToolUse, PostInvocation or Stop. */
+  /** SessionStart, PreInvocation (a turn starts), PreToolUse, PermissionRequest, PostToolUse, PostInvocation or Stop. */
   hookEventName?: string;
   conversationId?: string;
   cwd?: string;
@@ -37,6 +39,10 @@ export interface HookPayload {
   prompt?: string;
   /** Stop: the agent's last message of the turn. */
   reply?: string;
+  /** The agent's process, where the hook is its child. */
+  pid?: number;
+  /** PermissionRequest: the hook asks again for the answer to a request that it made before. */
+  again?: boolean;
 }
 
 function sessionsFile(agent: string): string {
@@ -57,7 +63,7 @@ function readSessions(agent: string): Record<string, RecordedSession> {
 /** Records an agent's active session from a plugin hook. */
 export function recordSession(
   agent: string,
-  info: { conversationId?: string; cwd?: string; transcriptPath?: string }
+  info: { conversationId?: string; cwd?: string; transcriptPath?: string; pid?: number }
 ): RecordedSession | null {
   if (!info.conversationId || !info.cwd) return null;
   const all = readSessions(agent);
@@ -66,8 +72,11 @@ export function recordSession(
     conversationId: info.conversationId,
     cwd: info.cwd,
     ...(info.transcriptPath || prev?.transcriptPath ? { transcriptPath: info.transcriptPath ?? prev?.transcriptPath } : {}),
+    ...(info.pid || prev?.pid ? { pid: info.pid ?? prev?.pid } : {}),
     updatedAt: Date.now(),
   };
+  // The file keeps the sessions in the order of their last record: two records of one millisecond stay in order.
+  delete all[info.conversationId];
   all[info.conversationId] = entry;
   const cutoff = Date.now() - 7 * 86_400_000;
   for (const [k, v] of Object.entries(all)) if (v.updatedAt < cutoff) delete all[k];
@@ -79,11 +88,15 @@ export function recordSession(
   return entry;
 }
 
-/** Finds an agent's most recent session matching `conversationId` or exact `cwd` (never falls back across repos). */
-export function findSession(agent: string, opts: { conversationId?: string; cwd?: string }): RecordedSession | null {
+/** Finds an agent's most recent session matching `conversationId`, the agent's process (`pid`), or exact `cwd` (never falls back across repos). */
+export function findSession(agent: string, opts: { conversationId?: string; cwd?: string; pid?: number }): RecordedSession | null {
   const all = readSessions(agent);
   if (opts.conversationId) return all[opts.conversationId] ?? null;
-  const list = Object.values(all).sort((a, b) => b.updatedAt - a.updatedAt);
+  const list = Object.values(all)
+    .reverse()
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  // The agent's process names its session exactly (the last one whose hook it ran): no guess.
+  if (opts.pid) return list.find((s) => s.pid == opts.pid) ?? null;
   if (opts.cwd) return list.find((s) => s.cwd == opts.cwd) ?? null;
   return null;
 }

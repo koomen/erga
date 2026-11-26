@@ -10,7 +10,7 @@
 
 import { homedir } from "node:os";
 import { cachedToken, defaultOrigin, ergaFetch, getAccessToken, normalizeOrigin } from "./auth.ts";
-import { daemonRpc, daemonSocketPath } from "./daemon.ts";
+import { daemonRpc, daemonSocketPath } from "./daemon-io.ts";
 import { BRIDGE_SESSION_ENV, type AgentDriver } from "./driver.ts";
 
 interface JsonRpcReq {
@@ -54,7 +54,7 @@ const PERMISSION_TOOL: McpToolDef = {
 const OPEN_HINT = `- When the user asks to edit an Erga document URL (or create a new Erga doc), run \`erga-agent open <url>\` (or \`erga-agent open --create --title "<title>"\`) in the shell to mount the live Yjs room and connect this session to Erga's browser panel.`;
 
 const localInstructions = (driver: AgentDriver) => `Erga local bridge is active.
-${driver.openHint ?? OPEN_HINT}
+${driver.openHint ?? OPEN_HINT}${driver.liveHint ? `\n${driver.liveHint}` : ""}
 - If \`erga-agent open\` or an Erga API tool returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser (local or remote), then retry once they confirm.
 - Edit the mounted document's files directly on disk using your native file tools: every edit syncs live via Yjs CRDT with proper agent attribution.
 - Use Erga's MCP tools (page, documents, read, edit, settings, people) for live page screenshots/console (view_page, page_log, page_input, open_page), page API calls (call_edit), comments, version history, publishing, sharing, and unmounted documents.`;

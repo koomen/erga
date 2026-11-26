@@ -9,7 +9,8 @@ import { activeBridge, bridgeStep, EMPTY_BRIDGES, panelOptions } from "../agents
 import { PersonAgents } from "../agents/person/sessions.ts";
 import { defaultOrigin, login, saveToken } from "../bridge/core/auth.ts";
 import { ErgaBridgeClient } from "../bridge/core/bridge-client.ts";
-import { daemonSocketPath, ErgaDaemon } from "../bridge/core/daemon.ts";
+import { ErgaDaemon } from "../bridge/core/daemon.ts";
+import { daemonSocketPath } from "../bridge/core/daemon-io.ts";
 import type { AgentDriver, AgentHandle, DriverEvent } from "../bridge/core/driver.ts";
 import { findSession, recordSession } from "../bridge/core/sessions.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";

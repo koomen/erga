@@ -9,17 +9,14 @@
 
 import { existsSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
-import { extractToolPath, type AgentDriver, type DriverEvent } from "../core/driver.ts";
+import { extractToolPath, type AgentDriver, type DriverEvent, type LiveSession } from "../core/driver.ts";
 import type { HookPayload } from "../core/sessions.ts";
 import { createAcpDriver } from "./acp.ts";
 
 /** In-memory connection handle to a live running Antigravity CLI process (never written to disk). */
-export interface LiveAntigravitySession {
-  readonly conversationId: string;
+export interface LiveAntigravitySession extends LiveSession {
   readonly lsAddress: string;
   readonly csrfToken: string;
-  readonly cwd: string;
-  readonly transcriptPath?: string | null;
 }
 
 /** Interface for talking to a live Antigravity process (injectable in unit tests). */
@@ -57,6 +54,7 @@ export function createAntigravityDriver(log?: (line: string) => void): AgentDriv
     ),
     sessionEnv: "ANTIGRAVITY_CONVERSATION_ID",
     openHint: OPEN_HINT,
+    live: defaultLiveAntigravityMessenger,
     // Antigravity's hook payload is the bridge's own shape. A PreToolUse hook must answer: it never blocks the tool.
     hook: (raw) => ({
       payload: raw as HookPayload,
