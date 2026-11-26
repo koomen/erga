@@ -31,6 +31,7 @@ import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
 import { pageDoc, panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
 import { mountTurn, type TurnFacts } from "./turn-summary";
+import { mountVoice, type VoiceControl } from "./voice";
 
 interface AgentState {
   enabled: boolean;
@@ -188,19 +189,25 @@ function busyChanged() {
   turn?.busy(log.busy);
   if (!log.busy) void readUndo();
 }
-function showHint(text: string, sticky = false) {
+function showHint(text: string, sticky = false, error = false) {
   clearTimeout(hintTimer);
   delete hint.dataset.off;
+  delete hint.dataset.voice;
   hint.textContent = text;
   hint.hidden = false;
   hint.classList.toggle("sticky", sticky);
+  hint.classList.toggle("error", error);
   if (!sticky) hintTimer = window.setTimeout(hideHint, 2600);
 }
 function hideHint() {
   clearTimeout(hintTimer);
+  delete hint.dataset.off;
+  delete hint.dataset.voice;
   hint.hidden = true;
-  hint.classList.remove("sticky");
+  hint.classList.remove("sticky", "error");
 }
+let holdAfterStop = false;
+let voice: VoiceControl | null = null;
 /** Why a message can't go by this path now (send-gate.ts), or null if it can. */
 const gate = (path: SendPath, text: string) => canSend(path, { off, reading: att.reading, text, files: att.files.length });
 /** Why Send can't send right now, or null if it can. */
@@ -209,6 +216,7 @@ function renderBusy() {
   busyChanged();
   // At work: as the server says, or a message of this tab's on its way to it.
   const busy = log.busy || talk.sending();
+  const asking = log.items.some((it) => it.kind == "tool" && it.status == "asking");
   const stop = busy && !input.value.trim() && !att.files.length && !att.reading;
   const why = off ?? (stop ? null : blocker());
   send.textContent = stop ? "Stop" : "Send";
@@ -228,7 +236,10 @@ function renderBusy() {
       hint.dataset.off = off;
     }
     noKeyLinks();
-  } else if (hint.classList.contains("sticky")) hideHint();
+  } else if (hint.dataset.off) hideHint();
+  const holdQueue = holdAfterStop && !busy;
+  if (holdQueue) holdAfterStop = false;
+  voice?.sync({ busy, asking, off, readingFiles: att.reading, files: att.files.length, holdQueue });
 }
 
 /**
@@ -328,24 +339,30 @@ async function postMessage(id: string, body: object, withFiles: boolean) {
   }
   renderBusy();
 }
-function sendNow() {
-  const text = input.value.trim();
+function sendPrompt(text: string, clearInput = false): boolean {
   const files = att.files;
-  const why = blocker();
+  const why = gate("box", text);
   if (why || (!text && !files.length)) {
     // Off: the panel says why again (with its links, when a key is missing).
     if (off) {
       delete hint.dataset.off;
       renderBusy();
     } else showHint(why ?? "Type a message to send it.");
-    input.focus();
-    return;
+    return false;
   }
-  input.value = "";
-  store.set(DRAFT, null);
+  holdAfterStop = false;
+  if (clearInput) {
+    voice?.manualSend();
+    input.value = "";
+  }
+  store.set(DRAFT, clearInput ? null : input.value || null);
   att.clear();
-  sizeInput();
+  if (clearInput) sizeInput();
   ask(text, context(), files);
+  return true;
+}
+function sendNow() {
+  if (!sendPrompt(input.value.trim(), true)) input.focus();
 }
 
 // The box sizes itself with field-sizing: content, and its wrapper eases to the new height (as in the editor).
@@ -355,6 +372,28 @@ function sizeInput() {
   if (!fieldSizing) { input.style.height = "auto"; input.style.height = input.scrollHeight + 2 + "px"; }
   renderBusy();
 }
+// Persistent Voice Mode (client/agent/voice.ts): waveform button, Web Speech dictation, "send prompt" trigger, and queue.
+voice = mountVoice({
+  form: $("agent-form"),
+  field,
+  input,
+  sendBtn: send,
+  fab: $("agent-fab"),
+  send: (text) => {
+    sendPrompt(text);
+  },
+  onInput: (draft) => {
+    store.set(DRAFT, draft);
+    sizeInput();
+  },
+  hint: (text, sticky, error) => {
+    showHint(text, sticky, error);
+    if (sticky) hint.dataset.voice = "1";
+  },
+  clearVoiceHint: () => {
+    if (hint.dataset.voice) hideHint();
+  },
+});
 // (In the next frame, not in the observer's own call: the wrapper's height changes the log's, which has an observer too
 // (agent-chat.ts), and a size that an observer's call changes gives the window an error event, "ResizeObserver loop
 // completed with undelivered notifications", in every browser.)
@@ -369,14 +408,23 @@ new ResizeObserver(() =>
 const DRAFT = "erga:factory-agent-draft:v1"; // its old name, so a draft from before survives
 const draft = store.get(DRAFT);
 if (draft) { input.value = draft; sizeInput(); }
-input.addEventListener("input", () => { if (!hint.classList.contains("sticky")) hideHint(); sizeInput(); store.set(DRAFT, input.value || null); });
+input.addEventListener("input", () => {
+  if (voice?.writing) return;
+  if (!hint.classList.contains("sticky")) hideHint();
+  sizeInput();
+  store.set(DRAFT, input.value || null);
+  voice?.inputEdited(input.value);
+});
 input.addEventListener("keydown", (e) => { if (e.key == "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendNow(); } });
 $("agent-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (send.classList.contains("stop")) call("/api/agent/abort", { method: "POST" });
-  else sendNow();
+  if (send.classList.contains("stop")) {
+    holdAfterStop = true;
+    call("/api/agent/abort", { method: "POST" });
+  } else sendNow();
 });
 $("agent-reset").addEventListener("click", () => {
+  voice?.resetConversation();
   call("/api/agent/conversation", { method: "DELETE" }).then(
     (r) => {
       if (!r.ok) showHint("Couldn't start a new conversation.");
@@ -599,7 +647,7 @@ window.addEventListener("pagehide", () => {
 // its layout are kept anyway; this keeps the files attached to the next message.
 interface Kept { files?: Attachment[] }
 live((l) => {
-  l.hold(() => (att.reading ? "files are being read" : null));
+  l.hold(() => (voice?.armed ? "voice mode is on" : att.reading ? "files are being read" : null));
   l.keep("agent", (): Kept => ({ files: att.files }));
 });
 const back = restoredFor<Kept>("agent");

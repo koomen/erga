@@ -509,6 +509,51 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 /* Attachments: the paperclip, the chips above the box, the panel lit up while files are dragged over it, and the chips in a sent message. */
 .agent-attach { flex: none; height: 38px; width: 34px; color: var(--soft); }
 .agent-attach svg { width: 19px; height: 19px; }
+/* Voice Mode (client/agent/voice.ts): five-bar waveform toggle in Erga's dark gray / active blue button theme, and its queue strip. */
+.agent-voice { flex: none; height: 38px; width: 34px; border-radius: 10px; border: 1px solid transparent; color: var(--chrome-hover); }
+.agent-voice svg { width: 19px; height: 19px; stroke-width: 1.75; }
+.agent-voice[data-voice="listening"],
+.agent-voice[data-voice="transcribing"],
+.agent-voice[data-voice="starting"],
+.agent-voice[data-voice="restarting"] {
+  background: color-mix(in srgb, var(--caret) 13%, transparent);
+  color: var(--caret);
+  border-color: color-mix(in srgb, var(--caret) 40%, transparent);
+}
+.agent-voice[data-armed-busy="true"] { border-color: color-mix(in srgb, var(--caret) 28%, transparent); }
+.agent-voice[data-voice="error"] { background: color-mix(in srgb, #d0453a 12%, transparent); color: #d0453a; border-color: color-mix(in srgb, #d0453a 40%, transparent); }
+.agent-voice[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+.agent-voice .voice-wave .bar { transform-box: fill-box; transform-origin: center; }
+.agent-voice[data-voice="listening"]:not([data-armed-busy="true"]) .voice-wave .bar,
+.agent-voice[data-voice="transcribing"]:not([data-armed-busy="true"]) .voice-wave .bar { animation: agent-voice-wave 1.1s ease-in-out infinite; }
+.agent-voice[data-voice="transcribing"]:not([data-armed-busy="true"]) .voice-wave .bar { animation-duration: 0.72s; }
+.agent-voice .voice-wave .b1 { animation-delay: 0ms; }
+.agent-voice .voice-wave .b2 { animation-delay: 140ms; }
+.agent-voice .voice-wave .b3 { animation-delay: 280ms; }
+.agent-voice .voice-wave .b4 { animation-delay: 100ms; }
+.agent-voice .voice-wave .b5 { animation-delay: 220ms; }
+@keyframes agent-voice-wave { 0%, 100% { transform: scaleY(0.55); } 50% { transform: scaleY(1.08); } }
+.agent-field.voice-live textarea { border-color: color-mix(in srgb, var(--caret) 65%, var(--rule)); }
+.agent-field.voice-busy textarea { border-color: color-mix(in srgb, var(--caret) 45%, var(--rule)); }
+.agent-voice-queue {
+  margin: 0 10px 8px; padding: 6px 9px; border-radius: 10px; background: color-mix(in srgb, var(--caret) 12%, transparent);
+  color: var(--fg); font-size: 12.5px; line-height: 1.4; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.agent-voice-queue[hidden] { display: none; }
+.agent-voice-queue .queue-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-voice-queue .queue-acts { display: flex; gap: 5px; flex: none; }
+.agent-voice-queue button {
+  height: 24px; padding: 0 8px; border: 1px solid var(--panel-border); border-radius: 7px;
+  background: var(--bg); color: var(--fg); font: 600 11.5px var(--font-text); cursor: pointer;
+}
+.agent-hint.error { background: color-mix(in srgb, #d0453a 12%, transparent); color: #d0453a; }
+.agent-fab.voice-on::before {
+  content: ""; position: absolute; top: 3px; right: 3px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--caret); box-shadow: 0 0 0 2px var(--bg); animation: agent-pulse 0.85s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-voice .voice-wave .bar, .agent-fab.voice-on::before { animation: none !important; }
+}
 .agent-attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; border-top: 1px solid var(--rule); }
 .agent-attachments[hidden] { display: none; }
 .agent-attachments + .agent-compose { border-top: 0; }
