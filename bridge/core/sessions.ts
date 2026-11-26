@@ -72,24 +72,20 @@ export function recordSession(
   const cutoff = Date.now() - 7 * 86_400_000;
   for (const [k, v] of Object.entries(all)) if (v.updatedAt < cutoff) delete all[k];
   const p = sessionsFile(agent);
-  mkdirSync(dirname(p), { recursive: true });
+  mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
   const tmp = `${p}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n");
   renameSync(tmp, p);
   return entry;
 }
 
-/** Finds an agent's most recent session matching `conversationId` or `cwd`. */
+/** Finds an agent's most recent session matching `conversationId` or exact `cwd` (never falls back across repos). */
 export function findSession(agent: string, opts: { conversationId?: string; cwd?: string }): RecordedSession | null {
   const all = readSessions(agent);
-  if (opts.conversationId && all[opts.conversationId]) return all[opts.conversationId];
+  if (opts.conversationId) return all[opts.conversationId] ?? null;
   const list = Object.values(all).sort((a, b) => b.updatedAt - a.updatedAt);
-  if (opts.cwd) {
-    const exact = list.find((s) => s.cwd == opts.cwd);
-    if (exact) return exact;
-  }
-  const newest = list[0];
-  return newest && Date.now() - newest.updatedAt < 120_000 ? newest : null;
+  if (opts.cwd) return list.find((s) => s.cwd == opts.cwd) ?? null;
+  return null;
 }
 
 /** Translates one plugin hook call into real-time DriverEvents for the Erga browser panel. */

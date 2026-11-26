@@ -24,6 +24,7 @@ export class ErgaBridgeClient {
   private pinger: ReturnType<typeof setInterval> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private tries = 0;
+  private hasConnected = false;
   private closed = false;
   /** Active document bindings replayed automatically on every reconnect. */
   private bindings = new Map<string, { label?: string; sessionId?: string | null; cwd?: string | null }>();
@@ -95,13 +96,16 @@ export class ErgaBridgeClient {
 
       ws.addEventListener("open", () => {
         this.tries = 0;
+        const reconnect = this.hasConnected;
+        this.hasConnected = true;
         this.send({
           type: "hello",
           id: this.opts.id,
           agent: this.opts.agent,
           label: this.opts.label,
+          ...(reconnect ? { reconnect: true } : {}),
         });
-        for (const [doc, info] of this.bindings) this.send({ type: "bind", doc, ...info });
+        for (const [doc, info] of this.bindings) this.send({ type: "bind", doc, ...info, ...(reconnect ? { reconnect: true } : {}) });
         if (this.pinger) clearInterval(this.pinger);
         this.pinger = setInterval(() => {
           try {

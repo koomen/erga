@@ -50,6 +50,7 @@ export type FromBridge =
       cwd?: string | null;
       model?: string | null;
       models?: readonly BridgeModel[];
+      reconnect?: boolean;
     }
   | {
       type: "bind";
@@ -57,6 +58,7 @@ export type FromBridge =
       label?: string;
       sessionId?: string | null;
       cwd?: string | null;
+      reconnect?: boolean;
     }
   | {
       type: "unbind";
@@ -127,6 +129,7 @@ const Hello = Schema.Struct({
   cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
   model: Schema.optionalKey(Schema.NullOr(Schema.String)),
   models: Schema.optionalKey(Schema.Array(BridgeModel)),
+  reconnect: Schema.optionalKey(Schema.Boolean),
 });
 const Bind = Schema.Struct({
   type: Schema.Literal("bind"),
@@ -134,6 +137,7 @@ const Bind = Schema.Struct({
   label: Schema.optionalKey(Schema.String),
   sessionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  reconnect: Schema.optionalKey(Schema.Boolean),
 });
 const Unbind = Schema.Struct({
   type: Schema.Literal("unbind"),

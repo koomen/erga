@@ -77,12 +77,14 @@ export interface AgentHandle {
   readonly sessionId: string;
   readonly models: readonly ModelOption[];
   readonly model: string | null;
+  readonly closed?: boolean;
   prompt(input: { text: string; attachments?: readonly LocalAttachment[] }): Promise<void>;
   abort(): Promise<void>;
   /** Answers a pending permission/question request (`callId`), optionally with a specific choice id; returns false if none matches. */
   answer(callId: string, approve: boolean, choice?: string): Promise<boolean>;
   setModel?(modelId: string): Promise<boolean>;
   onEvent(listener: (ev: DriverEvent) => void): () => void;
+  onClose?(listener: () => void): () => void;
   close(): Promise<void>;
 }
 

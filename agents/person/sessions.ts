@@ -12,7 +12,7 @@ import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts
 import { restoredLog } from "../checkpoint.ts";
 import { agentTools, opsOf, toolsFor } from "../tools.ts";
 import { callDocument, type Caller } from "../../server/operations/index.ts";
-import type { Directory, Route as DocRoute } from "../../server/directory/index.ts";
+import { roleMay, type Directory, type Route as DocRoute } from "../../server/directory/index.ts";
 import { isModelChoice, type AgentSettings } from "../models.ts";
 import { emptyLog, reduce, type Log, type LogEvent } from "../../shared/agent-log.ts";
 import { checkAttachments, fileRefs } from "../../shared/attach.ts";
@@ -100,6 +100,7 @@ export interface BridgeInfo {
 }
 
 interface BridgeSocket {
+  id: string;
   send(text: string): void;
   close(): void;
   info: BridgeInfo;
@@ -283,6 +284,21 @@ export class PersonAgents {
     });
   }
 
+  private disconnectBridge(login: string, bridgeId: string, sock?: BridgeSocket): void {
+    const key = bridgeKey(login, bridgeId);
+    const current = this.bridgeSockets.get(key);
+    if (sock && current !== sock) return;
+    this.bridgeSockets.delete(key);
+    try {
+      current?.close();
+    } catch {
+      /* already closed */
+    }
+    const res = bridgeStep(this.bridgesOf(login), { on: "disconnect", id: bridgeId });
+    this.bridgeStates.set(login, res.state);
+    if (res.notify) this.notifyPanels(login, res.notify);
+  }
+
   private sendBridge(login: string, bridgeId: string, msg: ToBridge): boolean {
     const sock = this.bridgeSockets.get(bridgeKey(login, bridgeId));
     if (!sock) return false;
@@ -290,7 +306,7 @@ export class PersonAgents {
       sock.send(JSON.stringify(msg));
       return true;
     } catch {
-      this.bridgeSockets.delete(bridgeKey(login, bridgeId));
+      this.disconnectBridge(login, bridgeId, sock);
       return false;
     }
   }
@@ -548,7 +564,7 @@ export class PersonAgents {
    */
   joinBridge(info: BridgeInfo, send: (text: string) => void, close: () => void): { message(text: string): void; close(): void } {
     let bridgeId: string | null = null;
-    const sock: BridgeSocket = { send, close, info };
+    const sock: BridgeSocket = { id: "", send, close, info };
     if (info.origin) this.origins.set(info.login, info.origin);
     this.keepBeating();
 
@@ -563,7 +579,7 @@ export class PersonAgents {
           try {
             send(PONG);
           } catch {
-            /* closed */
+            if (bridgeId) this.disconnectBridge(info.login, bridgeId, sock);
           }
           return;
         }
@@ -574,16 +590,17 @@ export class PersonAgents {
           const doc = msg.doc ?? null;
           if (info.onlyDoc && doc && doc != info.onlyDoc) return;
           if (bridgeId && bridgeId != msg.id) {
-            this.bridgeSockets.delete(bridgeKey(info.login, bridgeId));
-            applyAndNotify(bridgeStep(this.bridgesOf(info.login), { on: "disconnect", id: bridgeId }));
+            this.disconnectBridge(info.login, bridgeId, sock);
           }
           bridgeId = msg.id;
+          sock.id = msg.id;
           const prev = this.bridgeSockets.get(bridgeKey(info.login, bridgeId));
           if (prev && prev !== sock) prev.close();
           this.bridgeSockets.set(bridgeKey(info.login, bridgeId), sock);
           applyAndNotify(
             bridgeStep(this.bridgesOf(info.login), {
               on: "connect",
+              ...(msg.reconnect ? { reconnect: true } : {}),
               bridge: {
                 id: msg.id,
                 agent: msg.agent,
@@ -610,6 +627,7 @@ export class PersonAgents {
               label: msg.label,
               sessionId: msg.sessionId,
               cwd: msg.cwd,
+              ...(msg.reconnect ? { reconnect: true } : {}),
             })
           );
           return;
@@ -638,30 +656,31 @@ export class PersonAgents {
         }
         if (msg.type == "turn_done" && msg.doc) {
           if (info.onlyDoc && msg.doc != info.onlyDoc) return;
-          void this.platform.directory.route(msg.doc).then((route) => {
-            if (!route) return;
-            const caller: Caller = {
-              dir: this.platform.directory,
-              who: { login: info.login, via: VIA.token(info.label) },
-              name: info.login,
-              origin: info.origin,
-              platform: this.platform,
-              auth: authOps(this.platform, info.origin),
-            };
-            void callDocument(caller, route, "/api/turn-done", { method: "POST" }).then(
-              (r) => r.body?.cancel(),
-              () => {}
-            );
-          });
+          const who = { login: info.login, ...(info.onlyDoc ? { onlyDoc: info.onlyDoc } : {}), via: VIA.token(info.label) };
+          void this.platform.directory
+            .openAs(who, "d", msg.doc)
+            .then((found) => {
+              if (!found || !roleMay(found.role, "edit")) return;
+              const caller: Caller = {
+                dir: this.platform.directory,
+                who,
+                name: info.login,
+                origin: info.origin,
+                platform: this.platform,
+                auth: authOps(this.platform, info.origin),
+              };
+              const route: DocRoute = { id: found.doc.id, owner: found.doc.owner, test: found.doc.test };
+              void callDocument(caller, route, "/api/turn-done", { method: "POST" }).then(
+                (r) => r.body?.cancel(),
+                () => {}
+              );
+            })
+            .catch(() => {});
         }
       },
       close: () => {
         if (!bridgeId) return;
-        const key = bridgeKey(info.login, bridgeId);
-        if (this.bridgeSockets.get(key) === sock) {
-          this.bridgeSockets.delete(key);
-          applyAndNotify(bridgeStep(this.bridgesOf(info.login), { on: "disconnect", id: bridgeId }));
-        }
+        this.disconnectBridge(info.login, bridgeId, sock);
       },
     };
   }
@@ -685,11 +704,11 @@ export class PersonAgents {
       Effect.sync(() => {
         for (const c of this.clients.keys()) this.send(c, ": beat\n\n");
         for (const to of this.sockets.keys()) this.sendTo(to, '{"type":"beat"}');
-        for (const [k, b] of this.bridgeSockets) {
+        for (const b of [...this.bridgeSockets.values()]) {
           try {
             b.send(PING);
           } catch {
-            this.bridgeSockets.delete(k);
+            this.disconnectBridge(b.info.login, b.id, b);
           }
         }
         return this.clients.size > 0 || this.sockets.size > 0 || this.bridgeSockets.size > 0;

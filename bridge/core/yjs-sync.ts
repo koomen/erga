@@ -64,7 +64,8 @@ export interface YjsSyncOptions {
 }
 
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
-const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+/** Same 16-char SHA-1 content digest Erga's room stores in `assets(doc)` (document/room/room.ts). */
+const assetDigest = (bytes: Uint8Array) => createHash("sha1").update(bytes).digest("hex").slice(0, 16);
 
 async function writeAtomic(file: string, content: string | Uint8Array): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
@@ -95,8 +96,12 @@ export class YjsDiskSync {
   private epoch: string | null = null;
   /** Last text we wrote to or read from disk for each text file (echo guard & rebase base). */
   private diskBase = new Map<string, string>();
-  /** Last sha-256 hash we synced for each binary asset. */
+  /** Last text synced from the remote room for each text file (used by reAdoptEpoch). */
+  private remoteBase = new Map<string, string>();
+  /** Last 16-char SHA-1 digest of the local bytes we synced for each binary asset. */
   private assetHashes = new Map<string, string>();
+  /** Last remote hash tag observed in `assets(doc)` for each binary asset. */
+  private remoteAssetHashes = new Map<string, string>();
   /** Relative paths queued by fs.watch or poll. */
   private dirty = new Set<string>();
   private rescan = false;
@@ -123,11 +128,11 @@ export class YjsDiskSync {
   /** Connects to Erga, writes initial files to `opts.dir`, and starts live bidirectional sync. */
   async start(): Promise<void> {
     mkdirSync(this.opts.dir, { recursive: true });
-    this.bindDoc(this.doc);
     try {
       await this.fetchStart();
       await this.syncRemoteToDisk();
       await this.snapshotStamps();
+      this.bindDoc(this.doc);
       this.startWatching();
       await this.connectSocket();
       this.setStatus("synced");
@@ -238,6 +243,8 @@ export class YjsDiskSync {
     const bytes = new Uint8Array(await res.arrayBuffer());
     const { hello, state } = decodeStart<{ epoch?: string }>(bytes);
     Y.applyUpdate(this.doc, state, this.REMOTE);
+    this.remoteBase.clear();
+    for (const [p, t] of files(this.doc)) this.remoteBase.set(p, t.toString());
     this.epoch = hello.epoch ?? roomInfo(this.doc).get("epoch") ?? null;
   }
 
@@ -337,25 +344,33 @@ export class YjsDiskSync {
     await this.enqueue(async () => {
       const oldTexts = new Map<string, string>();
       for (const [p, t] of files(this.doc)) oldTexts.set(p, t.toString());
-      const bases = new Map(this.diskBase);
+      const oldRemoteBase = new Map(this.remoteBase);
 
       this.awareness.destroy();
       this.doc.destroy();
       this.doc = new Y.Doc();
       this.awareness = new Awareness(this.doc);
       this.awareness.setLocalState(Object.keys(this.presenceState).length ? this.presenceState : null);
-      this.bindDoc(this.doc);
 
       await this.fetchStart();
       this.doc.transact(() => {
         for (const [path, ours] of oldTexts) {
-          const base = bases.get(path);
+          const base = oldRemoteBase.get(path);
           const current = files(this.doc).get(path);
-          if (base == null || ours == base || !current) continue;
+          if (!current) {
+            if (base == null || ours != base) {
+              const nt = new Y.Text();
+              nt.insert(0, ours);
+              files(this.doc).set(path, nt);
+            }
+            continue;
+          }
+          if (base == null || ours == base) continue;
           applyChanges(current, rebaseOnce(base, current.toString(), ours));
         }
       }, this.LOCAL);
       await this.syncRemoteToDisk();
+      this.bindDoc(this.doc);
       await this.connectSocket();
     });
   }
@@ -422,10 +437,12 @@ export class YjsDiskSync {
       const abs = join(this.opts.dir, rel);
       if (!yText) {
         this.diskBase.delete(rel);
+        this.remoteBase.delete(rel);
         await rm(abs, { force: true }).catch(() => {});
         continue;
       }
       const content = yText.toString();
+      this.remoteBase.set(rel, content);
       if (this.diskBase.get(rel) === content && existsSync(abs)) continue;
       this.diskBase.set(rel, content);
       await writeAtomic(abs, content);
@@ -442,10 +459,11 @@ export class YjsDiskSync {
       const abs = join(this.opts.dir, rel);
       if (!hash) {
         this.assetHashes.delete(rel);
+        this.remoteAssetHashes.delete(rel);
         if (!files(this.doc).has(rel)) await rm(abs, { force: true }).catch(() => {});
         continue;
       }
-      if (this.assetHashes.get(rel) == hash && existsSync(abs)) continue;
+      if ((this.remoteAssetHashes.get(rel) == hash || this.assetHashes.get(rel) == hash) && existsSync(abs)) continue;
       if (!token) continue;
       const encoded = rel.split("/").map(encodeURIComponent).join("/");
       const res = await fetch(`${this.opts.origin}/d/${this.opts.docId}/doc/${encoded}`, {
@@ -454,7 +472,8 @@ export class YjsDiskSync {
       }).catch(() => null);
       if (!res?.ok) continue;
       const bytes = new Uint8Array(await res.arrayBuffer());
-      this.assetHashes.set(rel, hash);
+      this.remoteAssetHashes.set(rel, hash);
+      this.assetHashes.set(rel, assetDigest(bytes));
       await writeAtomic(abs, bytes);
       await this.stampFile(rel);
     }
@@ -559,6 +578,7 @@ export class YjsDiskSync {
           this.doc.transact(() => files(this.doc).delete(rel), this.LOCAL);
         } else if (this.assetHashes.has(rel)) {
           this.assetHashes.delete(rel);
+          this.remoteAssetHashes.delete(rel);
           this.doc.transact(() => assets(this.doc).delete(rel), this.LOCAL);
         }
         continue;
@@ -570,6 +590,7 @@ export class YjsDiskSync {
         const prev = this.diskBase.get(rel);
         if (prev === text) continue;
         this.diskBase.set(rel, text);
+        let merged = text;
         this.doc.transact(() => {
           const existing = files(this.doc).get(rel);
           if (!existing) {
@@ -580,11 +601,17 @@ export class YjsDiskSync {
             const base = prev ?? existing.toString();
             const changes = rebase(base, existing.toString(), text);
             if (!changes.empty) applyChanges(existing, changes);
+            merged = existing.toString();
           }
         }, this.LOCAL);
+        if (merged !== text) {
+          this.diskBase.set(rel, merged);
+          await writeAtomic(abs, merged);
+          await this.stampFile(rel);
+        }
       } else {
         // Binary file (image, PDF, font): upload via PUT /d/<id>/api/files/<path>.
-        const hash = sha256(bytes);
+        const hash = assetDigest(bytes);
         if (this.assetHashes.get(rel) == hash) continue;
         const token = await this.opts.token().catch(() => null);
         if (!token) continue;
@@ -595,8 +622,10 @@ export class YjsDiskSync {
           body: new Uint8Array(bytes),
           signal: AbortSignal.timeout(30_000),
         }).catch(() => null);
-        if (res?.ok) this.assetHashes.set(rel, hash);
-        else this.log(`upload failed for ${rel}: ${res?.status ?? "network error"}`);
+        if (res?.ok) {
+          this.assetHashes.set(rel, hash);
+          this.remoteAssetHashes.set(rel, hash);
+        } else this.log(`upload failed for ${rel}: ${res?.status ?? "network error"}`);
       }
     }
   }

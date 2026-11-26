@@ -50,6 +50,8 @@ export function createAntigravityDriver(log?: (line: string) => void): AgentDriv
         args: ["acp"],
         addDirFlag: "--add-dir",
         autoApproveFlag: "--dangerously-skip-permissions",
+        sessionMeta: (opts) =>
+          opts.systemPromptAppend ? { antigravity: { systemPrompt: { append: opts.systemPromptAppend } } } : undefined,
       },
       log
     ),

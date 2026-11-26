@@ -16,7 +16,7 @@
 //   erga-agent stop    [--agent antigravity|claude-code]
 //   erga-agent hook    [--agent antigravity|claude-code]
 
-import { DEFAULT_ORIGIN, login, normalizeOrigin } from "./auth.ts";
+import { defaultOrigin, getAccessToken, login, normalizeOrigin } from "./auth.ts";
 import { daemonRpc, ErgaDaemon, parseDocumentRef } from "./daemon.ts";
 import { BRIDGE_SESSION_ENV, type AgentDriver } from "./driver.ts";
 import { runMcpServer } from "./mcp-server.ts";
@@ -126,7 +126,7 @@ async function ensureDaemonRunning(agent: string, server: string, opts: { autoAp
 async function main(): Promise<void> {
   const { cmd, pos, flags } = parseFlags(process.argv.slice(2));
   const agentName = typeof flags.agent == "string" ? flags.agent : "antigravity";
-  const server = typeof flags.server == "string" ? normalizeOrigin(flags.server) : DEFAULT_ORIGIN;
+  const server = typeof flags.server == "string" ? normalizeOrigin(flags.server) : defaultOrigin();
   const autoApprove = Boolean(flags["auto-approve"] || flags["dangerously-skip-permissions"] || process.env.ERGA_AUTO_APPROVE == "1");
   const mode = typeof flags.mode == "string" ? flags.mode : undefined;
   const log = (line: string) => console.error(line);
@@ -310,6 +310,10 @@ Usage:
       await new Promise(() => {});
     }
 
+    // Sign in in the foreground terminal first so the OAuth URL/code is never swallowed by a detached daemon.
+    if (!(await getAccessToken(targetOrigin, driver.label, { interactive: false }))) {
+      await login(targetOrigin, driver.label, { log });
+    }
     await ensureDaemonRunning(agentName, targetOrigin, { autoApprove, mode });
     if (docArg) {
       const res = await daemonRpc<{ ok?: boolean; error?: string; url?: string; dir?: string; files?: string[]; liveAttached?: boolean }>(

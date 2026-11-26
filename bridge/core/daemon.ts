@@ -14,7 +14,7 @@ import { ignored } from "../../document/model/pages.ts";
 import type { LogEvent } from "../../shared/agent-log.ts";
 import type { ToBridge } from "../../shared/bridge-protocol.ts";
 import {
-  DEFAULT_ORIGIN,
+  defaultOrigin,
   ergaFetch,
   ergaHome,
   getAccessToken,
@@ -56,6 +56,7 @@ interface ActiveThread {
   doc: string | null;
   handle: AgentHandle;
   unsub: () => void;
+  unsubClose: () => void;
   sessionId: string;
   /** A prompt from the browser runs in this thread now. */
   busy: boolean;
@@ -134,7 +135,7 @@ export function daemonSocketPath(agentId: string): string {
 }
 
 /** Parses an Erga document URL, `/<owner>/<slug>`, `/d/<id>`, or bare id. */
-export function parseDocumentRef(ref: string, fallbackOrigin = DEFAULT_ORIGIN): { origin: string; ref: string } {
+export function parseDocumentRef(ref: string, fallbackOrigin = defaultOrigin()): { origin: string; ref: string } {
   const trimmed = ref.trim();
   if (/^https?:\/\//i.test(trimmed)) {
     const u = new URL(trimmed);
@@ -147,8 +148,12 @@ export function parseDocumentRef(ref: string, fallbackOrigin = DEFAULT_ORIGIN): 
 export class ErgaDaemon {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private mounts = new Map<string, MountedDoc>();
+  private openingMounts = new Map<string, Promise<MountedDoc>>();
   private bridges = new Map<string, ErgaBridgeClient>();
+  private connectingOrigins = new Map<string, Promise<ErgaBridgeClient>>();
   private threads = new Map<string, ActiveThread>();
+  private openingThreads = new Map<string, Promise<ActiveThread>>();
+  private promptQueues = new Map<string, Promise<void>>();
   private pendingLogins = new Map<string, { pending: PendingDeviceAuth; abort: AbortController }>();
   /** In-memory live session handles keyed by conversationId (never written to disk or returned in /status). */
   private liveSessions = new Map<string, LiveAntigravitySession>();
@@ -190,9 +195,15 @@ export class ErgaDaemon {
     return `${normalizeOrigin(origin)}\n${doc ?? ""}`;
   }
 
-  /** Starts the local Unix-socket RPC server (owner-only 0600 permissions). */
+  /** Starts the local Unix-socket RPC server (owner-only 0700 home dir and 0600 socket permissions). */
   startSocket(socketPath = daemonSocketPath(this.driver.id)): void {
-    mkdirSync(ergaHome(), { recursive: true });
+    const home = ergaHome();
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    try {
+      chmodSync(home, 0o700);
+    } catch {
+      /* ignore on platforms without chmod */
+    }
     if (existsSync(socketPath)) rmSync(socketPath, { force: true });
     this.server = Bun.serve({
       unix: socketPath,
@@ -257,30 +268,36 @@ export class ErgaDaemon {
   /** Connects the global bridge to `origin` so every Erga doc sees this local agent. */
   async connectOrigin(rawOrigin: string, opts: { interactive?: boolean; label?: string } = {}): Promise<ErgaBridgeClient> {
     const origin = normalizeOrigin(rawOrigin);
-    let client = this.bridges.get(origin);
-    if (client) {
-      if (!client.connected) await client.start();
-      return client;
+    const existing = this.bridges.get(origin);
+    if (existing) {
+      if (!existing.connected) await existing.start();
+      return existing;
     }
-    const tok = await getAccessToken(origin, this.driver.label, { interactive: opts.interactive !== false, log: (s) => this.log(s) });
-    if (!tok) throw new Error(`Not signed in to ${origin}.`);
-    client = new ErgaBridgeClient({
-      origin,
-      id: this.bridgeId,
-      agent: this.driver.id,
-      label: opts.label || this.driver.label,
-      token: async () => {
-        const t = await getAccessToken(origin, this.driver.label, { interactive: false });
-        if (!t) throw new Error(`Token expired for ${origin}`);
-        return t;
-      },
-      onMessage: (msg) => void this.handleBridgeMessage(origin, msg),
-      onStatus: (up) => this.log(`bridge ${origin}: ${up ? "connected" : "disconnected"}`),
-      log: (s) => this.log(s),
-    });
-    this.bridges.set(origin, client);
-    await client.start();
-    return client;
+    const inflight = this.connectingOrigins.get(origin);
+    if (inflight) return inflight;
+    const opening = (async () => {
+      const tok = await getAccessToken(origin, this.driver.label, { interactive: opts.interactive !== false, log: (s) => this.log(s) });
+      if (!tok) throw new Error(`Not signed in to ${origin}.`);
+      const client = new ErgaBridgeClient({
+        origin,
+        id: this.bridgeId,
+        agent: this.driver.id,
+        label: opts.label || this.driver.label,
+        token: async () => {
+          const t = await getAccessToken(origin, this.driver.label, { interactive: false });
+          if (!t) throw new Error(`Token expired for ${origin}`);
+          return t;
+        },
+        onMessage: (msg) => void this.handleBridgeMessage(origin, msg),
+        onStatus: (up) => this.log(`bridge ${origin}: ${up ? "connected" : "disconnected"}`),
+        log: (s) => this.log(s),
+      });
+      await client.start();
+      this.bridges.set(origin, client);
+      return client;
+    })().finally(() => this.connectingOrigins.delete(origin));
+    this.connectingOrigins.set(origin, opening);
+    return opening;
   }
 
   /** Starts (or reuses) a background device-code login for `rawOrigin` and returns the verification prompt. */
@@ -322,9 +339,8 @@ export class ErgaDaemon {
 
   /** Opens (or creates) an Erga document, mounts its local Yjs room, and binds the browser agent pane. */
   async openDocument(req: OpenDocRequest): Promise<OpenDocSuccess | NeedsAuthResult> {
-    const parsed = req.document
-      ? parseDocumentRef(req.document, req.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN)
-      : { origin: normalizeOrigin(req.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN), ref: "" };
+    const fallbackOrigin = req.origin ?? this.opts.defaultOrigin ?? defaultOrigin();
+    const parsed = req.document ? parseDocumentRef(req.document, fallbackOrigin) : { origin: normalizeOrigin(fallbackOrigin), ref: "" };
     const origin = parsed.origin;
 
     // Register live session handle immediately (even if auth is pending) so it stays ready after approval.
@@ -410,45 +426,53 @@ export class ErgaDaemon {
     let mounted = this.mounts.get(key);
     let copiedFrom: string | null = null;
     if (!mounted) {
-      const dir = managedDocDir(ergaHome(), origin, owner, slug);
-      const sync = new YjsDiskSync({
-        origin,
-        docId,
-        dir,
-        token: async () => {
-          const t = await getAccessToken(origin, this.driver.label, { interactive: false });
-          if (!t) throw new Error(`Not signed in to ${origin}`);
-          return t;
-        },
-        onStatus: (s) => {
-          if (mounted) mounted.status = s;
-        },
-        log: (s) => this.log(s),
-      });
-      await sync.start();
+      let opening = this.openingMounts.get(key);
+      if (!opening) {
+        opening = (async () => {
+          const dir = managedDocDir(ergaHome(), origin, owner, slug);
+          let created: MountedDoc | null = null;
+          const sync = new YjsDiskSync({
+            origin,
+            docId,
+            dir,
+            token: async () => {
+              const t = await getAccessToken(origin, this.driver.label, { interactive: false });
+              if (!t) throw new Error(`Not signed in to ${origin}`);
+              return t;
+            },
+            onStatus: (s) => {
+              if (created) created.status = s;
+            },
+            log: (s) => this.log(s),
+          });
+          await sync.start();
 
-      mounted = {
-        origin,
-        docId,
-        owner,
-        slug,
-        title,
-        url: docUrl,
-        dir,
-        cwd: sessionCwd,
-        conversationId: effectiveConversationId,
-        transcriptPath: null,
-        status: "synced",
-        sync,
-        mirror: null,
-      };
-      this.ensureMirror(mounted, transcriptPath);
-      this.mounts.set(key, mounted);
-    } else {
-      if (effectiveConversationId) mounted.conversationId = effectiveConversationId;
-      if (sessionCwd) mounted.cwd = sessionCwd;
-      this.ensureMirror(mounted, transcriptPath);
+          created = {
+            origin,
+            docId,
+            owner,
+            slug,
+            title,
+            url: docUrl,
+            dir,
+            cwd: sessionCwd,
+            conversationId: effectiveConversationId,
+            transcriptPath: null,
+            status: "synced",
+            sync,
+            mirror: null,
+          };
+          this.ensureMirror(created, transcriptPath);
+          this.mounts.set(key, created);
+          return created;
+        })().finally(() => this.openingMounts.delete(key));
+        this.openingMounts.set(key, opening);
+      }
+      mounted = await opening;
     }
+    if (effectiveConversationId) mounted.conversationId = effectiveConversationId;
+    if (sessionCwd) mounted.cwd = sessionCwd;
+    this.ensureMirror(mounted, transcriptPath);
 
     if (req.fromDir) {
       const src = resolve(sessionCwd, req.fromDir);
@@ -512,6 +536,7 @@ export class ErgaDaemon {
     const thread = this.threads.get(tKey);
     if (thread) {
       thread.unsub();
+      thread.unsubClose();
       await thread.handle.close();
       this.threads.delete(tKey);
     }
@@ -553,6 +578,7 @@ export class ErgaDaemon {
     this.mounts.clear();
     for (const t of this.threads.values()) {
       t.unsub();
+      t.unsubClose();
       await t.handle.close().catch(() => {});
     }
     this.threads.clear();
@@ -728,6 +754,7 @@ export class ErgaDaemon {
       const existing = this.threads.get(tKey);
       if (existing) {
         existing.unsub();
+        existing.unsubClose();
         await existing.handle.close();
         this.threads.delete(tKey);
       }
@@ -756,70 +783,86 @@ export class ErgaDaemon {
     }
 
     if (msg.type == "prompt") {
-      try {
-        let mounted = mountedForDoc;
-        if (msg.doc && !mounted) {
-          await this.openDocument({ origin, document: `/d/${msg.doc}` });
-          mounted = this.mounts.get(this.mountKey(origin, msg.doc));
-        }
+      const prev = this.promptQueues.get(tKey) ?? Promise.resolve();
+      const next = prev.catch(() => {}).then(() => this.runBridgePrompt(origin, bridge, tKey, msg));
+      const tracked = next.finally(() => {
+        if (this.promptQueues.get(tKey) === tracked) this.promptQueues.delete(tKey);
+      });
+      this.promptQueues.set(tKey, tracked);
+      await tracked;
+    }
+  }
 
-        // Materialize browser attachments into a local ignored folder so any agent can inspect them by path.
-        const attachments: LocalAttachment[] = [];
-        if (msg.files?.length) {
-          const baseDir = mounted?.dir ?? this.defaultCwd;
-          const attDir = join(baseDir, ".erga-attachments");
-          await mkdir(attDir, { recursive: true });
-          for (const f of msg.files) {
-            const safeName = `${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
-            const abs = join(attDir, safeName);
-            if (f.kind == "image") await writeFile(abs, Buffer.from(f.data, "base64"));
-            else await writeFile(abs, f.data, "utf8");
-            attachments.push({ kind: f.kind, name: f.name, type: f.mimeType, data: f.data, path: abs });
-          }
-        }
-
-        const live = mounted?.conversationId ? this.liveSessions.get(mounted.conversationId) : undefined;
-        if (live && mounted) {
-          await this.promptLiveSession(origin, bridge, mounted, live, msg.text, msg.context, attachments);
-          return;
-        }
-
-        // Never spawn a competing ACP process against an already-running interactive Antigravity conversation.
-        if (this.driver.id == "antigravity" && mounted?.conversationId) {
-          bridge.send({
-            type: "event",
-            doc: msg.doc,
-            ev: {
-              t: "error",
-              text: "This document is linked to your Antigravity terminal session, but live prompt routing is not attached yet. Run `erga-agent attach` in that terminal (or click + New conversation to start a separate background session).",
-            },
-          });
-          bridge.send({ type: "event", doc: msg.doc, ev: { t: "busy", busy: false } });
-          return;
-        }
-
-        if (!this.threads.has(tKey)) {
-          bridge.send({ type: "event", doc: msg.doc, ev: { t: "thinking", delta: `Starting ${this.driver.label} session…` } });
-        }
-        const thread = await this.ensureThread(origin, msg.doc, mounted ?? null);
-        const promptText = this.formatPrompt(msg.text, msg.context, mounted ?? null);
-        mounted?.sync.setPresence({ busy: true, activity: "working" });
-        mounted?.mirror?.setSuppressed(true);
-        thread.busy = true;
-        try {
-          await thread.handle.prompt({ text: promptText, attachments });
-        } finally {
-          thread.busy = false;
-          await mounted?.sync.flush().catch(() => {});
-          mounted?.sync.setPresence({ busy: false, activity: null });
-          mounted?.mirror?.setSuppressed(false);
-        }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        this.log(`prompt failed on ${msg.doc ?? "general"}: ${message}`);
-        bridge.send({ type: "event", doc: msg.doc, ev: { t: "error", text: message } });
-        bridge.send({ type: "event", doc: msg.doc, ev: { t: "busy", busy: false } });
+  private async runBridgePrompt(
+    origin: string,
+    bridge: ErgaBridgeClient,
+    tKey: string,
+    msg: Extract<ToBridge, { type: "prompt" }>
+  ): Promise<void> {
+    try {
+      let mounted = msg.doc ? this.mounts.get(this.mountKey(origin, msg.doc)) : undefined;
+      if (msg.doc && !mounted) {
+        await this.openDocument({ origin, document: `/d/${msg.doc}` });
+        mounted = this.mounts.get(this.mountKey(origin, msg.doc));
       }
+
+      // Materialize browser attachments into a local ignored folder so any agent can inspect them by path.
+      const attachments: LocalAttachment[] = [];
+      if (msg.files?.length) {
+        const baseDir = mounted?.dir ?? this.defaultCwd;
+        const attDir = join(baseDir, ".erga-attachments");
+        await mkdir(attDir, { recursive: true });
+        for (const f of msg.files) {
+          const safeName = `${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
+          const abs = join(attDir, safeName);
+          if (f.kind == "image") await writeFile(abs, Buffer.from(f.data, "base64"));
+          else await writeFile(abs, f.data, "utf8");
+          attachments.push({ kind: f.kind, name: f.name, type: f.mimeType, data: f.data, path: abs });
+        }
+      }
+
+      const live = mounted?.conversationId ? this.liveSessions.get(mounted.conversationId) : undefined;
+      if (live && mounted) {
+        await this.promptLiveSession(origin, bridge, mounted, live, msg.text, msg.context, attachments);
+        return;
+      }
+
+      // Never spawn a competing ACP process against an already-running interactive Antigravity conversation.
+      if (this.driver.id == "antigravity" && mounted?.conversationId) {
+        bridge.send({
+          type: "event",
+          doc: msg.doc,
+          ev: {
+            t: "error",
+            text: "This document is linked to your Antigravity terminal session, but live prompt routing is not attached yet. Run `erga-agent attach` in that terminal (or click + New conversation to start a separate background session).",
+          },
+        });
+        bridge.send({ type: "event", doc: msg.doc, ev: { t: "busy", busy: false } });
+        return;
+      }
+
+      const existing = this.threads.get(tKey);
+      if (!existing || existing.handle.closed) {
+        bridge.send({ type: "event", doc: msg.doc, ev: { t: "thinking", delta: `Starting ${this.driver.label} session…` } });
+      }
+      const thread = await this.ensureThread(origin, msg.doc, mounted ?? null);
+      const promptText = this.formatPrompt(msg.text, msg.context, mounted ?? null);
+      mounted?.sync.setPresence({ busy: true, activity: "working" });
+      mounted?.mirror?.setSuppressed(true);
+      thread.busy = true;
+      try {
+        await thread.handle.prompt({ text: promptText, attachments });
+      } finally {
+        thread.busy = false;
+        await mounted?.sync.flush().catch(() => {});
+        mounted?.sync.setPresence({ busy: false, activity: null });
+        mounted?.mirror?.setSuppressed(false);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.log(`prompt failed on ${msg.doc ?? "general"}: ${message}`);
+      bridge.send({ type: "event", doc: msg.doc, ev: { t: "error", text: message } });
+      bridge.send({ type: "event", doc: msg.doc, ev: { t: "busy", busy: false } });
     }
   }
 
@@ -885,37 +928,64 @@ export class ErgaDaemon {
   private async ensureThread(origin: string, doc: string | null, mounted: MountedDoc | null): Promise<ActiveThread> {
     const tKey = this.threadKey(origin, doc);
     const existing = this.threads.get(tKey);
-    if (existing) return existing;
+    if (existing) {
+      if (!existing.handle.closed) return existing;
+      existing.unsub();
+      existing.unsubClose();
+      this.threads.delete(tKey);
+    }
+    const inflight = this.openingThreads.get(tKey);
+    if (inflight) return inflight;
 
-    const cwd = mounted?.cwd ?? mounted?.dir ?? this.defaultCwd;
-    const addDirs = mounted && mounted.dir != cwd ? [mounted.dir] : [];
-    const mcpServers = this.opts.mcpSpec ? [this.opts.mcpSpec(origin)] : [];
-    const systemPromptAppend = mounted
-      ? `You are connected to Erga document ${mounted.url} (id: ${mounted.docId}). Its files are live-synced via Yjs in local directory: ${mounted.dir}. Read and edit the document's files directly in that local directory with your native file tools; changes sync live to the user's browser. Use the Erga MCP tools (page, documents, read, edit, comments, versions) for page previews, live console logs, comments, publishing, or other Erga documents.`
-      : `You are connected to Erga (${origin}). Use the Erga MCP tools (documents, read, edit, page) to read or edit documents, or run erga-agent open <url> to mount one locally.`;
+    const opening = (async () => {
+      const cwd = mounted?.cwd ?? mounted?.dir ?? this.defaultCwd;
+      const addDirs = mounted && mounted.dir != cwd ? [mounted.dir] : [];
+      const mcpServers = this.opts.mcpSpec ? [this.opts.mcpSpec(origin)] : [];
+      const systemPromptAppend = mounted
+        ? `You are connected to Erga document ${mounted.url} (id: ${mounted.docId}). Its files are live-synced via Yjs in local directory: ${mounted.dir}. Read and edit the document's files directly in that local directory with your native file tools; changes sync live to the user's browser. Use the Erga MCP tools (page, documents, read, edit, comments, versions) for page previews, live console logs, comments, publishing, or other Erga documents.`
+        : `You are connected to Erga (${origin}). Use the Erga MCP tools (documents, read, edit, page) to read or edit documents, or run erga-agent open <url> to mount one locally.`;
 
-    const handle = await this.driver.open({
-      cwd,
-      addDirs,
-      mcpServers,
-      resumeId: null,
-      systemPromptAppend,
-      autoApprove: this.opts.autoApprove,
-      mode: this.opts.mode,
-    });
+      const handle = await this.driver.open({
+        cwd,
+        addDirs,
+        mcpServers,
+        resumeId: null,
+        systemPromptAppend,
+        autoApprove: this.opts.autoApprove,
+        mode: this.opts.mode,
+      });
 
-    const unsub = handle.onEvent((ev) => {
-      const bridge = this.bridges.get(origin);
-      if (!bridge) return;
-      if (ev.t == "tool" && mounted) {
-        mounted.sync.setPresence({ busy: true, activity: ev.status == "running" ? ev.name : "working" });
+      const unsub = handle.onEvent((ev) => {
+        const bridge = this.bridges.get(origin);
+        if (!bridge) return;
+        if (ev.t == "tool" && mounted) {
+          mounted.sync.setPresence({ busy: true, activity: ev.status == "running" ? ev.name : "working" });
+        }
+        this.forwardDriverEvent(bridge, doc, ev);
+      });
+
+      const unsubClose =
+        handle.onClose?.(() => {
+          const cur = this.threads.get(tKey);
+          if (cur?.handle === handle) {
+            cur.unsub();
+            cur.unsubClose();
+            this.threads.delete(tKey);
+          }
+        }) ?? (() => {});
+
+      const thread: ActiveThread = { origin, doc, handle, unsub, unsubClose, sessionId: handle.sessionId, busy: false };
+      if (handle.closed) {
+        unsub();
+        unsubClose();
+      } else {
+        this.threads.set(tKey, thread);
       }
-      this.forwardDriverEvent(bridge, doc, ev);
-    });
+      return thread;
+    })().finally(() => this.openingThreads.delete(tKey));
 
-    const thread: ActiveThread = { origin, doc, handle, unsub, sessionId: handle.sessionId, busy: false };
-    this.threads.set(tKey, thread);
-    return thread;
+    this.openingThreads.set(tKey, opening);
+    return opening;
   }
 
   private forwardDriverEvent(bridge: ErgaBridgeClient, doc: string | null, ev: DriverEvent): void {
@@ -955,7 +1025,7 @@ export class ErgaDaemon {
       }
       if (req.method == "POST" && url.pathname == "/auth/start") {
         const body = (await req.json()) as { origin?: string };
-        const origin = normalizeOrigin(body.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN);
+        const origin = normalizeOrigin(body.origin ?? this.opts.defaultOrigin ?? defaultOrigin());
         const tok = await getAccessToken(origin, this.driver.label, { interactive: false });
         if (tok) return json({ ok: true, signedIn: true, origin });
         return json(await this.startAuth(origin));
@@ -967,8 +1037,10 @@ export class ErgaDaemon {
       }
       if (req.method == "POST" && url.pathname == "/connect") {
         const body = (await req.json()) as { origin?: string; label?: string };
-        const origin = normalizeOrigin(body.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN);
-        await this.connectOrigin(origin, { interactive: true, label: body.label });
+        const origin = normalizeOrigin(body.origin ?? this.opts.defaultOrigin ?? defaultOrigin());
+        const tok = await getAccessToken(origin, this.driver.label, { interactive: false });
+        if (!tok) return json(await this.startAuth(origin));
+        await this.connectOrigin(origin, { interactive: false, label: body.label });
         return json({ ok: true, origin });
       }
       if (req.method == "POST" && url.pathname == "/hook") {

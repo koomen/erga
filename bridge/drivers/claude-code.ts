@@ -80,12 +80,12 @@ class ClaudeCodeHandle extends DriverEvents implements AgentHandle {
   /** The text of the block that streams now, as far as its deltas gave it. */
   private streamed = "";
   private aborted = false;
-  private closed = false;
+  private _closed = false;
 
   constructor(
     private readonly command: string,
     private readonly opts: OpenSessionOptions,
-    private readonly onClose: () => void,
+    private readonly onEnd: () => void,
     private readonly log?: (line: string) => void
   ) {
     super();
@@ -95,6 +95,10 @@ class ClaudeCodeHandle extends DriverEvents implements AgentHandle {
 
   get model(): string | null {
     return this._model;
+  }
+
+  get closed(): boolean {
+    return this._closed;
   }
 
   private start(): AgentProcess {
@@ -142,7 +146,7 @@ class ClaudeCodeHandle extends DriverEvents implements AgentHandle {
   }
 
   async prompt(input: { text: string; attachments?: readonly LocalAttachment[] }): Promise<void> {
-    if (this.closed) throw new Error("This Claude Code session is closed.");
+    if (this._closed) throw new Error("This Claude Code session is closed.");
     const content: Block[] = [];
     if (input.text) content.push({ type: "text", text: input.text });
     for (const att of input.attachments ?? []) {
@@ -233,12 +237,12 @@ class ClaudeCodeHandle extends DriverEvents implements AgentHandle {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
+    if (this._closed) return;
+    this._closed = true;
     this.aborted = true;
     this.endAsks("The session closed.");
     if (this.proc) endProcess(this.proc);
-    this.onClose();
+    this.onEnd();
   }
 
   private text(delta: string): void {

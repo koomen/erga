@@ -322,7 +322,8 @@ test("erga-agent hook records a Claude Code session and prints no decision; a se
     expect(await run("mine", {})).toBe("{}");
     expect(findSession("claude-code", { conversationId: "mine" })?.cwd).toBe("/repo/mine");
     expect(await run("bridge", { [BRIDGE_SESSION_ENV]: "bridge" })).toBe("{}");
-    expect(findSession("claude-code", { cwd: "/repo/bridge" })?.conversationId).toBe("mine");
+    expect(findSession("claude-code", { cwd: "/repo/bridge" })).toBeNull();
+    expect(findSession("claude-code", { conversationId: "bridge" })).toBeNull();
   } finally {
     if (before === undefined) delete process.env.ERGA_HOME;
     else process.env.ERGA_HOME = before;

@@ -237,9 +237,11 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
     }
   }
 
-  // Read newline-delimited JSON-RPC messages from stdin.
+  // Read newline-delimited JSON-RPC messages from stdin and dispatch requests concurrently
+  // so slow calls (e.g. remote page tools or erga_permission) never block ping or tools/list.
   const reader = Bun.stdin.stream().getReader();
   const dec = new TextDecoder();
+  const inFlight = new Set<Promise<void>>();
   let buf = "";
   while (true) {
     const { value, done } = await reader.read();
@@ -256,8 +258,18 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
         write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
         continue;
       }
-      const reply = await handleRequest(parsed);
-      if (reply) write(reply);
+      const task = handleRequest(parsed)
+        .then((reply) => {
+          if (reply) write(reply);
+        })
+        .catch((e) => {
+          if (parsed.id !== undefined && parsed.id !== null) {
+            write({ jsonrpc: "2.0", id: parsed.id, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } });
+          }
+        })
+        .finally(() => inFlight.delete(task));
+      inFlight.add(task);
     }
   }
+  if (inFlight.size) await Promise.allSettled(inFlight);
 }

@@ -48,6 +48,7 @@ export type BridgeEvent =
   | {
       readonly on: "connect";
       readonly bridge: Omit<ConnectedBridge, "docs" | "docLabels"> & { readonly doc?: string | null };
+      readonly reconnect?: boolean;
     }
   | {
       readonly on: "bind";
@@ -56,6 +57,7 @@ export type BridgeEvent =
       readonly label?: string;
       readonly sessionId?: string | null;
       readonly cwd?: string | null;
+      readonly reconnect?: boolean;
     }
   | { readonly on: "unbind"; readonly id: string; readonly doc: string }
   | { readonly on: "disconnect"; readonly id: string }
@@ -139,17 +141,21 @@ export function bridgeStep(state: BridgeState, ev: BridgeEvent): BridgeStepResul
         docLabels: prev?.docLabels ?? {},
       };
       const bridges = [...state.bridges.filter((b) => b.id != bridge.id), bridge];
-      // When a local agent connects, switch/default affected threads to it.
+      // When a local agent connects initially, switch/default affected threads to it; a transient reconnect keeps explicit picks.
       const picks = { ...state.picks };
       if (docs.length) {
-        for (const d of docs) picks[threadKey(d)] = localChoice(bridge.id);
+        if (!ev.reconnect) {
+          for (const d of docs) picks[threadKey(d)] = localChoice(bridge.id);
+        }
         return { state: { bridges, picks }, notify: docs, ok: true };
       }
-      // Global bridge: clear any prior "embedded" pins so open threads default to the newly connected agent.
-      for (const [k, v] of Object.entries(picks)) {
-        if (v == EMBEDDED_PICK) delete picks[k];
+      if (!ev.reconnect) {
+        // Global bridge: clear any prior "embedded" pins so open threads default to the newly connected agent.
+        for (const [k, v] of Object.entries(picks)) {
+          if (v == EMBEDDED_PICK) delete picks[k];
+        }
+        picks[""] = localChoice(bridge.id);
       }
-      picks[""] = localChoice(bridge.id);
       return { state: { bridges, picks }, notify: ["*"], ok: true };
     }
     case "bind": {
@@ -165,7 +171,7 @@ export function bridgeStep(state: BridgeState, ev: BridgeEvent): BridgeStepResul
         cwd: ev.cwd !== undefined ? ev.cwd : target.cwd,
       };
       const bridges = state.bridges.map((b) => (b.id == ev.id ? updated : b));
-      const picks = { ...state.picks, [threadKey(ev.doc)]: localChoice(ev.id) };
+      const picks = ev.reconnect ? state.picks : { ...state.picks, [threadKey(ev.doc)]: localChoice(ev.id) };
       return { state: { bridges, picks }, notify: [ev.doc], ok: true };
     }
     case "unbind": {

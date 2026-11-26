@@ -59,11 +59,15 @@ export function defaultOrigin(): string {
   return latest?.origin || "http://localhost:4400";
 }
 
-export const DEFAULT_ORIGIN = defaultOrigin();
-
 function writeAuth(data: AuthFile): void {
   const p = authPath();
-  mkdirSync(dirname(p), { recursive: true });
+  const dir = dirname(p);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dir, 0o700);
+  } catch {
+    /* best effort */
+  }
   const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
   try {
@@ -339,6 +343,10 @@ export async function login(
     fetch(req) {
       const u = new URL(req.url);
       if (u.pathname != "/callback") return new Response("Not found", { status: 404 });
+      const gotState = u.searchParams.get("state");
+      if (gotState != state) {
+        return new Response("<h1>Invalid callback</h1>", { status: 400, headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
       const err = u.searchParams.get("error");
       if (err) {
         rejectCode(new Error(`Authorization denied: ${err}`));
@@ -347,9 +355,7 @@ export async function login(
         });
       }
       const code = u.searchParams.get("code");
-      const gotState = u.searchParams.get("state");
-      if (!code || gotState != state) {
-        rejectCode(new Error("Invalid OAuth callback state."));
+      if (!code) {
         return new Response("<h1>Invalid callback</h1>", { status: 400, headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
       resolveCode(code);

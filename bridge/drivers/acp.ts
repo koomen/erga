@@ -29,6 +29,10 @@ export interface AcpDriverConfig {
   readonly autoApproveFlag?: string;
   /** Optional extra flags (e.g. "--sandbox"). */
   readonly extraArgs?: readonly string[];
+  /** Optional agent-specific `_meta` payload for `session/new` and `session/resume`. */
+  readonly sessionMeta?: (opts: OpenSessionOptions) => Record<string, unknown> | undefined;
+  /** Startup timeout in milliseconds for ACP `initialize` / `session/new` (default 30s). */
+  readonly initTimeoutMs?: number;
 }
 
 export interface AcpPermissionOption {
@@ -101,7 +105,8 @@ class AcpHandle extends DriverEvents implements AgentHandle {
   private pending = new Map<number, PendingRpc>();
   private permissions = new Map<string, PendingPermission>();
   private activeTools = new Map<string, { name: string; path: string | null }>();
-  private closed = false;
+  private closeListeners = new Set<() => void>();
+  private _closed = false;
   private _sessionId = "";
   private _models: ModelOption[] = [];
   private _model: string | null = null;
@@ -110,6 +115,7 @@ class AcpHandle extends DriverEvents implements AgentHandle {
 
   constructor(
     private readonly proc: AgentProcess,
+    private readonly cfg: Pick<AcpDriverConfig, "sessionMeta" | "initTimeoutMs"> = {},
     private readonly log?: (line: string) => void
   ) {
     super();
@@ -124,41 +130,93 @@ class AcpHandle extends DriverEvents implements AgentHandle {
   get model(): string | null {
     return this._model;
   }
-
-  private write(msg: object): void {
-    if (!this.closed) writeLine(this.proc, msg);
+  get closed(): boolean {
+    return this._closed;
   }
 
-  private request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  onClose(listener: () => void): () => void {
+    if (this._closed) {
+      listener();
+      return () => {};
+    }
+    this.closeListeners.add(listener);
+    return () => this.closeListeners.delete(listener);
+  }
+
+  private markClosed(): void {
+    if (this._closed) return;
+    this._closed = true;
+    for (const fn of [...this.closeListeners]) fn();
+    this.closeListeners.clear();
+  }
+
+  private failPermissions(detail: string): void {
+    for (const [callId, perm] of this.permissions) {
+      this.emit({ t: "tool", id: callId, name: perm.toolName, path: perm.path, status: "error", detail });
+    }
+    this.permissions.clear();
+  }
+
+  private write(msg: object): void {
+    if (!this._closed) writeLine(this.proc, msg);
+  }
+
+  private request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
+    if (this._closed) return Promise.reject(new Error("ACP session is closed"));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (r: unknown) => void, reject });
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const done = (fn: () => void) => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        fn();
+      };
+      if (timeoutMs != null) {
+        timer = setTimeout(() => {
+          if (!this.pending.delete(id)) return;
+          reject(new Error(`ACP ${method} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }
+      this.pending.set(id, {
+        resolve: (r) => done(() => resolve(r as T)),
+        reject: (err) => done(() => reject(err)),
+      });
       try {
         this.write({ jsonrpc: "2.0", id, method, ...(params !== undefined ? { params } : {}) });
       } catch (e) {
         this.pending.delete(id);
-        reject(e instanceof Error ? e : new Error(String(e)));
+        done(() => reject(e instanceof Error ? e : new Error(String(e))));
       }
     });
   }
 
   async init(opts: OpenSessionOptions): Promise<void> {
+    const initTimeout = this.cfg.initTimeoutMs ?? 30_000;
     readLines(
       this.proc,
       "acp",
       (msg) => this.handleMessage(msg),
       () => {
-        if (this.closed) return;
+        if (this._closed) return;
         for (const [, p] of this.pending) p.reject(new Error("ACP process exited unexpectedly"));
         this.pending.clear();
+        this.failPermissions("ACP process exited unexpectedly");
+        this.activeTools.clear();
+        this.markClosed();
       },
       this.log
     );
-    await this.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-      clientInfo: { name: "erga-bridge", version: "0.1.0" },
-    });
+    await this.request(
+      "initialize",
+      {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+        clientInfo: { name: "erga-bridge", version: "0.1.0" },
+      },
+      initTimeout
+    );
 
     const mcpServers = (opts.mcpServers ?? []).map((s) => ({
       name: s.name,
@@ -166,26 +224,34 @@ class AcpHandle extends DriverEvents implements AgentHandle {
       args: [...s.args],
       env: Object.entries(s.env ?? {}).map(([name, value]) => ({ name, value })),
     }));
-    const meta = opts.systemPromptAppend ? { antigravity: { systemPrompt: { append: opts.systemPromptAppend } } } : undefined;
+    const meta = this.cfg.sessionMeta?.(opts);
 
     let res: AcpSessionResult | null = null;
     if (opts.resumeId) {
-      res = await this.request<AcpSessionResult>("session/resume", {
-        sessionId: opts.resumeId,
-        cwd: opts.cwd,
-        mcpServers,
-        ...(meta ? { _meta: meta } : {}),
-      }).catch((e) => {
+      res = await this.request<AcpSessionResult>(
+        "session/resume",
+        {
+          sessionId: opts.resumeId,
+          cwd: opts.cwd,
+          mcpServers,
+          ...(meta ? { _meta: meta } : {}),
+        },
+        initTimeout
+      ).catch((e) => {
         this.log?.(`session/resume ${opts.resumeId} failed, starting fresh session: ${e instanceof Error ? e.message : e}`);
         return null;
       });
     }
     if (!res) {
-      res = await this.request<AcpSessionResult>("session/new", {
-        cwd: opts.cwd,
-        mcpServers,
-        ...(meta ? { _meta: meta } : {}),
-      });
+      res = await this.request<AcpSessionResult>(
+        "session/new",
+        {
+          cwd: opts.cwd,
+          mcpServers,
+          ...(meta ? { _meta: meta } : {}),
+        },
+        initTimeout
+      );
     }
 
     this._sessionId = res.sessionId;
@@ -230,7 +296,7 @@ class AcpHandle extends DriverEvents implements AgentHandle {
   }
 
   async abort(): Promise<void> {
-    if (this.closed || !this._sessionId) return;
+    if (this._closed || !this._sessionId) return;
     // Cancel any open permission prompts first so the agent loop unblocks immediately.
     for (const [callId, perm] of this.permissions) {
       this.write({ jsonrpc: "2.0", id: perm.rpcId, result: { outcome: { outcome: "cancelled" } } });
@@ -298,10 +364,12 @@ class AcpHandle extends DriverEvents implements AgentHandle {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
+    if (this._closed) return;
+    this.markClosed();
     for (const [, p] of this.pending) p.reject(new Error("ACP session closed"));
     this.pending.clear();
+    this.failPermissions("ACP session closed");
+    this.activeTools.clear();
     if (this._sessionId) {
       try {
         writeLine(this.proc, { jsonrpc: "2.0", id: this.nextId++, method: "session/close", params: { sessionId: this._sessionId } });
@@ -426,7 +494,11 @@ export function createAcpDriver(cfg: AcpDriverConfig, log?: (line: string) => vo
           if (dir && dir != opts.cwd) args.push(cfg.addDirFlag, dir);
         }
       }
-      const handle = new AcpHandle(spawnAgent([cfg.command, ...args], opts.cwd), log);
+      const handle = new AcpHandle(
+        spawnAgent([cfg.command, ...args], opts.cwd),
+        { sessionMeta: cfg.sessionMeta, initTimeoutMs: cfg.initTimeoutMs },
+        log
+      );
       try {
         await handle.init(opts);
         return handle;
