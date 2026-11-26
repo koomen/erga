@@ -15,6 +15,7 @@ import type { AgentDriver, AgentHandle, DriverEvent } from "../bridge/core/drive
 import { findSession, recordSession } from "../bridge/core/sessions.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";
 import { createAcpDriver } from "../bridge/drivers/acp.ts";
+import { checkLiveAntigravityState, type LiveAntigravitySession } from "../bridge/drivers/antigravity.ts";
 import { assets, files, roomInfo } from "../document/model/content.ts";
 import { digest } from "../document/room/room.ts";
 import type { Platform } from "../server/platform.ts";
@@ -722,5 +723,218 @@ test("findSession matches only the requested conversationId or exact cwd without
     if (prevHome === undefined) delete process.env.ERGA_HOME;
     else process.env.ERGA_HOME = prevHome;
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------- 15. Antigravity live-attach lifecycle
+
+test("checkLiveAntigravityState keeps slow or unimplemented LS checks non-fatal and detects dead sessions", async () => {
+  let mode: "running" | "idle" | "unimplemented" | "server_error" | "slow" | "unauthenticated" | "not_found" = "running";
+  const slowResolvers: (() => void)[] = [];
+  const ls = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch() {
+      if (mode == "running") return Response.json({ state: { runState: "RUN_STATE_RUNNING" } });
+      if (mode == "idle") return Response.json({ state: { runState: "RUN_STATE_IDLE" } });
+      if (mode == "unimplemented") return new Response("404 page not found\n", { status: 404 });
+      if (mode == "server_error") return new Response("unavailable", { status: 503 });
+      if (mode == "unauthenticated") return Response.json({ code: "unauthenticated" }, { status: 401 });
+      if (mode == "not_found") return Response.json({ code: "not_found" }, { status: 404 });
+      await new Promise<void>((r) => slowResolvers.push(r));
+      return Response.json({ state: { runState: "RUN_STATE_RUNNING" } });
+    },
+  });
+  const baseSession = (lsAddress = `127.0.0.1:${ls.port}`): LiveAntigravitySession => ({
+    conversationId: "conv-check-1",
+    lsAddress,
+    csrfToken: "csrf-1",
+    cwd: "/tmp",
+  });
+  try {
+    expect(await checkLiveAntigravityState(baseSession())).toBe("running");
+    expect(await checkLiveAntigravityState(baseSession(`http://127.0.0.1:${ls.port}`))).toBe("running");
+
+    mode = "idle";
+    expect(await checkLiveAntigravityState(baseSession())).toBe("idle");
+
+    mode = "unimplemented";
+    expect(await checkLiveAntigravityState(baseSession())).toBe("unknown");
+
+    mode = "server_error";
+    expect(await checkLiveAntigravityState(baseSession())).toBe("unknown");
+
+    mode = "slow";
+    expect(await checkLiveAntigravityState(baseSession(), { timeoutMs: 80 })).toBe("unknown");
+    for (const r of slowResolvers.splice(0)) r();
+
+    mode = "unauthenticated";
+    expect(await checkLiveAntigravityState(baseSession())).toBe("gone");
+
+    mode = "not_found";
+    expect(await checkLiveAntigravityState(baseSession())).toBe("gone");
+
+    const deadPort = ls.port;
+    await ls.stop(true);
+    expect(await checkLiveAntigravityState(baseSession(`127.0.0.1:${deadPort}`))).toBe("gone");
+  } finally {
+    for (const r of slowResolvers.splice(0)) r();
+    ls.stop(true);
+  }
+});
+
+test("ErgaDaemon keeps Antigravity liveAttached across multiple browser prompts when state check is unimplemented or slow", async () => {
+  const serverDoc = new Y.Doc();
+  serverDoc.transact(() => {
+    roomInfo(serverDoc).set("epoch", "ep-live-2");
+    const t = new Y.Text();
+    t.insert(0, "<h1>Live Multi</h1>");
+    files(serverDoc).set("index.html", t);
+  });
+
+  const fromBridge: Record<string, unknown>[] = [];
+  let panel: Bun.ServerWebSocket<{ path: string }> | null = null;
+  const server = Bun.serve<{ path: string }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req, srv) {
+      const url = new URL(req.url);
+      if (url.pathname == "/d/doc1/api/doc")
+        return Response.json({ docName: { id: "doc1", owner: "pete", slug: "multi", title: "Multi" } });
+      if (url.pathname == "/d/doc1/api/start") {
+        return new Response(new Uint8Array(encodeStart({ type: "hello", epoch: "ep-live-2" }, Y.encodeStateAsUpdate(serverDoc))));
+      }
+      if (url.pathname == "/d/doc1/api/room" || url.pathname == "/api/agent/bridge") {
+        if (srv.upgrade(req, { data: { path: url.pathname } })) return undefined;
+      }
+      return new Response("not found", { status: 404 });
+    },
+    websocket: {
+      open(ws) {
+        if (ws.data.path == "/api/agent/bridge") return void (panel = ws);
+        const e = new Encoder();
+        e.writeUint(0);
+        writeSyncStep1(e, serverDoc);
+        ws.send(e.toBytes());
+      },
+      message(ws, data) {
+        if (typeof data == "string") {
+          if (ws.data.path == "/api/agent/bridge" && data.startsWith("{")) fromBridge.push(JSON.parse(data) as Record<string, unknown>);
+          return;
+        }
+        const d = new Decoder(new Uint8Array(data));
+        if (d.readUint() != 0) return;
+        const reply = new Encoder();
+        reply.writeUint(0);
+        readSyncMessage(d, reply, serverDoc, ws);
+        if (reply.length > 1) ws.send(reply.toBytes());
+      },
+    },
+  });
+
+  // Mock LS that handles send-message fine, but does not implement GetConversation (404 plain text).
+  const ls = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => new Response("404 page not found\n", { status: 404 }),
+  });
+
+  const root = mkdtempSync(join(tmpdir(), "erga-live-multi-"));
+  const transcript = join(root, "transcript_full.jsonl");
+  writeFileSync(transcript, "");
+  const prevHome = process.env.ERGA_HOME;
+  const prevTok = process.env.ERGA_TOKEN;
+  process.env.ERGA_HOME = root;
+  delete process.env.ERGA_TOKEN;
+
+  const origin = `http://127.0.0.1:${server.port}`;
+  saveToken({ origin, clientName: "Antigravity", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
+
+  const sent: string[] = [];
+  let checks = 0;
+  let acpSpawned = 0;
+  const daemon = new ErgaDaemon(
+    {
+      id: "antigravity",
+      label: "Antigravity",
+      open: async () => {
+        acpSpawned++;
+        throw new Error("ACP must not be spawned");
+      },
+    },
+    {
+      livePollMs: 25,
+      liveMessenger: {
+        send: async (_session, text) => {
+          sent.push(text);
+        },
+        check: async (session) => {
+          checks++;
+          return checkLiveAntigravityState(session as LiveAntigravitySession);
+        },
+      },
+    }
+  );
+
+  try {
+    const opened = await daemon.openDocument({
+      origin,
+      document: "/d/doc1",
+      cwd: root,
+      conversationId: "conv-multi-1",
+      lsAddress: `127.0.0.1:${ls.port}`,
+      csrfToken: "csrf-live-secret",
+      transcriptPath: transcript,
+    });
+    expect(opened.ok && opened.liveAttached).toBe(true);
+    await until(() => panel != null);
+
+    // Prompt 1: safety poll fires while turn is active, then Stop hook finishes turn 1.
+    panel!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "First prompt", context: null }));
+    await until(() => sent.length == 1);
+    await until(() => checks >= 2);
+    await daemon.handleHook({ hookEventName: "Stop", conversationId: "conv-multi-1", cwd: root, fullyIdle: true });
+    await until(() => fromBridge.some((m) => m.type == "turn_done"));
+
+    // liveAttached must STILL be true after turn 1 so prompt 2 routes live!
+    expect(daemon.status().mounts[0].conversationId).toBe("conv-multi-1");
+    expect(daemon.status().mounts[0].liveAttached).toBe(true);
+
+    // Prompt 2: must succeed without "live prompt routing is not attached yet" error.
+    fromBridge.length = 0;
+    panel!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "Second prompt", context: null }));
+    await until(() => sent.length == 2);
+    expect(sent[1]).toContain("Second prompt");
+    expect(fromBridge.some((m) => m.type == "event" && (m.ev as { t?: string }).t == "error")).toBe(false);
+    await daemon.handleHook({ hookEventName: "Stop", conversationId: "conv-multi-1", cwd: root, fullyIdle: true });
+    await until(() => fromBridge.some((m) => m.type == "turn_done"));
+    expect(daemon.status().mounts[0].liveAttached).toBe(true);
+
+    // Prompt 3 while LS actually dies (ConnectionRefused) -> consecutive gone polls detach cleanly.
+    fromBridge.length = 0;
+    ls.stop(true);
+    panel!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "Third prompt", context: null }));
+    await until(() => sent.length == 3);
+    await until(() => fromBridge.some((m) => m.type == "turn_done"));
+    expect(daemon.status().mounts[0].liveAttached).toBe(false);
+
+    // A subsequent hook carrying live credentials restores liveAttached in RAM only (never persisted or exposed).
+    await daemon.handleHook(
+      { hookEventName: "PreInvocation", conversationId: "conv-multi-1", cwd: root, transcriptPath: transcript },
+      { lsAddress: "127.0.0.1:59999", csrfToken: "csrf-refreshed-secret" }
+    );
+    expect(daemon.status().mounts[0].liveAttached).toBe(true);
+    expect(JSON.stringify(daemon.status())).not.toContain("csrf-refreshed-secret");
+    expect(readFileSync(join(root, "antigravity-sessions.json"), "utf8")).not.toContain("csrf-refreshed-secret");
+    expect(acpSpawned).toBe(0);
+  } finally {
+    await daemon.stop();
+    if (prevHome === undefined) delete process.env.ERGA_HOME;
+    else process.env.ERGA_HOME = prevHome;
+    if (prevTok !== undefined) process.env.ERGA_TOKEN = prevTok;
+    ls.stop(true);
+    server.stop(true);
+    serverDoc.destroy();
+    rmSync(root, { recursive: true, force: true });
   }
 });

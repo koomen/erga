@@ -72,8 +72,10 @@ interface ActiveLiveTurn {
   origin: string;
   doc: string;
   poll: ReturnType<typeof setInterval> | null;
+  checking: boolean;
   sawRunning: boolean;
   idlePolls: number;
+  gonePolls: number;
 }
 
 /** A permission that a live session asks in its terminal: the panel's card answers it too. */
@@ -184,6 +186,7 @@ export class ErgaDaemon {
       mode?: string | null;
       mcpSpec?: (origin: string) => McpServerSpec;
       liveMessenger?: LiveMessenger;
+      livePollMs?: number;
       log?: (line: string) => void;
     } = {}
   ) {
@@ -629,12 +632,36 @@ export class ErgaDaemon {
   }
 
   /** Handles one plugin hook callback of the agent's own session (`PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`). */
-  async handleHook(payload: HookPayload): Promise<Record<string, unknown>> {
+  async handleHook(
+    payload: HookPayload,
+    liveCredentials?: { lsAddress: string; csrfToken: string; appDataDir?: string }
+  ): Promise<Record<string, unknown>> {
     const evName = payload.hookEventName;
     const defaultReply = evName == "PreToolUse" ? { decision: "allow" } : {};
     recordSession(this.driver.id, payload);
     const cid = payload.conversationId;
     if (!cid) return defaultReply;
+
+    if (this.driver.id == "antigravity" && liveCredentials?.lsAddress && liveCredentials?.csrfToken) {
+      const prev = this.liveSessions.get(cid);
+      const cwd = payload.cwd ?? prev?.cwd ?? this.defaultCwd;
+      const transcriptPath = payload.transcriptPath ?? prev?.transcriptPath ?? defaultTranscriptPath(cid, liveCredentials.appDataDir);
+      const live: LiveAntigravitySession = {
+        conversationId: cid,
+        lsAddress: liveCredentials.lsAddress,
+        csrfToken: liveCredentials.csrfToken,
+        cwd,
+        transcriptPath,
+      };
+      this.liveSessions.set(cid, live);
+    }
+
+    const activeTurn = this.activeLiveTurns.get(cid);
+    if (activeTurn && evName != "Stop") {
+      activeTurn.sawRunning = true;
+      activeTurn.idlePolls = 0;
+      activeTurn.gonePolls = 0;
+    }
 
     this.adopt(cid, payload.pid);
     // A turn that the user starts in the terminal is not the turn that the panel stopped.
@@ -945,25 +972,40 @@ export class ErgaDaemon {
 
     // Track the live turn and add a safety poll in case the Stop hook does not fire.
     this.clearLiveTurn(live.conversationId);
-    const turn: ActiveLiveTurn = { origin, doc: mounted.docId, poll: null, sawRunning: false, idlePolls: 0 };
+    const turn: ActiveLiveTurn = { origin, doc: mounted.docId, poll: null, checking: false, sawRunning: false, idlePolls: 0, gonePolls: 0 };
     turn.poll = setInterval(() => {
-      void messenger.check(live).then((st) => {
-        if (!this.activeLiveTurns.has(live.conversationId)) return;
-        mounted.mirror?.poke();
-        if (st == "running") {
-          turn.sawRunning = true;
-          turn.idlePolls = 0;
-        } else if (st == "gone") {
-          this.liveSessions.delete(live.conversationId);
-          void this.finishLiveTurn(live.conversationId, mounted);
-        } else {
-          turn.idlePolls++;
-          if (turn.sawRunning || turn.idlePolls >= 3) {
-            void this.finishLiveTurn(live.conversationId, mounted);
+      if (turn.checking || this.activeLiveTurns.get(live.conversationId) !== turn) return;
+      turn.checking = true;
+      void messenger
+        .check(live)
+        .catch(() => "unknown" as const)
+        .then((st) => {
+          if (this.activeLiveTurns.get(live.conversationId) !== turn) return;
+          mounted.mirror?.poke();
+          if (st == "running") {
+            turn.sawRunning = true;
+            turn.idlePolls = 0;
+            turn.gonePolls = 0;
+          } else if (st == "unknown") {
+            turn.gonePolls = 0;
+          } else if (st == "gone") {
+            turn.gonePolls++;
+            if (turn.gonePolls >= 2) {
+              this.liveSessions.delete(live.conversationId);
+              void this.finishLiveTurn(live.conversationId, mounted);
+            }
+          } else {
+            turn.gonePolls = 0;
+            turn.idlePolls++;
+            if (turn.sawRunning || turn.idlePolls >= 3) {
+              void this.finishLiveTurn(live.conversationId, mounted);
+            }
           }
-        }
-      });
-    }, 2_000);
+        })
+        .finally(() => {
+          turn.checking = false;
+        });
+    }, this.opts.livePollMs ?? 2_000);
     this.activeLiveTurns.set(live.conversationId, turn);
     return true;
   }
@@ -1087,8 +1129,12 @@ export class ErgaDaemon {
         return json({ ok: true, origin });
       }
       if (req.method == "POST" && url.pathname == "/hook") {
-        const body = (await req.json()) as HookPayload;
-        const hookResponse = await this.handleHook(body);
+        const { lsAddress, csrfToken, appDataDir, ...body } = (await req.json()) as HookPayload & {
+          lsAddress?: string;
+          csrfToken?: string;
+          appDataDir?: string;
+        };
+        const hookResponse = await this.handleHook(body, lsAddress && csrfToken ? { lsAddress, csrfToken, appDataDir } : undefined);
         return json({ ok: true, hookResponse });
       }
       if (req.method == "POST" && url.pathname == "/wait") {

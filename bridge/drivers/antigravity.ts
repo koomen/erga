@@ -9,7 +9,7 @@
 
 import { existsSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
-import { extractToolPath, type AgentDriver, type DriverEvent, type LiveSession } from "../core/driver.ts";
+import { extractToolPath, type AgentDriver, type DriverEvent, type LiveSession, type LiveState } from "../core/driver.ts";
 import type { HookPayload } from "../core/sessions.ts";
 import { createAcpDriver } from "./acp.ts";
 
@@ -22,7 +22,7 @@ export interface LiveAntigravitySession extends LiveSession {
 /** Interface for talking to a live Antigravity process (injectable in unit tests). */
 export interface LiveAntigravityMessenger {
   send(session: LiveAntigravitySession, text: string, opts?: { title?: string }): Promise<void>;
-  check(session: LiveAntigravitySession): Promise<"running" | "idle" | "gone">;
+  check(session: LiveAntigravitySession): Promise<LiveState>;
 }
 
 /** Default transcript path for an Antigravity conversation when hooks have not reported one yet. */
@@ -73,7 +73,7 @@ export async function sendLiveAntigravityMessage(
   text: string,
   opts: { title?: string; bin?: string } = {}
 ): Promise<void> {
-  const bin = opts.bin || process.env.AGY_BIN || "agy";
+  const bin = opts.bin || process.env.AGY_BIN || process.env.ANTIGRAVITY_AGENTAPI_EXE || "agy";
   const title = opts.title || "Erga browser panel";
   const proc = Bun.spawn([bin, "agentapi", "send-message", "--title", title, session.conversationId, text], {
     cwd: session.cwd,
@@ -99,27 +99,44 @@ export async function sendLiveAntigravityMessage(
   }
 }
 
-/** Checks whether a live Antigravity CLI session is still running, idle, or gone via ConversationService. */
-export async function checkLiveAntigravityState(session: LiveAntigravitySession): Promise<"running" | "idle" | "gone"> {
+function lsBaseUrl(lsAddress: string): string {
+  const trimmed = lsAddress.trim().replace(/\/+$/, "");
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
+/** Checks whether a live Antigravity CLI session is running, idle, unknown (slow/unsupported), or gone. */
+export async function checkLiveAntigravityState(session: LiveAntigravitySession, opts: { timeoutMs?: number } = {}): Promise<LiveState> {
   try {
-    const res = await fetch(`http://${session.lsAddress}/product.v1.ConversationService/GetConversation`, {
+    const res = await fetch(`${lsBaseUrl(session.lsAddress)}/product.v1.ConversationService/GetConversation`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Connect-Protocol-Version": "1",
         "x-antigravity-csrf-token": session.csrfToken,
+        Connection: "close",
       },
       body: JSON.stringify({ conversationId: session.conversationId }),
-      signal: AbortSignal.timeout(3_000),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 8_000),
     });
-    if (!res.ok) return "gone";
+    if (res.status == 401 || res.status == 403) return "gone";
+    if (!res.ok) {
+      // Plain 404 / 501 (older LS without GetConversation) and 5xx are non-fatal; only explicit not_found means gone.
+      if (res.status == 404) {
+        const err = (await res.json().catch(() => null)) as { code?: string } | null;
+        if (err?.code == "not_found") return "gone";
+      }
+      return "unknown";
+    }
     const data = (await res.json()) as { state?: { runState?: string } };
     const st = data.state?.runState;
     if (st == "RUN_STATE_RUNNING") return "running";
     if (st == "RUN_STATE_IDLE" || st == "RUN_STATE_CANCELLING") return "idle";
     return "idle";
-  } catch {
-    return "gone";
+  } catch (e) {
+    const err = e as { code?: unknown; cause?: { code?: unknown } } | null;
+    const code = err?.code ?? err?.cause?.code;
+    if (code == "ConnectionRefused" || code == "ECONNREFUSED" || code == "FailedToOpenSocket") return "gone";
+    return "unknown";
   }
 }
 

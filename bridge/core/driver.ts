@@ -97,10 +97,13 @@ export interface LiveSession {
   readonly pid?: number;
 }
 
+/** Outcome of probing a live terminal session: `unknown` means slow/unsupported check, never dead. */
+export type LiveState = "running" | "idle" | "unknown" | "gone";
+
 /** How a prompt from the browser panel reaches a live session. */
 export interface LiveMessenger {
   send(session: LiveSession, text: string, opts?: { title?: string }): Promise<void>;
-  check(session: LiveSession): Promise<"running" | "idle" | "gone">;
+  check(session: LiveSession): Promise<LiveState>;
 }
 
 /** What a hook that waits for the panel's next prompt gets: the prompt, or to ask again (pending), or to end (neither). */

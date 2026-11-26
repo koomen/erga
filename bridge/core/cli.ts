@@ -163,9 +163,19 @@ Usage:
         recordSession(agentName, call.payload);
         if (call.payload.conversationId) {
           type Answer = { ok?: boolean; hookResponse?: Record<string, unknown> } | null;
-          let res: Answer = await daemonRpc(agentName, "/hook", call.payload, 2_000);
+          const liveEnv = agentName == "antigravity" ? liveAntigravityEnv() : {};
+          const hookBody =
+            liveEnv.lsAddress && liveEnv.csrfToken
+              ? {
+                  ...call.payload,
+                  lsAddress: liveEnv.lsAddress,
+                  csrfToken: liveEnv.csrfToken,
+                  ...(liveEnv.appDataDir ? { appDataDir: liveEnv.appDataDir } : {}),
+                }
+              : call.payload;
+          let res: Answer = await daemonRpc(agentName, "/hook", hookBody, 2_000);
           // The user may take long to answer a permission on the panel's card: the hook asks again while no answer came.
-          while (res?.hookResponse?.pending) res = await daemonRpc(agentName, "/hook", { ...call.payload, again: true }, 10_000);
+          while (res?.hookResponse?.pending) res = await daemonRpc(agentName, "/hook", { ...hookBody, again: true }, 10_000);
           if (res?.hookResponse && typeof res.hookResponse == "object") out = call.reply(res.hookResponse);
         }
       }
