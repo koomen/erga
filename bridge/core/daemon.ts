@@ -26,14 +26,11 @@ import {
 import { ErgaBridgeClient } from "./bridge-client.ts";
 import type { AgentDriver, AgentHandle, DriverEvent, LocalAttachment, McpServerSpec } from "./driver.ts";
 import { managedDocDir, YjsDiskSync, type SyncStatus } from "./yjs-sync.ts";
+import { findSession, hookEvents, recordSession, type HookPayload } from "./sessions.ts";
 import {
-  antigravityHookEvents,
   AntigravityTranscriptMirror,
   defaultLiveAntigravityMessenger,
   defaultTranscriptPath,
-  findAntigravitySession,
-  recordAntigravitySession,
-  type AntigravityHookPayload,
   type LiveAntigravityMessenger,
   type LiveAntigravitySession,
 } from "../drivers/antigravity.ts";
@@ -60,6 +57,8 @@ interface ActiveThread {
   handle: AgentHandle;
   unsub: () => void;
   sessionId: string;
+  /** A prompt from the browser runs in this thread now. */
+  busy: boolean;
 }
 
 interface ActiveLiveTurn {
@@ -211,7 +210,7 @@ export class ErgaDaemon {
   /** Registers an already-running Antigravity CLI session in daemon RAM and attaches matching mounted docs. */
   attachLiveSession(req: AttachLiveRequest): { ok: true; conversationId: string; liveAttached: true; attachedDocs: string[] } {
     const cwd = req.cwd || this.defaultCwd;
-    const discovered = findAntigravitySession({ conversationId: req.conversationId, cwd });
+    const discovered = findSession(this.driver.id, { conversationId: req.conversationId, cwd });
     const transcriptPath = req.transcriptPath ?? discovered?.transcriptPath ?? defaultTranscriptPath(req.conversationId, req.appDataDir);
     const live: LiveAntigravitySession = {
       conversationId: req.conversationId,
@@ -221,7 +220,7 @@ export class ErgaDaemon {
       transcriptPath,
     };
     this.liveSessions.set(req.conversationId, live);
-    recordAntigravitySession({ conversationId: req.conversationId, cwd, ...(transcriptPath ? { transcriptPath } : {}) });
+    recordSession(this.driver.id, { conversationId: req.conversationId, cwd, ...(transcriptPath ? { transcriptPath } : {}) });
 
     const attachedDocs: string[] = [];
     for (const m of this.mounts.values()) {
@@ -394,8 +393,7 @@ export class ErgaDaemon {
       docUrl = `${origin}/${owner}/${slug}`;
     }
 
-    const discovered =
-      this.driver.id == "antigravity" ? findAntigravitySession({ conversationId: req.conversationId, cwd: req.cwd }) : null;
+    const discovered = findSession(this.driver.id, { conversationId: req.conversationId, cwd: req.cwd });
     const conversationId = req.conversationId ?? discovered?.conversationId ?? null;
     const liveFromMap = conversationId
       ? this.liveSessions.get(conversationId)
@@ -637,11 +635,11 @@ export class ErgaDaemon {
     }
   }
 
-  /** Handles one Antigravity plugin hook callback (`PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`). */
-  async handleHook(payload: AntigravityHookPayload): Promise<Record<string, unknown>> {
+  /** Handles one plugin hook callback of the agent's own session (`PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`). */
+  async handleHook(payload: HookPayload): Promise<Record<string, unknown>> {
     const evName = payload.hookEventName;
     const defaultReply = evName == "PreToolUse" ? { decision: "allow" } : {};
-    recordAntigravitySession(payload);
+    recordSession(this.driver.id, payload);
     const cid = payload.conversationId;
     if (!cid) return defaultReply;
 
@@ -659,11 +657,11 @@ export class ErgaDaemon {
     const matching = [...this.mounts.values()].filter((m) => m.conversationId == cid);
     if (!matching.length) return defaultReply;
 
-    const translated = antigravityHookEvents(payload);
+    const translated = hookEvents(payload);
     for (const m of matching) {
       if (payload.transcriptPath) this.ensureMirror(m, payload.transcriptPath);
-      // Do not duplicate events when a standalone ACP turn is actively streaming for this doc.
-      if (this.threads.has(this.threadKey(m.origin, m.docId))) continue;
+      // Do not mix events into a turn that the agent's own subprocess streams for this doc now.
+      if (this.threads.get(this.threadKey(m.origin, m.docId))?.busy) continue;
       const bridge = this.bridges.get(m.origin);
       if (!bridge) continue;
 
@@ -672,6 +670,8 @@ export class ErgaDaemon {
         if (payload.invocationNum === 0) {
           m.sync.setPresence({ busy: true, activity: "thinking" });
           if (!this.activeLiveTurns.has(cid)) {
+            // A turn that started in the terminal: the panel shows what the user typed there.
+            for (const ev of translated) this.forwardDriverEvent(bridge, m.docId, ev);
             bridge.send({ type: "event", doc: m.docId, ev: { t: "busy", busy: true } });
           }
         }
@@ -799,9 +799,11 @@ export class ErgaDaemon {
         const promptText = this.formatPrompt(msg.text, msg.context, mounted ?? null);
         mounted?.sync.setPresence({ busy: true, activity: "working" });
         mounted?.mirror?.setSuppressed(true);
+        thread.busy = true;
         try {
           await thread.handle.prompt({ text: promptText, attachments });
         } finally {
+          thread.busy = false;
           await mounted?.sync.flush().catch(() => {});
           mounted?.sync.setPresence({ busy: false, activity: null });
           mounted?.mirror?.setSuppressed(false);
@@ -905,7 +907,7 @@ export class ErgaDaemon {
       this.forwardDriverEvent(bridge, doc, ev);
     });
 
-    const thread: ActiveThread = { origin, doc, handle, unsub, sessionId: handle.sessionId };
+    const thread: ActiveThread = { origin, doc, handle, unsub, sessionId: handle.sessionId, busy: false };
     this.threads.set(tKey, thread);
     return thread;
   }
@@ -964,9 +966,18 @@ export class ErgaDaemon {
         return json({ ok: true, origin });
       }
       if (req.method == "POST" && url.pathname == "/hook") {
-        const body = (await req.json()) as AntigravityHookPayload;
+        const body = (await req.json()) as HookPayload;
         const hookResponse = await this.handleHook(body);
         return json({ ok: true, hookResponse });
+      }
+      if (req.method == "POST" && url.pathname == "/permission") {
+        // A session that this daemon's driver started asks the user about one tool call (mcp-server.ts).
+        if (!this.driver.permission) return json({ ok: false, error: `${this.driver.label} asks no permission here.` }, 404);
+        const body = (await req.json()) as { session: string; args: Record<string, unknown> };
+        // The user may take long to answer, and this server ends a quiet request: the tool asks again while it is pending.
+        const wait = new Promise<null>((r) => setTimeout(() => r(null), 5_000));
+        const answer = await Promise.race([this.driver.permission(body), wait]);
+        return json(answer ? { ok: true, answer } : { ok: true, pending: true });
       }
       if (req.method == "POST" && url.pathname == "/stop") {
         setTimeout(() => void this.stop().then(() => process.exit(0)), 20);

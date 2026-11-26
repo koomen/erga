@@ -1,0 +1,14 @@
+{
+  "name": "erga",
+  "description": "Erga's plugin for Claude Code.",
+  "owner": {
+    "name": "Erga"
+  },
+  "plugins": [
+    {
+      "name": "erga",
+      "source": "./claude-code",
+      "description": "Edit Erga documents from Claude Code."
+    }
+  ]
+}

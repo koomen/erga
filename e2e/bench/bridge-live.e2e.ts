@@ -1,15 +1,15 @@
-// A live check of the local Antigravity bridge (bridge/core/cli.ts) against the real `agy` CLI:
-// it mounts a document's Yjs room into a temp folder, connects /api/agent/bridge on a bare server
-// with no API keys, enables the browser panel under "Connected agents", sends a prompt from the
-// browser, lets real `agy acp` edit index.html on disk, verifies the edit lands in the open editor
+// A live check of the local agent bridge (bridge/core/cli.ts) against a real agent's CLI (`agy`, or
+// `claude`): it mounts a document's Yjs room into a temp folder, connects /api/agent/bridge on a bare
+// server with no API keys, enables the browser panel under "Connected agents", sends a prompt from the
+// browser, lets the real agent edit index.html on disk, verifies the edit lands in the open editor
 // without a reload, checks the streamed reply, and verifies the panel returns to off on disconnect.
 //
-// It calls the real Antigravity agent, so it skips itself unless asked for: `bun run test` never
-// runs it.
+// It calls the real agent, so it skips itself unless asked for: `bun run test` never runs it.
 //
-//   ERGA_LIVE_BRIDGE=1 bun run test:e2e e2e/bench/bridge-live.e2e.ts
+//   ERGA_LIVE_BRIDGE=antigravity bun run test:e2e e2e/bench/bridge-live.e2e.ts
+//   ERGA_LIVE_BRIDGE=claude-code bun run test:e2e e2e/bench/bridge-live.e2e.ts
 //
-// (Set AGY_BIN=/path/to/agy if `agy` is not on PATH.)
+// (Set AGY_BIN=/path/to/agy or CLAUDE_BIN=/path/to/claude if the CLI is not on PATH.)
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -20,12 +20,17 @@ import { expect, servers, test, until } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
 import { say } from "../agent/panel";
 
-const ENABLED = process.env.ERGA_LIVE_BRIDGE == "1";
+const AGENTS: Record<string, string> = { antigravity: "Antigravity", "claude-code": "Claude Code" };
+const AGENT = process.env.ERGA_LIVE_BRIDGE ?? "";
+const ENABLED = AGENT in AGENTS;
 const own = () => servers.of("bridge-live");
 if (ENABLED) await own();
 
-/** A live `agy acp` turn can take up to two minutes. */
-const LIVE = { timeout: 240_000, skip: ENABLED ? false : "a live check: ERGA_LIVE_BRIDGE=1 runs it with local agy" };
+/** A live agent's turn can take up to two minutes. */
+const LIVE = {
+  timeout: 240_000,
+  skip: ENABLED ? false : "a live check: ERGA_LIVE_BRIDGE=antigravity or claude-code runs it with the local CLI",
+};
 const TURN_MS = 180_000;
 
 const working = (ed: Editor) =>
@@ -58,7 +63,7 @@ function stopChild(child: ChildProcess | null): Promise<void> {
 }
 
 test(
-  "local Antigravity bridge mounts the Yjs room, enables the panel with no API keys, edits index.html live, and disconnects cleanly",
+  "local agent bridge mounts the Yjs room, enables the panel with no API keys, edits index.html live, and disconnects cleanly",
   LIVE,
   async ({ tab }) => {
     const server = await own();
@@ -68,7 +73,7 @@ test(
     await ed.frame(`${W}.__marker = 1`);
 
     const docId = await ed.eval<string>(`document.querySelector('meta[name="erga-doc"]').content`);
-    const { token, error } = await newToken(server.root, { label: "Antigravity" });
+    const { token, error } = await newToken(server.root, { label: AGENTS[AGENT] });
     expect(error, "agent token for live bridge").toBe("");
 
     const scratch = mkdtempSync(join(tmpdir(), "erga-live-"));
@@ -80,15 +85,18 @@ test(
     const logs: string[] = [];
     const child = spawn(
       "bun",
-      [join(ROOT, "bridge/core/cli.ts"), "connect", `${server.root}/d/${docId}`, "--agent", "antigravity", "--foreground"],
+      [join(ROOT, "bridge/core/cli.ts"), "connect", `${server.root}/d/${docId}`, "--agent", AGENT, "--foreground"],
       {
         cwd: workDir,
         env: {
           PATH: process.env.PATH ?? "",
           HOME: process.env.ERGA_CHROME_HOME || homedir(),
+          // Claude Code finds its sign-in by the user's name.
+          ...(process.env.USER ? { USER: process.env.USER } : {}),
           ERGA_HOME: ergaHome,
           ERGA_TOKEN: token,
           ...(process.env.AGY_BIN ? { AGY_BIN: process.env.AGY_BIN } : {}),
+          ...(process.env.CLAUDE_BIN ? { CLAUDE_BIN: process.env.CLAUDE_BIN } : {}),
         },
         stdio: ["ignore", "pipe", "pipe"],
       }
@@ -104,7 +112,7 @@ test(
             `!!document.querySelector('#agent-model-select optgroup[label="Connected agents"] option') && document.getElementById("agent-hint").hidden`
           ),
         20_000,
-        "live Antigravity bridge connects and enables the panel",
+        "live bridge connects and enables the panel",
         dump
       );
 
@@ -122,7 +130,7 @@ test(
           return hasReply && !(await working(ed));
         },
         TURN_MS,
-        "live Antigravity turn finishes with a reply",
+        "live agent's turn finishes with a reply",
         dump
       );
 

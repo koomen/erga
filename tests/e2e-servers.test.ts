@@ -11,7 +11,7 @@ const ROOT = resolve(import.meta.dir, "..");
 /** Files that may start their server inside the test, and why. */
 const EXEMPT: Record<string, string> = {
   "e2e/bench/agent-live.e2e.ts": "it skips itself without a key, and must start nothing then",
-  "e2e/bench/bridge-live.e2e.ts": "it skips itself without ERGA_LIVE_BRIDGE=1, and must start nothing then",
+  "e2e/bench/bridge-live.e2e.ts": "it skips itself without ERGA_LIVE_BRIDGE=<agent>, and must start nothing then",
   "e2e/bench/structural.e2e.ts": "a benchmark, not in the suite",
 };
 

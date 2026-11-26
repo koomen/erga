@@ -1,12 +1,19 @@
 // Generic Agent Client Protocol (ACP) stdio driver (https://agentclientprotocol.com).
 // Speaks JSON-RPC 2.0 over stdin/stdout to any ACP-capable coding agent
-// (Antigravity `agy acp`, or future ACP adapters for Claude Code / Codex / Zed).
+// (Antigravity `agy acp`, or future ACP adapters for Codex / Zed).
 // Translates streaming chunks, thinking deltas, tool calls, and interactive
 // `session/request_permission` prompts into normalized DriverEvents.
 
-import type { Subprocess } from "bun";
 import type { AskChoice } from "../../shared/agent-log.ts";
-import type { AgentDriver, AgentHandle, DriverEvent, LocalAttachment, ModelOption, OpenSessionOptions } from "../core/driver.ts";
+import {
+  extractToolPath,
+  type AgentDriver,
+  type AgentHandle,
+  type LocalAttachment,
+  type ModelOption,
+  type OpenSessionOptions,
+} from "../core/driver.ts";
+import { attachmentNote, DriverEvents, endProcess, readLines, spawnAgent, writeLine, type AgentProcess } from "./stdio.ts";
 
 /** Synthetic choice id that approves the current prompt and auto-approves the rest of the session. */
 export const ALLOW_SESSION_CHOICE = "__erga_allow_session__";
@@ -54,38 +61,6 @@ interface AcpSessionResult {
   };
 }
 
-/** Pulls a short path or target label from a tool call's arguments for the Erga panel. */
-export function extractToolPath(name: string, args: Record<string, unknown> | undefined): string | null {
-  if (!args) return null;
-  if (name == "run_command" || name == "bash") {
-    const cmd = args.CommandLine ?? args.command ?? args.toolSummary;
-    if (typeof cmd == "string" && cmd.trim()) return cmd.trim().slice(0, 140);
-  }
-  for (const key of [
-    "Path",
-    "path",
-    "TargetFile",
-    "AbsolutePath",
-    "FilePath",
-    "file_path",
-    "DirectoryPath",
-    "SearchPath",
-    "document",
-    "url",
-    "Url",
-    "Query",
-    "query",
-    "Pattern",
-    "ToolName",
-    "toolSummary",
-    "Description",
-  ]) {
-    const v = args[key];
-    if (typeof v == "string" && v.trim()) return v.trim().slice(0, 140);
-  }
-  return null;
-}
-
 /** Converts ACP `session/request_permission` options into panel choice buttons, plus a session-wide allow-all option. */
 export function permissionChoices(options: readonly AcpPermissionOption[]): AskChoice[] {
   const mapped: AskChoice[] = options.map((o) => {
@@ -121,11 +96,10 @@ function pickDenyOption(options: readonly AcpPermissionOption[]): AcpPermissionO
   return options.find((o) => o.kind?.includes("reject") || o.optionId == "deny") ?? options.at(-1);
 }
 
-class AcpHandle implements AgentHandle {
+class AcpHandle extends DriverEvents implements AgentHandle {
   private nextId = 1;
   private pending = new Map<number, PendingRpc>();
   private permissions = new Map<string, PendingPermission>();
-  private listeners = new Set<(ev: DriverEvent) => void>();
   private activeTools = new Map<string, { name: string; path: string | null }>();
   private closed = false;
   private _sessionId = "";
@@ -135,9 +109,11 @@ class AcpHandle implements AgentHandle {
   private autoApproveSession = false;
 
   constructor(
-    private readonly proc: Subprocess<"pipe", "pipe", "pipe">,
+    private readonly proc: AgentProcess,
     private readonly log?: (line: string) => void
-  ) {}
+  ) {
+    super();
+  }
 
   get sessionId(): string {
     return this._sessionId;
@@ -149,18 +125,8 @@ class AcpHandle implements AgentHandle {
     return this._model;
   }
 
-  onEvent(listener: (ev: DriverEvent) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  private emit(ev: DriverEvent): void {
-    for (const fn of [...this.listeners]) fn(ev);
-  }
-
   private write(msg: object): void {
-    if (this.closed) return;
-    this.proc.stdin.write(JSON.stringify(msg) + "\n");
+    if (!this.closed) writeLine(this.proc, msg);
   }
 
   private request<T = unknown>(method: string, params?: unknown): Promise<T> {
@@ -177,7 +143,17 @@ class AcpHandle implements AgentHandle {
   }
 
   async init(opts: OpenSessionOptions): Promise<void> {
-    this.startReading();
+    readLines(
+      this.proc,
+      "acp",
+      (msg) => this.handleMessage(msg),
+      () => {
+        if (this.closed) return;
+        for (const [, p] of this.pending) p.reject(new Error("ACP process exited unexpectedly"));
+        this.pending.clear();
+      },
+      this.log
+    );
     await this.request("initialize", {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
@@ -233,10 +209,7 @@ class AcpHandle implements AgentHandle {
       if (att.kind == "image") {
         blocks.push({ type: "image", data: att.data, mimeType: att.type });
       } else {
-        const note = att.path
-          ? `Attached file ${att.name} (saved at ${att.path}):\n${att.data}`
-          : `Attached file ${att.name}:\n${att.data}`;
-        blocks.push({ type: "text", text: note });
+        blocks.push({ type: "text", text: attachmentNote(att) });
       }
     }
     if (!blocks.length) return;
@@ -331,64 +304,12 @@ class AcpHandle implements AgentHandle {
     this.pending.clear();
     if (this._sessionId) {
       try {
-        this.proc.stdin.write(
-          JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "session/close", params: { sessionId: this._sessionId } }) + "\n"
-        );
+        writeLine(this.proc, { jsonrpc: "2.0", id: this.nextId++, method: "session/close", params: { sessionId: this._sessionId } });
       } catch {
         /* process exiting */
       }
     }
-    try {
-      this.proc.stdin.end();
-    } catch {
-      /* ignore */
-    }
-    try {
-      this.proc.kill();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  private startReading(): void {
-    // Drain stderr for diagnostics without ever touching stdout.
-    void (async () => {
-      const reader = this.proc.stderr.getReader();
-      const dec = new TextDecoder();
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const text = dec.decode(value).trim();
-        if (text) this.log?.(`[acp stderr] ${text.slice(0, 400)}`);
-      }
-    })().catch(() => {});
-
-    void (async () => {
-      const reader = this.proc.stdout.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let msg: Record<string, unknown>;
-          try {
-            msg = JSON.parse(line) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          this.handleMessage(msg);
-        }
-      }
-      if (!this.closed) {
-        for (const [, p] of this.pending) p.reject(new Error("ACP process exited unexpectedly"));
-        this.pending.clear();
-      }
-    })().catch(() => {});
+    endProcess(this.proc);
   }
 
   private handleMessage(msg: Record<string, unknown>): void {
@@ -505,13 +426,7 @@ export function createAcpDriver(cfg: AcpDriverConfig, log?: (line: string) => vo
           if (dir && dir != opts.cwd) args.push(cfg.addDirFlag, dir);
         }
       }
-      const proc = Bun.spawn([cfg.command, ...args], {
-        cwd: opts.cwd,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const handle = new AcpHandle(proc, log);
+      const handle = new AcpHandle(spawnAgent([cfg.command, ...args], opts.cwd), log);
       try {
         await handle.init(opts);
         return handle;

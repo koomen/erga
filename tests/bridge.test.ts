@@ -19,13 +19,13 @@ import { PersonAgents } from "../agents/person/sessions.ts";
 import type { ChatSql } from "../agents/chat-store.ts";
 import { ALLOW_SESSION_CHOICE, createAcpDriver, permissionChoices } from "../bridge/drivers/acp.ts";
 import {
-  antigravityHookEvents,
   AntigravityTranscriptMirror,
   parseTranscriptStep,
   unwrapUserRequest,
   type LiveAntigravitySession,
 } from "../bridge/drivers/antigravity.ts";
 import type { DriverEvent } from "../bridge/core/driver.ts";
+import { hookEvents } from "../bridge/core/sessions.ts";
 import { copyIntoManaged, ErgaDaemon } from "../bridge/core/daemon.ts";
 import { cachedToken, saveToken } from "../bridge/core/auth.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";
@@ -913,9 +913,9 @@ while (true) {
 
 // ---------------------------------------------------------------- 10. Live Antigravity session injection & hooks
 
-test("antigravityHookEvents translates PreToolUse, PostToolUse, and Stop into real-time DriverEvents", () => {
+test("hookEvents translates PreToolUse, PostToolUse, and Stop into real-time DriverEvents", () => {
   expect(
-    antigravityHookEvents({
+    hookEvents({
       hookEventName: "PreToolUse",
       stepIdx: 4,
       toolCall: { id: "call-4", name: "edit_file", args: { Path: "/tmp/index.html" } },
@@ -923,14 +923,14 @@ test("antigravityHookEvents translates PreToolUse, PostToolUse, and Stop into re
   ).toEqual([{ t: "tool", id: "call-4", name: "edit_file", path: "/tmp/index.html", status: "running" }]);
 
   expect(
-    antigravityHookEvents({
+    hookEvents({
       hookEventName: "PostToolUse",
       stepIdx: 4,
       toolCall: { id: "call-4", name: "edit_file", args: { Path: "/tmp/index.html" } },
     })
   ).toEqual([{ t: "tool", id: "call-4", name: "edit_file", path: "/tmp/index.html", status: "done" }]);
 
-  expect(antigravityHookEvents({ hookEventName: "Stop", fullyIdle: true, continuationActive: false })).toEqual([
+  expect(hookEvents({ hookEventName: "Stop", fullyIdle: true, continuationActive: false })).toEqual([
     { t: "busy", busy: false },
     { t: "turn_done" },
   ]);

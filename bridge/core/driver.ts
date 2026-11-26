@@ -1,10 +1,14 @@
 // The small, agent-agnostic driver boundary shared across all local agents
-// (Antigravity via ACP, and future adapters for Claude Code, Codex, and Pi).
-// Each driver translates its agent's native stdio/JSON-RPC protocol into
-// normalized DriverEvents that bridge/core/bridge-client.ts forwards as
+// (Antigravity via ACP, Claude Code via its own stream, and future adapters
+// for Codex and Pi). Each driver translates its agent's native stdio protocol
+// into normalized DriverEvents that bridge/core/bridge-client.ts forwards as
 // Erga LogEvents.
 
 import type { AskChoice, ToolCall, ToolStatus } from "../../shared/agent-log.ts";
+import type { HookPayload } from "./sessions.ts";
+
+/** The environment variable that marks a session the bridge itself started (never the user's own): it holds that session's id. */
+export const BRIDGE_SESSION_ENV = "ERGA_SESSION";
 
 export interface ModelOption {
   readonly id: string;
@@ -82,10 +86,58 @@ export interface AgentHandle {
   close(): Promise<void>;
 }
 
+/** One call of an agent's plugin hook: the bridge's payload, and the hook's output for the agent. */
+export interface HookCall {
+  readonly payload: HookPayload;
+  /** The hook's output, from the daemon's answer (null: no daemon runs, or it gave none). */
+  reply(answer: Record<string, unknown> | null): Record<string, unknown>;
+}
+
 /** Factory for one local agent runtime (Antigravity, Claude Code, Codex, Pi). */
 export interface AgentDriver {
   readonly id: string;
   /** Human-readable name used for Erga OAuth client registration ("Antigravity" -> "Pete’s Antigravity"). */
   readonly label: string;
+  /** How the agent's own session opens a document, where the MCP server's own instructions do not fit it. */
+  readonly openHint?: string;
+  /** The environment variable that holds the id of the agent's running session, where it sets one. */
+  readonly sessionEnv?: string;
   open(opts: OpenSessionOptions): Promise<AgentHandle>;
+  /** Reads one payload of the agent's plugin hook. */
+  hook?(raw: Record<string, unknown>): HookCall;
+  /** Asks the user about one tool call of a session this driver opened: the agent's own permission answer. */
+  permission?(ask: { session: string; args: Record<string, unknown> }): Promise<Record<string, unknown>>;
+}
+
+/** Pulls a short path or target label from a tool call's arguments for the Erga panel. */
+export function extractToolPath(name: string, args: Record<string, unknown> | undefined): string | null {
+  if (!args) return null;
+  if (/^(run_command|bash)$/i.test(name)) {
+    const cmd = args.CommandLine ?? args.command ?? args.toolSummary;
+    if (typeof cmd == "string" && cmd.trim()) return cmd.trim().slice(0, 140);
+  }
+  for (const key of [
+    "Path",
+    "path",
+    "TargetFile",
+    "AbsolutePath",
+    "FilePath",
+    "file_path",
+    "DirectoryPath",
+    "SearchPath",
+    "document",
+    "url",
+    "Url",
+    "Query",
+    "query",
+    "Pattern",
+    "pattern",
+    "ToolName",
+    "toolSummary",
+    "Description",
+  ]) {
+    const v = args[key];
+    if (typeof v == "string" && v.trim()) return v.trim().slice(0, 140);
+  }
+  return null;
 }

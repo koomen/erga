@@ -7,18 +7,11 @@
 //   (2) Standalone ACP fallback (`agy acp`) for headless `erga-agent connect` runs
 //       with no interactive terminal session.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
-import { ergaHome } from "../core/auth.ts";
-import type { AgentDriver, DriverEvent } from "../core/driver.ts";
-import { createAcpDriver, extractToolPath } from "./acp.ts";
-
-export interface RecordedSession {
-  conversationId: string;
-  cwd: string;
-  transcriptPath?: string;
-  updatedAt: number;
-}
+import { extractToolPath, type AgentDriver, type DriverEvent } from "../core/driver.ts";
+import type { HookPayload } from "../core/sessions.ts";
+import { createAcpDriver } from "./acp.ts";
 
 /** In-memory connection handle to a live running Antigravity CLI process (never written to disk). */
 export interface LiveAntigravitySession {
@@ -29,79 +22,10 @@ export interface LiveAntigravitySession {
   readonly transcriptPath?: string | null;
 }
 
-/** Normalized Antigravity plugin hook payload delivered on stdin to `erga-agent hook`. */
-export interface AntigravityHookPayload {
-  hookEventName?: string;
-  conversationId?: string;
-  cwd?: string;
-  transcriptPath?: string;
-  modelName?: string;
-  stepIdx?: number;
-  invocationNum?: number;
-  fullyIdle?: boolean;
-  continuationActive?: boolean;
-  error?: string;
-  toolCall?: {
-    id?: string;
-    name?: string;
-    args?: Record<string, unknown>;
-  };
-}
-
 /** Interface for talking to a live Antigravity process (injectable in unit tests). */
 export interface LiveAntigravityMessenger {
   send(session: LiveAntigravitySession, text: string, opts?: { title?: string }): Promise<void>;
   check(session: LiveAntigravitySession): Promise<"running" | "idle" | "gone">;
-}
-
-function sessionsFile(): string {
-  return join(ergaHome(), "antigravity-sessions.json");
-}
-
-function readSessions(): Record<string, RecordedSession> {
-  const p = sessionsFile();
-  if (!existsSync(p)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(p, "utf8")) as Record<string, RecordedSession>;
-    return parsed && typeof parsed == "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-/** Records an active Antigravity conversation from a plugin hook (metadata only, never secrets). */
-export function recordAntigravitySession(info: { conversationId?: string; cwd?: string; transcriptPath?: string }): RecordedSession | null {
-  if (!info.conversationId || !info.cwd) return null;
-  const all = readSessions();
-  const prev = all[info.conversationId];
-  const entry: RecordedSession = {
-    conversationId: info.conversationId,
-    cwd: info.cwd,
-    ...(info.transcriptPath || prev?.transcriptPath ? { transcriptPath: info.transcriptPath ?? prev?.transcriptPath } : {}),
-    updatedAt: Date.now(),
-  };
-  all[info.conversationId] = entry;
-  const cutoff = Date.now() - 7 * 86_400_000;
-  for (const [k, v] of Object.entries(all)) if (v.updatedAt < cutoff) delete all[k];
-  const p = sessionsFile();
-  mkdirSync(dirname(p), { recursive: true });
-  const tmp = `${p}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n");
-  renameSync(tmp, p);
-  return entry;
-}
-
-/** Finds the most recent Antigravity session matching `conversationId` or `cwd`. */
-export function findAntigravitySession(opts: { conversationId?: string; cwd?: string }): RecordedSession | null {
-  const all = readSessions();
-  if (opts.conversationId && all[opts.conversationId]) return all[opts.conversationId];
-  const list = Object.values(all).sort((a, b) => b.updatedAt - a.updatedAt);
-  if (opts.cwd) {
-    const exact = list.find((s) => s.cwd == opts.cwd);
-    if (exact) return exact;
-  }
-  const newest = list[0];
-  return newest && Date.now() - newest.updatedAt < 120_000 ? newest : null;
 }
 
 /** Default transcript path for an Antigravity conversation when hooks have not reported one yet. */
@@ -117,18 +41,30 @@ export function defaultTranscriptPath(conversationId: string, appDataDir?: strin
 /** Creates the standalone Antigravity ACP AgentDriver (`agy acp`), used when no live terminal session is attached. */
 export function createAntigravityDriver(log?: (line: string) => void): AgentDriver {
   const bin = process.env.AGY_BIN || "agy";
-  return createAcpDriver(
-    {
-      id: "antigravity",
-      label: "Antigravity",
-      command: bin,
-      args: ["acp"],
-      addDirFlag: "--add-dir",
-      autoApproveFlag: "--dangerously-skip-permissions",
-    },
-    log
-  );
+  return {
+    ...createAcpDriver(
+      {
+        id: "antigravity",
+        label: "Antigravity",
+        command: bin,
+        args: ["acp"],
+        addDirFlag: "--add-dir",
+        autoApproveFlag: "--dangerously-skip-permissions",
+      },
+      log
+    ),
+    sessionEnv: "ANTIGRAVITY_CONVERSATION_ID",
+    openHint: OPEN_HINT,
+    // Antigravity's hook payload is the bridge's own shape. A PreToolUse hook must answer: it never blocks the tool.
+    hook: (raw) => ({
+      payload: raw as HookPayload,
+      reply: (answer) => answer ?? (raw.hookEventName == "PreToolUse" ? { decision: "allow" } : {}),
+    }),
+  };
 }
+
+const OPEN_HINT = `- When the user asks to edit an Erga document URL (or create a new Erga doc), prefer running \`erga-agent open <url>\` via run_command so the live Yjs room mounts AND Erga's browser panel connects directly to THIS running session without spawning a second agent.
+- If you call erga_open via MCP and it returns liveAttached: false, run \`erga-agent attach\` via run_command so browser prompts route straight into this running session.`;
 
 // ---------------------------------------------------------------- live session injection (`agy agentapi`)
 
@@ -192,31 +128,6 @@ export const defaultLiveAntigravityMessenger: LiveAntigravityMessenger = {
   send: (session, text, opts) => sendLiveAntigravityMessage(session, text, opts),
   check: (session) => checkLiveAntigravityState(session),
 };
-
-// ---------------------------------------------------------------- hook event translation
-
-/** Translates one Antigravity plugin hook payload into real-time DriverEvents for the Erga browser panel. */
-export function antigravityHookEvents(payload: AntigravityHookPayload): DriverEvent[] {
-  const ev = payload.hookEventName;
-  if (ev == "PreToolUse" || ev == "PostToolUse") {
-    const tc = payload.toolCall;
-    const name = tc?.name || "tool";
-    const id = tc?.id || `hook-${payload.stepIdx ?? 0}-${name}`;
-    const path = extractToolPath(name, tc?.args);
-    if (ev == "PreToolUse") return [{ t: "tool", id, name, path, status: "running" }];
-    const err = typeof payload.error == "string" && payload.error.trim() ? payload.error.trim().slice(0, 200) : undefined;
-    return [{ t: "tool", id, name, path, status: err ? "error" : "done", ...(err ? { detail: err } : {}) }];
-  }
-  if (ev == "Stop") {
-    const out: DriverEvent[] = [];
-    if (typeof payload.error == "string" && payload.error.trim()) out.push({ t: "error", text: payload.error.trim() });
-    if (payload.fullyIdle !== false && !payload.continuationActive) {
-      out.push({ t: "busy", busy: false }, { t: "turn_done" });
-    }
-    return out;
-  }
-  return [];
-}
 
 // ---------------------------------------------------------------- transcript.jsonl mirror
 

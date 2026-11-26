@@ -9,25 +9,28 @@
 //   erga-agent mount   <doc-url> [--from <path>] [--server <url>]
 //   erga-agent connect [doc-url] [--from <path>] [--server <url>] [--foreground] [--auto-approve]
 //   erga-agent login   [server-url] [--device|--local] [--no-open]
-//   erga-agent mcp     [--agent antigravity] [--server <url>]
-//   erga-agent daemon  [--agent antigravity] [--server <url>] [--auto-approve]
-//   erga-agent status  [--agent antigravity]
-//   erga-agent stop    [--agent antigravity]
-//   erga-agent hook    [--agent antigravity]
+//   erga-agent mcp     [--agent antigravity|claude-code] [--server <url>]
+//   erga-agent daemon  [--agent antigravity|claude-code] [--server <url>] [--auto-approve]
+//   erga-agent status  [--agent antigravity|claude-code]
+//   erga-agent stop    [--agent antigravity|claude-code]
+//   erga-agent hook    [--agent antigravity|claude-code]
 
 import { DEFAULT_ORIGIN, login, normalizeOrigin } from "./auth.ts";
 import { daemonRpc, ErgaDaemon, parseDocumentRef } from "./daemon.ts";
-import type { AgentDriver } from "./driver.ts";
+import { BRIDGE_SESSION_ENV, type AgentDriver } from "./driver.ts";
 import { runMcpServer } from "./mcp-server.ts";
-import { createAntigravityDriver, recordAntigravitySession, type AntigravityHookPayload } from "../drivers/antigravity.ts";
+import { recordSession } from "./sessions.ts";
+import { createAntigravityDriver } from "../drivers/antigravity.ts";
+import { createClaudeCodeDriver } from "../drivers/claude-code.ts";
 
 /**
  * Registry of supported local agent drivers.
- * Adding Claude Code, Codex, or Pi requires adding one driver module in
+ * Adding Codex or Pi requires adding one driver module in
  * bridge/drivers/ and registering it here.
  */
 const DRIVERS: Record<string, (log?: (line: string) => void) => AgentDriver> = {
   antigravity: createAntigravityDriver,
+  "claude-code": createClaudeCodeDriver,
 };
 
 /** Resolves how to re-invoke this process (works both via `bun cli.ts` and compiled standalone binary). */
@@ -123,34 +126,33 @@ Usage:
   erga-agent mount <doc-url> [--from <path>] [--server <url>]
   erga-agent connect [doc-url] [--from <path>] [--server <url>] [--foreground] [--auto-approve]
   erga-agent login [server-url] [--device|--local] [--no-open]
-  erga-agent mcp [--agent antigravity] [--server <url>]
-  erga-agent daemon [--agent antigravity] [--server <url>] [--auto-approve]
-  erga-agent status [--agent antigravity]
-  erga-agent stop [--agent antigravity]`);
+  erga-agent mcp [--agent antigravity|claude-code] [--server <url>]
+  erga-agent daemon [--agent antigravity|claude-code] [--server <url>] [--auto-approve]
+  erga-agent status [--agent antigravity|claude-code]
+  erga-agent stop [--agent antigravity|claude-code]`);
     return;
   }
 
   if (cmd == "hook") {
-    // Lightweight Antigravity plugin hook handler: forwards live tool/turn events to
-    // the local daemon and always outputs valid hook JSON (never blocking PreToolUse).
+    // The agent's plugin hook: records the session, forwards its live tool and turn events to the
+    // local daemon, and always outputs valid hook JSON (a hook must never fail the agent's loop).
     const stdinText = await new Response(Bun.stdin.stream()).text().catch(() => "");
-    let hookEventName: string | undefined;
-    let hookResponse: Record<string, unknown> | null = null;
+    let out: Record<string, unknown> = {};
     try {
-      const payload = JSON.parse(stdinText || "{}") as AntigravityHookPayload;
-      hookEventName = payload.hookEventName;
-      if (agentName == "antigravity") {
-        recordAntigravitySession(payload);
-        if (payload.conversationId) {
-          const res = await daemonRpc<{ ok?: boolean; hookResponse?: Record<string, unknown> }>(agentName, "/hook", payload, 2_000);
-          if (res?.hookResponse && typeof res.hookResponse == "object") hookResponse = res.hookResponse;
+      const call = driverFor(agentName).hook?.(JSON.parse(stdinText || "{}") as Record<string, unknown>);
+      // A session that the bridge itself started is not the user's own: its hooks say nothing.
+      if (call && !process.env[BRIDGE_SESSION_ENV]) {
+        out = call.reply(null);
+        recordSession(agentName, call.payload);
+        if (call.payload.conversationId) {
+          const res = await daemonRpc<{ ok?: boolean; hookResponse?: Record<string, unknown> }>(agentName, "/hook", call.payload, 2_000);
+          if (res?.hookResponse && typeof res.hookResponse == "object") out = call.reply(res.hookResponse);
         }
       }
     } catch {
-      /* hooks must never fail the agent loop */
+      /* the output so far stands */
     }
-    const fallback = hookEventName == "PreToolUse" ? { decision: "allow" } : {};
-    process.stdout.write(JSON.stringify(hookResponse ?? fallback) + "\n");
+    process.stdout.write(JSON.stringify(out) + "\n");
     return;
   }
 
