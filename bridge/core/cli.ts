@@ -5,6 +5,7 @@
 //
 // Subcommands:
 //   erga-agent open    [doc-url] [--create] [--title ...] [--from <path>] [--server <url>]
+//   erga-agent unmount <doc-id> [--server <url>]
 //   erga-agent attach  [doc-url] [--server <url>]
 //   erga-agent mount   <doc-url> [--from <path>] [--server <url>]
 //   erga-agent connect [doc-url] [--from <path>] [--server <url>] [--foreground] [--auto-approve]
@@ -70,7 +71,20 @@ function driverFor(name: string, log?: (line: string) => void): AgentDriver {
   return factory(log);
 }
 
-/** Reads documented Antigravity session env vars when invoked inside a running `agy` session's shell. */
+/** Reads the active terminal session's env vars (never for bridge-spawned sessions). */
+function sessionEnvFields(driver: AgentDriver): {
+  conversationId?: string;
+  lsAddress?: string;
+  csrfToken?: string;
+  appDataDir?: string;
+} {
+  if (process.env[BRIDGE_SESSION_ENV]) return {};
+  const driverSession = driver.sessionEnv ? process.env[driver.sessionEnv] : undefined;
+  return {
+    ...(driverSession ? { conversationId: driverSession } : {}),
+    ...(driver.id == "antigravity" ? liveAntigravityEnv() : {}),
+  };
+}
 function liveAntigravityEnv(): {
   conversationId?: string;
   lsAddress?: string;
@@ -122,6 +136,7 @@ async function main(): Promise<void> {
 
 Usage:
   erga-agent open [doc-url] [--create] [--title <title>] [--from <path>] [--server <url>]
+  erga-agent unmount <doc-id> [--server <url>]
   erga-agent attach [doc-url] [--server <url>]
   erga-agent mount <doc-url> [--from <path>] [--server <url>]
   erga-agent connect [doc-url] [--from <path>] [--server <url>] [--foreground] [--auto-approve]
@@ -168,7 +183,7 @@ Usage:
   }
 
   if (cmd == "mcp") {
-    await runMcpServer({ driver, defaultOrigin: server, selfCmd: self, log });
+    await runMcpServer({ driver, defaultOrigin: typeof flags.server == "string" ? server : undefined, selfCmd: self, log });
     return;
   }
 
@@ -237,7 +252,7 @@ Usage:
       ...(fromDir ? { fromDir } : {}),
       cwd: process.cwd(),
       nonBlockingAuth: true,
-      ...liveAntigravityEnv(),
+      ...sessionEnvFields(driver),
     });
     if (!res) throw new Error("Could not reach local Erga daemon.");
     console.log(JSON.stringify(res, null, 2));
@@ -245,11 +260,21 @@ Usage:
     return;
   }
 
+  if (cmd == "unmount") {
+    const docId = pos[0];
+    if (!docId) throw new Error("Provide a document id to unmount (from `erga-agent status`).");
+    const body = typeof flags.server == "string" ? { origin: server, docId } : { docId };
+    const res = await daemonRpc<{ ok?: boolean; error?: string }>(agentName, "/unmount", body, 5_000);
+    console.log(JSON.stringify(res ?? { ok: false }, null, 2));
+    if (!res?.ok) process.exit(1);
+    return;
+  }
+
   if (cmd == "connect" || cmd == "mount") {
     const docArg = pos[0];
     const fromDir = typeof flags.from == "string" ? flags.from : undefined;
     const targetOrigin = docArg ? parseDocumentRef(docArg, server).origin : server;
-    const liveEnv = liveAntigravityEnv();
+    const liveEnv = sessionEnvFields(driver);
 
     if (flags.foreground) {
       const daemon = new ErgaDaemon(driver, {

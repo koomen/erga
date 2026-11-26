@@ -456,7 +456,7 @@ export async function ergaFetch(
 ): Promise<Response> {
   const origin = normalizeOrigin(rawOrigin);
   const token = await getAccessToken(origin, clientName, opts);
-  if (!token) throw new Error(`Not signed in to ${origin}. Run login or call erga_open.`);
+  if (!token) throw new Error(`Not signed in to ${origin}. Run erga-agent login or erga-agent open.`);
   const go = (bearer: string) => {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${bearer}`);

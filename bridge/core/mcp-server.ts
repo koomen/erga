@@ -1,15 +1,16 @@
-// Agent-agnostic stdio MCP server that exposes:
-//   (1) Local Yjs mount & browser-pane bridge tools (`erga_open`, `erga_unmount`, `erga_status`)
-//   (2) The full remote Erga API dynamically proxied from `<origin>/mcp` using the
-//       same shared OAuth token store (bridge/core/auth.ts).
+// Agent-agnostic stdio MCP proxy for Erga's remote API (`<origin>/mcp`).
+// Reuses the shared OAuth token store (bridge/core/auth.ts) so users sign in
+// once for both local Yjs sync (`erga-agent open`) and remote Erga tools
+// (`page`, `documents`, `read`, `edit`, `settings`, `people`, `skill`).
 //
-// Auto-starts the local background daemon on demand so saying "Edit <url>" to
-// Antigravity (or any future agent) mounts the Yjs room, authenticates once,
-// exposes Erga's full API, and connects Erga's browser agent pane automatically.
+// Document mounting and live session attach live solely on the `erga-agent` CLI
+// (`open`, `unmount`, `status`, `attach`). When spawned inside a bridge-managed
+// session (ERGA_SESSION set), this server also exposes `erga_permission` for
+// drivers that delegate tool approvals through MCP (e.g. Claude Code).
 
 import { homedir } from "node:os";
-import { cachedToken, DEFAULT_ORIGIN, ergaFetch, getAccessToken, normalizeOrigin } from "./auth.ts";
-import { daemonRpc, daemonSocketPath, parseDocumentRef } from "./daemon.ts";
+import { cachedToken, defaultOrigin, ergaFetch, getAccessToken, normalizeOrigin } from "./auth.ts";
+import { daemonRpc, daemonSocketPath } from "./daemon.ts";
 import { BRIDGE_SESSION_ENV, type AgentDriver } from "./driver.ts";
 
 interface JsonRpcReq {
@@ -24,56 +25,6 @@ interface McpToolDef {
   description: string;
   inputSchema: Record<string, unknown>;
 }
-
-const LOCAL_TOOLS: readonly McpToolDef[] = [
-  {
-    name: "erga_open",
-    description:
-      "Mount an Erga document's live Yjs room into a local folder and connect this agent to Erga's browser agent pane. Opens an existing document by URL/address/id, or creates a new one (create: true).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        document: {
-          type: "string",
-          description: "Document URL (https://erga.example/<owner>/<slug>), address (/<owner>/<slug>), or id. Omit when create is true.",
-        },
-        create: {
-          type: "boolean",
-          description: "Set true to create a new Erga document first and mount it immediately.",
-        },
-        title: { type: "string", description: "Title for a new document (when create is true)." },
-        slug: { type: "string", description: "Slug for a new document (when create is true)." },
-        template: { type: "string", description: 'Template for a new document (e.g. "doc", "slides", "canvas").' },
-        fromDir: {
-          type: "string",
-          description:
-            "Optional local directory whose files should be copied into the new document's managed directory (~/.erga/docs/...). The original folder is left untouched.",
-        },
-        server: {
-          type: "string",
-          description: "Optional Erga server origin (e.g. https://erga.example or http://localhost:4400) when document is not a full URL.",
-        },
-      },
-    },
-  },
-  {
-    name: "erga_unmount",
-    description: "Stop live local Yjs sync and detach Erga's browser pane for a mounted document.",
-    inputSchema: {
-      type: "object",
-      required: ["docId"],
-      properties: {
-        docId: { type: "string", description: "The Erga document id returned by erga_open or erga_status." },
-        server: { type: "string", description: "Erga server origin (defaults to the active server)." },
-      },
-    },
-  },
-  {
-    name: "erga_status",
-    description: "List mounted local Yjs document folders and connected Erga browser bridges.",
-    inputSchema: { type: "object", properties: {} },
-  },
-];
 
 const FALLBACK_API_TOOL: McpToolDef = {
   name: "erga_api",
@@ -100,12 +51,12 @@ const PERMISSION_TOOL: McpToolDef = {
   },
 };
 
-const OPEN_HINT = `- When the user asks to edit an Erga document URL (or create a new Erga doc), call erga_open first: it mounts the document's live Yjs room in a local folder and connects this agent to the document's agent panel in the browser.`;
+const OPEN_HINT = `- When the user asks to edit an Erga document URL (or create a new Erga doc), run \`erga-agent open <url>\` (or \`erga-agent open --create --title "<title>"\`) in the shell to mount the live Yjs room and connect this session to Erga's browser panel.`;
 
 const localInstructions = (driver: AgentDriver) => `Erga local bridge is active.
 ${driver.openHint ?? OPEN_HINT}
-- If erga-agent open, erga_open, or an Erga API tool returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser (local or remote), then retry once they confirm.
-- Edit the mounted document's files directly on disk using your native file tools (read_file, edit_file, write_file, run_command): every edit syncs live via Yjs CRDT with proper agent attribution.
+- If \`erga-agent open\` or an Erga API tool returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser (local or remote), then retry once they confirm.
+- Edit the mounted document's files directly on disk using your native file tools: every edit syncs live via Yjs CRDT with proper agent attribution.
 - Use Erga's MCP tools (page, documents, read, edit, settings, people) for live page screenshots/console (view_page, page_log, page_input, open_page), page API calls (call_edit), comments, version history, publishing, sharing, and unmounted documents.`;
 
 function safeCwd(): string {
@@ -126,12 +77,12 @@ export interface McpServerOptions {
 
 /** Runs the stdio MCP server until stdin closes. */
 export async function runMcpServer(opts: McpServerOptions): Promise<void> {
-  let activeOrigin = normalizeOrigin(opts.defaultOrigin || DEFAULT_ORIGIN);
+  let activeOrigin: string | null = opts.defaultOrigin ? normalizeOrigin(opts.defaultOrigin) : null;
   let remoteToolsCache: McpToolDef[] | null = null;
   let remoteInstructions = "";
   const log = opts.log ?? ((s) => console.error(`[erga-mcp] ${s}`));
   const bridgeSession = process.env[BRIDGE_SESSION_ENV] || null;
-  const sessionId = opts.driver.sessionEnv ? process.env[opts.driver.sessionEnv] : undefined;
+  const currentOrigin = () => activeOrigin ?? defaultOrigin();
 
   const write = (msg: object) => {
     process.stdout.write(JSON.stringify(msg) + "\n");
@@ -142,10 +93,10 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
   };
 
   /** Ensures the local background daemon for `opts.driver.id` is running. */
-  async function ensureDaemon(): Promise<void> {
+  async function ensureDaemon(origin: string): Promise<void> {
     const alive = await daemonRpc(opts.driver.id, "/status", undefined, 2_000);
     if (alive?.ok) return;
-    const child = Bun.spawn([opts.selfCmd.command, ...opts.selfCmd.prefix, "daemon", "--agent", opts.driver.id, "--server", activeOrigin], {
+    const child = Bun.spawn([opts.selfCmd.command, ...opts.selfCmd.prefix, "daemon", "--agent", opts.driver.id, "--server", origin], {
       cwd: safeCwd(),
       stdin: "ignore",
       stdout: "ignore",
@@ -200,9 +151,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
       const instr = (init?.result as { instructions?: string } | undefined)?.instructions;
       if (typeof instr == "string" && instr) remoteInstructions = instr;
       const listed = await remoteMcp(origin, "tools/list", {}, interactive);
-      const tools = ((listed?.result as { tools?: McpToolDef[] } | undefined)?.tools ?? []).filter(
-        (t) => !LOCAL_TOOLS.some((l) => l.name == t.name)
-      );
+      const tools = ((listed?.result as { tools?: McpToolDef[] } | undefined)?.tools ?? []).filter((t) => t.name != PERMISSION_TOOL.name);
       remoteToolsCache = tools;
       return tools;
     } catch (e) {
@@ -215,7 +164,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
   function originForArgs(args: Record<string, unknown>): string {
     if (typeof args.server == "string" && /^https?:\/\//i.test(args.server)) return normalizeOrigin(args.server);
     if (typeof args.document == "string" && /^https?:\/\//i.test(args.document)) return new URL(args.document).origin;
-    return activeOrigin;
+    return currentOrigin();
   }
 
   async function handleRequest(req: JsonRpcReq): Promise<object | null> {
@@ -225,21 +174,21 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
 
     switch (req.method) {
       case "initialize": {
-        await loadRemoteCatalog(activeOrigin, false);
+        await loadRemoteCatalog(currentOrigin(), false);
         const local = localInstructions(opts.driver);
         const instructions = remoteInstructions ? `${local}\n\n${remoteInstructions}` : local;
         return ok({
           protocolVersion: String(req.params?.protocolVersion ?? "2025-06-18"),
           capabilities: { tools: { listChanged: true } },
-          serverInfo: { name: "erga", title: "Erga Local Bridge", version: "0.1.0" },
+          serverInfo: { name: "erga", title: "Erga", version: "0.1.0" },
           instructions,
         });
       }
       case "ping":
         return ok({});
       case "tools/list": {
-        const remote = remoteToolsCache ?? (await loadRemoteCatalog(activeOrigin, false));
-        const tools: McpToolDef[] = remote.length ? [...LOCAL_TOOLS, ...remote] : [...LOCAL_TOOLS, FALLBACK_API_TOOL];
+        const remote = remoteToolsCache?.length ? remoteToolsCache : await loadRemoteCatalog(currentOrigin(), false);
+        const tools: McpToolDef[] = remote.length ? [...remote] : [FALLBACK_API_TOOL];
         if (bridgeSession) tools.push(PERMISSION_TOOL);
         return ok({ tools });
       }
@@ -247,38 +196,6 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
         const name = String(req.params?.name ?? "");
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
         try {
-          if (name == "erga_open") {
-            const origin = originForArgs(args);
-            activeOrigin = origin;
-            const parsed = typeof args.document == "string" ? parseDocumentRef(args.document, origin) : null;
-            await ensureDaemon();
-            const res = await daemonRpc<{ ok?: boolean; needsAuth?: boolean; error?: string; [k: string]: unknown }>(
-              opts.driver.id,
-              "/open",
-              {
-              origin: parsed?.origin ?? origin,
-              ...(parsed ? { document: parsed.ref } : {}),
-              ...(args.create ? { create: true } : {}),
-              ...(typeof args.title == "string" ? { title: args.title } : {}),
-              ...(typeof args.slug == "string" ? { slug: args.slug } : {}),
-              ...(typeof args.template == "string" ? { template: args.template } : {}),
-              ...(typeof args.fromDir == "string" ? { fromDir: args.fromDir } : {}),
-              cwd: safeCwd(),
-              nonBlockingAuth: true,
-              // A session that the bridge started is not the user's own session: the daemon finds that one by its folder.
-              ...(sessionId && !bridgeSession ? { conversationId: sessionId } : {}),
-            });
-            if (res?.needsAuth) {
-              return ok({ content: [{ type: "text", text: JSON.stringify(res, null, 2) }] });
-            }
-            if (!res?.ok) throw new Error(res?.error || "erga_open failed");
-            // After signing in, load the full remote Erga toolset and notify the client.
-            const hadRemote = !!remoteToolsCache?.length;
-            const loaded = await loadRemoteCatalog(activeOrigin, false);
-            if (!hadRemote && loaded.length) notifyToolsChanged();
-            return ok({ content: [{ type: "text", text: JSON.stringify(res, null, 2) }] });
-          }
-
           if (name == PERMISSION_TOOL.name && bridgeSession) {
             // The user may take long to answer: the daemon answers "pending" every few seconds, until they do.
             type Reply = { pending?: boolean; error?: string; answer?: Record<string, unknown> } | null;
@@ -289,23 +206,6 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
             return ok({ content: [{ type: "text", text: JSON.stringify(answer) }] });
           }
 
-          if (name == "erga_unmount") {
-            await ensureDaemon();
-            const origin = originForArgs(args);
-            const res = await daemonRpc<{ ok?: boolean; error?: string }>(opts.driver.id, "/unmount", {
-              origin,
-              docId: String(args.docId ?? ""),
-            });
-            return ok({ content: [{ type: "text", text: JSON.stringify(res ?? { ok: false }) }] });
-          }
-
-          if (name == "erga_status") {
-            const res = await daemonRpc(opts.driver.id, "/status");
-            return ok({
-              content: [{ type: "text", text: JSON.stringify(res ?? { running: false, mounts: [], bridges: [] }, null, 2) }],
-            });
-          }
-
           // Remote Erga API proxy: either `erga_api` wrapper or a direct proxied Erga tool name.
           const remoteName = name == "erga_api" ? String(args.tool ?? "") : name;
           const remoteArgs = name == "erga_api" ? ((args.args ?? {}) as Record<string, unknown>) : args;
@@ -313,7 +213,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
           activeOrigin = origin;
           const tok = await getAccessToken(origin, opts.driver.label, { interactive: false });
           if (!tok) {
-            await ensureDaemon();
+            await ensureDaemon(origin);
             const auth = await daemonRpc<Record<string, unknown>>(opts.driver.id, "/auth/start", { origin });
             if (auth?.needsAuth) return ok({ content: [{ type: "text", text: JSON.stringify(auth, null, 2) }] });
           }

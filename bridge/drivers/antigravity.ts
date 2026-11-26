@@ -63,8 +63,7 @@ export function createAntigravityDriver(log?: (line: string) => void): AgentDriv
   };
 }
 
-const OPEN_HINT = `- When the user asks to edit an Erga document URL (or create a new Erga doc), prefer running \`erga-agent open <url>\` via run_command so the live Yjs room mounts AND Erga's browser panel connects directly to THIS running session without spawning a second agent.
-- If you call erga_open via MCP and it returns liveAttached: false, run \`erga-agent attach\` via run_command so browser prompts route straight into this running session.`;
+const OPEN_HINT = `- When the user asks to edit an Erga document URL (or create a new Erga doc), run \`erga-agent open <url>\` (or \`erga-agent open --create --title "<title>"\`) via run_command so the live Yjs room mounts AND Erga's browser panel connects directly to THIS running session without spawning a second agent.`;
 
 // ---------------------------------------------------------------- live session injection (`agy agentapi`)
 

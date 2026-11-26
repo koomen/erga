@@ -334,6 +334,8 @@ export function createClaudeCodeDriver(log?: (line: string) => void): AgentDrive
     id: "claude-code",
     label: "Claude Code",
     sessionEnv: "CLAUDE_CODE_SESSION_ID",
+    openHint:
+      '- When the user asks to edit an Erga document URL (or create a new Erga doc), run `"${CLAUDE_PLUGIN_ROOT}/bin/erga-agent" open --agent claude-code "<url>"` to mount the live Yjs room in a local folder and connect this session to Erga\'s browser panel.',
     async open(opts: OpenSessionOptions): Promise<AgentHandle> {
       const handle: ClaudeCodeHandle = new ClaudeCodeHandle(command, opts, () => handles.delete(handle.sessionId), log);
       handles.set(handle.sessionId, handle);

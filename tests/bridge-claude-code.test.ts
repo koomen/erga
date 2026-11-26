@@ -250,7 +250,7 @@ test("Claude Code plugin: the panel shows the terminal session's turns, and a pa
 
   try {
     daemon.startSocket();
-    // The terminal session opens the document (the plugin's erga_open).
+    // The terminal session opens the document (via `erga-agent open`).
     const opened = await daemon.openDocument({ origin, document: "/d/doc1", cwd: work, conversationId: "term-1" });
     expect(opened.ok).toBe(true);
     await until(() => fromBridge.some((m) => m.type == "bind"), "the bind");

@@ -90,8 +90,6 @@ const VERBS: Record<string, [string, string]> = {
   search_web: ["Searching the web", "Searched the web"],
   read_url_content: ["Reading page", "Read page"],
   call_mcp_tool: ["Calling tool", "Called tool"],
-  erga_open: ["Connecting document", "Connected document"],
-  erga_mount: ["Syncing document", "Synced document"],
 };
 
 /** Its host, for someone who may edit it (meta erga-base): the agent's edits there, which Undo takes back. */

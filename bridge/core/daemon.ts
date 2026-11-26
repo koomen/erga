@@ -491,18 +491,24 @@ export class ErgaDaemon {
     };
   }
 
-  async unmountDocument(rawOrigin: string, docId: string): Promise<boolean> {
-    const origin = normalizeOrigin(rawOrigin);
-    const key = this.mountKey(origin, docId);
-    const mounted = this.mounts.get(key);
-    if (!mounted) return false;
+  async unmountDocument(rawOrigin: string | undefined, docId: string): Promise<boolean> {
+    const origin = rawOrigin ? normalizeOrigin(rawOrigin) : undefined;
+    const hit = origin
+      ? (() => {
+          const key = this.mountKey(origin, docId);
+          const mounted = this.mounts.get(key);
+          return mounted ? ([key, mounted] as const) : null;
+        })()
+      : ([...this.mounts.entries()].find(([, m]) => m.docId == docId || m.url == docId) ?? null);
+    if (!hit) return false;
+    const [key, mounted] = hit;
     if (mounted.conversationId) this.clearLiveTurn(mounted.conversationId);
     await mounted.sync.flush().catch(() => {});
     await mounted.sync.stop();
     mounted.mirror?.stop();
     this.mounts.delete(key);
-    this.bridges.get(origin)?.unbind(docId);
-    const tKey = this.threadKey(origin, docId);
+    this.bridges.get(mounted.origin)?.unbind(mounted.docId);
+    const tKey = this.threadKey(mounted.origin, mounted.docId);
     const thread = this.threads.get(tKey);
     if (thread) {
       thread.unsub();
@@ -886,7 +892,7 @@ export class ErgaDaemon {
     const mcpServers = this.opts.mcpSpec ? [this.opts.mcpSpec(origin)] : [];
     const systemPromptAppend = mounted
       ? `You are connected to Erga document ${mounted.url} (id: ${mounted.docId}). Its files are live-synced via Yjs in local directory: ${mounted.dir}. Read and edit the document's files directly in that local directory with your native file tools; changes sync live to the user's browser. Use the Erga MCP tools (page, documents, read, edit, comments, versions) for page previews, live console logs, comments, publishing, or other Erga documents.`
-      : `You are connected to Erga (${origin}). Use the Erga MCP tools (erga_open, documents, read, edit, page) to open, create, or edit documents.`;
+      : `You are connected to Erga (${origin}). Use the Erga MCP tools (documents, read, edit, page) to read or edit documents, or run erga-agent open <url> to mount one locally.`;
 
     const handle = await this.driver.open({
       cwd,
@@ -956,7 +962,7 @@ export class ErgaDaemon {
       }
       if (req.method == "POST" && url.pathname == "/unmount") {
         const body = (await req.json()) as { origin?: string; docId: string };
-        const ok = await this.unmountDocument(body.origin ?? this.opts.defaultOrigin ?? DEFAULT_ORIGIN, body.docId);
+        const ok = await this.unmountDocument(body.origin, body.docId);
         return json({ ok });
       }
       if (req.method == "POST" && url.pathname == "/connect") {
