@@ -1,9 +1,13 @@
 {
   "name": "erga",
-  "version": "0.1.0",
   "description": "Edit Erga documents from Claude Code: a live local copy of the document, Erga's tools, and the document's agent panel.",
   "author": {
     "name": "Erga"
   },
-  "keywords": ["erga", "documents", "mcp"]
+  "license": "MIT",
+  "keywords": [
+    "erga",
+    "documents",
+    "mcp"
+  ]
 }

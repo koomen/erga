@@ -27,6 +27,7 @@
 //   /auth/domain-pass          a custom domain's sign-in, through here (server/identity/domain-pass.ts)
 //   /setup                     a new server's setup page: sign-in, updates, the first admin (server/identity/setup.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
+//   /plugin/...                Erga's plugin for a local agent (Claude Code, Antigravity), to install (server/pages/plugin.ts)
 //   /oauth/authorize           MCP's sign-in: the person lets an agent's app act for them (server/identity/authorize.ts)
 //   /tokens/new                making a token to paste (the Settings dialog)
 //   /_home-files/<gen>/<path>  the Erga domain's published files
@@ -92,12 +93,15 @@ import { releaseApi, withLive } from "./live.ts";
 import { newsRoutes } from "./news/index.ts";
 import {
   accountOf,
+  antigravityScript,
   homeGoesToDocuments,
   isAssetPath,
   libraryOf,
   serveLibrary,
   loadAssets,
   OWN_ACCOUNT,
+  pluginMarketplace,
+  pluginZip,
   serveAsset,
   serveWorker,
   serveClear,
@@ -164,6 +168,7 @@ export const app = (outside: Outside): Route =>
   });
 
 const SIGN = { domain: "none", exempt: SIGN_IN } as const;
+const PLUGIN = { domain: "none", exempt: "a person installs the plugin on their own computer, in their agent's terminal" } as const;
 
 /** The routes this file answers itself: signing in, the deploy's default homepage, and the release an open page follows. */
 export const ROUTES: readonly RouteRow<Route>[] = [
@@ -278,6 +283,35 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     action: "Complete a remote agent's device-code approval after the gate signs its code",
     domain: "none",
     exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
+  // Erga's plugin for a local agent (server/pages/plugin.ts): public, with no secret, for anyone to install.
+  {
+    method: "GET",
+    path: "/plugin/marketplace.json",
+    run: pluginMarketplace,
+    action: "Claude Code reads Erga's plugin marketplace",
+    ...PLUGIN,
+  },
+  {
+    method: "GET",
+    path: "/plugin/claude-code.zip",
+    run: pluginZip("claude-code"),
+    action: "Download Erga's plugin for Claude Code",
+    ...PLUGIN,
+  },
+  {
+    method: "GET",
+    path: "/plugin/antigravity.zip",
+    run: pluginZip("antigravity"),
+    action: "Download Erga's plugin for Antigravity",
+    ...PLUGIN,
+  },
+  {
+    method: "GET",
+    path: "/plugin/antigravity.sh",
+    run: antigravityScript,
+    action: "Download the script that installs Erga's plugin for Antigravity",
+    ...PLUGIN,
   },
   // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
   {

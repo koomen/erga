@@ -2,7 +2,7 @@
   "mcpServers": {
     "erga": {
       "command": "sh",
-      "args": ["${PLUGIN_ROOT}/scripts/erga-mcp.sh"]
+      "args": ["${PLUGIN_ROOT}/bin/erga-agent", "mcp", "--agent", "antigravity"]
     }
   }
 }

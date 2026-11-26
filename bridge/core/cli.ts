@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
-// Standalone Erga local agent bridge binary (`erga-agent`).
-// Compiles to a single dependency-free native executable via `bun bridge/build.ts`
-// so users never need to clone Erga or install Bun.
+// Erga's local agent bridge (`erga-agent`). The plugins carry it as one script for Bun (erga-agent.js), which
+// their launcher runs (bridge/plugin-files.ts); each Erga instance serves them (server/pages/plugin.ts).
 //
 // Subcommands:
 //   erga-agent open    [doc-url] [--create] [--title ...] [--from <path>] [--server <url>]
@@ -36,11 +35,9 @@ const DRIVERS: Record<string, (log?: (line: string) => void) => AgentDriver> = {
   "claude-code": createClaudeCodeDriver,
 };
 
-/** Resolves how to re-invoke this process (works both via `bun cli.ts` and compiled standalone binary). */
+/** How to run this script again: Bun, with the script's path (erga-agent.js, or cli.ts here). */
 export function selfCommand(): { command: string; prefix: string[] } {
-  const script = process.argv[1];
-  const compiled = !script || script.startsWith("/$bunfs/") || script == process.execPath;
-  return compiled ? { command: process.execPath, prefix: [] } : { command: process.execPath, prefix: [script] };
+  return { command: process.execPath, prefix: [process.argv[1]] };
 }
 
 const BOOL_FLAGS = new Set(["foreground", "create", "help", "device", "local", "no-open", "auto-approve", "dangerously-skip-permissions"]);

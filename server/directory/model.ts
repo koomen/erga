@@ -115,6 +115,7 @@ export const RESERVED = new Set([
   "assets",
   "static",
   "settings",
+  "plugin",
   "admin",
   "login",
   "logout",

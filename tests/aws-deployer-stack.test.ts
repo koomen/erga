@@ -7,7 +7,8 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Aws } from "../deploy/aws/cli";
-import { type DeployerShape, deployerCode, deployerTemplate, hasDeployer, removeDeployer, zipOne } from "../deploy/aws/deployer";
+import { type DeployerShape, deployerCode, deployerTemplate, hasDeployer, removeDeployer } from "../deploy/aws/deployer";
+import { zip } from "../shared/zip";
 import { TEMPLATE_MAX } from "../deploy/aws/template";
 import { ROOT } from "./helpers/deploys.ts";
 
@@ -81,7 +82,7 @@ describe("the deployer's stack", () => {
     const code = new TextEncoder().encode('exports.handler = async () => "é";\n'.repeat(200));
     const dir = mkdtempSync(join(tmpdir(), "erga-zip-"));
     try {
-      writeFileSync(join(dir, "code.zip"), zipOne("index.js", code));
+      writeFileSync(join(dir, "code.zip"), zip([{ path: "index.js", bytes: code }]));
       const listed = Bun.spawnSync(["unzip", "-Z1", join(dir, "code.zip")]);
       expect([listed.exitCode, listed.stdout.toString()]).toEqual([0, "index.js\n"]);
       expect(Bun.spawnSync(["unzip", "-tq", join(dir, "code.zip")]).exitCode).toBe(0);

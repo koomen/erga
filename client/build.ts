@@ -24,6 +24,7 @@
 //                        view's CodeMirror and languages, the agent's screenshots)
 //     style-<h>.css, editor-<h>.html, inter-<h>.css, fonts/inter-...-<h>.woff2
 //     admin-<h>.css      the admin pages' one stylesheet (client/styles/admin.css, with assets/ops/ops-view.css)
+//     plugins-<h>.json   the agent plugins' files (bridge/plugin-files.ts), not for a browser: the server zips them
 //   manifest.json      each file's address by its name, the chunks each script needs first, their integrity
 //                      hashes and the typeface's @font-face rules (shared/assets.ts): the Worker reads it and
 //                      names the files in the pages it makes (server/pages/assets.ts). Not served.
@@ -46,6 +47,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, wri
 import { join, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { ASSET_PREFIX, namedBy, type AssetManifest } from "../shared/assets";
+import { pluginFiles } from "../bridge/plugin-files";
 
 const ROOT = resolve(import.meta.dir, "..");
 const OUT = join(ROOT, ".build");
@@ -237,6 +239,9 @@ async function build(): Promise<void> {
   // under .ops-view, so it changes no other page.
   const admin = enc(["client/styles/admin.css", "assets/ops/ops-view.css"].map((f) => readFileSync(join(ROOT, f), "utf8")).join("\n"));
   files["admin.css"] = put(`admin-${hashOf(admin)}.css`, admin);
+  // The agent plugins' files, which each instance serves as zips with its own address (server/pages/plugin.ts).
+  const plugins = enc(JSON.stringify(await pluginFiles()));
+  files["plugins.json"] = put(`plugins-${hashOf(plugins)}.json`, plugins);
 
   // The editor's page, naming the files of this build: the typeface's rules and its own styles in it (no stylesheet to
   // wait for), its stylesheet, and its script as a module.

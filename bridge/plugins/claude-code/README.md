@@ -14,18 +14,18 @@ The plugin connects a Claude Code session to an Erga document:
 
 ## Install
 
-Build the plugin (it holds the `erga-agent` binary):
+Each Erga server serves the plugin. In a terminal:
 
-    bun bridge/build.ts
-
-For one session only:
-
-    claude --plugin-dir dist/plugins/claude-code
-
-To keep it:
-
-    claude plugin marketplace add ./dist/plugins
+    claude plugin marketplace add https://<your Erga server>/plugin/marketplace.json
     claude plugin install erga@erga
+
+The plugin works with the server that it came from. It needs Bun or Node.js
+on the computer. `claude plugin update erga@erga` gets the server's newest
+release. Settings, in Erga, shows the same commands with your server's address.
+
+To work on the plugin itself, write it from this checkout and start a session
+with it: `bun bridge/build.ts --server <url>`, then
+`claude --plugin-dir dist/plugins/claude-code`.
 
 ## Connect a session to a document
 

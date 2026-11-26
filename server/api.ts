@@ -26,6 +26,7 @@ import type { ToolContent } from "../document/api/operations";
 import { authOps, type Grant } from "./identity/index.ts";
 import { Base64 } from "effect/encoding";
 import { RESOURCE } from "../gate/core.ts";
+import { pluginInstall } from "../shared/agent-plugin.ts";
 
 /** Who calls a tool here: the person signed in (their session, or an agent's token), the platform, and the server's origin. */
 type ToolContext = Caller & { readonly session: Session; readonly platform: Platform; readonly origin: string };
@@ -367,6 +368,12 @@ Erga is a multiplayer HTML page editor. Agents use it through its MCP server: ${
 Add it to your MCP app (Streamable HTTP). It signs you in through your user's browser, and its instructions and tools tell you the rest.
 
 Without MCP, call the same tools over HTTP with a token (Authorization: Bearer <token>): GET ${origin}/api/tools lists them, and POST ${origin}/api/tools/<name> runs one, with its arguments as JSON.
+
+To edit a document's files on your user's computer, live, install Erga's plugin:
+
+${Object.entries(pluginInstall(origin))
+  .map(([agent, command]) => `- ${agent}: \`${command}\``)
+  .join("\n")}
 `;
 
 // ---------------------------------------------------------------- the routes

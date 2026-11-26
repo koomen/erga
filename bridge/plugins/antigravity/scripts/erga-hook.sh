@@ -1,20 +1,9 @@
 #!/bin/sh
-set -eu
+# Antigravity's hooks: erga-agent's answer, or, when erga-agent can't run, an answer that changes nothing.
 DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-if [ -x "$DIR/bin/erga-agent" ]; then
-  exec "$DIR/bin/erga-agent" hook --agent antigravity
-fi
-if command -v erga-agent >/dev/null 2>&1; then
-  exec erga-agent hook --agent antigravity
-fi
-if [ -x "$HOME/.local/bin/erga-agent" ]; then
-  exec "$HOME/.local/bin/erga-agent" hook --agent antigravity
-fi
-if [ -f "$DIR/../../core/cli.ts" ] && command -v bun >/dev/null 2>&1; then
-  exec bun "$DIR/../../core/cli.ts" hook --agent antigravity
-fi
-if grep -q '"PreToolUse"'; then
-  echo '{"decision":"allow"}'
-else
-  echo "{}"
-fi
+IN="$(cat)"
+printf '%s' "$IN" | sh "$DIR/bin/erga-agent" hook --agent antigravity && exit 0
+case "$IN" in
+  *'"PreToolUse"'*) echo '{"decision":"allow"}' ;;
+  *) echo '{}' ;;
+esac

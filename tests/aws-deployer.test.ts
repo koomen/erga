@@ -13,7 +13,7 @@ import { join } from "node:path";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { type DeployerShape, deployerCode, deployerName, deployerTemplate, roleStatements, zipOne } from "../deploy/aws/deployer";
+import { type DeployerShape, deployerCode, deployerName, deployerTemplate, roleStatements } from "../deploy/aws/deployer";
 import { documentScript } from "../deploy/aws/machine";
 import { TEMPLATE_MAX } from "../deploy/aws/template";
 import { gateParam, liveParam } from "../deploy/deployer/aws";

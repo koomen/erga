@@ -28,6 +28,7 @@ import { type Aws, awsCli } from "./cli";
 import { awsSql } from "./deploy";
 import { documentScript } from "./machine";
 import { applyStack, changeLines, type Planned, planStack, stackState, templatesDir } from "./stack";
+import { zip } from "../../shared/zip";
 
 type Json = Record<string, unknown>;
 const sub = (s: string) => ({ "Fn::Sub": s });
@@ -211,50 +212,6 @@ export async function deployerCode(): Promise<Uint8Array> {
   return new Uint8Array(await built.outputs[0].arrayBuffer());
 }
 
-/** A zip with one file, stored as it is (no compression), which every user may read: a Lambda function's code. */
-export function zipOne(name: string, bytes: Uint8Array): Uint8Array {
-  const path = new TextEncoder().encode(name);
-  const crc = Bun.hash.crc32(bytes);
-  /** A header's numbers, each of 2 or 4 bytes, little-endian. */
-  const record = (fields: [size: 2 | 4, value: number][]) => {
-    const out = new DataView(new ArrayBuffer(fields.reduce((sum, [size]) => sum + size, 0)));
-    let at = 0;
-    for (const [size, value] of fields) {
-      if (size == 2) out.setUint16(at, value, true);
-      else out.setUint32(at, value, true);
-      at += size;
-    }
-    return new Uint8Array(out.buffer);
-  };
-  // No compression, and the date of 1980-01-01: the same code gives the same zip.
-  const same: [2 | 4, number][] = [
-    [2, 20],
-    [2, 0],
-    [2, 0],
-    [2, 0],
-    [2, 33],
-    [4, crc],
-    [4, bytes.length],
-    [4, bytes.length],
-    [2, path.length],
-    [2, 0],
-  ];
-  const local = record([[4, 0x04034b50], ...same]);
-  // (Made on Unix, a plain file with the mode 0644: Lambda's user must read it.)
-  const central = record([[4, 0x02014b50], [2, (3 << 8) | 20], ...same, [2, 0], [2, 0], [2, 0], [4, (0o100644 << 16) >>> 0], [4, 0]]);
-  const end = record([
-    [4, 0x06054b50],
-    [2, 0],
-    [2, 0],
-    [2, 1],
-    [2, 1],
-    [4, central.length + path.length],
-    [4, local.length + path.length + bytes.length],
-    [2, 0],
-  ]);
-  return new Uint8Array(Buffer.concat([local, path, bytes, central, path, end]));
-}
-
 /**
  * Installs the deployer of an instance on AWS, or updates it: the stack (its change set is shown first, and `vet`
  * sees it before AWS applies it and throws to stop there), then the function's code. With the person's own login
@@ -283,11 +240,11 @@ export async function installDeployer(
   await applyStack(plan, log, "about a minute");
   const tmp = mkdtempSync(join(tmpdir(), "erga-deployer-"));
   try {
-    const zip = join(tmp, "deployer.zip");
-    writeFileSync(zip, zipOne("index.js", await deployerCode()));
+    const code = join(tmp, "deployer.zip");
+    writeFileSync(code, zip([{ path: "index.js", bytes: await deployerCode() }]));
     // (A new function takes no code until it is active, and runs the new code only when its update ended.)
     await aws("lambda", "wait", "function-active-v2", "--function-name", name);
-    await aws("lambda", "update-function-code", "--function-name", name, "--zip-file", `fileb://${zip}`);
+    await aws("lambda", "update-function-code", "--function-name", name, "--zip-file", `fileb://${code}`);
     await aws("lambda", "wait", "function-updated-v2", "--function-name", name);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

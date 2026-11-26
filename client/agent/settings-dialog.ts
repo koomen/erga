@@ -6,6 +6,8 @@
 //     to paste a new one, Save, and Remove. Their key runs every model of its provider in their agent, and wins over
 //     the server's. Save sends it to POST /api/agent/keys, never anywhere else; the list and Remove are the operations
 //     whoami (its apiKeys) and revoke. The agent's panel hears "erga:agent-keys" and reads its models again.
+//   - Local agents: the commands that install Erga's plugin for Claude Code and Antigravity from this server
+//     (shared/agent-plugin.ts), each with Copy.
 //   - Tokens: the person's agent tokens (whoami's tokens), newest first: the first SHOWN, then "N more" and Show 10
 //     more, which asks whoami for the next MORE. Each has Revoke (revoke). An expired token isn't listed (whoami). New
 //     token makes one (POST /tokens/new: the token comes in the answer's header x-erga-token), shown once, with the
@@ -17,6 +19,7 @@
 import { asUser, runTool, WHOLE_LIST } from "../common/tools";
 import { showCopied } from "../common/copied";
 import { esc } from "../../shared/html";
+import { pluginInstall } from "../../shared/agent-plugin";
 
 interface Key {
   name: string;
@@ -66,6 +69,14 @@ function make(): HTMLDialogElement {
 <section class="keys" aria-labelledby="erga-settings-keys"><h3 id="erga-settings-keys">Agent</h3>
 <p class="sub">Your own API keys, for your agent only. A saved key is never shown again.</p>
 <ul class="rows"></ul></section>
+<section class="plugin" aria-labelledby="erga-settings-plugin"><h3 id="erga-settings-plugin">Local agents</h3>
+<p class="sub">Edit your documents from Claude Code or Antigravity on your computer: its edits show here at once. Run one command in a terminal.</p>
+${Object.entries(pluginInstall(location.origin))
+  .map(
+    ([agent, command]) =>
+      `<div class="cmd"><b>${esc(agent)}</b> <button type="button" class="pill copy">Copy</button></div><pre>${esc(command)}</pre>`
+  )
+  .join("")}</section>
 <section class="tokens" aria-labelledby="erga-settings-tokens"><h3 id="erga-settings-tokens">Tokens</h3>
 <p class="sub">A token lets an outside agent or script act as you, for 30 days at most.</p>
 <div class="made" hidden></div><ul class="rows"></ul>
@@ -89,6 +100,14 @@ function make(): HTMLDialogElement {
     void makeToken(form);
   });
   d.querySelector("p.more button")!.addEventListener("click", () => void showMore());
+  for (const copy of d.querySelectorAll<HTMLElement>("section.plugin .copy"))
+    copy.addEventListener("click", () => {
+      const command = copy.parentElement!.nextElementSibling!.textContent ?? "";
+      void navigator.clipboard.writeText(command).then(
+        () => showCopied(copy),
+        () => {}
+      );
+    });
   return d;
 }
 
@@ -320,6 +339,7 @@ const STYLE = `
 #erga-settings form.make label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--soft); }
 #erga-settings pre { margin: 6px 0; padding: 8px 10px; background: var(--code-bg); border-radius: 8px; font: 12.5px/1.45 var(--font-mono);
   white-space: pre-wrap; overflow-wrap: anywhere; }
+#erga-settings .cmd { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; color: var(--fg-strong); }
 #erga-settings .made { margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--panel-border); border-radius: 10px; }
 #erga-settings .made p { margin: 4px 0; }
 `;

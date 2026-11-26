@@ -8,6 +8,7 @@
   "author": {
     "name": "Erga"
   },
+  "license": "MIT",
   "suggestedPrompts": [
     "Edit an Erga document from its URL",
     "Create a new Erga document explaining this project"
