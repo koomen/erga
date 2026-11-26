@@ -5,7 +5,7 @@ import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import * as C from "../api/clipboard";
 import * as R from "./clipboard-read";
 import { placeOf, publicHref, type Place } from "../../../client/common/link-target";
-import { HEADING } from "../api/source";
+import { exitAnchorEnd, HEADING } from "../api/source";
 import { editableAt } from "../api/rules";
 import { LOADING_AGAIN } from "./drop";
 import { pageUrl } from "../../../document/model/pages";
@@ -42,7 +42,7 @@ export function paste(ed: EditorCore, e: ClipboardEvent): void {
     sel?.empty &&
     u &&
     /^(https?:\/\/|mailto:)\S+$/i.test(url) &&
-    !M.inlineStackAt(src(ed), u, sel.from).some((t) => t.tag == "a" || t.tag == "code")
+    !M.inlineStackAt(src(ed), u, exitAnchorEnd(src(ed), u, sel.from)).some((t) => t.tag == "a" || t.tag == "code")
   )
     return pasteBlocks(ed, [{ tag: "p", html: `<a href="${escapeAttr(url)}">${escapeHtmlText(url)}</a>`, text: url, md: url }]);
   // A link to a place in this page, copied from it (as its public address), is #id again.

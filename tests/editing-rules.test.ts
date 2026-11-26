@@ -195,6 +195,31 @@ describe("through the editor's handlers", () => {
     ed.select(cut.replace("Another block.", "Another block.|")).pasteText("the target block");
     expect(ed.text).toBe(cut.replace("Another block.", "Another block.the target block|"));
   });
+
+  // Pete's bug: typing, Enter, Shift+Enter, and paste at the end of <a> inserted inside <a> or reopened <a>.
+  test("at the end of an anchor, typing, Enter, Shift+Enter, paste, and stored styles land after </a>", () => {
+    const A = '<a href="http://example.com/">anchor</a>';
+    const atEnd = '<a href="http://example.com/">anchor|</a>';
+    expect(keys(`<p>${atEnd}</p>`).key("new.").text).toBe(`<p>${A}new.|</p>`);
+    expect(keys(`<p>${atEnd}</p>`).key("Enter").key("next").text).toBe(`<p>${A}</p>\n<p>next|</p>`);
+    expect(keys(`<p>${atEnd}</p>`).key("Shift+Enter").key("line 2").text).toBe(`<p>${A}<br>line 2|</p>`);
+    expect(keys(`<p>${atEnd}</p>`).key("Mod+b").key("bold").text).toBe(`<p>${A}<strong>bold|</strong></p>`);
+    expect(keys(`<p>${atEnd}</p>`).pasteText("https://other.example/").text).toBe(
+      `<p>${A}<a href="https://other.example/">https://other.example/</a>|</p>`
+    );
+    expect(keys(`<p>${atEnd}</p>`).pasteIn([{ tag: "p", html: "<strong>bold</strong>", text: "bold", md: "**bold**" }]).text).toBe(
+      `<p>${A}<strong>bold</strong>|</p>`
+    );
+    // Strictly inside <a> still edits the link; Backspace at the end still deletes its last char.
+    expect(keys('<p><a href="http://example.com/">an|chor</a></p>').key("X").text).toBe(
+      '<p><a href="http://example.com/">anX|chor</a></p>'
+    );
+    expect(keys(`<p>${atEnd}</p>`).key("Backspace").text).toBe('<p><a href="http://example.com/">ancho|</a></p>');
+    // Direct Layer 1 rules (used by edits.ts insert_text / split).
+    expect(key(`<p>${atEnd}</p>`, type("new"))).toEqual({ text: `<p>${A}new|</p>`, undo: "type" });
+    expect(key(`<p>${atEnd}</p>`, { kind: "enter", shift: false })).toEqual({ text: `<p>${A}</p>\n<p>|<br></p>`, undo: "own" });
+    expect(key(`<p>${atEnd}</p>`, { kind: "enter", shift: true })).toEqual({ text: `<p>${A}<br>|<br></p>`, undo: "own" });
+  });
 });
 
 describe("the three shared answers", () => {

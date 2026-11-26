@@ -349,6 +349,24 @@ const CASES: [string, string, string[], string][] = [
     ["- One", "Enter", "Two", "Tab", "Shift+Tab", "Undo"],
     "<ul>\n  <li>One\n    <ul>\n      <li>Two|</li>\n    </ul>\n  </li>\n</ul>",
   ],
+  [
+    "Enter at the end of a link in a bullet starts a plain bullet",
+    '<ul>\n  <li><a href="http://example.com/">anchor|</a></li>\n</ul>',
+    ["Enter", "Next"],
+    '<ul>\n  <li><a href="http://example.com/">anchor</a></li>\n  <li>Next|</li>\n</ul>',
+  ],
+  [
+    "Enter at the end of a link in an item with a nested list starts a plain bullet",
+    '<ul>\n  <li><a href="http://example.com/">anchor|</a>\n    <ul>\n      <li>Sub</li>\n    </ul>\n  </li>\n</ul>',
+    ["Enter", "Next"],
+    '<ul>\n  <li><a href="http://example.com/">anchor</a></li>\n  <li>Next|\n    <ul>\n      <li>Sub</li>\n    </ul>\n  </li>\n</ul>',
+  ],
+  [
+    "Shift+Enter at the end of a link in a bullet breaks the line outside the link",
+    '<ul>\n  <li><a href="http://example.com/">anchor|</a></li>\n</ul>',
+    ["Shift+Enter", "Line 2"],
+    '<ul>\n  <li><a href="http://example.com/">anchor</a><br>Line 2|</li>\n</ul>',
+  ],
 ];
 
 const P = (t: string) => ({ tag: "p" as const, html: t, text: t, md: t });

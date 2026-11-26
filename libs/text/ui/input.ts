@@ -6,7 +6,7 @@ import * as M from "../../../shared/manuscript";
 import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { contentIn, findDiff, norm, placeholderBr, setChecked } from "../api/source";
+import { contentIn, exitAnchorEnd, findDiff, norm, placeholderBr, setChecked } from "../api/source";
 import {
   askPage,
   draggedFiles,
@@ -780,13 +780,21 @@ function readBack(ed: EditorCore, u: M.Unit, userEvent: string): void {
   for (let i = 0; i < u.runs.length; i++)
     if (u.runs[i].from <= hint && hint <= u.runs[i].to) hintK = starts[i] + M.runOffset(u.runs[i], hint);
   const diff = findDiff(norm(before), after, hintK);
+  let moved = false;
   if (diff) {
-    const from = toPos(diff.from),
+    let from = toPos(diff.from),
       to = toPos(diff.toA);
     const insert = escapeHtmlText(after.slice(diff.from, diff.toB));
+    if (from == to && insert) {
+      const out = exitAnchorEnd(src(ed), u, from);
+      if (out != from) {
+        from = to = out;
+        moved = true;
+      }
+    }
     dispatch(ed, { changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
   }
-  const now = own && ed.unitByEl.get(el);
+  const now = (own || moved) && ed.unitByEl.get(el);
   if (now && ed.units[now.id] == now) {
     redraw(ed, now, el);
     syncDOMSelection(ed, true);

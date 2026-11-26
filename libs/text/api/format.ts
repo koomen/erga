@@ -8,7 +8,19 @@ import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { ChangeSet, Text } from "@codemirror/state";
 import { editableAt, inlineAt, placeholderDrops, undoOf, type Page, type Step } from "./rules";
 import type { Change } from "./lists";
-import { attrOf, dropped, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn, type InlineStyle } from "./source";
+import {
+  anchorEnd,
+  attrOf,
+  dropped,
+  exitAnchorEnd,
+  FORMAT_TAGS,
+  linkEnding,
+  setAttr,
+  STYLE_TAGS,
+  textIn,
+  unitsIn,
+  type InlineStyle,
+} from "./source";
 
 export type Segment = { u: M.Unit; from: number; to: number };
 
@@ -281,7 +293,8 @@ export function toggleStoredStyle(
   if (!u || !page.editable(u) || !editableAt(u, pos)) return { why: "Put the caret in the text first." };
   if (u.tag == "pre") return { why: "Text in a code block can't be styled." };
   const styles = new Map(current ?? undefined);
-  const on = styles.get(style) ?? inlineAt(u, pos).some((e) => STYLE_TAGS[style].includes(e.tag));
+  const at = exitAnchorEnd(page.src, u, pos);
+  const on = styles.get(style) ?? inlineAt(u, at).some((e) => STYLE_TAGS[style].includes(e.tag));
   styles.set(style, !on);
   return { styles };
 }
@@ -294,9 +307,10 @@ export function toggleStoredStyle(
 export function typeWithStored(page: Page, pos: number, text: string, styles: StoredStyles): Step | null {
   const u = M.unitAt(page.units, pos);
   if (!u || !page.editable(u) || !styles.size) return null;
-  const src = page.src,
-    stack = inlineAt(u, pos);
-  let at = pos,
+  const src = page.src;
+  const atPos = exitAnchorEnd(src, u, pos);
+  const stack = inlineAt(u, atPos);
+  let at = atPos,
     before = "",
     after = "",
     open = "",
@@ -307,22 +321,22 @@ export function typeWithStored(page: Page, pos: number, text: string, styles: St
     if (on && i < 0) {
       open += `<${STYLE_TAGS[style][0]}>`;
       close = `</${STYLE_TAGS[style][0]}>` + close;
-    } else if (!on && i >= 0 && at == pos) {
+    } else if (!on && i >= 0 && at == atPos) {
       const e = stack[i],
         inner = tags(stack.slice(i + 1));
       const onlyTags = (a: number, b: number) => !src.slice(a, b).replace(/<[^>]*>/g, "");
-      if (onlyTags(pos, e.closeFrom)) at = e.to;
-      else if (onlyTags(e.openTo, pos)) at = e.from;
-      if (at != pos) [before, after] = [M.openTags(inner), M.closeTags(inner)];
+      if (onlyTags(atPos, e.closeFrom)) at = e.to;
+      else if (onlyTags(e.openTo, atPos)) at = e.from;
+      if (at != atPos) [before, after] = [M.openTags(inner), M.closeTags(inner)];
       else {
         before = M.closeTags(tags(stack.slice(i))) + M.openTags(inner);
         after = M.closeTags(inner) + M.openTags(tags(stack.slice(i)));
       }
     }
   }
-  if (at == pos && !before && !open) return null;
+  if (at == atPos && !before && !open) return null;
   const head = before + open + escapeHtmlText(text);
-  const drops = placeholderDrops(src, [u], pos, pos, true);
+  const drops = placeholderDrops(src, [u], atPos, atPos, true);
   const changes: Change[] = [{ from: at, insert: head + close + after }, ...drops];
   return {
     changes,
@@ -333,28 +347,36 @@ export function typeWithStored(page: Page, pos: number, text: string, styles: St
 }
 
 /**
- * Text typed or pasted at a caret at either end of a link: the part next to the link goes into it, and from a space on
- * it's plain text. So a space at a link's end ends the link, and one at its start goes before it. Null where the caret
- * isn't at a link's end.
+ * Text typed or pasted at a caret at either end of a link: at the end of a link, all text inserts after `</a>`;
+ * at the start of a link, non-space text joins the link and a space goes before it. Null elsewhere.
  */
 export function typeAtLinkEdge(page: Page, pos: number, text: string, userEvent = "input.type"): Step | null {
   const u = M.unitAt(page.units, pos);
   if (!u || u.tag == "pre" || !page.editable(u) || !editableAt(u, pos)) return null;
+  const end = anchorEnd(page.src, u, pos);
+  if (end) {
+    if (!text) return null;
+    const insert = escapeHtmlText(text);
+    const changes: Change[] = [{ from: end.to, insert }];
+    const set = ChangeSet.of(changes, page.src.length);
+    return {
+      changes,
+      selection: { anchor: end.to + insert.length },
+      userEvent,
+      undo: undoOf(page.src, set, userEvent),
+    };
+  }
   const el = enclosing(u, ["a"], pos, pos) ?? linkEnding(u, pos);
-  if (!el) return null;
-  const end = pos == el.closeFrom || pos == el.to,
-    start = pos == el.from || pos == el.openTo;
-  if (!end && !start) return null;
-  const join = end ? /^\S*/.exec(text)![0] : /\S*$/.exec(text)![0];
-  const plain = end ? text.slice(join.length) : text.slice(0, text.length - join.length);
-  const [inside, outside] = end ? [el.closeFrom, el.to] : [el.openTo, el.from];
+  if (!el || (pos != el.from && pos != el.openTo)) return null;
+  const join = /\S*$/.exec(text)![0];
+  const plain = text.slice(0, text.length - join.length);
   const changes: Change[] = [];
-  if (plain) changes.push({ from: outside, insert: escapeHtmlText(plain) });
-  if (join) changes.push({ from: inside, insert: escapeHtmlText(join) });
+  if (plain) changes.push({ from: el.from, insert: escapeHtmlText(plain) });
+  if (join) changes.push({ from: el.openTo, insert: escapeHtmlText(join) });
   if (!changes.length) return null;
   changes.sort((a, b) => a.from - b.from);
   const set = ChangeSet.of(changes, page.src.length);
-  const caret = set.mapPos(end ? (plain ? outside : inside) : join ? inside : outside, 1);
+  const caret = set.mapPos(join ? el.openTo : el.from, 1);
   return {
     changes,
     selection: { anchor: caret },

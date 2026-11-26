@@ -163,35 +163,44 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
     await expect.poll(() => linkBar(ed)).toBe(true);
     await ed.press("ArrowRight");
     await expect.poll(() => linkBar(ed)).toBe(false);
-    // Typing at the end still joins the link, and the caret stays at its end: no bar.
+    // Typing at the end exits the link after </a>: no bar.
     await ed.type("s");
-    await expect.poll(() => ed.source()).toContain(`>the sites</a> ok`);
+    await expect.poll(() => ed.source()).toContain(`>the site</a>s ok`);
     expect(await linkBar(ed)).toBe(false);
+    await ed.press("Backspace");
+    await expect.poll(() => ed.source()).toContain(`>the site</a> ok`);
   });
 
-  test("a click in a link puts the caret there and shows the link bar, without following the link; letters at its ends join it, a space ends it", async () => {
+  test("a click in a link puts the caret there and shows the link bar, without following the link; typing, Enter and Shift+Enter at its end exit it", async () => {
     const url = ed.page.url();
     const at = await ed.charAt(A, 2);
     await ed.click(at.x, at.y);
     await expect.poll(() => linkBar(ed)).toBe(true);
     expect(await field(ed, "link-url")).toBe("https://example.com");
-    expect(await field(ed, "link-text")).toBe("the sites");
+    expect(await field(ed, "link-text")).toBe("the site");
     expect(ed.page.url()).toBe(url);
     // The focus stayed in the page: typing goes into the link, and the bar follows it.
     await ed.type("X");
-    await expect.poll(() => ed.source()).toContain(`${LINK}thXe sites</a>`);
-    await expect.poll(() => field(ed, "link-text")).toBe("thXe sites");
-    // At its end.
-    for (let i = 0; i < 7; i++) await ed.press("ArrowRight");
+    await expect.poll(() => ed.source()).toContain(`${LINK}thXe site</a>`);
+    await expect.poll(() => field(ed, "link-text")).toBe("thXe site");
+    // At its end: letters, Shift+Enter, and Enter all land outside </a>.
+    for (let i = 0; i < 6; i++) await ed.press("ArrowRight");
     await ed.type("s");
-    await expect.poll(() => ed.source()).toContain(`>thXe sitess</a> ok`);
+    await expect.poll(() => ed.source()).toContain(`>thXe site</a>s ok`);
+    await ed.press("Backspace");
+    await ed.press("Shift+Enter");
+    await ed.type("L2");
+    await expect.poll(() => ed.source()).toContain(`>thXe site</a><br>L2 ok`);
+    await ed.press("ControlOrMeta+z");
+    await ed.press("ControlOrMeta+z");
+    await expect.poll(() => ed.source()).toContain(`>thXe site</a> ok`);
     await ed.type(" ok");
-    await expect.poll(() => ed.source()).toContain(`>thXe sitess</a> ok ok`);
+    await expect.poll(() => ed.source()).toContain(`>thXe site</a> ok ok`);
     // At its start.
     const start = await ed.charAt(A, 0);
     await ed.click(start.x - 1, start.y);
     await ed.type("Z");
-    await expect.poll(() => ed.source()).toContain(`see ${LINK}ZthXe sitess</a>`);
+    await expect.poll(() => ed.source()).toContain(`see ${LINK}ZthXe site</a>`);
   });
 
   test("the link bar changes a link's text; Esc closes it until a click in the link; it removes the link, and undo brings it back", async () => {
@@ -283,6 +292,9 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
     await expect.poll(() => menu(ed)).toEqual(["Heading", "[List]", ...ALL.slice(2)]);
     await ed.press("Enter");
     await expect.poll(() => menu(ed)).toBeNull();
+    await keys(ed, "[Tea](https://example.com)\nCoffee");
+    await expect.poll(() => ed.source()).toMatch(/<ul>\s*<li><a href="https:\/\/example\.com">Tea<\/a><\/li>\s*<li>Coffee<\/li>\s*<\/ul>/);
+    for (let i = 0; i < 4; i++) await ed.press("ControlOrMeta+z");
     await ed.type("Tea");
     await expect.poll(() => ed.source()).toMatch(/<ul>\s*<li>Tea<\/li>\s*<\/ul>/);
 

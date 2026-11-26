@@ -173,6 +173,37 @@ export function linkEnding(u: M.Unit, pos: number): M.ElementNode | null {
   return found;
 }
 
+/**
+ * The anchor element whose end `pos` sits at: inside `<a>` with nothing rendered between `pos` and `</a>`
+ * (including nested inline closing tags like `<a href="..."><strong>anchor|</strong></a>`), or right after `</a>`.
+ * Null in `<pre>` or when `pos` is strictly inside or before a link's content.
+ */
+export function anchorEnd(src: string, u: M.Unit, pos: number): M.ElementNode | null {
+  if (u.tag == "pre") return null;
+  let found: M.ElementNode | null = null;
+  const walk = (node: M.ElementNode) => {
+    for (const c of node.children) {
+      if (c.kind != "element" || c.selfClosing || c.to < pos || c.from > pos) continue;
+      if (
+        c.tag == "a" &&
+        (c.to == pos ||
+          (c.openTo <= pos && pos <= c.closeFrom && textIn([u], pos, c.closeFrom) == "" && !CONTENT_TAG.test(src.slice(pos, c.closeFrom))))
+      ) {
+        found = c;
+        return;
+      }
+      if (c.openTo <= pos && pos <= c.closeFrom) walk(c);
+    }
+  };
+  walk(u.node);
+  return found;
+}
+
+/** Moves `pos` past the closing `</a>` when it sits at the end of an anchor element. */
+export function exitAnchorEnd(src: string, u: M.Unit, pos: number): number {
+  return anchorEnd(src, u, pos)?.to ?? pos;
+}
+
 /** An attribute's value as text: only the references escapeAttr and esc write (decodeEntities makes &nbsp; a plain space). */
 export const decodeAttr = (v: string) => v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 

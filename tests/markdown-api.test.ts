@@ -214,16 +214,28 @@ describe("libs/text/api/format.ts stored marks and link-edge typing", () => {
     ).toEqual({ why: "Put the caret in the text first." });
   });
 
-  test("typeAtLinkEdge extends links on non-space text and exits on spaces at both edges", () => {
+  test("typeAtLinkEdge exits links at the end and preserves start-edge behavior", () => {
     const run = (marked: string, text: string) => {
       const { src, head } = parse(marked);
       return applyStep(src, typeAtLinkEdge(pageOf(src), head, text))?.text ?? null;
     };
-    // End of link (inside or outside </a>): word extends, space exits, mixed splits.
-    expect(run('<p><a href="https://example.com">link|</a></p>', "s")).toBe('<p><a href="https://example.com">links|</a></p>');
-    expect(run('<p><a href="https://example.com">link</a>|</p>', "s")).toBe('<p><a href="https://example.com">links|</a></p>');
+    // End of link (inside, outside </a>, or inside nested inline tag): all text inserts after </a>.
+    expect(run('<p><a href="https://example.com">link|</a></p>', "s")).toBe('<p><a href="https://example.com">link</a>s|</p>');
+    expect(run('<p><a href="https://example.com">link</a>|</p>', "new.")).toBe('<p><a href="https://example.com">link</a>new.|</p>');
     expect(run('<p><a href="https://example.com">link|</a></p>', " ")).toBe('<p><a href="https://example.com">link</a> |</p>');
-    expect(run('<p><a href="https://example.com">link|</a></p>', "s more")).toBe('<p><a href="https://example.com">links</a> more|</p>');
+    expect(run('<p><a href="https://example.com">link|</a></p>', "s more")).toBe('<p><a href="https://example.com">link</a>s more|</p>');
+    expect(run('<p><a href="https://example.com"><strong>link|</strong></a></p>', "new")).toBe(
+      '<p><a href="https://example.com"><strong>link</strong></a>new|</p>'
+    );
+    expect(run('<p><strong><a href="https://example.com">link|</a></strong></p>', "new")).toBe(
+      '<p><strong><a href="https://example.com">link</a>new|</strong></p>'
+    );
+    expect(run('<p><a href="https://a.example">one|</a><a href="https://b.example">two</a></p>', "x")).toBe(
+      '<p><a href="https://a.example">one</a>x|<a href="https://b.example">two</a></p>'
+    );
+    expect(run('<p><a href="https://a.example">one</a>|<a href="https://b.example">two</a></p>', "x")).toBe(
+      '<p><a href="https://a.example">one</a>x|<a href="https://b.example">two</a></p>'
+    );
 
     // Start of link (inside or outside <a>): word extends, space stays outside, mixed splits.
     expect(run('<p><a href="https://example.com">|link</a></p>', "my")).toBe('<p><a href="https://example.com">my|link</a></p>');
@@ -234,5 +246,12 @@ describe("libs/text/api/format.ts stored marks and link-edge typing", () => {
     expect(run('<p><a href="https://example.com">li|nk</a></p>', "x")).toBeNull();
     expect(run("<p>plain|</p>", "x")).toBeNull();
     expect(run('<pre><a href="https://example.com">link|</a></pre>', "x")).toBeNull();
+
+    // Stored styles toggled at the end of a link apply after </a>, not inside it.
+    const atEnd = parse('<p><a href="https://example.com">link|</a></p>');
+    const boldAtEnd = toggleStoredStyle(pageOf(atEnd.src), atEnd.head, "strong", null) as { styles: StoredStyles };
+    expect(applyStep(atEnd.src, typeWithStored(pageOf(atEnd.src), atEnd.head, "bold", boldAtEnd.styles))?.text).toBe(
+      '<p><a href="https://example.com">link</a><strong>bold|</strong></p>'
+    );
   });
 });

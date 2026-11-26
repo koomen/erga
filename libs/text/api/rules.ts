@@ -17,6 +17,7 @@ import {
   contentIn,
   dropped,
   emptyIn,
+  exitAnchorEnd,
   HEADING,
   lineHolder,
   placeholderBr,
@@ -331,6 +332,7 @@ export function replace(page: Page, from: number, to: number, text: string, user
   if (!editableAt(a, from)) return null;
   const insert = text ? escapeHtmlText(text) : "";
   if (a == b) {
+    if (from == to && insert) from = to = exitAnchorEnd(src, a, from);
     // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
     // The same for the <br> that holds an empty last line open, typed on.
     const holder = lineHolder(src, a);
@@ -548,6 +550,7 @@ function enterAt(page: Page, pos: number, shift: boolean): Step | null {
   const { src, units } = page;
   const u = M.unitAt(units, pos);
   if (!u || !page.editable(u) || !editableAt(u, pos)) return null;
+  pos = exitAnchorEnd(src, u, pos);
   const at = (insert: string, caret: number) => step([{ from: pos, insert }], { anchor: caret }, "input", src);
   const rule = shift && u.tag != "pre" ? null : enterBlock(src, u, pos, u.tag == "summary" && page.open(u));
   if (rule) return { ...rule, undo: "own" };
@@ -638,6 +641,7 @@ function paste(page: Page, sel: Sel, blocks: C.Block[]): Step | null {
   }
   const u = M.unitAt(units, pos);
   if (!u) return null;
+  pos = exitAnchorEnd(src, u, pos);
   const stack = M.inlineStackAt(src, u, pos);
   const indent = M.lineIndent(src, u.openFrom);
   // In a list item, the pieces are items; an item with its text in a <p> splits as an item (lists.ts, itemSplit).
