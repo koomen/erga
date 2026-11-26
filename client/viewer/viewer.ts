@@ -1,5 +1,5 @@
 // The viewer's post-frame behaviour on a document's page (server/pages/viewer.ts): one cached module for the bars,
-// page navigation, the Document LLM API, the band and canvas, full screen, zoom, going into the editor, comments,
+// a drag that selects text, page navigation, the Document LLM API, the band and canvas, full screen, zoom, going into the editor, comments,
 // the pages tree and live reloads.
 
 import { isMac } from "../common/app-keys";
@@ -51,12 +51,38 @@ function mountLlm(doc: string): void {
   });
 }
 
+/**
+ * A drag that selects text in this window (an agent's message). The page's frame is in a process of its own: over it,
+ * the frame takes the pointer and its release, so the drag has no end here. While the button is down the frame takes
+ * no pointer (.shell-selecting: client/inline/viewer.css). And a press in the page clears what is selected here, as a
+ * press in this window does.
+ */
+function mountSelect(): void {
+  const body = document.body;
+  const end = () => body.classList.remove("shell-selecting");
+  addEventListener(
+    "pointerdown",
+    (e) => {
+      if (e.button == 0 && e.pointerType == "mouse" && getComputedStyle(e.target as Element).userSelect != "none")
+        body.classList.add("shell-selecting");
+    },
+    true
+  );
+  addEventListener("pointerup", end, true);
+  addEventListener("pointercancel", end, true);
+  addEventListener("blur", () => {
+    end();
+    if (document.activeElement?.id == "frame") getSelection()?.removeAllRanges();
+  });
+}
+
 const el = document.getElementById("erga-viewer");
 const config: ViewerConfig = el?.dataset.config ? JSON.parse(el.dataset.config) : {};
 const docId = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content ?? "";
 
 newDocPicker(document);
 mountViewerBars();
+mountSelect();
 mountNav();
 mountLlm(docId);
 mountBand();

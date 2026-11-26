@@ -424,6 +424,9 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
    Its head, the conversation and the box: the editor's panel (client/styles/editor.css places it) and
    the admin's on the admin pages both use them. */
 
+/* The panel is a control: a drag over its head or an empty part of it selects nothing. The messages and the box stay selectable. */
+.agent-glass { -webkit-user-select: none; user-select: none; }
+.agent-log > *, .agent-glass textarea { -webkit-user-select: text; user-select: text; }
 .agent-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px 18px; }
 .agent-head .title { font-weight: 600; color: var(--fg-strong); }
 .agent-head .model { color: var(--chrome); font-size: 12px; margin-left: 6px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -91,6 +91,15 @@ html.page-dark .erga-tree-card { --fg: #cacad2; --fg-strong: #ececf1; --soft: #8
 .erga-crumbs.erga-bar { left: max(6px, env(safe-area-inset-left), calc(var(--frame-l, 0px) - 2px)); transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1); }
 .erga-view-buttons.erga-bar { right: max(8px, env(safe-area-inset-right), calc(var(--frame-r, 0px) - 2px)); transition: right 560ms cubic-bezier(0.45, 0, 0.15, 1); }
 .agent { z-index: 1001; }
+/* The window around the page is controls: a drag that starts on them, or between them, selects nothing. What a person
+   reads in a card stays selectable (the agent's messages: client/style.css), but for its buttons: a press on one is no
+   drag. While a drag selects text here (client/viewer/viewer.ts, mountSelect), the page's frame takes no pointer: the
+   drag goes on over the page, and its end comes to this window. Not `body` in a published site's controls: there this
+   sheet is in their shadow root. */
+body { -webkit-user-select: none; user-select: none; }
+:is(dialog, .help, .notes) { -webkit-user-select: text; user-select: text; }
+button { -webkit-user-select: none; user-select: none; }
+body.shell-selecting #frame { pointer-events: none; }
 /* The browser's own Print (its menu): the page alone, from the sheet's top, with no bars, agent or editor around it. Only
    the part of the page in the frame prints so; ⌘P prints all of it (client/viewer/viewer.ts tells the page to print itself). */
 @media print {

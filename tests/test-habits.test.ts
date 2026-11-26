@@ -55,6 +55,8 @@ const PRESSES: Record<string, number> = {
   "e2e/access/tokens.e2e.ts": 1,
   "e2e/agent/samples.ts": 1,
   "e2e/agent/tools.e2e.ts": 1,
+  // (A drag that starts between the controls, where there is no element to press, and is held over the page.)
+  "e2e/agent/turn.e2e.ts": 1,
   "e2e/comments/comments.ts": 1,
   "e2e/documents/list.e2e.ts": 1,
   // (One more: a press held on a row's button while the tree's news comes.)

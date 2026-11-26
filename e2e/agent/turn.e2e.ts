@@ -368,6 +368,45 @@ journey("a turn of the agent in the editor", () => {
     expect(await ada.eval<string>(`document.activeElement.id`)).toBe("agent-input");
   });
 
+  // The bug: a press just above the panel and a drag to the right, over the page, selected the bars' words and the
+  // agent's messages, and a click in the page left them selected. The page is in a process of its own: it took the
+  // pointer and its release, so the drag had no end in the window around it.
+  test("a drag from between the controls over the page selects none of them; a drag from a message selects its text until the release, and a click in the page clears it", async () => {
+    await ada.openAgent();
+    const selected = () => page.evaluate(() => String(getSelection()).trim());
+    const box = async (selector: string) => (await page.locator(selector).last().boundingBox())!;
+    const [panel, bar, answer, frame] = [
+      await box("#agent"),
+      await box(".chrome-nav"),
+      await box("#agent-log .msg-assistant"),
+      await ada.frameAt(),
+    ];
+    const over = { x: Math.max(frame.x, panel.x + panel.width) + 200, y: answer.y + answer.height / 2 };
+    const drag = async (x: number, y: number) => {
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(over.x, over.y, { steps: 4 });
+    };
+    // From the gap above the panel, and from the breadcrumbs' bar beside its words.
+    for (const [x, y] of [
+      [panel.x + 60, panel.y - 4],
+      [bar.x + bar.width / 2, bar.y + 2],
+    ]) {
+      await drag(x, y);
+      expect(await selected(), `a drag from ${x}, ${y}`).toBe("");
+      await page.mouse.up();
+    }
+    // From the answer's first letter, along its line: its text, and no word of the bars or the panel's head.
+    // Until the release the page takes no pointer, so the release comes to this window.
+    const pageTakes = () => page.evaluate(() => getComputedStyle(document.getElementById("frame")!).pointerEvents);
+    await drag(answer.x + 1, over.y);
+    expect([await selected(), await pageTakes()]).toEqual(["Hi.", "none"]);
+    await page.mouse.up();
+    expect([await selected(), await pageTakes()]).toEqual(["Hi.", "auto"]);
+    await ada.click(over.x, over.y);
+    await expect.poll(selected).toBe("");
+  });
+
   // The bug: after a mouse click on Collapse, the agent's circle showed hints of a blue focus ring.
   test("collapsing the agent with the mouse leaves no ring or selection on its circle; Tab still shows a ring", async () => {
     const ring = `(() => {
