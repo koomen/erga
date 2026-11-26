@@ -12,6 +12,10 @@ interface SpeechRecognitionLike {
   maxAlternatives: number;
   lang: string;
   onstart: (() => void) | null;
+  onsoundstart: (() => void) | null;
+  onsoundend: (() => void) | null;
+  onspeechstart: (() => void) | null;
+  onspeechend: (() => void) | null;
   onresult: ((e: SpeechRecognitionResultEventLike) => void) | null;
   onerror: ((e: { error?: string }) => void) | null;
   onend: (() => void) | null;
@@ -35,6 +39,7 @@ const speechCtor = (): SpeechRecognitionCtor | null => {
 };
 
 export interface VoiceOptions {
+  pane: HTMLElement;
   form: HTMLElement;
   field: HTMLElement;
   input: HTMLTextAreaElement;
@@ -69,7 +74,7 @@ const WAVE_ICON = `<svg class="voice-wave" viewBox="0 0 24 24" aria-hidden="true
 const WAVE_ERR_ICON = `<svg class="voice-wave" viewBox="0 0 24 24" aria-hidden="true"><path class="bar b1" d="M4 10.5v3"/><path class="bar b2" d="M8 7v10"/><path class="bar b3" d="M12 4v16"/><path class="bar b4" d="M16 7v10"/><path class="bar b5" d="M20 10.5v3"/><path d="M3.5 3.5 20.5 20.5"/></svg>`;
 
 export function mountVoice(o: VoiceOptions): VoiceControl {
-  const { form, field, input, sendBtn, fab } = o;
+  const { pane, form, field, input, sendBtn, fab } = o;
 
   const queueEl = document.createElement("div");
   queueEl.className = "agent-voice-queue";
@@ -93,10 +98,18 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
   btn.innerHTML = WAVE_ICON;
   sendBtn.before(btn);
 
+  // Lower-left sub-icon on the collapsed agent FAB: blue circle with the animated waveform while Voice Mode stays on.
+  const fabVoice = document.createElement("span");
+  fabVoice.className = "agent-fab-voice";
+  fabVoice.setAttribute("aria-hidden", "true");
+  fabVoice.innerHTML = WAVE_ICON;
+  pane.append(fabVoice);
+
   let state: VoiceState = initialVoiceState(!!speechCtor());
   let rec: SpeechRecognitionLike | null = null;
   let restartTimer = 0;
   let interimTimer = 0;
+  let speechIdleTimer = 0;
   let writing = false;
   let iconError = false;
 
@@ -104,7 +117,7 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
     if (!rec) return;
     const old = rec;
     rec = null;
-    old.onstart = old.onresult = old.onerror = old.onend = null;
+    old.onstart = old.onsoundstart = old.onsoundend = old.onspeechstart = old.onspeechend = old.onresult = old.onerror = old.onend = null;
     try {
       old.stop();
     } catch {
@@ -126,6 +139,8 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
       r.maxAlternatives = 1;
       r.lang = navigator.language || "en-US";
       r.onstart = () => dispatch({ t: "rec-start" });
+      r.onsoundstart = r.onspeechstart = () => dispatch({ t: "sound-start" });
+      r.onsoundend = r.onspeechend = () => dispatch({ t: "sound-end" });
       r.onresult = (e) => {
         const slices: SpeechSlice[] = [];
         for (let i = 0; i < e.results.length; i++) {
@@ -178,6 +193,13 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
         case "cancel-interim-trigger":
           clearTimeout(interimTimer);
           break;
+        case "schedule-speech-idle":
+          clearTimeout(speechIdleTimer);
+          speechIdleTimer = window.setTimeout(() => dispatch({ t: "speech-idle" }), fx.ms);
+          break;
+        case "cancel-speech-idle":
+          clearTimeout(speechIdleTimer);
+          break;
         case "set-input":
           writing = true;
           input.value = fx.value;
@@ -197,6 +219,7 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
   function render() {
     const armed = isArmed(state.phase);
     const busy = state.agentBusy || state.agentAsking;
+    const speaking = armed && state.speaking;
     const isErr = state.phase == "error";
     if (isErr != iconError) {
       iconError = isErr;
@@ -204,6 +227,7 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
     }
     btn.dataset.voice = state.phase;
     btn.dataset.armedBusy = String(armed && busy);
+    btn.dataset.speaking = String(speaking);
     btn.setAttribute("aria-pressed", String(armed));
     btn.setAttribute("aria-disabled", String(state.phase == "unsupported"));
     const label =
@@ -225,6 +249,8 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
 
     fab.classList.toggle("voice-on", armed);
     fab.setAttribute("aria-label", armed ? "Open the agent (voice mode is on)" : "Open the agent (⌘J)");
+    fabVoice.dataset.voiceOn = String(armed);
+    fabVoice.dataset.speaking = String(speaking);
 
     if (state.queue.length > 0) {
       queueEl.hidden = false;

@@ -374,6 +374,7 @@ function sizeInput() {
 }
 // Persistent Voice Mode (client/agent/voice.ts): waveform button, Web Speech dictation, "send prompt" trigger, and queue.
 voice = mountVoice({
+  pane: $("agent"),
   form: $("agent-form"),
   field,
   input,

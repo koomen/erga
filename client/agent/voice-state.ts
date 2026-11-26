@@ -45,12 +45,17 @@ export interface VoiceState {
   readonly lastStartedAt: number | null;
   /** Highest SpeechRecognitionResult index already consumed in this recognition session. */
   readonly consumedThrough: number;
+  /** True while the recognizer is actively picking up the user's voice (soundstart/speechstart or incoming words). */
+  readonly speaking: boolean;
   readonly error: { readonly code: VoiceErrorCode; readonly message: string } | null;
 }
 
 export type VoiceEvent =
   | { readonly t: "toggle" }
   | { readonly t: "rec-start" }
+  | { readonly t: "sound-start" }
+  | { readonly t: "sound-end" }
+  | { readonly t: "speech-idle" }
   | { readonly t: "rec-result"; readonly resultIndex: number; readonly slices: readonly SpeechSlice[] }
   | { readonly t: "rec-end" }
   | { readonly t: "rec-error"; readonly code: string }
@@ -81,6 +86,8 @@ export type VoiceEffect =
   | { readonly t: "cancel-restart" }
   | { readonly t: "schedule-interim-trigger"; readonly ms: number }
   | { readonly t: "cancel-interim-trigger" }
+  | { readonly t: "schedule-speech-idle"; readonly ms: number }
+  | { readonly t: "cancel-speech-idle" }
   | { readonly t: "set-input"; readonly value: string; readonly draft: string | null }
   | { readonly t: "dispatch-prompt"; readonly text: string }
   | { readonly t: "hint"; readonly text: string; readonly sticky: boolean; readonly error?: boolean };
@@ -96,6 +103,8 @@ export const HEALTHY_MS = 2000;
 export const CLEAN_RESTART_MS = 150;
 /** Stability window before firing a trigger phrase that sits only in trailing interim speech. */
 export const INTERIM_TRIGGER_MS = 700;
+/** Decay window after incoming speech results before settling the speaking animation back to calm. */
+export const SPEECH_IDLE_MS = 650;
 
 export const isArmed = (phase: VoicePhase): boolean => ARMED.has(phase);
 
@@ -142,6 +151,7 @@ export const initialVoiceState = (supported: boolean): VoiceState => ({
   retries: 0,
   lastStartedAt: null,
   consumedThrough: 0,
+  speaking: false,
   error: null,
 });
 
@@ -192,12 +202,12 @@ export function voiceStep(
       }
       if (isArmed(s.phase)) {
         const merged = joinSpeech(s.committed, s.interim);
-        const next: VoiceState = { ...s, phase: "off", committed: merged, interim: "", retries: 0 };
-        effects.push({ t: "cancel-restart" }, { t: "cancel-interim-trigger" }, { t: "stop-rec" });
+        const next: VoiceState = { ...s, phase: "off", committed: merged, interim: "", retries: 0, lastStartedAt: null, speaking: false };
+        effects.push({ t: "cancel-restart" }, { t: "cancel-interim-trigger" }, { t: "cancel-speech-idle" }, { t: "stop-rec" });
         syncInput(next);
         return { state: next, effects };
       }
-      const next: VoiceState = { ...s, phase: "starting", error: null, retries: 0 };
+      const next: VoiceState = { ...s, phase: "starting", error: null, retries: 0, speaking: false };
       effects.push({ t: "start-rec" });
       return { state: next, effects };
     }
@@ -205,19 +215,36 @@ export function voiceStep(
     case "rec-start": {
       if (!isArmed(s.phase)) return { state: s, effects };
       const phase: VoicePhase = s.committed || s.interim ? "transcribing" : "listening";
-      return { state: { ...s, phase, lastStartedAt: now, consumedThrough: 0, error: null }, effects };
+      return { state: { ...s, phase, lastStartedAt: now, consumedThrough: 0, speaking: false, error: null }, effects };
     }
+
+    case "sound-start": {
+      if (!isArmed(s.phase)) return { state: s, effects };
+      effects.push({ t: "cancel-speech-idle" });
+      return { state: { ...s, speaking: true }, effects };
+    }
+
+    case "sound-end": {
+      if (!isArmed(s.phase)) return { state: s, effects };
+      effects.push({ t: "cancel-speech-idle" });
+      return { state: { ...s, speaking: false }, effects };
+    }
+
+    case "speech-idle":
+      return { state: s.speaking ? { ...s, speaking: false } : s, effects };
 
     case "rec-result": {
       if (!isArmed(s.phase)) return { state: s, effects };
       let committed = s.committed;
       let interim = "";
       let consumedThrough = s.consumedThrough;
+      let heardSpeech = false;
       const start = Math.max(ev.resultIndex, s.consumedThrough);
 
       for (let i = start; i < ev.slices.length; i++) {
         const slice = ev.slices[i];
         if (!slice) continue;
+        if (slice.transcript.trim()) heardSpeech = true;
         if (slice.isFinal) {
           committed = joinSpeech(committed, slice.transcript);
           consumedThrough = i + 1;
@@ -226,7 +253,8 @@ export function voiceStep(
         }
       }
 
-      let next: VoiceState = { ...s, committed, interim, consumedThrough, retries: 0 };
+      if (heardSpeech) effects.push({ t: "schedule-speech-idle", ms: SPEECH_IDLE_MS });
+      let next: VoiceState = { ...s, committed, interim, consumedThrough, retries: 0, speaking: heardSpeech ? true : s.speaking };
 
       // 1. Immediate dispatch on finalized trigger.
       const finalMatch = parseVoiceTrigger(next.committed);
@@ -277,10 +305,11 @@ export function voiceStep(
             ? "No microphone was found. Connect a microphone, then click the voice mode button again."
             : "Microphone access is blocked. Allow mic access in your browser's site settings, then click the voice mode button again.";
         const merged = joinSpeech(s.committed, s.interim);
-        const next: VoiceState = { ...s, phase: "error", committed: merged, interim: "", error: { code, message } };
+        const next: VoiceState = { ...s, phase: "error", committed: merged, interim: "", speaking: false, error: { code, message } };
         effects.push(
           { t: "cancel-restart" },
           { t: "cancel-interim-trigger" },
+          { t: "cancel-speech-idle" },
           { t: "stop-rec" },
           { t: "hint", text: message, sticky: true, error: true }
         );
@@ -290,10 +319,11 @@ export function voiceStep(
       if (code == "network" && s.retries >= 4) {
         const message =
           "Voice recognition could not reach the browser's speech service. Check your connection, then click the voice mode button to retry.";
-        const next: VoiceState = { ...s, phase: "error", error: { code: "network-fatal", message } };
+        const next: VoiceState = { ...s, phase: "error", speaking: false, error: { code: "network-fatal", message } };
         effects.push(
           { t: "cancel-restart" },
           { t: "cancel-interim-trigger" },
+          { t: "cancel-speech-idle" },
           { t: "stop-rec" },
           { t: "hint", text: message, sticky: true, error: true }
         );
@@ -307,8 +337,8 @@ export function voiceStep(
       const healthy = s.lastStartedAt != null && now - s.lastStartedAt >= HEALTHY_MS;
       const retries = healthy ? 0 : s.retries + 1;
       const ms = healthy ? CLEAN_RESTART_MS : nextBackoff(retries);
-      effects.push({ t: "cancel-interim-trigger" }, { t: "schedule-restart", ms });
-      return { state: { ...s, phase: "restarting", retries, lastStartedAt: null, interim: "" }, effects };
+      effects.push({ t: "cancel-interim-trigger" }, { t: "cancel-speech-idle" }, { t: "schedule-restart", ms });
+      return { state: { ...s, phase: "restarting", retries, lastStartedAt: null, speaking: false, interim: "" }, effects };
     }
 
     case "restart-due": {
@@ -320,8 +350,8 @@ export function voiceStep(
     case "visibility": {
       if (!isArmed(s.phase)) return { state: s, effects };
       if (ev.hidden) {
-        effects.push({ t: "cancel-restart" }, { t: "cancel-interim-trigger" }, { t: "stop-rec" });
-        return { state: { ...s, phase: "paused" }, effects };
+        effects.push({ t: "cancel-restart" }, { t: "cancel-interim-trigger" }, { t: "cancel-speech-idle" }, { t: "stop-rec" });
+        return { state: { ...s, phase: "paused", lastStartedAt: null, speaking: false }, effects };
       }
       if (s.phase == "paused") {
         effects.push({ t: "start-rec" });

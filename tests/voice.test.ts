@@ -5,6 +5,7 @@ import {
   CLEAN_RESTART_MS,
   HEALTHY_MS,
   INTERIM_TRIGGER_MS,
+  SPEECH_IDLE_MS,
   initialVoiceState,
   isArmed,
   joinSpeech,
@@ -77,7 +78,12 @@ test("live dictation transcribes interim and final speech, strips send prompt, a
     10_500
   );
   expect(interim.state.phase).toBe("transcribing");
-  expect(interim.effects).toEqual([{ t: "cancel-interim-trigger" }, { t: "set-input", value: "Tighten the header spacing", draft: null }]);
+  expect(interim.state.speaking).toBe(true);
+  expect(interim.effects).toEqual([
+    { t: "schedule-speech-idle", ms: SPEECH_IDLE_MS },
+    { t: "cancel-interim-trigger" },
+    { t: "set-input", value: "Tighten the header spacing", draft: null },
+  ]);
 
   const sent = voiceStep(
     interim.state,
@@ -89,6 +95,7 @@ test("live dictation transcribes interim and final speech, strips send prompt, a
   expect(sent.state.agentBusy).toBe(true);
   expect(sent.state.committed).toBe("");
   expect(sent.effects).toEqual([
+    { t: "schedule-speech-idle", ms: SPEECH_IDLE_MS },
     { t: "cancel-interim-trigger" },
     { t: "dispatch-prompt", text: "Tighten the header spacing" },
     { t: "set-input", value: "", draft: null },
@@ -134,6 +141,7 @@ test("mid-utterance carry-over preserves words spoken right after send prompt", 
   expect(res.state.phase).toBe("transcribing");
   expect(res.state.committed).toBe("also check dark mode");
   expect(res.effects).toEqual([
+    { t: "schedule-speech-idle", ms: SPEECH_IDLE_MS },
     { t: "cancel-interim-trigger" },
     { t: "dispatch-prompt", text: "Make the title larger" },
     { t: "set-input", value: "also check dark mode", draft: "also check dark mode" },
@@ -245,7 +253,12 @@ test("hidden tab pauses recognition while armed and resumes automatically when v
   const hidden = voiceStep(armed, { t: "visibility", hidden: true }, 12_000);
   expect(hidden.state.phase).toBe("paused");
   expect(isArmed(hidden.state.phase)).toBe(true);
-  expect(hidden.effects).toEqual([{ t: "cancel-restart" }, { t: "cancel-interim-trigger" }, { t: "stop-rec" }]);
+  expect(hidden.effects).toEqual([
+    { t: "cancel-restart" },
+    { t: "cancel-interim-trigger" },
+    { t: "cancel-speech-idle" },
+    { t: "stop-rec" },
+  ]);
 
   // rec-end arriving while paused must not schedule a restart.
   const endWhilePaused = voiceStep(hidden.state, { t: "rec-end" }, 12_100);
@@ -303,4 +316,29 @@ test("manual typing and manual send coexist cleanly with armed Voice Mode", () =
   expect(sent.state.phase).toBe("listening");
   expect(isArmed(sent.state.phase)).toBe(true);
   expect(sent.state.committed).toBe("");
+});
+
+test("speaking tracks sound-start, sound-end, rec-result decay, and clears on pause or shutoff", () => {
+  const { state: armed } = run(initialVoiceState(true), [[{ t: "toggle" }], [{ t: "rec-start" }]]);
+  expect(armed.speaking).toBe(false);
+
+  const talking = voiceStep(armed, { t: "sound-start" }, 10_200);
+  expect(talking.state.speaking).toBe(true);
+  expect(talking.effects).toEqual([{ t: "cancel-speech-idle" }]);
+
+  const quiet = voiceStep(talking.state, { t: "sound-end" }, 10_600);
+  expect(quiet.state.speaking).toBe(false);
+
+  // Incoming speech results also activate speaking and schedule a decay back to calm.
+  const heard = voiceStep(quiet.state, { t: "rec-result", resultIndex: 0, slices: [{ transcript: "Hello", isFinal: false }] }, 10_800);
+  expect(heard.state.speaking).toBe(true);
+  expect(heard.effects).toContainEqual({ t: "schedule-speech-idle", ms: SPEECH_IDLE_MS });
+
+  const settled = voiceStep(heard.state, { t: "speech-idle" }, 11_500);
+  expect(settled.state.speaking).toBe(false);
+
+  // Shutting off mid-speech clears speaking and cancels the idle timer.
+  const off = voiceStep(heard.state, { t: "toggle" }, 11_000);
+  expect(off.state.speaking).toBe(false);
+  expect(off.effects).toContainEqual({ t: "cancel-speech-idle" });
 });
