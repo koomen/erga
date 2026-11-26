@@ -34,5 +34,5 @@
     "assets/logo"
   ],
   // They test Worker files with the Workers' types: tsconfig.workers.json checks them.
-  "exclude": ["tests/document-host.test.ts", "tests/render-browser.test.ts"]
+  "exclude": ["tests/document-host.test.ts", "tests/r2-blobs.test.ts", "tests/render-browser.test.ts"]
 }

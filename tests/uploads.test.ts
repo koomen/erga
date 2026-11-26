@@ -78,13 +78,18 @@ test("with no connection the files wait, and start again by themselves when it i
   expect(kinds(fx)).toEqual(["check images/c.jpg", "send images/a.jpg", "send images/b.jpg", "show"]);
 });
 
-test("a file the server fails goes again, three times in all; then it says so, and Try again starts it afresh", () => {
-  let [s, fx] = run([add(file("files/map.pdf")), { t: "checked", id: "files/map.pdf", have: false }]);
-  [s, fx] = run([{ t: "failed", id: "files/map.pdf", why: "The server answered 500." }], s);
-  expect([states(s), s.files[0].tries, kinds(fx)]).toEqual(["sending", 1, ["send files/map.pdf", "show"]]);
-  // Its write waits no more there (it took too long): it is written again.
-  [s, fx] = run([{ t: "failed", id: "files/map.pdf", why: "No write waits.", gone: true }], s);
+test("a file the server fails goes again after a pause, three times in all; then it says so in plain words, and Try again starts it afresh", () => {
+  // The check itself fails (on 2026-11-26: the server's file store, for about a second): no try follows at once.
+  let [s, fx] = run([add(file("files/map.pdf")), { t: "failed", id: "files/map.pdf", why: "The tool failed: head: (10001)" }]);
+  expect([s.files[0].state, s.files[0].tries, fx]).toEqual([
+    { t: "pausing", next: "checking" },
+    1,
+    [{ t: "pause", id: "files/map.pdf", ms: 1000 }, { t: "show" }],
+  ]);
+  expect(U.rowOf(s, s.files[0], 0)).toMatchObject({ detail: "120 KB · trying again", state: "waiting" });
+  [s, fx] = run([{ t: "resume", id: "files/map.pdf" }], s);
   expect([states(s), kinds(fx)]).toEqual(["checking", ["check files/map.pdf", "show"]]);
+  // The send fails: after a longer pause it waits for its turn again. (A second `resume` does nothing.)
   [s, fx] = run(
     [
       { t: "checked", id: "files/map.pdf", have: false },
@@ -92,9 +97,21 @@ test("a file the server fails goes again, three times in all; then it says so, a
     ],
     s
   );
-  expect(s.files[0].state).toEqual({ t: "failed", why: "The server answered 500." });
-  expect(U.problemOf(s.files[0], false)).toMatchObject({
-    title: "The server did not take “map.pdf”",
+  expect([s.files[0].state, fx]).toEqual([
+    { t: "pausing", next: "waiting" },
+    [{ t: "pause", id: "files/map.pdf", ms: 3000 }, { t: "show" }],
+  ]);
+  [s, fx] = run([{ t: "resume", id: "files/map.pdf" }], s);
+  expect([states(s), kinds(fx)]).toEqual(["sending", ["send files/map.pdf", "show"]]);
+  expect(run([{ t: "resume", id: "files/map.pdf" }], s)[1]).toEqual([]);
+  // The third failure is the last: the person reads that the server failed, not its own words.
+  [s, fx] = run([{ t: "failed", id: "files/map.pdf", why: "The tool failed: head: (10001)" }], s);
+  expect(s.files[0].state).toEqual({ t: "failed", why: "The tool failed: head: (10001)" });
+  expect(U.problemOf(s.files[0], false)).toEqual({
+    lead: "Not uploaded.",
+    text: "The server failed. You can try again.",
+    title: "“map.pdf” was not uploaded",
+    detail: "the server failed. You can try again.",
     actions: [
       { id: "retry", label: "Try again", primary: true },
       { id: "remove", label: "Remove" },
@@ -102,6 +119,24 @@ test("a file the server fails goes again, three times in all; then it says so, a
   });
   [s, fx] = run([{ t: "retry", id: "files/map.pdf" }], s);
   expect([states(s), s.files[0].tries, kinds(fx)]).toEqual(["checking", 0, ["check files/map.pdf", "show"]]);
+  // Its write waits no more there (it took too long): it is written again at once. A file that pauses can be cancelled.
+  [s, fx] = run(
+    [
+      { t: "checked", id: "files/map.pdf", have: false },
+      { t: "failed", id: "files/map.pdf", why: "No write waits.", gone: true },
+    ],
+    s
+  );
+  expect([states(s), kinds(fx)]).toEqual(["checking", ["check files/map.pdf", "show"]]);
+  [s, fx] = run(
+    [
+      { t: "failed", id: "files/map.pdf", why: "The server answered 500." },
+      { t: "cancel", id: "files/map.pdf" },
+    ],
+    s
+  );
+  expect([states(s), kinds(fx)]).toEqual(["cancelled", ["remove files/map.pdf", "show"]]);
+  expect(run([{ t: "resume", id: "files/map.pdf" }], s)[1]).toEqual([]);
 });
 
 test("cancel in each state before done: the request stops, and the element leaves the document", () => {

@@ -607,6 +607,42 @@ journey("files dropped and pasted on a page in a folder", () => {
     expected(tab);
   });
 
+  test("the server fails the first of two images dropped one after the other: the second goes in, and the first says in plain words that its upload failed; Try again sends it", async ({
+    tab,
+  }) => {
+    // Pete, 2026-11-26: the server's file store failed for a second, the editor's three tries came in 0.9 s, and the
+    // card said "The tool failed: head: We encountered an internal error. Please try again. (10001)".
+    await ed.eval(`window.__ergaTimescale = ${TIMESCALE}`);
+    const writes = await hold(ed.page, { url: /\/api\/tools\/write$/, method: "POST", body: "first.png" });
+    const fault = { ok: false, error: "The tool failed: head: We encountered an internal error. Please try again. (10001)" };
+    await drop(ed, "p.tail", 13, [onDisk("first.png")], "top");
+    await drop(ed, "p.tail", 13, [onDisk("second.png")], "top");
+    // Its three tries, each after a pause: the file says that it tries again meanwhile.
+    await writes.answer(500, fault);
+    await expect.poll(() => pendingParts(ed)).toEqual(expect.arrayContaining([expect.stringMatching(/^badge .*trying again/)]));
+    await writes.answer(500, fault);
+    await writes.answer(500, fault);
+    await expect
+      .poll(async () => (await ed.alerts()).alerts)
+      .toEqual([
+        {
+          title: "“first.png” was not uploaded",
+          count: "",
+          detail: "Upload · the server failed. You can try again.",
+          rows: [],
+          buttons: ["Try again", "Remove"],
+        },
+      ]);
+    expect(await pendingParts(ed)).toEqual(["ph error", "badge error Not uploaded. The server failed. You can try again.Try againRemove"]);
+    await expect.poll(async () => (await images(ed)).find((i) => /second/.test(i.src)), UPLOAD).toMatchObject(LOADED);
+    await writes.end();
+    await ed.page.click('#alerts [data-action="retry"]');
+    await expect.poll(async () => (await images(ed)).find((i) => /first/.test(i.src)), UPLOAD).toMatchObject(LOADED);
+    await expect.poll(async () => [(await ed.alerts()).view, await pendingParts(ed)]).toEqual(["none", []]);
+    await ed.eval(`delete window.__ergaTimescale`);
+    expected(tab);
+  });
+
   test("a slow upload shows as one line after a second, with what is left; × on the image stops it and takes the image out; so does Undo", async ({
     tab,
   }) => {
@@ -646,7 +682,7 @@ journey("files dropped and pasted on a page in a folder", () => {
     // (The shell makes the page afresh for a stylesheet or a script that changes, not for a file.)
     expect(await ed.frame<number>(`performance.timeOrigin`)).toBe(loaded);
     const before = await images(ed);
-    expect(before.length).toBe(7);
+    expect(before.length).toBe(9);
     await ed.page.reload(); // page load 3
     await ed.loaded();
     await expect.poll(() => images(ed), UPLOAD).toEqual(before);

@@ -65,8 +65,12 @@ const runNamed = Effect.fnUntraced(function* (name: string, args: unknown, ctx: 
   if (typeof args != "object" || Array.isArray(args)) return yield* refuse("The arguments must be a JSON object.");
   return yield* Effect.tryPromise({
     try: () => runTool(tool, args as Record<string, unknown>, ctx, true),
-    catch: (e) =>
-      e instanceof OperationError ? e : new OperationError({ message: `The tool failed: ${(e as Error)?.message ?? e}`, status: 500 }),
+    catch: (e) => {
+      if (e instanceof OperationError) return e;
+      // (In the server's log: the answer alone, a 500, does not say what failed.)
+      console.error(`erga: the tool ${name} failed: ${(e as Error)?.message ?? e}`);
+      return new OperationError({ message: `The tool failed: ${(e as Error)?.message ?? e}`, status: 500 });
+    },
   });
 });
 

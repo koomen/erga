@@ -69,6 +69,8 @@ export function mountUploads(shell: Shell) {
   const admin = () => !!shell.people.accountLinks?.admin;
 
   function send(e: U.Event) {
+    // (The person reads plain words on the file and in the card: the server's own are here, for who repairs it.)
+    if (e.t == "failed") console.warn(`The upload of ${e.id} failed: ${e.why}`);
     const [next, effects] = U.step(state, e);
     state = next;
     for (const f of effects) {
@@ -77,6 +79,7 @@ export function mountUploads(shell: Shell) {
       else if (f.t == "abort") sends.get(f.id)?.abort();
       else if (f.t == "remove") remove(f.id);
       else if (f.t == "again") window.setTimeout(again, ms(f.ms));
+      else if (f.t == "pause") window.setTimeout(() => send({ t: "resume", id: f.id }), ms(f.ms));
       else if (f.t == "landed") {
         waits.delete(f.id);
         arrivedAt.set(f.id, Date.now());

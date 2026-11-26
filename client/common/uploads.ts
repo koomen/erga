@@ -10,12 +10,17 @@
 //   sending   --progress-->  sending    (the bytes that went)
 //   sending   --sent------>  done
 //   sending   --lost------>  waiting    (no answer: it starts again by itself, from its first byte, at `online`)
-//   sending   --failed---->  waiting    (the server failed: again, TRIES times), then failed (Try again: `retry`)
+//   sending   --failed---->  pausing    (the server failed: again after a pause, TRIES times in all), then failed
+//   checking  --failed---->  pausing    (Try again: `retry`)
+//   pausing   --resume---->  checking, or waiting (the state it failed in)
 //   refused   --fixed----->  checking   (an admin raised the limit)
 //   any but done --cancel--> cancelled  (its element leaves the document, and its write waits no more)
 //
 // Trap: a file's place in the document is its element there, which the editor wrote at the drop. This machine never
 // says where a file goes: only whether its bytes are there.
+//
+// Trap: a try that follows a failure at once fails with it. On 2026-11-26 the server's file store failed for about a
+// second, and the three tries, 0.9 s in all, ended as "The server did not take …". Each try now waits first (PAUSES).
 
 import { agentLabel } from "../../shared/attribution";
 import type { Pending } from "../../shared/room-socket";
@@ -23,6 +28,8 @@ import type { Action, Raise, Row } from "./alerts";
 
 export const SLOTS = 3,
   TRIES = 3,
+  /** How long a file that the server failed waits before its second try, and before its third. */
+  PAUSES = [1000, 3000],
   /** The speed is that of the last SPEED_MS. */
   SPEED_MS = 3000,
   /** How long a file waits before it tries a lost connection again. */
@@ -39,6 +46,8 @@ export type FileState =
   | { t: "checking" }
   | { t: "waiting" }
   | { t: "sending" }
+  /** The server failed it: it waits for its next try, which starts in the state `next`. */
+  | { t: "pausing"; next: "checking" | "waiting" }
   | { t: "done" }
   | { t: "refused"; why: Refusal }
   | { t: "failed"; why: string }
@@ -81,6 +90,8 @@ export type Event =
   | { t: "online" }
   /** The server failed it. `gone`: its write waits no more there (it took too long): it is checked again. */
   | { t: "failed"; id: string; why: string; gone?: boolean }
+  /** Its pause is over. */
+  | { t: "resume"; id: string }
   | { t: "retry"; id: string }
   | { t: "cancel"; id: string }
   | { t: "cancel-batch"; batch: number }
@@ -99,6 +110,8 @@ export type Effect =
   | { t: "landed"; id: string }
   /** Say `online` after `ms`. */
   | { t: "again"; ms: number }
+  /** Say `resume` for it after `ms`. */
+  | { t: "pause"; id: string; ms: number }
   /** The alerts and the page, again. */
   | { t: "show" }
   /** Only its numbers changed. */
@@ -106,7 +119,7 @@ export type Effect =
 
 export const initial = (maxMb: number | null): State => ({ files: [], online: true, maxMb });
 
-const active = (u: Up) => u.state.t == "checking" || u.state.t == "waiting" || u.state.t == "sending";
+const active = (u: Up) => u.state.t == "checking" || u.state.t == "waiting" || u.state.t == "sending" || u.state.t == "pausing";
 const over = (u: Up) => u.state.t == "done" || u.state.t == "cancelled";
 
 /** Gives the free slots to the files that wait, the oldest first: their sends. */
@@ -183,11 +196,18 @@ export function step(s: State, e: Event): [State, Effect[]] {
       if (!old || (old.state.t != "sending" && old.state.t != "checking")) return [s, []];
       const tries = old.tries + 1;
       if (tries >= TRIES) return settle(put({ ...old, tries, state: { t: "failed", why: e.why } }));
-      // Again: checked again if its write waits no more, or if the check itself failed.
-      if (e.gone || old.state.t == "checking")
-        return settle(put({ ...old, tries, state: { t: "checking" }, samples: [] }), [{ t: "check", id: old.id }]);
-      return settle(put({ ...old, tries, state: { t: "waiting" }, samples: [] }));
+      // Its write waits no more there: no fault of the server's, so it is written again at once.
+      if (e.gone) return settle(put({ ...old, tries, state: { t: "checking" }, samples: [] }), [{ t: "check", id: old.id }]);
+      // Again after a pause, from the state it failed in: its check, or its turn to send.
+      const next = old.state.t == "checking" ? "checking" : "waiting";
+      return settle(put({ ...old, tries, state: { t: "pausing", next }, samples: [] }), [
+        { t: "pause", id: old.id, ms: PAUSES[tries - 1] },
+      ]);
     }
+    case "resume":
+      if (old?.state.t != "pausing") return [s, []];
+      if (old.state.next == "checking") return settle(put({ ...old, state: { t: "checking" } }), [{ t: "check", id: old.id }]);
+      return settle(put({ ...old, state: { t: "waiting" } }));
     case "retry":
       if (old?.state.t != "failed") return [s, []];
       return settle(put({ ...old, tries: 0, received: 0, state: { t: "checking" } }), [{ t: "check", id: old.id }]);
@@ -247,7 +267,8 @@ function left(files: Up[], all: Up[], now: number): string {
 /** How far a file is, 0 to 1. */
 const part = (u: Up) => (u.state.t == "done" ? 1 : u.size ? Math.min(1, u.received / u.size) : 0);
 /** What a file that waits says of itself. */
-const waitsFor = (s: State, u: Up) => (!s.online ? "waiting for the connection" : u.state.t == "checking" ? "" : "waiting");
+const waitsFor = (s: State, u: Up) =>
+  !s.online ? "waiting for the connection" : u.state.t == "checking" ? "" : u.state.t == "pausing" ? "trying again" : "waiting";
 
 /** The most an admin can raise max_file_mb to for a file of `size` bytes: the next 50 MB; null: more than a file can ever have. */
 export function raiseTo(size: number): number | null {
@@ -261,9 +282,10 @@ export function problemOf(u: Up, admin: boolean): { lead: string; text: string; 
   if (u.state.t == "failed")
     return {
       lead: "Not uploaded.",
-      text: `The server did not take ${u.name}.`,
-      title: `The server did not take “${u.name}”`,
-      detail: u.state.why,
+      text: "The server failed. You can try again.",
+      title: `“${u.name}” was not uploaded`,
+      // (The server's own words, `why`, are for the console: client/shell/uploads.ts.)
+      detail: "the server failed. You can try again.",
       actions: [{ id: "retry", label: "Try again", primary: true }, remove],
     };
   if (u.state.t != "refused") return null;
