@@ -336,7 +336,7 @@ const CASES: [string, string, string[], string][] = [
     ["abc", "Tab"],
     "<ul>\n  <li>Item 8\n    <ul>\n      <li>Itemabc| 9</li>\n    </ul>\n  </li>\n  <li>Item 10</li>\n</ul>",
   ],
-  ["Undo right after - makes a list gives back the - typed, as text", "<p>|<br></p>", ["- ", "Undo"], "<p>- |</p>"],
+  ["Undo right after - makes a list gives back the - typed, as text", "<p>|<br></p>", ["- ", "Undo"], "<p>-&nbsp;|</p>"],
   [
     "Redo after - and undo makes the list again, the caret in its item, and typing goes on there",
     "<p>|<br></p>",

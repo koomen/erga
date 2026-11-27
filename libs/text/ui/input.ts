@@ -6,7 +6,7 @@ import * as M from "../../../shared/manuscript";
 import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { contentIn, exitAnchorEnd, findDiff, norm, placeholderBr, setChecked } from "../api/source";
+import { contentIn, encodeInsert, exitAnchorEnd, findDiff, mergeSpaceChanges, norm, placeholderBr, setChecked } from "../api/source";
 import {
   askPage,
   draggedFiles,
@@ -784,15 +784,17 @@ function readBack(ed: EditorCore, u: M.Unit, userEvent: string): void {
   if (diff) {
     let from = toPos(diff.from),
       to = toPos(diff.toA);
-    const insert = escapeHtmlText(after.slice(diff.from, diff.toB));
-    if (from == to && insert) {
+    const rawInsert = after.slice(diff.from, diff.toB);
+    if (from == to && rawInsert) {
       const out = exitAnchorEnd(src(ed), u, from);
       if (out != from) {
         from = to = out;
         moved = true;
       }
     }
-    dispatch(ed, { changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
+    const encoded = encodeInsert(src(ed), u, from, to, rawInsert);
+    const { changes, leftShift } = mergeSpaceChanges({ from, to, insert: encoded.insert }, encoded.leftRevert, encoded.rightRevert);
+    dispatch(ed, { changes, selection: { anchor: from + leftShift + encoded.insert.length }, userEvent });
   }
   const now = (own || moved) && ed.unitByEl.get(el);
   if (now && ed.units[now.id] == now) {

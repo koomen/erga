@@ -130,6 +130,9 @@ describe("libs/text/api/markdown.ts", () => {
       return applyStep(src, linkRule(pageOf(src), head))?.text ?? null;
     };
     expect(run("<p>visit https://example.com/a |</p>")).toBe('<p>visit <a href="https://example.com/a">https://example.com/a</a> |</p>');
+    expect(run("<p>visit https://example.com/a&nbsp;|</p>")).toBe(
+      '<p>visit <a href="https://example.com/a">https://example.com/a</a>&nbsp;|</p>'
+    );
     expect(run("<p>(https://example.com/a |</p>")).toBe('<p>(<a href="https://example.com/a">https://example.com/a</a> |</p>');
     expect(run("<p>visit https://example.com/a. |</p>")).toBeNull();
     expect(run('<p><a href="https://example.com">https://example.com |</a></p>')).toBeNull();
@@ -222,7 +225,7 @@ describe("libs/text/api/format.ts stored marks and link-edge typing", () => {
     // End of link (inside, outside </a>, or inside nested inline tag): all text inserts after </a>.
     expect(run('<p><a href="https://example.com">link|</a></p>', "s")).toBe('<p><a href="https://example.com">link</a>s|</p>');
     expect(run('<p><a href="https://example.com">link</a>|</p>', "new.")).toBe('<p><a href="https://example.com">link</a>new.|</p>');
-    expect(run('<p><a href="https://example.com">link|</a></p>', " ")).toBe('<p><a href="https://example.com">link</a> |</p>');
+    expect(run('<p><a href="https://example.com">link|</a></p>', " ")).toBe('<p><a href="https://example.com">link</a>&nbsp;|</p>');
     expect(run('<p><a href="https://example.com">link|</a></p>', "s more")).toBe('<p><a href="https://example.com">link</a>s more|</p>');
     expect(run('<p><a href="https://example.com"><strong>link|</strong></a></p>', "new")).toBe(
       '<p><a href="https://example.com"><strong>link</strong></a>new|</p>'
@@ -237,9 +240,10 @@ describe("libs/text/api/format.ts stored marks and link-edge typing", () => {
       '<p><a href="https://a.example">one</a>x|<a href="https://b.example">two</a></p>'
     );
 
-    // Start of link (inside or outside <a>): word extends, space stays outside, mixed splits.
+    // Start of link (inside or outside <a>): word extends, space stays outside (as &nbsp; at line edge), mixed splits.
     expect(run('<p><a href="https://example.com">|link</a></p>', "my")).toBe('<p><a href="https://example.com">my|link</a></p>');
-    expect(run('<p>|<a href="https://example.com">link</a></p>', " ")).toBe('<p> |<a href="https://example.com">link</a></p>');
+    expect(run('<p>|<a href="https://example.com">link</a></p>', " ")).toBe('<p>&nbsp;|<a href="https://example.com">link</a></p>');
+    expect(run('<p>see|<a href="https://example.com">link</a></p>', " ")).toBe('<p>see |<a href="https://example.com">link</a></p>');
     expect(run('<p><a href="https://example.com">|link</a></p>', "see my")).toBe('<p>see <a href="https://example.com">my|link</a></p>');
 
     // Middle of link, outside a link, or inside <pre>: returns null.

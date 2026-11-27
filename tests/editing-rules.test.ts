@@ -227,7 +227,7 @@ describe("through the editor's handlers", () => {
     const code = keys("<p>Run `foo|</p>").key("`");
     expect(code.text).toBe("<p>Run <code>foo</code>|</p>");
     expect(code.key("Backspace").text).toBe("<p>Run <code>fo|</code></p>");
-    expect(code.key("Backspace").key("Backspace").text).toBe("<p>Run |</p>");
+    expect(code.key("Backspace").key("Backspace").text).toBe("<p>Run&nbsp;|</p>");
     expect(code.key("Backspace").text).toBe("<p>Run|</p>");
     // Undo brings back the space and the inline code tag cleanly.
     expect(code.key("Undo").key("Undo").text).toBe("<p>Run <code>f|</code></p>");
@@ -236,7 +236,7 @@ describe("through the editor's handlers", () => {
     const link = keys('<p>See <a href="https://example.com">hi|</a></p>').key("x").key("Backspace");
     expect(link.text).toBe('<p>See <a href="https://example.com">hi</a>|</p>');
     expect(link.key("Backspace").text).toBe('<p>See <a href="https://example.com">h|</a></p>');
-    expect(link.key("Backspace").text).toBe("<p>See |</p>");
+    expect(link.key("Backspace").text).toBe("<p>See&nbsp;|</p>");
     expect(link.key("Backspace").text).toBe("<p>See|</p>");
 
     // Adjacent inline tags: Backspace crosses </code> backward, Delete crosses <strong> forward.
@@ -244,8 +244,8 @@ describe("through the editor's handlers", () => {
     // Forward Delete before a leading inline tag crosses <code>.
     expect(keys("<p>|<code>foo</code></p>").key("Delete").text).toBe("<p><code>|oo</code></p>");
     // Nested inline formatting tags prune all emptied layers; outer tag with remaining text stays.
-    expect(keys("<p>Hi <strong><em>x|</em></strong></p>").key("Backspace").text).toBe("<p>Hi |</p>");
-    expect(keys("<p>Hi <strong>a <em>x|</em></strong></p>").key("Backspace").text).toBe("<p>Hi <strong>a |</strong></p>");
+    expect(keys("<p>Hi <strong><em>x|</em></strong></p>").key("Backspace").text).toBe("<p>Hi&nbsp;|</p>");
+    expect(keys("<p>Hi <strong>a <em>x|</em></strong></p>").key("Backspace").text).toBe("<p>Hi <strong>a&nbsp;|</strong></p>");
     // Inline code on a line after <br> preserves the line-holding <br>.
     expect(keys("<p>one<br><code>x|</code></p>").key("Backspace").text).toBe("<p>one<br>|<br></p>");
     // Pre-existing empty inline tag at caret is dropped cleanly on Backspace or Delete.
@@ -253,7 +253,7 @@ describe("through the editor's handlers", () => {
     expect(keys("<p>Run <code>|</code> ok</p>").key("Delete").text).toBe("<p>Run |ok</p>");
     expect(keys("<p>Run <em>ab</em><code>|</code></p>").key("Backspace").text).toBe("<p>Run <em>a|</em></p>");
     // Selection delete (and word delete) prunes emptied tags; typing over a selection keeps the tag.
-    expect(keys("<p>Run <code>[foo]</code></p>").key("Backspace").text).toBe("<p>Run |</p>");
+    expect(keys("<p>Run <code>[foo]</code></p>").key("Backspace").text).toBe("<p>Run&nbsp;|</p>");
     expect(keys("<p>He[llo <code>foo]</code> ok</p>").key("Backspace").text).toBe("<p>He| ok</p>");
     expect(keys("<p>Run <code>[foo]</code></p>").key("bar").text).toBe("<p>Run <code>bar|</code></p>");
     // Entities and multi-code-unit emoji inside inline tags.
@@ -262,6 +262,55 @@ describe("through the editor's handlers", () => {
     // Code blocks (<pre><code>) and elements with id/name are never pruned.
     expect(keys("<pre><code>x|</code></pre>").key("Backspace").text).toBe("<pre><code>|</code></pre>");
     expect(keys('<p><b id="n">0|</b></p>').key("Backspace").text).toBe('<p><b id="n">|</b></p>');
+  });
+
+  // Pete's bug: typing a space at the end of a line (e.g. before a nested list or indented closing tag) collapsed invisibly.
+  test("spaces that HTML would collapse insert &nbsp; and revert to normal space once text follows", () => {
+    const nested = (text: string) => `<ul>\n  <li>${text}\n    <ul>\n      <li>Child</li>\n    </ul>\n  </li>\n</ul>`;
+    // Nested list item: single space -> &nbsp;, typing next word -> plain space, undo restores exact source.
+    const ed = keys(nested("Parent|"));
+    expect(ed.key(" ").text).toBe(nested("Parent&nbsp;|"));
+    expect(ed.key("now").text).toBe(nested("Parent now|"));
+    expect(ed.key("Undo").text).toBe(nested("Parent|"));
+    expect(ed.key("Redo").text).toBe(nested("Parent now|"));
+
+    // Multiple spaces at line edge alternate " " and &nbsp;, keeping every space visible.
+    expect(keys(nested("Parent|")).key(" ").key(" ").text).toBe(nested("Parent &nbsp;|"));
+    expect(keys(nested("Parent|")).key(" ").key(" ").key(" ").text).toBe(nested("Parent &nbsp;&nbsp;|"));
+    expect(keys(nested("Parent|")).key(" ").key(" ").key(" ").key("x").text).toBe(nested("Parent &nbsp; x|"));
+    expect(keys(nested("Parent|")).key(" ").key(" ").key("x").text).toBe(nested("Parent &nbsp;x|"));
+
+    // Pretty-printed paragraph, before <br>, start of line, empty block, and mid-line spaces.
+    expect(keys("<p>\n  Hello|\n</p>").key(" ").text).toBe("<p>\n  Hello&nbsp;|\n</p>");
+    expect(keys("<p>\n  Hello|\n</p>").key(" ").key("world").text).toBe("<p>\n  Hello world|\n</p>");
+    expect(keys("<p>Line 1|<br>Line 2</p>").key(" ").text).toBe("<p>Line 1&nbsp;|<br>Line 2</p>");
+    expect(keys("<p>Line 1|<br>Line 2</p>").key(" ").key("a").text).toBe("<p>Line 1 a|<br>Line 2</p>");
+    expect(keys("<p>|Hello</p>").key(" ").text).toBe("<p>&nbsp;|Hello</p>");
+    expect(keys("<p>|&nbsp;Hello</p>").key("x").text).toBe("<p>x| Hello</p>");
+    expect(keys("<p>|<br></p>").key(" ").text).toBe("<p>&nbsp;|</p>");
+    expect(keys("<p>|<br></p>").key(" ").key("hi").text).toBe("<p>&nbsp;hi|</p>");
+    expect(keys("<p>Hello|world</p>").key(" ").text).toBe("<p>Hello |world</p>");
+    expect(keys("<p>Hello |world</p>").key(" ").text).toBe("<p>Hello &nbsp;|world</p>");
+    expect(keys("<p>Hello| world</p>").key(" ").text).toBe("<p>Hello&nbsp;| world</p>");
+
+    // Stored bold and anchor end: trailing &nbsp; reverts cleanly to plain space when styled or sibling text follows.
+    expect(keys("<p>Last|</p>").key(" ").key("Mod+b").key("bold").text).toBe("<p>Last <strong>bold|</strong></p>");
+    expect(keys('<p><a href="https://example.com">link|</a></p>').key(" ").text).toBe(
+      '<p><a href="https://example.com">link</a>&nbsp;|</p>'
+    );
+    expect(keys('<p><a href="https://example.com">link|</a></p>').key(" ").key("ok").text).toBe(
+      '<p><a href="https://example.com">link</a> ok|</p>'
+    );
+
+    // Backspace exposing a trailing space promotes it to &nbsp;; another Backspace deletes it; to-do checkbox space stays plain.
+    expect(keys(nested("Parent w|")).key("Backspace").text).toBe(nested("Parent&nbsp;|"));
+    expect(keys(nested("Parent w|")).key("Backspace").key("Backspace").text).toBe(nested("Parent|"));
+    expect(keys('<ul>\n  <li style="list-style: none"><input type="checkbox"> x|</li>\n</ul>').key("Backspace").text).toBe(
+      '<ul>\n  <li style="list-style: none"><input type="checkbox"> |</li>\n</ul>'
+    );
+
+    // Code blocks (<pre>) are untouched.
+    expect(keys("<pre><code>fn|</code></pre>").key(" ").text).toBe("<pre><code>fn |</code></pre>");
   });
 });
 

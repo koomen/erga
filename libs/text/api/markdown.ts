@@ -5,7 +5,7 @@
 import * as M from "../../../shared/manuscript";
 import { escapeAttr } from "../../../shared/html";
 import { ChangeSet } from "@codemirror/state";
-import { attrOf, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "./source";
+import { attrOf, norm, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "./source";
 import { listNeighbors, trimEnd } from "./lists";
 import { editableAt, type Page, type Step } from "./rules";
 
@@ -20,7 +20,7 @@ export function blockRule(page: Page, pos: number): Step | null {
   if (!u || !page.editable(u)) return null;
   const src = page.src;
   const br = u.tag == "p" ? u.node.children.filter((c) => c.kind == "element" && c.tag == "br" && c.to <= pos).pop() : undefined;
-  const typed = textIn([u], br ? br.to : u.contentFrom, pos).replace(/^\s+/, "");
+  const typed = norm(textIn([u], br ? br.to : u.contentFrom, pos)).replace(/^\s+/, "");
   // The lines before: their paragraph, which keeps a blank line at its end open (two line breaks).
   const blank = !!br && /(^|<br\s*\/?>)\s*$/i.test(src.slice(u.contentFrom, br.from));
   const head = br ? `${src.slice(u.from, blank ? br.to : br.from)}</p>\n${M.lineIndent(src, u.from)}` : "";
@@ -182,12 +182,12 @@ export function linkRule(page: Page, at: number): Step | null {
   const u = M.unitAt(page.units, at);
   if (!u || u.tag == "pre" || !page.editable(u)) return null;
   const src = page.src;
-  if (M.inlineStackAt(src, u, at - 1).some((t) => t.tag == "a" || t.tag == "code")) return null;
   const { text, starts, ends } = textBefore(src, u, at);
-  const m = /(^|[\s(])(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]]) $/.exec(text);
+  const m = /(^|[\s(])(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]])[ \u00a0]$/.exec(text);
   if (!m) return null;
   const open = m.index + m[1].length,
     last = text.length - 2;
+  if (M.inlineStackAt(src, u, ends[last]).some((t) => t.tag == "a" || t.tag == "code")) return null;
   return markdownEdit(src, at, starts[open], starts[open], ends[last], ends[last], `<a href="${escapeAttr(m[2])}">`, "</a>");
 }
 

@@ -643,7 +643,7 @@ function setTexts(ed: EditorCore, u: M.Unit, html: string): void {
   }
   const texts = domTexts(u, html);
   (live as Text[]).forEach((n, i) => {
-    if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) n.nodeValue = texts[i];
+    if (n.nodeValue != texts[i]) n.nodeValue = texts[i];
   });
 }
 

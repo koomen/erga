@@ -187,7 +187,7 @@ const CASES: [string, string, string[], string][] = [
   ],
   ["- makes a list; Enter twice leaves it", "<p>|<br></p>", ["- item", "Enter", "Enter"], "<ul>\n  <li>item</li>\n</ul>\n<p>|<br></p>"],
   ["> makes a quote", "<p>|<br></p>", ["> quoted"], "<blockquote>\n  <p>quoted|</p>\n</blockquote>"],
-  ["> makes a quote; two undos bring back the literal mark", "<p>|<br></p>", ["> quoted", "Undo", "Undo"], "<p>&gt; |</p>"],
+  ["> makes a quote; two undos bring back the literal mark", "<p>|<br></p>", ["> quoted", "Undo", "Undo"], "<p>&gt;&nbsp;|</p>"],
   [
     "- [x] makes a ticked to-do item",
     "<p>|<br></p>",
@@ -527,9 +527,9 @@ test("***text*** makes the text bold and italic; one undo gives back the typed m
 });
 
 test("an address typed with a space after it, or pasted, becomes a link", () => {
-  const typed = '<p>see <a href="https://example.com">https://example.com</a> ok ';
-  const ed = walk("<p>|<br></p>", [["see https://example.com ok "], `${typed}|</p>`]);
-  expect(ed.pasteText("https://erga.dev").text).toBe(`${typed}<a href="https://erga.dev">https://erga.dev</a>|</p>`);
+  const typed = '<p>see <a href="https://example.com">https://example.com</a> ok';
+  const ed = walk("<p>|<br></p>", [["see https://example.com ok "], `${typed}&nbsp;|</p>`]);
+  expect(ed.pasteText("https://erga.dev").text).toBe(`${typed} <a href="https://erga.dev">https://erga.dev</a>|</p>`);
 });
 
 test("``` and Enter make a code block, with the language as a class; undo gives back the typed marks", () => {

@@ -12,9 +12,11 @@ import {
   anchorEnd,
   attrOf,
   dropped,
+  encodeInsert,
   exitAnchorEnd,
   FORMAT_TAGS,
   linkEnding,
+  mergeSpaceChanges,
   setAttr,
   STYLE_TAGS,
   textIn,
@@ -335,12 +337,18 @@ export function typeWithStored(page: Page, pos: number, text: string, styles: St
     }
   }
   if (at == atPos && !before && !open) return null;
-  const head = before + open + escapeHtmlText(text);
+  const encoded = encodeInsert(src, u, at, at, text);
+  const head = before + open + encoded.insert;
   const drops = placeholderDrops(src, [u], atPos, atPos, true);
-  const changes: Change[] = [{ from: at, insert: head + close + after }, ...drops];
+  const { changes: mainChanges, leftShift } = mergeSpaceChanges(
+    { from: at, to: at, insert: head + close + after },
+    encoded.leftRevert,
+    encoded.rightRevert
+  );
+  const changes: Change[] = [...mainChanges, ...drops];
   return {
     changes,
-    selection: { anchor: at + head.length - dropped(drops, at) },
+    selection: { anchor: at + leftShift + head.length - dropped(drops, at) },
     userEvent: "input.type",
     undo: undoOf(src, ChangeSet.of(changes, src.length), "input.type"),
   };
@@ -356,12 +364,16 @@ export function typeAtLinkEdge(page: Page, pos: number, text: string, userEvent 
   const end = anchorEnd(page.src, u, pos);
   if (end) {
     if (!text) return null;
-    const insert = escapeHtmlText(text);
-    const changes: Change[] = [{ from: end.to, insert }];
+    const encoded = encodeInsert(page.src, u, end.to, end.to, text);
+    const { changes, leftShift } = mergeSpaceChanges(
+      { from: end.to, to: end.to, insert: encoded.insert },
+      encoded.leftRevert,
+      encoded.rightRevert
+    );
     const set = ChangeSet.of(changes, page.src.length);
     return {
       changes,
-      selection: { anchor: end.to + insert.length },
+      selection: { anchor: end.to + leftShift + encoded.insert.length },
       userEvent,
       undo: undoOf(page.src, set, userEvent),
     };
@@ -371,8 +383,25 @@ export function typeAtLinkEdge(page: Page, pos: number, text: string, userEvent 
   const join = /\S*$/.exec(text)![0];
   const plain = text.slice(0, text.length - join.length);
   const changes: Change[] = [];
-  if (plain) changes.push({ from: el.from, insert: escapeHtmlText(plain) });
-  if (join) changes.push({ from: el.openTo, insert: escapeHtmlText(join) });
+  if (plain) {
+    const encoded = encodeInsert(page.src, u, el.from, el.from, plain);
+    const { changes: plainChanges } = mergeSpaceChanges(
+      { from: el.from, to: el.from, insert: encoded.insert },
+      encoded.leftRevert,
+      encoded.rightRevert
+    );
+    changes.push(...plainChanges);
+  }
+  if (join) {
+    const encoded = encodeInsert(page.src, u, el.openTo, el.openTo, join);
+    // Avoid duplicating a leftRevert if `plain` already inserts before `<a>`.
+    const { changes: joinChanges } = mergeSpaceChanges(
+      { from: el.openTo, to: el.openTo, insert: encoded.insert },
+      plain ? null : encoded.leftRevert,
+      encoded.rightRevert
+    );
+    changes.push(...joinChanges);
+  }
   if (!changes.length) return null;
   changes.sort((a, b) => a.from - b.from);
   const set = ChangeSet.of(changes, page.src.length);

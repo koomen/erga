@@ -223,7 +223,7 @@ journey("a selection by mouse across blocks", () => {
     await ed.click(w.end, w.y, { modifiers: ["Shift"] });
     await expect.poll(async () => (await ed.selection()).text).toContain("kept whole.");
     await ed.press("Backspace");
-    await expect.poll(() => ed.source()).toContain("<p><strong>R2</strong> (storage): </p>\n  <h3>Lines</h3>\n  <p>The window");
+    await expect.poll(() => ed.source()).toContain("<p><strong>R2</strong> (storage):&nbsp;</p>\n  <h3>Lines</h3>\n  <p>The window");
     await ed.shows(`
       ## Under the hood (draft text for the diagram)
 
@@ -444,13 +444,33 @@ journey("the arrows at the spaces at the ends of blocks", () => {
   test("spaces typed at the end of a block: ArrowRight goes through them, as ArrowLeft does, and typing goes in after them", async () => {
     await ed.clickEnd("#after-spaces");
     await ed.type("   ");
-    await expect.poll(() => ed.source()).toContain("The next block   </p>");
+    await expect.poll(() => ed.source()).toContain("The next block &nbsp;&nbsp;</p>");
     const stops = await symmetric(ed, "#after-spaces", "#nbsp");
     expect(stops.slice(-4).map((s) => s.x)).toEqual([...new Set(stops.slice(-4).map((s) => s.x))]);
     await startOf(ed, "#nbsp");
     await ed.press("ArrowLeft");
     await ed.type("!");
-    await expect.poll(() => ed.source()).toContain("The next block   !</p>");
+    await expect.poll(() => ed.source()).toContain("The next block &nbsp; !</p>");
+  });
+
+  // Was a bug: typing a space before a nested list or indented closing tag collapsed invisibly and the caret did not move.
+  test("space at the end of a nested list item or indented block inserts &nbsp;, moves the caret, and reverts to a space once text follows", async () => {
+    await startOf(ed, "#parent");
+    await ed.press("End");
+    const before = await stop(ed);
+    await ed.press("Space");
+    await expect.poll(() => ed.source()).toContain("Parent item&nbsp;\n");
+    await expect.poll(async () => (await stop(ed)).x).toBeGreaterThan(before.x + 1);
+    await ed.type("now");
+    await expect.poll(() => ed.source()).toContain("Parent item now\n");
+    await startOf(ed, "#pretty");
+    await ed.press("End");
+    const beforePretty = await stop(ed);
+    await ed.press("Space");
+    await expect.poll(() => ed.source()).toContain("indents&nbsp;\n");
+    await expect.poll(async () => (await stop(ed)).x).toBeGreaterThan(beforePretty.x + 1);
+    await ed.press("Backspace");
+    await expect.poll(() => ed.source()).toContain("indents\n");
   });
 
   test("ArrowUp and ArrowDown keep the caret's column across a block that ends in spaces", async () => {

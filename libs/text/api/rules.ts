@@ -18,11 +18,16 @@ import {
   contentIn,
   dropped,
   emptyIn,
+  encodeInsert,
   exitAnchorEnd,
   FORMAT_TAGS,
   HEADING,
   lineHolder,
+  mergeSpaceChanges,
   placeholderBr,
+  preserveExposedSpace,
+  revertNbspAround,
+  spaceContext,
   SPLITS,
   textIn,
   TODO_BOX,
@@ -333,10 +338,11 @@ export function replace(page: Page, from: number, to: number, text: string, user
     return replace(page, whole ? a.contentFrom : from, whole ? a.contentTo : M.textEnd(units[b.id - 1]), text, userEvent);
   }
   if (!editableAt(a, from)) return null;
-  const insert = text ? escapeHtmlText(text) : "";
   if (a == b) {
-    if (from == to && insert) from = to = exitAnchorEnd(src, a, from);
-    if (!insert && from < to) ({ from, to } = pruneEmptyInline(src, a, from, to));
+    if (from == to && text) from = to = exitAnchorEnd(src, a, from);
+    if (!text && from < to) ({ from, to } = pruneEmptyInline(src, a, from, to));
+    const encoded = text ? encodeInsert(src, a, from, to, text) : null;
+    const insert = encoded ? encoded.insert : "";
     // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
     // The same for the <br> that holds an empty last line open, typed on.
     const holder = lineHolder(src, a);
@@ -350,13 +356,17 @@ export function replace(page: Page, from: number, to: number, text: string, user
     )
       drops.push(holder);
     // Deleting all of a last line's text after a line break: a <br> holds the line open, with the caret on it.
-    return step(
-      [cut(src, a, from, to, insert || (holdsLine(src, a, from, to) ? "<br>" : "")), ...drops],
-      { anchor: from + insert.length - dropped(drops, from) },
-      userEvent,
-      src
+    const brHold = !insert && holdsLine(src, a, from, to);
+    const main = cut(src, a, from, to, insert || (brHold ? "<br>" : ""));
+    const exposed = !insert && !brHold && from < to ? preserveExposedSpace(src, a, from, to) : null;
+    const { changes, leftShift } = mergeSpaceChanges(
+      main,
+      encoded?.leftRevert ?? exposed?.leftPromote ?? null,
+      encoded?.rightRevert ?? exposed?.rightPromote ?? null
     );
+    return step([...changes, ...drops], { anchor: from + leftShift + insert.length - dropped(drops, from) }, userEvent, src);
   }
+  const insert = text ? escapeHtmlText(text) : "";
   // Across blocks.
   const between = units.slice(a.id, b.id + 1);
   const joinable = between.every((u, i) => i == 0 || M.adjacent(src, between[i - 1], u));
@@ -477,8 +487,24 @@ function deleteKey(page: Page, sel: Sel, forward: boolean): Step | null {
     const holder = lineHolder(src, u);
     const end = holder && /<br\s*\/?>(\s*)$/i.exec(src.slice(0, holder.from));
     const partner = end && { from: end.index, to: end.index + end[0].length - end[1].length };
-    const changes = holder && partner && (br.from == holder.from || br.from == partner.from) ? [partner, holder] : [br];
-    return step(changes, { anchor: forward ? pos : changes[0].from }, userEvent, src);
+    if (holder && partner && (br.from == holder.from || br.from == partner.from)) {
+      return step([partner, holder], { anchor: forward ? pos : partner.from }, userEvent, src);
+    }
+    // Joining two lines across <br>: revert an adjacent &nbsp; that is now between visible characters.
+    let leftRev = null,
+      rightRev = null;
+    if (u.tag != "pre") {
+      const left = spaceContext(src, u, br.from, br.from).left;
+      const right = spaceContext(src, u, br.to, br.to).right;
+      if (left.kind == "nbsp" && left.editable && left.outer == "char" && (right.kind == "char" || right.kind == "nbsp")) {
+        leftRev = { from: left.from, to: left.to, insert: " " };
+      }
+      if (right.kind == "nbsp" && right.editable && right.outer == "char" && (left.kind == "char" || (left.kind == "nbsp" && !leftRev))) {
+        rightRev = { from: right.from, to: right.to, insert: " " };
+      }
+    }
+    const { changes, leftShift } = mergeSpaceChanges({ from: br.from, to: br.to, insert: "" }, leftRev, rightRev);
+    return step(changes, { anchor: (forward ? pos : br.from) + leftShift }, userEvent, src);
   }
   // One grapheme within the block's text, past inline tags.
   let run: M.TextRun | undefined,
@@ -517,14 +543,17 @@ function deleteKey(page: Page, sel: Sel, forward: boolean): Step | null {
     extra = null;
     Object.assign(del, pruneEmptyInline(src, u, del.from, del.to));
   }
-  const main: Change = { from: del.from, to: del.to, insert: holdsLine(src, u, del.from, del.to) ? "<br>" : "" };
-  const changes = extra
-    ? extra.to < del.from
-      ? [{ from: extra.from, to: extra.to }, main]
-      : [main, { from: extra.from, to: extra.to }]
-    : [main];
-  const anchor = extra && extra.to < del.from ? del.from - (extra.to - extra.from) : del.from;
-  return step(changes, { anchor }, userEvent, src);
+  const brHold = holdsLine(src, u, del.from, del.to);
+  const exposed = !brHold ? preserveExposedSpace(src, u, del.from, del.to) : null;
+  const disjoint = (c: { from: number; to: number } | null) => (c && (!extra || c.to <= extra.from || c.from >= extra.to) ? c : null);
+  const { changes: mainChanges, leftShift } = mergeSpaceChanges(
+    { from: del.from, to: del.to, insert: brHold ? "<br>" : "" },
+    disjoint(exposed?.leftPromote ?? null) as { from: number; to: number; insert: string } | null,
+    disjoint(exposed?.rightPromote ?? null) as { from: number; to: number; insert: string } | null
+  );
+  const changes: Change[] = extra ? [...mainChanges, { from: extra.from, to: extra.to }].sort((a, b) => a.from - b.from) : mainChanges;
+  const extraShift = extra && extra.to <= del.from ? extra.to - extra.from : 0;
+  return step(changes, { anchor: del.from + leftShift - extraShift }, userEvent, src);
 }
 
 /**
@@ -673,10 +702,18 @@ function paste(page: Page, sel: Sel, blocks: C.Block[]): Step | null {
         ...(b.tag == "ul" || b.tag == "ol" ? { listTag: b.tag } : {}),
       }));
   let insert: string, from: number, to: number, caret: number;
+  let leftRevert: Change | null = null,
+    rightRevert: Change | null = null;
   if ((!inList && !SPLITS.test(u.tag)) || (pieces.length == 1 && pieces[0].html != null)) {
     // Into the block, inside the formatting at the caret; a link can't hold another.
     let inner = pieces.length == 1 && pieces[0].html != null ? pieces[0].html : C.flatHtml(blocks).join("<br>");
     if (stack.some((t) => t.tag == "a")) inner = inner.replace(/<\/?a\b[^>]*>/g, "");
+    const plain = inner.replace(/<[^>]*>/g, "");
+    const startsVisible = (plain.length > 0 && !/^[ \t\n\r\f]/.test(plain)) || /^<(img|svg|video|audio|canvas|input)\b/i.test(inner);
+    const endsVisible = (plain.length > 0 && !/[ \t\n\r\f]$/.test(plain)) || /<(img|svg|video|audio|canvas|input)\b[^>]*>$/i.test(inner);
+    const rev = revertNbspAround(src, u, pos, pos, startsVisible, endsVisible);
+    leftRevert = rev.leftRevert;
+    rightRevert = rev.rightRevert;
     ({ insert, from, to, caret } = { insert: inner, from: pos, to: pos, caret: inner.length });
   } else {
     const open = split?.open ?? src.slice(u.openFrom, u.openTo),
@@ -725,10 +762,15 @@ function paste(page: Page, sel: Sel, blocks: C.Block[]): Step | null {
       to = hasTail ? pos : u.contentTo;
     } else to = joinedNext ? joinedNext.openTo : (split?.to ?? u.to);
   }
-  const drops: Change[] = from == pos && to == pos ? placeholderDrops(src, [u], pos, pos, true) : [];
+  const drops: { from: number; to: number }[] = from == pos && to == pos ? placeholderDrops(src, [u], pos, pos, true) : [];
   if (split?.drop && from > u.openFrom) drops.push({ from: split.drop.from, to: split.drop.to ?? split.drop.from });
-  const after = ChangeSet.of([{ from, to, insert }, ...drops], src.length);
-  const selection = { anchor: after.mapPos(from, -1) + caret };
+  const merged = mergeSpaceChanges(
+    { from, to, insert },
+    leftRevert as { from: number; to: number; insert: string } | null,
+    rightRevert as { from: number; to: number; insert: string } | null
+  );
+  const after = ChangeSet.of([...merged.changes, ...drops], src.length);
+  const selection = { anchor: from + merged.leftShift + caret - dropped(drops, from) };
   return before
     ? composed(page.src, before, after, selection, "input.paste")
     : composed(page.src, after, ChangeSet.empty(after.newLength), selection, "input.paste");
