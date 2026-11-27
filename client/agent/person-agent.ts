@@ -29,7 +29,7 @@ import { sleep } from "../../shared/time";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
-import { pageDoc, panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
+import { blockedStep, IDLE_BLOCKED, pageDoc, panelStep, savePanel, type BlockedState, type PanelPhase } from "../common/agent-panel";
 import { mountTurn, type TurnFacts } from "./turn-summary";
 import { mountVoice, type VoiceControl } from "./voice";
 
@@ -208,6 +208,7 @@ function hideHint() {
 }
 let holdAfterStop = false;
 let voice: VoiceControl | null = null;
+let blocked: BlockedState = IDLE_BLOCKED;
 /** Why a message can't go by this path now (send-gate.ts), or null if it can. */
 const gate = (path: SendPath, text: string) => canSend(path, { off, reading: att.reading, text, files: att.files.length });
 /** Why Send can't send right now, or null if it can. */
@@ -216,7 +217,11 @@ function renderBusy() {
   busyChanged();
   // At work: as the server says, or a message of this tab's on its way to it.
   const busy = log.busy || talk.sending();
-  const asking = log.items.some((it) => it.kind == "tool" && it.status == "asking");
+  const askingIds = log.items.flatMap((it) => (it.kind == "tool" && it.status == "asking" ? [it.id] : []));
+  const asking = askingIds.length > 0;
+  const nextBlocked = blockedStep(blocked, { t: "sync", asking: askingIds, open: !!window.ergaAgent?.open() });
+  blocked = nextBlocked.state;
+  if (nextBlocked.expand) window.ergaAgent?.show(true, { focus: false, persist: false });
   const stop = busy && !input.value.trim() && !att.files.length && !att.reading;
   const why = off ?? (stop ? null : blocker());
   send.textContent = stop ? "Stop" : "Send";
@@ -434,9 +439,9 @@ $("agent-reset").addEventListener("click", () => {
   );
   input.focus();
 });
-window.addEventListener("erga:agent-shown", () => {
+window.addEventListener("erga:agent-shown", (e) => {
   talk.follow(true);
-  input.focus();
+  if ((e as CustomEvent<{ focus?: boolean }>).detail?.focus !== false) input.focus();
   window.ergaAlerts?.end(TURN_FAILED);
 });
 

@@ -39,7 +39,7 @@ export default function viewerLayoutEarly(): void {
     probe.remove();
     const narrow = W < 760;
     // (On a phone the agent starts closed: open, it covers the page.)
-    const open = panelOpen(pageDoc()) && !narrow;
+    const open = (typeof window != "undefined" && window.ergaAgent ? window.ergaAgent.open() : panelOpen(pageDoc())) && !narrow;
     const w = narrow ? Math.max(0, Math.min(kept, W - 32)) : clamp(kept, 300, Math.max(300, Math.min(760, W - sl - sr - 360 - 32)));
     // The agent's box, 16px from the window's edge on its side; open (and not on a phone), the document beside it.
     const agentX = right ? W - sr - 16 - w : sl + 16;

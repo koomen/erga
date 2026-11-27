@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 import { sendStep, type SendEvent, type SendState } from "../client/agent/sends";
 import { canSend, type SendFacts } from "../client/agent/send-gate";
-import { panelOpen, panelStep, panelVisit, savePanel, type Drawn } from "../client/common/agent-panel";
+import { blockedStep, IDLE_BLOCKED, panelOpen, panelStep, panelVisit, savePanel, type Drawn } from "../client/common/agent-panel";
 
 const run = (events: SendEvent[], from: SendState = "pending") =>
   events.reduce<{ state: SendState; effects: string[] }>(
@@ -86,4 +86,26 @@ test("open or closed is kept for each document, and one time for the pages outsi
   } finally {
     g.localStorage = was;
   }
+});
+
+test("blockedStep auto-expands a collapsed panel once per blocked call, never fights dismissal, and resets when cleared", () => {
+  // Collapsed panel + new asking call -> expands.
+  let r = blockedStep(IDLE_BLOCKED, { t: "sync", asking: ["c1"], open: false });
+  expect(r).toEqual({ state: { at: "blocked", seen: ["c1"] }, expand: true });
+  // User collapses panel while c1 is still asking; subsequent syncs do NOT re-open it.
+  r = blockedStep(r.state, { t: "sync", asking: ["c1"], open: false });
+  expect(r).toEqual({ state: { at: "blocked", seen: ["c1"] }, expand: false });
+  // A new asking call c2 arrives while collapsed -> expands again.
+  r = blockedStep(r.state, { t: "sync", asking: ["c1", "c2"], open: false });
+  expect(r).toEqual({ state: { at: "blocked", seen: ["c1", "c2"] }, expand: true });
+  // Clearing all asking calls returns to idle; a later call reusing the same id ("c1") expands again.
+  r = blockedStep(r.state, { t: "sync", asking: [], open: false });
+  expect(r).toEqual({ state: IDLE_BLOCKED, expand: false });
+  r = blockedStep(r.state, { t: "sync", asking: ["c1"], open: false });
+  expect(r).toEqual({ state: { at: "blocked", seen: ["c1"] }, expand: true });
+  // Already-open panel records seen IDs without requesting an expand.
+  r = blockedStep(IDLE_BLOCKED, { t: "sync", asking: ["c3"], open: true });
+  expect(r).toEqual({ state: { at: "blocked", seen: ["c3"] }, expand: false });
+  r = blockedStep(r.state, { t: "sync", asking: ["c3"], open: false });
+  expect(r).toEqual({ state: { at: "blocked", seen: ["c3"] }, expand: false });
 });

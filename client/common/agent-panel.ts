@@ -105,3 +105,20 @@ export function panelStep(s: PanelPhase, ev: PanelEvent): { state: PanelPhase; s
   if (ev.t == "loaded") return { state: "loaded", save: null };
   return { state: s, save: s == "loaded" ? ev.drawn : null };
 }
+
+/**
+ * Whether the active agent currently waits for the person's answer (`asking` tool calls) and which call IDs this page
+ * has already reacted to, so collapsing the panel never fights the user while a new blocked call still expands it.
+ */
+export type BlockedState = { readonly at: "idle" } | { readonly at: "blocked"; readonly seen: readonly string[] };
+export type BlockedEvent = { readonly t: "sync"; readonly asking: readonly string[]; readonly open: boolean };
+
+export const IDLE_BLOCKED: BlockedState = { at: "idle" };
+
+/** Decides whether to auto-expand a collapsed panel when a connected or embedded agent is blocked on an approval card. */
+export function blockedStep(s: BlockedState, ev: BlockedEvent): { state: BlockedState; expand: boolean } {
+  if (!ev.asking.length) return { state: IDLE_BLOCKED, expand: false };
+  const prev = s.at == "blocked" ? s.seen : [];
+  const fresh = ev.asking.some((id) => !prev.includes(id));
+  return { state: { at: "blocked", seen: [...ev.asking] }, expand: fresh && !ev.open };
+}

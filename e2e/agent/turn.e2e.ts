@@ -888,6 +888,20 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
     await expect.poll(() => ed.textOf("h1")).toBe("Edited by local bridge");
     expect(received.map((m) => m.type)).toEqual(["prompt", "answer"]);
     expect(received[1]).toMatchObject({ type: "answer", id: "bridge-call-1", approve: true, choice: "__erga_allow_session__" });
+
+    // A collapsed panel auto-expands when blocked without overwriting localStorage, and stays shut if dismissed.
+    await tab.page.click("#agent-close");
+    await expect.poll(() => paneOpen(tab.page)).toBe(false);
+    const ask2 = { t: "tool" as const, id: "bridge-call-2", name: "run_command", path: "check" };
+    bridge.send({ type: "event", doc: docId, ev: { ...ask2, status: "asking", detail: "Run checks" } });
+    await expect.poll(() => paneOpen(tab.page)).toBe(true);
+    expect(await ed.eval<string | null>(`localStorage.getItem("erga:agent:v1:" + ${JSON.stringify(docId)})`)).toBe("closed");
+    await tab.page.click("#agent-close");
+    await expect.poll(() => paneOpen(tab.page)).toBe(false);
+    bridge.send({ type: "event", doc: docId, ev: { t: "busy", busy: false } });
+    await settle(tab.page);
+    expect(await paneOpen(tab.page)).toBe(false);
+    bridge.send({ type: "event", doc: docId, ev: { ...ask2, status: "done" } });
   } finally {
     bridge.stop();
     await sync.stop();

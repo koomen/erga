@@ -7,7 +7,7 @@ import { pageDoc, panelVisit, restorePanel, savePanel, type Drawn } from "../com
 
 declare global {
   interface Window {
-    ergaAgent?: { show(open: boolean): void; open(): boolean };
+    ergaAgent?: { show(open: boolean, opts?: { focus?: boolean; persist?: boolean }): void; open(): boolean };
     /** On a document's page: the editor's layout put on again, for the agent open or closed (server/pages/viewer.ts). */
     ergaLayoutEarly?: () => void;
   }
@@ -43,14 +43,14 @@ export default function agentToggle(): void {
     card.inert = !open;
     fab.setAttribute("aria-expanded", String(open));
   };
-  const show = (open: boolean) => {
+  const show = (open: boolean, opts?: { focus?: boolean; persist?: boolean }) => {
     set(open);
     if (!narrow.matches) {
-      savePanel({ open }, doc);
+      if (opts?.persist !== false) savePanel({ open }, doc);
       // The page and the bars slide over to make room, or back (the editor's layout keeps up by itself, once it runs).
       window.ergaLayoutEarly?.();
     }
-    if (open) window.dispatchEvent(new Event("erga:agent-shown"));
+    if (open) window.dispatchEvent(new CustomEvent("erga:agent-shown", { detail: { focus: opts?.focus !== false } }));
     else fab.focus();
   };
   window.ergaAgent = { show, open: () => body.classList.contains("agent-open") };
