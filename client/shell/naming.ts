@@ -94,7 +94,7 @@ export function mountNaming(shell: Shell) {
     shell.docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
-    titleBtn.setAttribute("aria-label", shell.pages > 1 ? `${n.title}: its pages` : `${n.title}: rename`);
+    titleBtn.setAttribute("aria-label", `${n.title}: its pages`);
     titleBtn.title = `${location.host}${n.address}`;
     // The tab's title is the page's own, if it has one (client/viewer/nav.ts); else the document's.
     document.querySelector<HTMLMetaElement>('meta[name="erga-title"]')?.setAttribute("content", n.title);
@@ -138,33 +138,9 @@ export function mountNaming(shell: Shell) {
     titleIn.focus();
     titleIn.select();
   }
-  // With more than one page, the title opens them; with one (nothing to open), its name, to rename it.
-  titleBtn.addEventListener("click", () => (!naming.hidden ? toggleNaming(false) : shell.pages > 1 ? togglePages() : toggleNaming(true)));
-  /**
-   * How many pages the host says it has now (the hello, or a "tree" event: a page made or deleted in any tab, or by an
-   * agent): with more than one, the title has the caret and opens them. At once, with no reload.
-   */
-  function setPages(pages: number) {
-    shell.pages = pages;
-    const many = pages > 1;
-    titleBtn.classList.toggle("pages", many);
-    titleBtn.setAttribute("aria-controls", many ? "pages" : "naming");
-    if (shell.docName) titleBtn.setAttribute("aria-label", many ? `${shell.docName.title}: its pages` : `${shell.docName.title}: rename`);
-  }
-  setPages(shell.pages);
+  // The title always opens the document's files (unless the rename card is open, which it closes).
+  titleBtn.addEventListener("click", () => (!naming.hidden ? toggleNaming(false) : togglePages()));
   $("naming-cancel").addEventListener("click", () => toggleNaming(false));
-  // New page: the pages open, with a new page's name to type in the tree. Only where pages can be made (an editor's, not a
-  // single file opened from disk).
-  const newPageFoot = $("naming-new-page").parentElement!;
-  newPageFoot.hidden = !shell.canMakePages;
-  $("naming-new-page").addEventListener("click", () => {
-    toggleNaming(false);
-    togglePages(true);
-    prepareTree().then(
-      (t) => t.newPage(),
-      () => {}
-    );
-  });
   // An address that follows the title follows it here too, until it's typed in.
   titleIn.addEventListener("input", () => { if (!shell.docName!.slugSet && !slugTouched) slugIn.value = slugify(titleIn.value) || shell.docName!.slug; namingHint(); });
   slugIn.addEventListener("input", () => { slugTouched = true; namingHint(); });
@@ -328,7 +304,6 @@ export function mountNaming(shell: Shell) {
     viewHref,
     toggleNaming,
     togglePages,
-    setPages,
     flushTitle,
     hasPending: () => !!pending,
     signedOut: () => {

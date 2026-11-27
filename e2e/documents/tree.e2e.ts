@@ -792,17 +792,32 @@ journey("pages on Documents and in the viewer; a document with one page, then mo
     await css.close();
   });
 
-  test("one page: the title opens its name, with no caret; a second page from elsewhere gives it its caret at once, in every tab; one page again takes it away", async () => {
+  test("one page: the breadcrumb always shows its caret and opens the file tree in viewer and editor; index.html's pencil opens rename", async () => {
     /** A tree operation from outside the tabs, as an agent's. */
     const op = (o: Record<string, unknown>) => treeOp(s.root, plain, o);
+    // Viewer on a one-page document: the breadcrumb has its caret and opens the file tree.
+    await page.goto(`${s.root}${plainAt}`);
+    await clickOn(page, ".erga-tree-btn");
+    await until(() => has(`#erga-tree ${row("index.html")}`), 5000, "the viewer's crumb shows index.html on a one-page doc");
+
+    // Editor on a one-page document: the caret is always visible, and clicking the title opens #pages (not #naming).
     await up(page, `${s.root}${plainAt}`);
     await treeUp(page);
     await editorFocused(page);
-    const other = await page.context().newPage();
-    await up(other, `${s.root}${plainAt}`);
-    await page.bringToFront();
-    expect([await caret(), await caret(other)]).toEqual([false, false]);
+    expect(await caret()).toBe(true);
     await clickOn(page, "#doc-title");
+    await expect
+      .poll(() =>
+        js(
+          page,
+          `[document.getElementById("naming").hidden, document.getElementById("pages").hidden, [...document.querySelectorAll("#pages .et-foot .et-add")].filter((b) => !b.hidden).map((b) => b.textContent).join()]`
+        )
+      )
+      .toEqual([true, false, "New page,New folder"]);
+    await until(() => has(`#pages ${row("index.html")}`), 5000, "index.html is in the file tree");
+
+    // Clicking the pencil on index.html opens the rename card (#naming).
+    await clickOn(page, `#pages ${row("index.html")} .et-act`);
     await expect
       .poll(() => js(page, `[document.getElementById("naming").hidden, document.getElementById("pages").hidden]`))
       .toEqual([false, true]);
@@ -818,43 +833,18 @@ journey("pages on Documents and in the viewer; a document with one page, then mo
     expect(await js(page, `!!document.querySelector("#doc-settings [role=radiogroup]")`)).toBe(false);
     await page.keyboard.press("Escape");
 
-    // The name's card has New page: it opens the pages with a new page's name to type. A second page: the caret, here
-    // and in the other tab with no reload; the title opens the pages.
+    // Add a second page from #pages, delete it back to one page (caret stays), then re-add for Documents.
     await clickOn(page, "#doc-title");
-    await until(() => js(page, `!document.getElementById("naming").hidden`), 5000, "the name's card opens");
-    expect(await js(page, `document.getElementById("naming-new-page").textContent`)).toBe("New page");
-    await clickOn(page, "#naming-new-page");
-    await until(
-      () =>
-        js(
-          page,
-          `document.getElementById("naming").hidden && !document.getElementById("pages").hidden && document.activeElement?.classList.contains("et-input")`
-        ),
-      5000,
-      "the pages open, with a new page's name to type"
-    );
+    await until(() => has("#pages .et-foot .et-add"), 5000, "New page button is ready");
+    await clickOn(page, "#pages .et-foot .et-add:first-child");
+    await until(() => js(page, `document.activeElement?.classList.contains("et-input")`), 5000, "new page input is focused");
     await page.keyboard.type("About");
     await changing(page, () => page.keyboard.press("Enter"));
-    await until(() => caret(), 5000, "the caret shows with a second page");
-    await until(() => caret(other), 5000, "the other tab's caret shows, with no reload");
-    await other.close();
     await page.keyboard.press("Escape");
-    await clickOn(page, "#doc-title");
-    await expect
-      .poll(() =>
-        js(
-          page,
-          `!document.getElementById("pages").hidden && [...document.querySelectorAll("#pages .et-foot .et-add")].filter((b) => !b.hidden).map((b) => b.textContent).join()`
-        )
-      )
-      .toBe("New page,New folder");
-    await page.keyboard.press("Escape");
-
-    // One page again: the caret goes at once; a second page again, for Documents.
     expect((await changing(page, () => op({ op: "delete", path: "about.html" }), "deleted")).status).toBe(200);
-    await until(async () => !(await caret()), 5000, "the caret goes");
+    expect(await caret()).toBe(true);
     expect((await changing(page, () => op({ op: "new_page", path: "about" }))).status).toBe(200);
-    await until(() => caret(), 5000, "the caret is back");
+    expect(await caret()).toBe(true);
   });
 
   test("New, then Site: a document of two pages, its caret shown, and both pages in the tree", async () => {

@@ -123,11 +123,10 @@ export function viewerPage(o: {
   /** Someone who may comment and not edit: who they are, for the comments on the page (client/viewer/comment.ts). */
   commenter?: { user: string; name: string; color: string; avatar?: string };
   /**
-   * For someone signed in: the document's address, and whether it has more than one page (its crumb opens its tree:
-   * client/viewer/tree.ts). The tree's script is there either way: the page's build (server/live.ts) is its
-   * scripts, and a page made or deleted must not reload an open editor.
+   * For someone signed in: the document's address (its crumb always opens its file tree:
+   * client/viewer/tree.ts).
    */
-  tree?: { address: string; many: boolean };
+  tree?: { address: string };
   /** A scratch document, for its owner, who may save it: unsaved, it goes `hours` after it's made (null: never). */
   scratch?: { hours: number | null };
 }): { before: string; after: string } {
@@ -168,7 +167,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</scr
   const bars = barsHtml({
     session,
     title: o.title,
-    tree: !!o.tree?.many,
+    tree: !!o.tree,
     full: true,
     edit: o.edit,
     corner: o.corner,

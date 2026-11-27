@@ -729,8 +729,14 @@ journey("the Erga domain", () => {
     });
     await page.goto(`${main.root}/_home?edit`);
     await editorUp();
-    // One page: the title opens its name.
+    // The title opens the file tree; index.html's pencil opens its name.
     await clickOn("#doc-title");
+    await until(
+      () => js(`!document.getElementById("pages").hidden && !!document.querySelector(${JSON.stringify(`${indexRow} .et-act`)})`),
+      5_000,
+      "the pages tree opens"
+    );
+    await clickOn(`${indexRow} .et-act`);
     await until(
       () => js(`!document.getElementById("naming").hidden && document.activeElement.id == "naming-title"`),
       5_000,

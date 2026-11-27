@@ -379,7 +379,7 @@ async function render(
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room. Not
     // the server's browser (view_page: Session.view): its page stays as it loaded, while the picture is taken.
     ...(session && !session.agent && !session.view ? { live: d.ver } : {}),
-    ...(session && !session.agent ? { tree: { address, many: d.pages != 1 } } : {}),
+    ...(session && !session.agent ? { tree: { address } } : {}),
     ...(canComment && session
       ? {
           commenter: {

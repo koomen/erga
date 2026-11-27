@@ -50,10 +50,6 @@ export interface Shell {
   docId: string;
 
   info: DocInfo;
-  /** How many pages the document has, as the host last said (more than one: the title opens them). */
-  pages: number;
-  /** Whether you may make pages here (the hello's tree: an editor's, and not a single file opened from disk). */
-  canMakePages: boolean;
   /** The document's file tree entries, from hello and kept up to date by tree events and pages-tree refreshes. */
   treeEntries: Hello["tree"]["entries"];
   /** The page editor's last reported caret/selection context, for the agent and feedback (erga-context). */

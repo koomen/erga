@@ -7,7 +7,7 @@ import { pageBuild } from "../server/live.ts";
 import { viewerPage } from "../server/pages/viewer.ts";
 import type { Session } from "../server/platform.ts";
 
-const pageOf = (title: string, live: string, o: { editing: boolean; agent: boolean; many?: boolean }) => {
+const pageOf = (title: string, live: string, o: { editing: boolean; agent: boolean }) => {
   const { before, after } = viewerPage({
     title,
     head: {},
@@ -24,15 +24,17 @@ const pageOf = (title: string, live: string, o: { editing: boolean; agent: boole
     edit: "",
     corner: "",
     live,
-    tree: { address: "/ada/plans", many: o.many ?? true },
+    tree: { address: "/ada/plans" },
   });
   return before + after;
 };
 const build = (title: string, live: string) => pageBuild(pageOf(title, live, { editing: true, agent: false }));
 
-test("a document's page keeps its build when its version, its title and its number of pages change", async () => {
+test("a document's page keeps its build when its version and title change, and always renders the tree button", async () => {
   expect(await build("Plans", "l1")).toBe(await build("Plans for May", "l2"));
-  expect(await build("Plans", "l1")).toBe(await pageBuild(pageOf("Plans", "l1", { editing: true, agent: false, many: false })));
+  const html = pageOf("Plans", "l1", { editing: false, agent: false });
+  expect(html).toContain("erga-tree-btn");
+  expect(html).toContain('id="erga-tree"');
 });
 
 test("someone who may edit, reading: the document's frame starts before the editor's parts and the stylesheet", () => {

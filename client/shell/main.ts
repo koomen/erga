@@ -91,8 +91,6 @@ const TITLE_NOT_SAVED = {
   const shell = {
     docSettings: null,
     docName: null,
-    pages: 1,
-    canMakePages: false,
   } as Partial<Shell> as Shell;
   /** Editing (shell.editor: once it's mounted). */
   const editing = () => shell.editor.state.editing;
@@ -145,8 +143,6 @@ const TITLE_NOT_SAVED = {
   const first = await awaitHello(socket.hello, checkMissing);
   if (!first) return;
   shell.info = first.info;
-  shell.pages = first.tree.pages;
-  shell.canMakePages = first.tree.canEdit;
   shell.treeEntries = first.tree.entries;
   shell.latestContext = null;
   performance.mark("erga:hello");

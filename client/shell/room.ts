@@ -56,7 +56,6 @@ export function mountRoom(shell: Shell) {
         shell.docSettings?.event("tree");
       }
       greeted = true;
-      shell.naming.setPages(h.tree.pages);
       stillHere(h.tree);
     }
     // Your agents' changes to this document (the document's operations, run as you via them): Undo's count in the panel.
@@ -68,7 +67,6 @@ export function mountRoom(shell: Shell) {
     else if (msg.type == "uploads") shell.uploads.heard((m as unknown as UploadsMessage).files);
     else if (msg.type == "tree") {
       if (Array.isArray(msg.entries)) shell.treeEntries = msg.entries;
-      if (msg.pages != null) shell.naming.setPages(msg.pages);
       treeChanged(msg);
       shell.docSettings?.event("tree");
     }
