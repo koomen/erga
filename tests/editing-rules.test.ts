@@ -62,10 +62,10 @@ describe("the keys", () => {
     });
   });
 
-  test("Backspace on a block's last bold letter keeps the empty tag, and the next one joins the block before", () => {
+  test("Backspace on a block's last bold letter removes the emptied tag, and the next one joins the block before", () => {
     const back = { kind: "delete", forward: false } as const;
     const one = key("<p>One</p>\n<p><strong>x|</strong></p>", back);
-    expect(one).toEqual({ text: "<p>One</p>\n<p><strong>|</strong></p>", undo: "type" });
+    expect(one).toEqual({ text: "<p>One</p>\n<p>|</p>", undo: "own" });
     expect(key((one as { text: string }).text, back)).toEqual({ text: "<p>One|</p>", undo: "own" });
   });
 
@@ -219,6 +219,49 @@ describe("through the editor's handlers", () => {
     expect(key(`<p>${atEnd}</p>`, type("new"))).toEqual({ text: `<p>${A}new|</p>`, undo: "type" });
     expect(key(`<p>${atEnd}</p>`, { kind: "enter", shift: false })).toEqual({ text: `<p>${A}</p>\n<p>|<br></p>`, undo: "own" });
     expect(key(`<p>${atEnd}</p>`, { kind: "enter", shift: true })).toEqual({ text: `<p>${A}<br>|<br></p>`, undo: "own" });
+  });
+
+  // Pete's bug: Backspace wouldn't cross inline tag boundaries (after </code>, after </a>, between tags, or in empty tags).
+  test("Backspace and Delete cross inline tag boundaries and prune emptied formatting tags", () => {
+    // Markdown inline code at end of block -> Backspace crosses </code>, deletes through to empty, removes <code>.
+    const code = keys("<p>Run `foo|</p>").key("`");
+    expect(code.text).toBe("<p>Run <code>foo</code>|</p>");
+    expect(code.key("Backspace").text).toBe("<p>Run <code>fo|</code></p>");
+    expect(code.key("Backspace").key("Backspace").text).toBe("<p>Run |</p>");
+    expect(code.key("Backspace").text).toBe("<p>Run|</p>");
+    // Undo brings back the space and the inline code tag cleanly.
+    expect(code.key("Undo").key("Undo").text).toBe("<p>Run <code>f|</code></p>");
+
+    // Typing after a link and backspacing back into the hyperlink crosses </a> and prunes <a> when empty.
+    const link = keys('<p>See <a href="https://example.com">hi|</a></p>').key("x").key("Backspace");
+    expect(link.text).toBe('<p>See <a href="https://example.com">hi</a>|</p>');
+    expect(link.key("Backspace").text).toBe('<p>See <a href="https://example.com">h|</a></p>');
+    expect(link.key("Backspace").text).toBe("<p>See |</p>");
+    expect(link.key("Backspace").text).toBe("<p>See|</p>");
+
+    // Adjacent inline tags: Backspace crosses </code> backward, Delete crosses <strong> forward.
+    expect(keys("<p><code>a</code>|<strong>b</strong></p>").key("Backspace").key("Delete").text).toBe("<p>|</p>");
+    // Forward Delete before a leading inline tag crosses <code>.
+    expect(keys("<p>|<code>foo</code></p>").key("Delete").text).toBe("<p><code>|oo</code></p>");
+    // Nested inline formatting tags prune all emptied layers; outer tag with remaining text stays.
+    expect(keys("<p>Hi <strong><em>x|</em></strong></p>").key("Backspace").text).toBe("<p>Hi |</p>");
+    expect(keys("<p>Hi <strong>a <em>x|</em></strong></p>").key("Backspace").text).toBe("<p>Hi <strong>a |</strong></p>");
+    // Inline code on a line after <br> preserves the line-holding <br>.
+    expect(keys("<p>one<br><code>x|</code></p>").key("Backspace").text).toBe("<p>one<br>|<br></p>");
+    // Pre-existing empty inline tag at caret is dropped cleanly on Backspace or Delete.
+    expect(keys("<p>Run <code>|</code> ok</p>").key("Backspace").text).toBe("<p>Run| ok</p>");
+    expect(keys("<p>Run <code>|</code> ok</p>").key("Delete").text).toBe("<p>Run |ok</p>");
+    expect(keys("<p>Run <em>ab</em><code>|</code></p>").key("Backspace").text).toBe("<p>Run <em>a|</em></p>");
+    // Selection delete (and word delete) prunes emptied tags; typing over a selection keeps the tag.
+    expect(keys("<p>Run <code>[foo]</code></p>").key("Backspace").text).toBe("<p>Run |</p>");
+    expect(keys("<p>He[llo <code>foo]</code> ok</p>").key("Backspace").text).toBe("<p>He| ok</p>");
+    expect(keys("<p>Run <code>[foo]</code></p>").key("bar").text).toBe("<p>Run <code>bar|</code></p>");
+    // Entities and multi-code-unit emoji inside inline tags.
+    expect(keys("<p><code>&lt;</code>|</p>").key("Backspace").text).toBe("<p>|</p>");
+    expect(keys("<p><code>🚀</code>|</p>").key("Backspace").text).toBe("<p>|</p>");
+    // Code blocks (<pre><code>) and elements with id/name are never pruned.
+    expect(keys("<pre><code>x|</code></pre>").key("Backspace").text).toBe("<pre><code>|</code></pre>");
+    expect(keys('<p><b id="n">0|</b></p>').key("Backspace").text).toBe('<p><b id="n">|</b></p>');
   });
 });
 

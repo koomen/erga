@@ -88,6 +88,18 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
         ed.frame(`[...${F}.querySelectorAll("p + p :is(strong, em, code)")].map((e) => e.tagName + ":" + e.textContent).join(" ")`)
       )
       .toBe("STRONG:b EM:i CODE:c");
+    // Backspace crosses </code> and </a> boundaries at line end and removes the emptied inline tags.
+    await keys(ed, " `ok`");
+    await expect.poll(() => ed.source()).toContain("snake_case_name <code>ok</code></p>");
+    for (let i = 0; i < 3; i++) await ed.press("Backspace");
+    await expect.poll(() => ed.source()).toContain("snake_case_name</p>");
+    await keys(ed, " [hi](https://example.com)");
+    await expect.poll(() => ed.source()).toContain(`snake_case_name ${LINK}hi</a></p>`);
+    await ed.press("Backspace");
+    await expect.poll(() => ed.source()).toContain(`snake_case_name ${LINK}h</a></p>`);
+    await ed.press("Backspace");
+    await ed.press("Backspace");
+    await expect.poll(() => ed.source()).toContain("snake_case_name</p>");
   });
 
   test("the bar's type menu: Heading 2 by the mouse, a numbered list by the keys, Escape; each undo gives a type back", async () => {

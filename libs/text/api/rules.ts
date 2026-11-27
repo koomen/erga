@@ -14,14 +14,17 @@ import { escapeHtmlText } from "../../../shared/html";
 import { ChangeSet, EditorSelection, findClusterBreak } from "@codemirror/state";
 import {
   BLOCK_SPLIT,
+  CONTENT_TAG,
   contentIn,
   dropped,
   emptyIn,
   exitAnchorEnd,
+  FORMAT_TAGS,
   HEADING,
   lineHolder,
   placeholderBr,
   SPLITS,
+  textIn,
   TODO_BOX,
   todoBox,
   WHOLE_BLOCKS,
@@ -333,6 +336,7 @@ export function replace(page: Page, from: number, to: number, text: string, user
   const insert = text ? escapeHtmlText(text) : "";
   if (a == b) {
     if (from == to && insert) from = to = exitAnchorEnd(src, a, from);
+    if (!insert && from < to) ({ from, to } = pruneEmptyInline(src, a, from, to));
     // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
     // The same for the <br> that holds an empty last line open, typed on.
     const holder = lineHolder(src, a);
@@ -477,24 +481,20 @@ function deleteKey(page: Page, sel: Sel, forward: boolean): Step | null {
     return step(changes, { anchor: forward ? pos : changes[0].from }, userEvent, src);
   }
   // One grapheme within the block's text, past inline tags.
-  let i = M.runAt(u, pos, !forward);
-  if (i < 0) return null;
-  let run = u.runs[i],
-    k = M.runOffset(run, pos);
-  if (!forward && k == 0) {
-    do {
-      i--;
-    } while (i >= 0 && (!u.runs[i].text.length || !u.runs[i].editable));
-    if (i < 0) return null;
-    run = u.runs[i];
-    k = run.text.length;
-  } else if (forward && k >= run.text.length) {
-    do {
-      i++;
-    } while (i < u.runs.length && (!u.runs[i].text.length || !u.runs[i].editable));
-    if (i >= u.runs.length) return null;
-    run = u.runs[i];
+  let run: M.TextRun | undefined,
     k = 0;
+  const i = M.runAt(u, pos, !forward);
+  if (i >= 0) {
+    run = u.runs[i];
+    k = M.runOffset(run, pos);
+    if ((!forward && k == 0) || (forward && k >= run.text.length)) run = undefined;
+  }
+  if (!run) {
+    run = forward
+      ? u.runs.find((r) => r.from >= pos && r.text.length > 0 && r.editable)
+      : [...u.runs].reverse().find((r) => r.to <= pos && r.text.length > 0 && r.editable);
+    if (!run) return null;
+    k = forward ? 0 : run.text.length;
   }
   if (!run.editable) return null;
   const other = findClusterBreak(run.text, k, forward);
@@ -506,7 +506,25 @@ function deleteKey(page: Page, sel: Sel, forward: boolean): Step | null {
   const holder = !forward && u.tag == "pre" && run.text.slice(Math.min(k, other), Math.max(k, other)) == "\n" ? lineHolder(src, u) : null;
   if (holder && !src.slice(to, holder.from).trim() && !/\n$/.test(src.slice(u.contentFrom, from)))
     return step([{ from, to: holder.to }], { anchor: from }, userEvent, src);
-  return step([{ from, to, insert: holdsLine(src, u, from, to) ? "<br>" : "" }], { anchor: from }, userEvent, src);
+  const del = pruneEmptyInline(src, u, from, to);
+  let extra = emptyInlineAt(src, u, pos, del.from, del.to);
+  if (extra?.to == del.from) {
+    del.from = extra.from;
+    extra = null;
+    Object.assign(del, pruneEmptyInline(src, u, del.from, del.to));
+  } else if (extra?.from == del.to) {
+    del.to = extra.to;
+    extra = null;
+    Object.assign(del, pruneEmptyInline(src, u, del.from, del.to));
+  }
+  const main: Change = { from: del.from, to: del.to, insert: holdsLine(src, u, del.from, del.to) ? "<br>" : "" };
+  const changes = extra
+    ? extra.to < del.from
+      ? [{ from: extra.from, to: extra.to }, main]
+      : [main, { from: extra.from, to: extra.to }]
+    : [main];
+  const anchor = extra && extra.to < del.from ? del.from - (extra.to - extra.from) : del.from;
+  return step(changes, { anchor }, userEvent, src);
 }
 
 /**
@@ -726,6 +744,65 @@ export function inlineAt(u: M.Unit, pos: number): M.ElementNode[] {
     if (node) out.push(node);
   }
   return out;
+}
+
+/** Whether an inline element can be dropped when deleting leaves it empty (formatting tag, no id or name). */
+const removableInline = (src: string, el: M.ElementNode): boolean =>
+  FORMAT_TAGS.has(el.tag) && !M.ID_ATTR.test(src.slice(el.from, el.openTo));
+
+/** Whether [from, to) of `u` holds no text (even spaces) and no content element (<img>, <br>, ...). */
+const hasNothing = (src: string, u: M.Unit, from: number, to: number): boolean =>
+  textIn([u], from, to) == "" && !CONTENT_TAG.test(src.slice(from, to));
+
+/**
+ * Expands a deletion range [from, to) within `u` to include any removable inline formatting elements (`<code>`, `<a>`,
+ * `<strong>`, ...) that deleting [from, to) would leave empty.
+ */
+function pruneEmptyInline(src: string, u: M.Unit, from: number, to: number): { from: number; to: number } {
+  if (u.tag == "pre" || from >= to) return { from, to };
+  for (;;) {
+    let grew = false;
+    const a = inlineAt(u, from),
+      b = inlineAt(u, to);
+    let k = 0;
+    while (k < a.length && k < b.length && a[k] == b[k]) k++;
+    const common = k > 0 ? a[k - 1] : null;
+    if (common && removableInline(src, common) && hasNothing(src, u, common.openTo, from) && hasNothing(src, u, to, common.closeFrom)) {
+      from = common.from;
+      to = common.to;
+      grew = true;
+      continue;
+    }
+    const left = a.length > k ? a[a.length - 1] : null;
+    if (left && removableInline(src, left) && hasNothing(src, u, left.openTo, from)) {
+      from = left.from;
+      grew = true;
+    }
+    const right = b.length > k ? b[b.length - 1] : null;
+    if (right && removableInline(src, right) && hasNothing(src, u, to, right.closeFrom)) {
+      to = right.to;
+      grew = true;
+    }
+    if (!grew) return { from, to };
+  }
+}
+
+/**
+ * The outermost removable empty inline formatting element in `u` touching `pos` that lies disjoint from [from, to);
+ * null if none.
+ */
+function emptyInlineAt(src: string, u: M.Unit, pos: number, from: number, to: number): M.ElementNode | null {
+  if (u.tag == "pre") return null;
+  const walk = (node: M.ElementNode): M.ElementNode | null => {
+    for (const c of node.children) {
+      if (c.kind != "element" || c.selfClosing || c.to < pos || c.from > pos) continue;
+      if (removableInline(src, c) && hasNothing(src, u, c.openTo, c.closeFrom) && (c.to <= from || c.from >= to)) return c;
+      const hit = walk(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(u.node);
 }
 
 /**
