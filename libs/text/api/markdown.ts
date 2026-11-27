@@ -5,7 +5,7 @@
 import * as M from "../../../shared/manuscript";
 import { escapeAttr } from "../../../shared/html";
 import { ChangeSet } from "@codemirror/state";
-import { attrOf, norm, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "./source";
+import { attrOf, detectUrls, norm, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox, type TypedSpan } from "./source";
 import { listNeighbors, trimEnd } from "./lists";
 import { editableAt, type Page, type Step } from "./rules";
 
@@ -175,20 +175,34 @@ export function inputRule(page: Page, pos: number): Step | null {
 }
 
 /**
- * A web address typed, then a space: a link (`at` is the caret, after the space). Its own undo step, which gives back
- * the address as text.
+ * A newly typed web/mail address followed by a space (or right at `at` before Enter when `trailingSpace` is false):
+ * turns it into a link, leaving trailing sentence punctuation outside `<a>`. Only triggers when the entire URL lies
+ * inside `span` (the current newly-typed range), so removed links and pre-existing plain URLs are never re-linked.
+ * Its own undo step, which gives back the address as text.
  */
-export function linkRule(page: Page, at: number): Step | null {
+export function linkRule(page: Page, at: number, span: TypedSpan, trailingSpace = true): Step | null {
+  if (!span) return null;
   const u = M.unitAt(page.units, at);
   if (!u || u.tag == "pre" || !page.editable(u)) return null;
   const src = page.src;
   const { text, starts, ends } = textBefore(src, u, at);
-  const m = /(^|[\s(])(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]])[ \u00a0]$/.exec(text);
-  if (!m) return null;
-  const open = m.index + m[1].length,
-    last = text.length - 2;
-  if (M.inlineStackAt(src, u, ends[last]).some((t) => t.tag == "a" || t.tag == "code")) return null;
-  return markdownEdit(src, at, starts[open], starts[open], ends[last], ends[last], `<a href="${escapeAttr(m[2])}">`, "</a>");
+  let slice = text;
+  if (trailingSpace) {
+    if (!/[ \u00a0]$/.test(slice)) return null;
+    slice = slice.slice(0, -1);
+  }
+  const hit = detectUrls(slice).at(-1);
+  if (!hit || !/^[.,;:!?'")\]}”’»>]*$/.test(slice.slice(hit.end))) return null;
+  const urlFrom = starts[hit.start],
+    urlTo = ends[hit.end - 1];
+  if (urlFrom < span.from || urlTo > span.to) return null;
+  if (
+    M.inlineStackAt(src, u, urlFrom).some((t) => t.tag == "a" || t.tag == "code") ||
+    M.inlineStackAt(src, u, urlTo).some((t) => t.tag == "a" || t.tag == "code") ||
+    /<(a|code)\b/i.test(src.slice(urlFrom, urlTo))
+  )
+    return null;
+  return markdownEdit(src, at, urlFrom, urlFrom, urlTo, urlTo, `<a href="${escapeAttr(hit.href)}">`, "</a>");
 }
 
 /**

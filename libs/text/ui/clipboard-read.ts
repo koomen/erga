@@ -8,6 +8,7 @@ import {
   clipboardOf,
   DROP,
   LINK,
+  linkPlainRuns,
   nest,
   NONE,
   render,
@@ -149,7 +150,8 @@ export function linesOf(html: string, o: { link?: LinkOf; images?: boolean } = {
   let cur: { tag: Line["tag"]; list: ("ul" | "ol")[]; quote: boolean; runs: Run[] } | null = null;
   const flush = () => {
     if (!cur) return;
-    const r = render(cur.runs, cur.tag == "pre", /^h\d$/.test(cur.tag));
+    const pre = cur.tag == "pre";
+    const r = render(pre ? cur.runs : linkPlainRuns(cur.runs), pre, /^h\d$/.test(cur.tag));
     if (r.text.trim() || r.html.includes("<img")) lines.push({ tag: cur.tag, list: cur.list, quote: cur.quote, ...r });
     cur = null;
   };

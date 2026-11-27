@@ -19,7 +19,7 @@
 
 import type { ChangeSet, EditorSelection, EditorState } from "@codemirror/state";
 import type { HeldInput, LinkEdit, LinkInfo, PageEditorConfig, PageUpdate, Peer, TypingAgent } from "./types";
-import type { InlineStyle } from "../api/source";
+import { stepTypedSpan, type InlineStyle } from "../api/source";
 import type { BlockType } from "../api/block-type";
 import type { DropFile, PagePlace } from "./drop";
 import {
@@ -289,6 +289,7 @@ export class PageEditor {
     const oldUnits = ed.units;
     carrySrc(ed, changes, tr.startState.doc, tr.newDoc);
     ed.state = tr.state;
+    ed.typedSpan = stepTypedSpan(ed.typedSpan, { kind: "external", changes });
     mapMarks(ed, changes);
     // (Read first: a change that replaces the block with the caret takes the focus with it, and this puts it back.)
     const hadFocus = hasFocus(ed);

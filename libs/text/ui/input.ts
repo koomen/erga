@@ -6,7 +6,18 @@ import * as M from "../../../shared/manuscript";
 import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { contentIn, encodeInsert, exitAnchorEnd, findDiff, mergeSpaceChanges, norm, placeholderBr, setChecked } from "../api/source";
+import {
+  contentIn,
+  encodeInsert,
+  exitAnchorEnd,
+  findDiff,
+  mergeSpaceChanges,
+  norm,
+  placeholderBr,
+  setChecked,
+  stepTypedSpan,
+} from "../api/source";
+import * as MD from "../api/markdown";
 import {
   askPage,
   draggedFiles,
@@ -41,7 +52,20 @@ import {
   type EditorCore,
 } from "./core";
 import { isStale, redraw, requestReload, showChecks, verify } from "./render";
-import { currentSelection, deleteChar, dispatch, enter, indentItem, insertText, redo, replaceRange, selectAll, take, undo } from "./edit";
+import {
+  currentSelection,
+  deleteChar,
+  dispatch,
+  enter,
+  indentItem,
+  insertText,
+  page,
+  redo,
+  replaceRange,
+  selectAll,
+  take,
+  undo,
+} from "./edit";
 import { clearStyles, styleKey } from "./format";
 import { tableRow } from "./markdown";
 import { copy, cut, paste } from "./clipboard";
@@ -491,6 +515,7 @@ function selectionchange(ed: EditorCore): void {
   }
   if (sameSpot(ed, sel.main, main)) return;
   ed.state = ed.state.update({ selection: sel, userEvent: "select" }).state;
+  ed.typedSpan = stepTypedSpan(ed.typedSpan, { kind: "select", empty: sel.main.empty, head: sel.main.head });
   notify(ed, { docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
 }
 
@@ -748,6 +773,10 @@ function readBack(ed: EditorCore, u: M.Unit, userEvent: string): void {
     const at = br ? br.from : head >= u.contentFrom && head <= u.contentTo ? head : u.contentFrom;
     const insert = escapeHtmlText(text);
     dispatch(ed, { changes: { from: at, to: br ? br.to : at, insert }, selection: { anchor: at + insert.length }, userEvent });
+    if (/[ \u00a0]$/.test(text)) {
+      const link = MD.linkRule(page(ed), ed.state.selection.main.head, ed.typedSpan);
+      if (link) take(ed, link);
+    }
     // Mirror preserves unowned text nodes: redraw so the browser's IME text node does not stay beside the bound run.
     const now = ed.unitByEl.get(el);
     if (now && ed.units[now.id] == now) {
@@ -795,6 +824,10 @@ function readBack(ed: EditorCore, u: M.Unit, userEvent: string): void {
     const encoded = encodeInsert(src(ed), u, from, to, rawInsert);
     const { changes, leftShift } = mergeSpaceChanges({ from, to, insert: encoded.insert }, encoded.leftRevert, encoded.rightRevert);
     dispatch(ed, { changes, selection: { anchor: from + leftShift + encoded.insert.length }, userEvent });
+    if (/[ \u00a0]$/.test(rawInsert)) {
+      const link = MD.linkRule(page(ed), ed.state.selection.main.head, ed.typedSpan);
+      if (link) take(ed, link);
+    }
   }
   const now = (own || moved) && ed.unitByEl.get(el);
   if (now && ed.units[now.id] == now) {

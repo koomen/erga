@@ -5,6 +5,7 @@ import * as M from "../../../shared/manuscript";
 import { EditorSelection, Transaction, type TransactionSpec } from "@codemirror/state";
 import { undo as historyUndo, redo as historyRedo, isolateHistory } from "./history";
 import { blockRange, caretNear, rules, undoOf, type Intent, type Page, type Step } from "../api/rules";
+import { stepTypedSpan } from "../api/source";
 import * as F from "../api/format";
 import * as MD from "../api/markdown";
 import type * as C from "../api/clipboard";
@@ -36,6 +37,7 @@ export function currentSelection(ed: EditorCore) {
   if (sameSpot(ed, fromDOM.main, main)) return main;
   if (fromDOM.main.anchor != main.anchor || fromDOM.main.head != main.head) {
     ed.state = ed.state.update({ selection: fromDOM, userEvent: "select" }).state;
+    ed.typedSpan = stepTypedSpan(ed.typedSpan, { kind: "select", empty: fromDOM.main.empty, head: fromDOM.main.head });
   }
   return fromDOM.main;
 }
@@ -103,6 +105,20 @@ export function dispatch(ed: EditorCore, spec: TransactionSpec | Transaction, un
     oldSrc = src(ed);
   carrySrc(ed, tr.changes, tr.startState.doc, tr.newDoc);
   ed.state = tr.state;
+  if (tr.docChanged) {
+    const ev = tr.annotation(Transaction.userEvent) ?? "";
+    ed.typedSpan = stepTypedSpan(
+      ed.typedSpan,
+      ev.startsWith("input.type")
+        ? { kind: "insert", changes: tr.changes }
+        : ev.startsWith("delete")
+          ? { kind: "delete", changes: tr.changes }
+          : { kind: "reset" }
+    );
+  } else if (tr.selection) {
+    const main = tr.state.selection.main;
+    ed.typedSpan = stepTypedSpan(ed.typedSpan, { kind: "select", empty: main.empty, head: main.head });
+  }
   if (tr.docChanged) {
     mapMarks(ed, tr.changes);
     applyChanges(ed, tr, oldUnits, oldSrc);
@@ -172,11 +188,13 @@ export function insertText(ed: EditorCore, text: string, range: { from: number; 
     const step = MD.inputRule(page(ed), ed.state.selection.main.head);
     if (step) take(ed, step);
   }
-  if (done && userEvent == "input.type" && text == " ") {
-    const link = MD.linkRule(page(ed), ed.state.selection.main.head);
+  if (done && userEvent == "input.type" && /[ \u00a0]$/.test(text)) {
+    const link = MD.linkRule(page(ed), ed.state.selection.main.head, ed.typedSpan);
     if (link) take(ed, link);
-    const block = MD.blockRule(page(ed), ed.state.selection.main.head);
-    if (block) take(ed, block);
+    if (text == " ") {
+      const block = MD.blockRule(page(ed), ed.state.selection.main.head);
+      if (block) take(ed, block);
+    }
   }
   return done;
 }
@@ -191,14 +209,21 @@ export function deleteChar(ed: EditorCore, forward: boolean): boolean {
   return apply(ed, { kind: "delete", forward }, currentSelection(ed));
 }
 
-/** Enter: split the block (Shift: a line break). A Markdown rule (api/markdown.ts, enterRule) goes first. */
+/** Enter: split the block (Shift: a line break). Markdown rules (enterRule, linkRule) go first. */
 export function enter(ed: EditorCore, shift: boolean): boolean {
-  const sel = currentSelection(ed);
+  let sel = currentSelection(ed);
   if (sel.empty && !shift) {
     const rule = MD.enterRule(page(ed), sel.head);
     if (rule) {
       take(ed, rule);
       return true;
+    }
+  }
+  if (sel.empty) {
+    const link = MD.linkRule(page(ed), sel.head, ed.typedSpan, false);
+    if (link) {
+      take(ed, link);
+      sel = ed.state.selection.main;
     }
   }
   return apply(ed, { kind: "enter", shift }, sel);

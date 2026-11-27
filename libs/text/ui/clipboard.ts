@@ -5,7 +5,7 @@ import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import * as C from "../api/clipboard";
 import * as R from "./clipboard-read";
 import { placeOf, publicHref, type Place } from "../../../client/common/link-target";
-import { exitAnchorEnd, HEADING } from "../api/source";
+import { exitAnchorEnd, HEADING, standaloneUrl } from "../api/source";
 import { editableAt } from "../api/rules";
 import { LOADING_AGAIN } from "./drop";
 import { pageUrl } from "../../../document/model/pages";
@@ -35,16 +35,18 @@ export function paste(ed: EditorCore, e: ClipboardEvent): void {
     return;
   }
   // A URL pasted over selected text links the text (as the style bar's link does); where it can't, the URL replaces it.
-  if (sel && !sel.empty && u && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && setLink(ed, { url: text.trim() }) == null) return;
+  const bare = standaloneUrl(text);
+  if (sel && !sel.empty && u && bare && setLink(ed, { url: bare.href }) == null) return;
   // An address alone, pasted at the caret, is a link (not in a link or in code).
-  const url = text.trim();
   if (
     sel?.empty &&
     u &&
-    /^(https?:\/\/|mailto:)\S+$/i.test(url) &&
+    bare &&
     !M.inlineStackAt(src(ed), u, exitAnchorEnd(src(ed), u, sel.from)).some((t) => t.tag == "a" || t.tag == "code")
   )
-    return pasteBlocks(ed, [{ tag: "p", html: `<a href="${escapeAttr(url)}">${escapeHtmlText(url)}</a>`, text: url, md: url }]);
+    return pasteBlocks(ed, [
+      { tag: "p", html: `<a href="${escapeAttr(bare.href)}">${escapeHtmlText(bare.url)}</a>`, text: bare.url, md: bare.url },
+    ]);
   // A link to a place in this page, copied from it (as its public address), is #id again.
   const place = pagePlace(ed),
     self = place?.address ? pageUrl(place.address, place.page) + "#" : null;

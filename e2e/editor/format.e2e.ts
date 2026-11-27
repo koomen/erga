@@ -431,6 +431,31 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
     await expect.poll(() => ed.caretIn("h2 a")).toBe(true);
   });
 
+  test("newly typed or pasted URLs auto-link, and removing a link does not re-link when text follows it", async () => {
+    await ed.clickEnd("body > p:last-child");
+    await ed.press("Enter");
+    await keys(ed, "https://example.com. ");
+    await expect.poll(() => ed.source()).toContain('<p><a href="https://example.com">https://example.com</a>.&nbsp;</p>');
+    const at = await ed.charAt("body > p:last-child a", 8);
+    await ed.click(at.x, at.y);
+    await expect.poll(() => linkBar(ed)).toBe(true);
+    await press(ed, "#fmt [data-link=remove]");
+    await expect.poll(() => ed.source()).toContain("<p>https://example.com.&nbsp;</p>");
+    // Move to end, remove the dot/space, and type a new space + text: must NOT re-link.
+    await ed.clickEnd("body > p:last-child");
+    await ed.press("Backspace");
+    await ed.press("Backspace");
+    await keys(ed, " ok");
+    await expect.poll(() => ed.source()).toContain("<p>https://example.com ok</p>");
+    // Pasting text containing a URL auto-links it (undo restores link count for the reader step).
+    await ed.frame(
+      `(() => { const dt = new DataTransfer(); dt.setData("text/plain", " See www.example.com."); ${F}.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); })()`
+    );
+    await expect.poll(() => ed.source()).toContain('<a href="https://www.example.com">www.example.com</a>.');
+    await ed.press("ControlOrMeta+z");
+    await expect.poll(() => ed.source()).toContain("<p>https://example.com ok</p>");
+  });
+
   test("for readers, a link that leaves the document opens a new tab; the one set to open in this tab takes the tab", async () => {
     const page = ed.page;
     /** In the document's page, as a reader has it (the tab's own frames). */

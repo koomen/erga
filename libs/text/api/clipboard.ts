@@ -25,6 +25,7 @@
 // This part needs no DOM: the reading of HTML and the copy of a page's selection are the UI's (ui/clipboard-read.ts).
 
 import { escapeAttr, escapeHtmlText } from "../../../shared/html";
+import { detectUrls, urlAt } from "./source";
 
 /** An inline piece of text: what it is, and the formatting it has. */
 export interface Marks {
@@ -336,10 +337,34 @@ function closer(s: string, from: number, delim: string): number {
   return -1;
 }
 
+/** Splits plain-text runs (outside links and code) so newly pasted bare URLs become links. */
+export function linkPlainRuns(runs: Run[]): Run[] {
+  const out: Run[] = [];
+  for (const r of runs) {
+    if (!("text" in r) || r.marks.href || r.marks.code) {
+      out.push(r);
+      continue;
+    }
+    const urls = detectUrls(r.text);
+    if (!urls.length) {
+      out.push(r);
+      continue;
+    }
+    let at = 0;
+    for (const u of urls) {
+      if (u.start > at) out.push({ text: r.text.slice(at, u.start), marks: r.marks });
+      out.push({ text: u.text, marks: { ...r.marks, href: u.href } });
+      at = u.end;
+    }
+    if (at < r.text.length) out.push({ text: r.text.slice(at), marks: r.marks });
+  }
+  return out;
+}
+
 /**
  * Markdown's inline formatting as runs: **bold** and __bold__, *italic* and
- * _italic_, ~~struck~~, `code`, [links](url) (to the addresses a paste keeps) and
- * backslash escapes. Anything else is text as it is.
+ * _italic_, ~~struck~~, `code`, [links](url) (to the addresses a paste keeps),
+ * bare URLs (http(s)://, www., mailto:) and backslash escapes. Anything else is text as it is.
  */
 function markdownRuns(s: string, marks: Marks, out: Run[]): void {
   let buf = "";
@@ -393,6 +418,15 @@ function markdownRuns(s: string, marks: Marks, out: Run[]): void {
         const href = m[1].trim();
         markdownRuns(s.slice(i + 1, j), LINK.test(href) ? { ...marks, href } : marks, out);
         i = j + 1 + m[0].length;
+        continue;
+      }
+    }
+    if (!marks.href && !marks.code && (c == "h" || c == "H" || c == "w" || c == "W" || c == "m" || c == "M")) {
+      const hit = urlAt(s, i);
+      if (hit) {
+        flush();
+        out.push({ text: hit.text, marks: { ...marks, href: hit.href } });
+        i = hit.end;
         continue;
       }
     }

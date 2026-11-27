@@ -526,10 +526,54 @@ test("***text*** makes the text bold and italic; one undo gives back the typed m
   walk("<p>|<br></p>", [["a ***both***"], "<p>a <strong><em>both</em></strong>|</p>"], [["Undo"], "<p>a ***both***|</p>"]);
 });
 
-test("an address typed with a space after it, or pasted, becomes a link", () => {
+test("an address typed with a space or Enter, or pasted, becomes a link; removed or pre-existing URLs never re-link", () => {
   const typed = '<p>see <a href="https://example.com">https://example.com</a> ok';
   const ed = walk("<p>|<br></p>", [["see https://example.com ok "], `${typed}&nbsp;|</p>`]);
   expect(ed.pasteText("https://erga.dev").text).toBe(`${typed} <a href="https://erga.dev">https://erga.dev</a>|</p>`);
+
+  // Trailing punctuation stays outside <a>, and Enter / Shift+Enter auto-link newly typed URLs.
+  walk(
+    "<p>|<br></p>",
+    [["Visit https://example.com. "], '<p>Visit <a href="https://example.com">https://example.com</a>.&nbsp;|</p>'],
+    [
+      ["www.erga.dev", "Enter"],
+      '<p>Visit <a href="https://example.com">https://example.com</a>. <a href="https://www.erga.dev">www.erga.dev</a></p>\n<p>|<br></p>',
+    ],
+    [
+      ["https://erga.dev/a", "Shift+Enter"],
+      '<p>Visit <a href="https://example.com">https://example.com</a>. <a href="https://www.erga.dev">www.erga.dev</a></p>\n<p><a href="https://erga.dev/a">https://erga.dev/a</a><br>|<br></p>',
+    ]
+  );
+
+  // Fixing a typo while typing a URL still auto-links on Space.
+  walk("<p>|<br></p>", [
+    ["https://exampel", "Backspace", "Backspace", "le.com "],
+    '<p><a href="https://example.com">https://example.com</a>&nbsp;|</p>',
+  ]);
+
+  // Removing a hyperlink via setLink({ url: "" }) and typing Space or a suffix after it does NOT re-link.
+  const rm = keys('<p>see <a href="https://erga.dev">https://erga.dev</a></p>'.replace("erga.dev</a>", "er|ga.dev</a>"));
+  expect(rm.editor.setLink({ url: "" })).toBeNull();
+  expect(rm.text).toBe("<p>see https://er|ga.dev</p>");
+  rm.select("<p>see https://erga.dev|</p>").key(" ok ");
+  expect(rm.text).toBe("<p>see https://erga.dev ok&nbsp;|</p>");
+
+  const suffix = keys('<p><a href="https://erga.dev">https://er|ga.dev</a></p>');
+  expect(suffix.editor.setLink({ url: "" })).toBeNull();
+  suffix.select("<p>https://erga.dev|</p>").key("/docs ");
+  expect(suffix.text).toBe("<p>https://erga.dev/docs&nbsp;|</p>");
+
+  // Undoing auto-link (⌘Z), backspacing the space, and pressing Space again does NOT re-link.
+  walk(
+    "<p>|<br></p>",
+    [["https://erga.dev "], '<p><a href="https://erga.dev">https://erga.dev</a>&nbsp;|</p>'],
+    [["Undo"], "<p>https://erga.dev&nbsp;|</p>"],
+    [["Backspace", " "], "<p>https://erga.dev&nbsp;|</p>"]
+  );
+
+  // Pre-existing plain-text URL in a document is NOT linked when text or Enter follows it.
+  walk("<p>Mirror: https://example.com|</p>", [[" is up"], "<p>Mirror: https://example.com is up|</p>"]);
+  walk("<p>Mirror: https://example.com|</p>", [["Enter"], "<p>Mirror: https://example.com</p>\n<p>|<br></p>"]);
 });
 
 test("``` and Enter make a code block, with the language as a class; undo gives back the typed marks", () => {

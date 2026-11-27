@@ -13,7 +13,7 @@ import {
 } from "@codemirror/state";
 import { TEXT_ATTR } from "../../../shared/page-html";
 import type { HeldInput, PageEditorConfig, PageUpdate, Peer, TypingAgent } from "./types";
-import { placeholderBr, same, textIn } from "../api/source";
+import { placeholderBr, same, textIn, type TypedSpan } from "../api/source";
 import type { StoredStyles } from "../api/format";
 import type { Mirror } from "./mirror";
 import type { Ownership } from "./check";
@@ -113,6 +113,8 @@ export interface EditorCore {
   reported: Set<string>;
   /** The styles a style key with no selection set for the text typed next at the caret (format.ts). */
   stored: { at: number; doc: Source; styles: StoredStyles } | null;
+  /** Source range of text newly inserted during the current uninterrupted typing run (for auto-linking URLs). */
+  typedSpan: TypedSpan;
   /** The text the last Ctrl+K deleted, for Ctrl+Y (input.ts). */
   killed: string;
 }
@@ -179,6 +181,7 @@ export function createCore(config: PageEditorConfig): EditorCore {
     ownership: null,
     reported: new Set(),
     stored: null,
+    typedSpan: null,
     killed: "",
   };
 }

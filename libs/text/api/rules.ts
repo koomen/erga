@@ -705,9 +705,9 @@ function paste(page: Page, sel: Sel, blocks: C.Block[]): Step | null {
   let leftRevert: Change | null = null,
     rightRevert: Change | null = null;
   if ((!inList && !SPLITS.test(u.tag)) || (pieces.length == 1 && pieces[0].html != null)) {
-    // Into the block, inside the formatting at the caret; a link can't hold another.
+    // Into the block, inside the formatting at the caret; a link or inline code can't hold a link.
     let inner = pieces.length == 1 && pieces[0].html != null ? pieces[0].html : C.flatHtml(blocks).join("<br>");
-    if (stack.some((t) => t.tag == "a")) inner = inner.replace(/<\/?a\b[^>]*>/g, "");
+    if (stack.some((t) => t.tag == "a" || t.tag == "code")) inner = inner.replace(/<\/?a\b[^>]*>/g, "");
     const plain = inner.replace(/<[^>]*>/g, "");
     const startsVisible = (plain.length > 0 && !/^[ \t\n\r\f]/.test(plain)) || /^<(img|svg|video|audio|canvas|input)\b/i.test(inner);
     const endsVisible = (plain.length > 0 && !/[ \t\n\r\f]$/.test(plain)) || /<(img|svg|video|audio|canvas|input)\b[^>]*>$/i.test(inner);

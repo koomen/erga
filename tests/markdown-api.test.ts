@@ -7,6 +7,7 @@ import * as M from "../shared/manuscript";
 import type { Page, Step } from "../libs/text/api/rules";
 import { blockRule, enterRule, inputRule, linkRule, slashTable, slashText, tableRow } from "../libs/text/api/markdown";
 import { toggleStoredStyle, typeAtLinkEdge, typeWithStored, type StoredStyles } from "../libs/text/api/format";
+import { detectUrls, standaloneUrl, stepTypedSpan, type TypedSpan } from "../libs/text/api/source";
 import { parse, show } from "./helpers/page-keys";
 
 const pageOf = (src: string, editable?: (u: M.Unit) => boolean): Page => {
@@ -124,17 +125,91 @@ describe("libs/text/api/markdown.ts", () => {
     expect(run('<p><a href="https://example.com">[nested](https://example.com)|</a></p>')).toBeNull();
   });
 
-  test("linkRule auto-links a typed URL followed by a space", () => {
-    const run = (marked: string) => {
+  test("detectUrls and standaloneUrl handle schemes, www., mailto:, trailing punctuation, and balanced parens", () => {
+    expect(detectUrls("Visit https://erga.dev. And (www.example.com/a), mailto:ada@example.com!")).toEqual([
+      { start: 6, end: 22, text: "https://erga.dev", href: "https://erga.dev" },
+      { start: 29, end: 46, text: "www.example.com/a", href: "https://www.example.com/a" },
+      { start: 49, end: 71, text: "mailto:ada@example.com", href: "mailto:ada@example.com" },
+    ]);
+    expect(detectUrls("See https://en.wikipedia.org/wiki/Rust_(programming_language) ok")).toEqual([
+      {
+        start: 4,
+        end: 61,
+        text: "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+        href: "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+      },
+    ]);
+    expect(detectUrls("(See https://en.wikipedia.org/wiki/Rust_(lang))")).toEqual([
+      {
+        start: 5,
+        end: 46,
+        text: "https://en.wikipedia.org/wiki/Rust_(lang)",
+        href: "https://en.wikipedia.org/wiki/Rust_(lang)",
+      },
+    ]);
+    expect(detectUrls("http://localhost:4712/demo?a=1&b=2#top")).toEqual([
+      {
+        start: 0,
+        end: 38,
+        text: "http://localhost:4712/demo?a=1&b=2#top",
+        href: "http://localhost:4712/demo?a=1&b=2#top",
+      },
+    ]);
+    // Skips bare filenames / non-URLs like editor.js, README.md, and incomplete schemes.
+    expect(detectUrls("editor.js README.md deploy.sh https:// foohttps://example.com")).toEqual([]);
+    expect(standaloneUrl("  www.erga.dev/docs  ")).toEqual({ url: "www.erga.dev/docs", href: "https://www.erga.dev/docs" });
+    expect(standaloneUrl("https://example.com.")).toBeNull();
+    expect(standaloneUrl("see https://example.com")).toBeNull();
+  });
+
+  test("stepTypedSpan tracks contiguous typing, mid-span typo deletes, remote maps, and resets", () => {
+    const ins = (docLen: number, from: number, to: number, insert: string) => ChangeSet.of([{ from, to, insert }], docLen);
+    let span: TypedSpan = null;
+    span = stepTypedSpan(span, { kind: "insert", changes: ins(10, 3, 3, "https://") });
+    expect(span).toEqual({ from: 3, to: 11 });
+    span = stepTypedSpan(span, { kind: "insert", changes: ins(18, 11, 11, "exampel") });
+    expect(span).toEqual({ from: 3, to: 18 });
+    // Deleting typo inside span keeps span active.
+    span = stepTypedSpan(span, { kind: "delete", changes: ins(25, 16, 18, "") });
+    expect(span).toEqual({ from: 3, to: 16 });
+    // Deleting before span resets it.
+    expect(stepTypedSpan(span, { kind: "delete", changes: ins(23, 2, 3, "") })).toBeNull();
+    // Moving caret inside keeps span; leaving resets it.
+    expect(stepTypedSpan(span, { kind: "select", empty: true, head: 10 })).toEqual({ from: 3, to: 16 });
+    expect(stepTypedSpan(span, { kind: "select", empty: true, head: 2 })).toBeNull();
+    expect(stepTypedSpan(span, { kind: "select", empty: false, head: 10 })).toBeNull();
+    // Non-overlapping external edit shifts span; overlapping external edit resets it.
+    expect(stepTypedSpan(span, { kind: "external", changes: ins(23, 0, 0, "AB") })).toEqual({ from: 5, to: 18 });
+    expect(stepTypedSpan(span, { kind: "external", changes: ins(23, 6, 7, "X") })).toBeNull();
+    expect(stepTypedSpan(span, { kind: "reset" })).toBeNull();
+  });
+
+  test("linkRule auto-links newly typed URLs inside typedSpan and refuses older/unlinked text", () => {
+    const run = (marked: string, span?: TypedSpan, trailingSpace = true) => {
       const { src, head } = parse(marked);
-      return applyStep(src, linkRule(pageOf(src), head))?.text ?? null;
+      const s = span === undefined ? { from: 0, to: src.length } : span;
+      return applyStep(src, linkRule(pageOf(src), head, s, trailingSpace))?.text ?? null;
     };
     expect(run("<p>visit https://example.com/a |</p>")).toBe('<p>visit <a href="https://example.com/a">https://example.com/a</a> |</p>');
     expect(run("<p>visit https://example.com/a&nbsp;|</p>")).toBe(
       '<p>visit <a href="https://example.com/a">https://example.com/a</a>&nbsp;|</p>'
     );
-    expect(run("<p>(https://example.com/a |</p>")).toBe('<p>(<a href="https://example.com/a">https://example.com/a</a> |</p>');
-    expect(run("<p>visit https://example.com/a. |</p>")).toBeNull();
+    expect(run("<p>(https://example.com/a) |</p>")).toBe('<p>(<a href="https://example.com/a">https://example.com/a</a>) |</p>');
+    expect(run("<p>visit https://example.com/a. |</p>")).toBe('<p>visit <a href="https://example.com/a">https://example.com/a</a>. |</p>');
+    expect(run("<p>www.example.com |</p>")).toBe('<p><a href="https://www.example.com">www.example.com</a> |</p>');
+    expect(run("<p>mailto:ada@example.com |</p>")).toBe('<p><a href="mailto:ada@example.com">mailto:ada@example.com</a> |</p>');
+    expect(run("<p>https://example.com/a?x=1&amp;y=2 |</p>")).toBe(
+      '<p><a href="https://example.com/a?x=1&amp;y=2">https://example.com/a?x=1&amp;y=2</a> |</p>'
+    );
+    // Enter (trailingSpace = false) links right before the caret.
+    expect(run("<p>visit https://example.com/a.|</p>", undefined, false)).toBe(
+      '<p>visit <a href="https://example.com/a">https://example.com/a</a>.|</p>'
+    );
+    // Refuses when span is null or only covers text added after an existing/unlinked URL.
+    expect(run("<p>visit https://example.com/a |</p>", null)).toBeNull();
+    const afterOnly = parse("<p>visit https://example.com/a |</p>");
+    expect(linkRule(pageOf(afterOnly.src), afterOnly.head, { from: afterOnly.head - 1, to: afterOnly.head })).toBeNull();
+    // Refuses inside existing links or code.
     expect(run('<p><a href="https://example.com">https://example.com |</a></p>')).toBeNull();
     expect(run("<p><code>https://example.com |</code></p>")).toBeNull();
   });

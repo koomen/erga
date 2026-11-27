@@ -15,6 +15,7 @@ import { styleKey } from "../../libs/text/ui/format";
 import { tableRow } from "../../libs/text/ui/markdown";
 import { cut, paste } from "../../libs/text/ui/clipboard";
 import type * as C from "../../libs/text/api/clipboard";
+import { stepTypedSpan } from "../../libs/text/api/source";
 // (The editor's globals, for the type check: frame.ts declares them.)
 import type {} from "../../libs/text/ui/frame";
 
@@ -105,6 +106,7 @@ class Keys {
     const { src, anchor, head } = parse(marked);
     if (src != this.editor.state.doc.toString()) throw new Error(`select: the source is\n${this.text}\nnot\n${marked}`);
     this.editor.state = this.editor.state.update({ selection: EditorSelection.single(anchor, head), userEvent: "select" }).state;
+    this.editor.core.typedSpan = stepTypedSpan(this.editor.core.typedSpan, { kind: "select", empty: anchor == head, head });
     return this;
   }
 

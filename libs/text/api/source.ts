@@ -487,3 +487,140 @@ export function setAttr(open: string, name: string, value: string | null): strin
   if (hit) return `${open.slice(0, hit.from)} ${name}="${value}"${open.slice(hit.to)}`;
   return open.replace(/\s*\/?>$/, (end) => ` ${name}="${value}"${end.trim()}`);
 }
+
+// ------------------------------------------------------------------ URL detection & newly-typed span
+
+/** A URL found in plain text, with its character range and normalized `href`. */
+export interface DetectedUrl {
+  start: number;
+  end: number;
+  text: string;
+  href: string;
+}
+
+const URL_BOUNDARY = /[\s([{"'«“]/;
+const URL_START = /^(?:https?:\/\/|www\.|mailto:)[^\s<>]+/i;
+const URL_IN_TEXT = /(^|[\s([{"'«“])((?:https?:\/\/|www\.|mailto:)[^\s<>]+)/gi;
+const TRAIL_PUNCT = /[.,;:!?'”’»>]$/;
+const CLOSE_PAIR: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+
+/** Strips trailing sentence punctuation and unbalanced closing brackets from a candidate URL. */
+export function trimUrl(raw: string): string {
+  let u = raw;
+  for (;;) {
+    if (TRAIL_PUNCT.test(u)) {
+      u = u.slice(0, -1);
+      continue;
+    }
+    const last = u[u.length - 1];
+    const open = CLOSE_PAIR[last];
+    if (open) {
+      let opens = 0,
+        closes = 0;
+      for (const ch of u) {
+        if (ch == open) opens++;
+        else if (ch == last) closes++;
+      }
+      if (closes > opens) {
+        u = u.slice(0, -1);
+        continue;
+      }
+    }
+    break;
+  }
+  return u;
+}
+
+function validUrl(u: string): boolean {
+  if (/^https?:\/\//i.test(u)) return /^https?:\/\/(?:localhost|[a-z0-9-]+(?:\.[a-z0-9-]+)+|\[[0-9a-f:]+\])(?::\d+)?(?:[/?#].*)?$/i.test(u);
+  if (/^www\./i.test(u)) return /^www\.[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:[/?#].*)?$/i.test(u);
+  if (/^mailto:/i.test(u)) return /^mailto:[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/i.test(u);
+  return false;
+}
+
+const hrefOfUrl = (u: string): string => (/^www\./i.test(u) ? "https://" + u : u);
+
+/** A URL starting right at `index` in `text` (at start or after a delimiter), or null. */
+export function urlAt(text: string, index: number): DetectedUrl | null {
+  if (index > 0 && !URL_BOUNDARY.test(text[index - 1])) return null;
+  const m = URL_START.exec(text.slice(index));
+  if (!m) return null;
+  const trimmed = trimUrl(m[0]);
+  return validUrl(trimmed) ? { start: index, end: index + trimmed.length, text: trimmed, href: hrefOfUrl(trimmed) } : null;
+}
+
+/** Every valid bare URL (`http(s)://`, `www.`, `mailto:`) in `text`, in order. */
+export function detectUrls(text: string): DetectedUrl[] {
+  const out: DetectedUrl[] = [];
+  URL_IN_TEXT.lastIndex = 0;
+  for (let m = URL_IN_TEXT.exec(text); m; m = URL_IN_TEXT.exec(text)) {
+    const start = m.index + m[1].length;
+    const trimmed = trimUrl(m[2]);
+    if (validUrl(trimmed)) out.push({ start, end: start + trimmed.length, text: trimmed, href: hrefOfUrl(trimmed) });
+  }
+  return out;
+}
+
+/** A trimmed string that is a single URL alone (for pasting a URL over selected text), else null. */
+export function standaloneUrl(text: string): { url: string; href: string } | null {
+  const trimmed = text.trim();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  const hit = urlAt(trimmed, 0);
+  return hit && hit.end == trimmed.length ? { url: hit.text, href: hit.href } : null;
+}
+
+/**
+ * Source range `[from, to)` of text newly inserted during the current uninterrupted typing run, or null when none.
+ * Only URLs wholly contained in this span auto-link on Space/Enter, so removed links and pre-existing plain-text URLs
+ * are never turned into links when new text is inserted after them.
+ */
+export type TypedSpan = { from: number; to: number } | null;
+
+export type TypedSpanEvent =
+  | { kind: "insert"; changes: ChangeSet }
+  | { kind: "delete"; changes: ChangeSet }
+  | { kind: "select"; empty: boolean; head: number }
+  | { kind: "external"; changes: ChangeSet }
+  | { kind: "reset" };
+
+/** Pure transition for `TypedSpan`. */
+export function stepTypedSpan(span: TypedSpan, event: TypedSpanEvent): TypedSpan {
+  if (event.kind == "reset") return null;
+  if (event.kind == "select") return span && event.empty && event.head >= span.from && event.head <= span.to ? span : null;
+  if (event.kind == "external") {
+    if (!span) return null;
+    let overlaps = false;
+    event.changes.iterChangedRanges((fromA, toA) => {
+      if ((toA > span.from && fromA < span.to) || (fromA == toA && fromA > span.from && fromA < span.to)) overlaps = true;
+    });
+    if (overlaps) return null;
+    const from = event.changes.mapPos(span.from, 1),
+      to = event.changes.mapPos(span.to, -1);
+    return to > from ? { from, to } : null;
+  }
+  let minFromA = Infinity,
+    maxToA = -1,
+    minFromB = Infinity,
+    maxToB = -1;
+  event.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+    if (fromA < minFromA) minFromA = fromA;
+    if (toA > maxToA) maxToA = toA;
+    if (fromB < minFromB) minFromB = fromB;
+    if (toB > maxToB) maxToB = toB;
+  });
+  if (maxToA < 0) return span;
+  if (event.kind == "delete") {
+    if (!span || minFromA < span.from || maxToA > span.to) return null;
+    const from = event.changes.mapPos(span.from, 1),
+      to = event.changes.mapPos(span.to, -1);
+    return to > from ? { from, to } : null;
+  }
+  if (maxToB <= minFromB) return null;
+  if (span && minFromA >= span.from && maxToA <= span.to) {
+    return {
+      from: Math.min(event.changes.mapPos(span.from, -1), minFromB),
+      to: Math.max(event.changes.mapPos(span.to, 1), maxToB),
+    };
+  }
+  return { from: minFromB, to: maxToB };
+}
