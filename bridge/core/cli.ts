@@ -1,49 +1,38 @@
 #!/usr/bin/env bun
-// Standalone Erga local agent bridge binary (`erga-agent`).
-// Compiles to a single dependency-free native executable via `bun bridge/build.ts`
-// so users never need to clone Erga or install Bun.
+// Local Erga bridge CLI (`erga-agent`).
+// Talks to a single background daemon (~/.erga/bridge.sock) backed by either
+// `herdr-core` (Phase 1) or `rex` (Phase 2).
 //
 // Subcommands:
-//   erga-agent open    [doc-url] [--create] [--title ...] [--from <path>] [--server <url>]
+//   erga-agent open    [doc-url] [--space [name]] [--terminal <id>] [--create] [--title <t>] [--from <dir>] [--server <url>]
 //   erga-agent unmount <doc-id> [--server <url>]
-//   erga-agent attach  [doc-url] [--server <url>]
-//   erga-agent mount   <doc-url> [--from <path>] [--server <url>]
-//   erga-agent connect [doc-url] [--from <path>] [--server <url>] [--foreground] [--auto-approve]
+//   erga-agent spaces  [--backend herdr-core|rex]
+//   erga-agent status
+//   erga-agent update  [--check]
 //   erga-agent login   [server-url] [--device|--local] [--no-open]
-//   erga-agent mcp     [--agent antigravity|claude-code] [--server <url>]
-//   erga-agent daemon  [--agent antigravity|claude-code] [--server <url>] [--auto-approve]
-//   erga-agent status  [--agent antigravity|claude-code]
-//   erga-agent stop    [--agent antigravity|claude-code]
-//   erga-agent hook    [--agent antigravity|claude-code]
-//   erga-agent wait    [--agent claude-code]
+//   erga-agent mcp     [--server <url>]
+//   erga-agent daemon  [--backend herdr-core|rex] [--server <url>]
+//   erga-agent stop
 
-import { defaultOrigin, getAccessToken, login, normalizeOrigin } from "./auth.ts";
+import { HerdrCoreBackend } from "../backends/herdr-core.ts";
+import { RexBackend } from "../backends/rex.ts";
+import { defaultOrigin, login, normalizeOrigin } from "./auth.ts";
+import { detectBackendKind, type TerminalBackend } from "./backend.ts";
 import { ErgaDaemon } from "./daemon.ts";
 import { daemonRpc, parseDocumentRef } from "./daemon-io.ts";
-import { BRIDGE_SESSION_ENV, type AgentDriver, type PromptWait } from "./driver.ts";
 import { runMcpServer } from "./mcp-server.ts";
-import { recordSession } from "./sessions.ts";
-import { createAntigravityDriver } from "../drivers/antigravity.ts";
-import { createClaudeCodeDriver } from "../drivers/claude-code.ts";
+import { BRIDGE_VERSION, readPinnedOrigin, writePinnedOrigin } from "./updater.ts";
 
-/**
- * Registry of supported local agent drivers.
- * Adding Codex or Pi requires adding one driver module in
- * bridge/drivers/ and registering it here.
- */
-const DRIVERS: Record<string, (log?: (line: string) => void) => AgentDriver> = {
-  antigravity: createAntigravityDriver,
-  "claude-code": createClaudeCodeDriver,
-};
+const CLIENT_NAME = "Erga Bridge";
 
-/** Resolves how to re-invoke this process (works both via `bun cli.ts` and compiled standalone binary). */
+/** Resolves how to re-invoke this process (works both via `bun cli.ts` and bundled `bridge.js`). */
 export function selfCommand(): { command: string; prefix: string[] } {
   const script = process.argv[1];
   const compiled = !script || script.startsWith("/$bunfs/") || script == process.execPath;
   return compiled ? { command: process.execPath, prefix: [] } : { command: process.execPath, prefix: [script] };
 }
 
-const BOOL_FLAGS = new Set(["foreground", "create", "help", "device", "local", "no-open", "auto-approve", "dangerously-skip-permissions"]);
+const BOOL_FLAGS = new Set(["create", "help", "device", "local", "no-open", "check", "version", "foreground"]);
 
 function parseFlags(argv: string[]): { cmd: string; pos: string[]; flags: Record<string, string | boolean> } {
   const flags: Record<string, string | boolean> = {};
@@ -53,7 +42,15 @@ function parseFlags(argv: string[]): { cmd: string; pos: string[]; flags: Record
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next != null && !next.startsWith("--") && !BOOL_FLAGS.has(key)) {
+      if (key == "space") {
+        // `--space` may be bare (infer current space) or take a space name/id if next is not a URL or flag.
+        if (next != null && !next.startsWith("--") && !/^https?:\/\//i.test(next) && !next.startsWith("/")) {
+          flags[key] = next;
+          i++;
+        } else {
+          flags[key] = true;
+        }
+      } else if (next != null && !next.startsWith("--") && !BOOL_FLAGS.has(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -67,47 +64,17 @@ function parseFlags(argv: string[]): { cmd: string; pos: string[]; flags: Record
   return { cmd, pos: rest, flags };
 }
 
-function driverFor(name: string, log?: (line: string) => void): AgentDriver {
-  const factory = DRIVERS[name];
-  if (!factory) throw new Error(`Unknown agent "${name}". Supported: ${Object.keys(DRIVERS).join(", ")}.`);
-  return factory(log);
+function makeBackend(preferred?: string, log?: (line: string) => void): TerminalBackend {
+  const kind = detectBackendKind(preferred);
+  return kind == "rex" ? new RexBackend({ log }) : new HerdrCoreBackend({ log });
 }
 
-/** Reads the active terminal session's env vars (never for bridge-spawned sessions). */
-function sessionEnvFields(driver: AgentDriver): {
-  conversationId?: string;
-  lsAddress?: string;
-  csrfToken?: string;
-  appDataDir?: string;
-} {
-  if (process.env[BRIDGE_SESSION_ENV]) return {};
-  const driverSession = driver.sessionEnv ? process.env[driver.sessionEnv] : undefined;
-  return {
-    ...(driverSession ? { conversationId: driverSession } : {}),
-    ...(driver.id == "antigravity" ? liveAntigravityEnv() : {}),
-  };
-}
-function liveAntigravityEnv(): {
-  conversationId?: string;
-  lsAddress?: string;
-  csrfToken?: string;
-  appDataDir?: string;
-} {
-  return {
-    ...(process.env.ANTIGRAVITY_CONVERSATION_ID ? { conversationId: process.env.ANTIGRAVITY_CONVERSATION_ID } : {}),
-    ...(process.env.ANTIGRAVITY_LS_ADDRESS ? { lsAddress: process.env.ANTIGRAVITY_LS_ADDRESS } : {}),
-    ...(process.env.ANTIGRAVITY_CSRF_TOKEN ? { csrfToken: process.env.ANTIGRAVITY_CSRF_TOKEN } : {}),
-    ...(process.env.ANTIGRAVITY_APP_DATA_DIR ? { appDataDir: process.env.ANTIGRAVITY_APP_DATA_DIR } : {}),
-  };
-}
-
-async function ensureDaemonRunning(agent: string, server: string, opts: { autoApprove?: boolean; mode?: string } = {}): Promise<void> {
-  const alive = await daemonRpc(agent, "/status", undefined, 2_000);
+async function ensureDaemonRunning(server: string, backend?: string): Promise<void> {
+  const alive = await daemonRpc("/status", undefined, 2_000);
   if (alive?.ok) return;
   const self = selfCommand();
-  const args = [...self.prefix, "daemon", "--agent", agent, "--server", server];
-  if (opts.autoApprove) args.push("--auto-approve");
-  if (opts.mode) args.push("--mode", opts.mode);
+  const args = [...self.prefix, "daemon", "--server", server];
+  if (backend) args.push("--backend", backend);
   const child = Bun.spawn([self.command, ...args], {
     cwd: process.cwd(),
     stdin: "ignore",
@@ -116,132 +83,86 @@ async function ensureDaemonRunning(agent: string, server: string, opts: { autoAp
     detached: true,
   });
   child.unref();
-  const until = Date.now() + 8_000;
-  while (Date.now() < until) {
-    const ok = await daemonRpc(agent, "/status", undefined, 1_000);
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const ok = await daemonRpc("/status", undefined, 1_000);
     if (ok?.ok) return;
-    await Bun.sleep(100);
+    await Bun.sleep(80);
   }
-  throw new Error("Timed out waiting for background daemon to start.");
+  throw new Error("Timed out waiting for local Erga bridge daemon to start.");
 }
 
 async function main(): Promise<void> {
   const { cmd, pos, flags } = parseFlags(process.argv.slice(2));
-  const agentName = typeof flags.agent == "string" ? flags.agent : "antigravity";
+  const backendFlag = typeof flags.backend == "string" ? flags.backend : undefined;
   const server = typeof flags.server == "string" ? normalizeOrigin(flags.server) : defaultOrigin();
-  const autoApprove = Boolean(flags["auto-approve"] || flags["dangerously-skip-permissions"] || process.env.ERGA_AUTO_APPROVE == "1");
-  const mode = typeof flags.mode == "string" ? flags.mode : undefined;
   const log = (line: string) => console.error(line);
 
+  if (flags.version || cmd == "version") {
+    console.log(BRIDGE_VERSION);
+    return;
+  }
+
   if (cmd == "help" || flags.help) {
-    console.log(`erga-agent — local Yjs sync, full Erga API MCP proxy, and browser-pane bridge
+    console.log(`erga-agent (${BRIDGE_VERSION}) — terminal-first Erga bridge for herdr-core & rex
 
 Usage:
-  erga-agent open [doc-url] [--create] [--title <title>] [--from <path>] [--server <url>]
-  erga-agent unmount <doc-id> [--server <url>]
-  erga-agent attach [doc-url] [--server <url>]
-  erga-agent mount <doc-url> [--from <path>] [--server <url>]
-  erga-agent connect [doc-url] [--from <path>] [--server <url>] [--foreground] [--auto-approve]
-  erga-agent login [server-url] [--device|--local] [--no-open]
-  erga-agent mcp [--agent antigravity|claude-code] [--server <url>]
-  erga-agent daemon [--agent antigravity|claude-code] [--server <url>] [--auto-approve]
-  erga-agent status [--agent antigravity|claude-code]
-  erga-agent stop [--agent antigravity|claude-code]`);
+  erga-agent open    [doc-url] [--space [name]] [--terminal <id>] [--create] [--title <t>] [--from <dir>]
+  erga-agent unmount <doc-id>
+  erga-agent spaces  [--backend herdr-core|rex]
+  erga-agent status
+  erga-agent update  [--check]
+  erga-agent login   [server-url] [--device|--local] [--no-open]
+  erga-agent mcp     [--server <url>]
+  erga-agent daemon  [--backend herdr-core|rex] [--server <url>]
+  erga-agent stop`);
     return;
   }
 
-  if (cmd == "hook") {
-    // The agent's plugin hook: records the session, forwards its live tool and turn events to the
-    // local daemon, and always outputs valid hook JSON (a hook must never fail the agent's loop).
-    const stdinText = await new Response(Bun.stdin.stream()).text().catch(() => "");
-    let out: Record<string, unknown> = {};
-    try {
-      const call = driverFor(agentName).hook?.(JSON.parse(stdinText || "{}") as Record<string, unknown>);
-      // A session that the bridge itself started is not the user's own: its hooks say nothing.
-      if (call && !process.env[BRIDGE_SESSION_ENV]) {
-        out = call.reply(null);
-        recordSession(agentName, call.payload);
-        if (call.payload.conversationId) {
-          type Answer = { ok?: boolean; hookResponse?: Record<string, unknown> } | null;
-          const liveEnv = agentName == "antigravity" ? liveAntigravityEnv() : {};
-          const hookBody =
-            liveEnv.lsAddress && liveEnv.csrfToken
-              ? {
-                  ...call.payload,
-                  lsAddress: liveEnv.lsAddress,
-                  csrfToken: liveEnv.csrfToken,
-                  ...(liveEnv.appDataDir ? { appDataDir: liveEnv.appDataDir } : {}),
-                }
-              : call.payload;
-          let res: Answer = await daemonRpc(agentName, "/hook", hookBody, 2_000);
-          // The user may take long to answer a permission on the panel's card: the hook asks again while no answer came.
-          while (res?.hookResponse?.pending) res = await daemonRpc(agentName, "/hook", { ...hookBody, again: true }, 10_000);
-          if (res?.hookResponse && typeof res.hookResponse == "object") out = call.reply(res.hookResponse);
-        }
-      }
-    } catch {
-      /* the output so far stands */
-    }
-    process.stdout.write(JSON.stringify(out) + "\n");
-    return;
-  }
-
-  if (cmd == "wait") {
-    // A hook that the agent runs in the background of its own session (Claude Code: asyncRewake). It waits for
-    // the next prompt from the panel of a document that the session has open. Then it writes the prompt to
-    // stderr and ends with code 2: the agent wakes the session with that text. Any other end says nothing.
-    const stdinText = await new Response(Bun.stdin.stream()).text().catch(() => "");
-    const agentPid = process.ppid;
-    let prompt: string | undefined;
-    try {
-      const { conversationId, cwd, transcriptPath } = driverFor(agentName).hook?.(JSON.parse(stdinText || "{}")).payload ?? {};
-      const session = { conversationId, cwd, transcriptPath, pid: agentPid, waiter: process.pid };
-      const own = conversationId && !process.env[BRIDGE_SESSION_ENV];
-      // The daemon reads which session the agent's process runs now.
-      if (own) recordSession(agentName, session);
-      // It ends with the agent, with the document's unmount, and when another hook of the session waits.
-      while (own && process.ppid == agentPid) {
-        const res = await daemonRpc<PromptWait>(agentName, "/wait", session, 10_000);
-        prompt = res?.prompt;
-        if (prompt || !res?.pending) break;
-      }
-    } catch {
-      /* it says nothing */
-    }
-    if (!prompt) return;
-    await Bun.write(Bun.stderr, prompt);
-    process.exit(2);
-  }
-
-  const driver = driverFor(agentName, log);
   const self = selfCommand();
 
   if (cmd == "login") {
     const target = pos[0] ? normalizeOrigin(pos[0]) : server;
     const modeChoice = flags.device ? "device" : flags.local ? "local" : "auto";
-    await login(target, driver.label, { log, mode: modeChoice, ...(flags["no-open"] ? { open: false } : {}) });
-    console.log(`Signed in to ${target} as ${driver.label}.`);
+    await login(target, CLIENT_NAME, { log, mode: modeChoice, ...(flags["no-open"] ? { open: false } : {}) });
+    if (!readPinnedOrigin()) writePinnedOrigin(target);
+    console.log(`Signed in to ${target}.`);
     return;
   }
 
   if (cmd == "mcp") {
-    await runMcpServer({ driver, defaultOrigin: typeof flags.server == "string" ? server : undefined, selfCmd: self, log });
+    await runMcpServer({
+      clientName: CLIENT_NAME,
+      defaultOrigin: typeof flags.server == "string" ? server : undefined,
+      selfCmd: self,
+      log,
+    });
     return;
   }
 
   if (cmd == "daemon") {
-    const daemon = new ErgaDaemon(driver, {
+    const backend = makeBackend(backendFlag, log);
+    const daemon = new ErgaDaemon(backend, {
       defaultOrigin: server,
-      defaultCwd: process.cwd(),
-      autoApprove,
-      mode,
-      mcpSpec: (origin) => ({
-        name: "erga",
-        command: self.command,
-        args: [...self.prefix, "mcp", "--agent", driver.id, "--server", origin],
-      }),
       log,
+      onRestart: () => {
+        // Re-exec cleanly via the launcher shim (or self) so the newly swapped bundle runs immediately.
+        void daemon.stop().finally(() => {
+          const child = Bun.spawn(
+            [self.command, ...self.prefix, "daemon", "--server", server, ...(backendFlag ? ["--backend", backendFlag] : [])],
+            {
+            cwd: process.cwd(),
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+            detached: true,
+          });
+          child.unref();
+          process.exit(0);
+        });
+      },
     });
+    await daemon.start();
     daemon.startSocket();
     const shutdown = () => void daemon.stop().then(() => process.exit(0));
     process.on("SIGINT", shutdown);
@@ -249,54 +170,54 @@ Usage:
     await new Promise(() => {});
   }
 
-  if (cmd == "attach") {
-    const liveEnv = liveAntigravityEnv();
-    if (!liveEnv.conversationId || !liveEnv.lsAddress || !liveEnv.csrfToken) {
-      throw new Error(
-        "No live Antigravity session environment detected (ANTIGRAVITY_LS_ADDRESS / ANTIGRAVITY_CONVERSATION_ID missing). Run `erga-agent attach` from inside an Antigravity session."
-      );
-    }
-    const docArg = pos[0];
-    const targetOrigin = docArg ? parseDocumentRef(docArg, server).origin : server;
-    await ensureDaemonRunning(agentName, targetOrigin, { autoApprove, mode });
-    if (docArg) {
-      const res = await daemonRpc<Record<string, unknown>>(agentName, "/open", {
-        origin: targetOrigin,
-        document: parseDocumentRef(docArg, targetOrigin).ref,
-        cwd: process.cwd(),
-        nonBlockingAuth: true,
-        ...liveEnv,
-      });
-      console.log(JSON.stringify(res ?? { ok: false, error: "Could not open document." }, null, 2));
-      return;
-    }
-    const res = await daemonRpc<{ ok?: boolean; error?: string; conversationId?: string; attachedDocs?: string[] }>(agentName, "/attach", {
-      ...liveEnv,
-      cwd: process.cwd(),
-    });
-    if (!res?.ok) throw new Error(res?.error || "Could not attach live session.");
-    console.log(JSON.stringify(res, null, 2));
-    return;
-  }
-
   if (cmd == "open") {
     const docArg = pos[0];
-    const fromDir = typeof flags.from == "string" ? flags.from : undefined;
     const targetOrigin = docArg ? parseDocumentRef(docArg, server).origin : server;
-    await ensureDaemonRunning(agentName, targetOrigin, { autoApprove, mode });
-    const res = await daemonRpc<Record<string, unknown>>(agentName, "/open", {
+    if (flags.foreground) {
+      const backend = makeBackend(backendFlag, log);
+      const daemon = new ErgaDaemon(backend, { defaultOrigin: targetOrigin, log });
+      await daemon.start();
+      daemon.startSocket();
+      const res = await daemon.openDocument({
+        origin: targetOrigin,
+        ...(docArg ? { document: parseDocumentRef(docArg, targetOrigin).ref } : {}),
+        ...(flags.create ? { create: true } : {}),
+        ...(typeof flags.title == "string" ? { title: flags.title } : {}),
+        ...(typeof flags.slug == "string" ? { slug: flags.slug } : {}),
+        ...(typeof flags.template == "string" ? { template: flags.template } : {}),
+        ...(typeof flags.from == "string" ? { fromDir: flags.from } : {}),
+        ...(flags.space ? { space: flags.space } : {}),
+        ...(typeof flags.terminal == "string" ? { terminal: flags.terminal } : {}),
+        cwd: process.cwd(),
+      });
+      console.log(JSON.stringify(res, null, 2));
+      if (!res.ok) process.exit(1);
+      const shutdown = () => void daemon.stop().then(() => process.exit(0));
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      await new Promise(() => {});
+    }
+
+    await ensureDaemonRunning(targetOrigin, backendFlag);
+    const res = await daemonRpc<Record<string, unknown>>("/open", {
       origin: targetOrigin,
       ...(docArg ? { document: parseDocumentRef(docArg, targetOrigin).ref } : {}),
       ...(flags.create ? { create: true } : {}),
       ...(typeof flags.title == "string" ? { title: flags.title } : {}),
       ...(typeof flags.slug == "string" ? { slug: flags.slug } : {}),
       ...(typeof flags.template == "string" ? { template: flags.template } : {}),
-      ...(fromDir ? { fromDir } : {}),
+      ...(typeof flags.from == "string" ? { fromDir: flags.from } : {}),
+      ...(flags.space ? { space: flags.space } : {}),
+      ...(typeof flags.terminal == "string" ? { terminal: flags.terminal } : {}),
       cwd: process.cwd(),
+      env: {
+        ...(process.env.HC_TERMINAL_ID ? { HC_TERMINAL_ID: process.env.HC_TERMINAL_ID } : {}),
+        ...(process.env.REX_BLOCK_ID ? { REX_BLOCK_ID: process.env.REX_BLOCK_ID } : {}),
+        ...(process.env.REX_SESSION ? { REX_SESSION: process.env.REX_SESSION } : {}),
+      },
       nonBlockingAuth: true,
-      ...sessionEnvFields(driver),
     });
-    if (!res) throw new Error("Could not reach local Erga daemon.");
+    if (!res) throw new Error("Could not reach local Erga bridge daemon.");
     console.log(JSON.stringify(res, null, 2));
     if (!res.ok && !res.needsAuth) process.exit(1);
     return;
@@ -306,89 +227,56 @@ Usage:
     const docId = pos[0];
     if (!docId) throw new Error("Provide a document id to unmount (from `erga-agent status`).");
     const body = typeof flags.server == "string" ? { origin: server, docId } : { docId };
-    const res = await daemonRpc<{ ok?: boolean; error?: string }>(agentName, "/unmount", body, 5_000);
+    const res = await daemonRpc<{ ok?: boolean }>("/unmount", body, 5_000);
     console.log(JSON.stringify(res ?? { ok: false }, null, 2));
     if (!res?.ok) process.exit(1);
     return;
   }
 
-  if (cmd == "connect" || cmd == "mount") {
-    const docArg = pos[0];
-    const fromDir = typeof flags.from == "string" ? flags.from : undefined;
-    const targetOrigin = docArg ? parseDocumentRef(docArg, server).origin : server;
-    const liveEnv = sessionEnvFields(driver);
+  if (cmd == "spaces") {
+    const alive = await daemonRpc("/spaces", undefined, 3_000);
+    if (alive?.ok) {
+      console.log(JSON.stringify(alive, null, 2));
+      return;
+    }
+    const backend = makeBackend(backendFlag, log);
+    const info = await backend.connect();
+    try {
+      const [spaces, terminals] = await Promise.all([backend.listSpaces(), backend.listTerminals()]);
+      console.log(JSON.stringify({ ok: true, backend: backend.id, version: info.version, spaces, terminals }, null, 2));
+    } finally {
+      await backend.close();
+    }
+    return;
+  }
 
-    if (flags.foreground) {
-      const daemon = new ErgaDaemon(driver, {
-        defaultOrigin: targetOrigin,
-        defaultCwd: process.cwd(),
-        autoApprove,
-        mode,
-        mcpSpec: (origin) => ({
-          name: "erga",
-          command: self.command,
-          args: [...self.prefix, "mcp", "--agent", driver.id, "--server", origin],
-        }),
-        log,
-      });
-      daemon.startSocket();
-      if (docArg) {
-        const res = await daemon.openDocument({
-          origin: targetOrigin,
-          document: docArg,
-          fromDir,
-          cwd: process.cwd(),
-          ...liveEnv,
-        });
-        if (!res.ok) throw new Error(res.message);
-        console.log(`Mounted ${res.url} -> ${res.dir}`);
-      } else {
-        await daemon.connectOrigin(targetOrigin, { interactive: true });
-        console.log(`Connected ${driver.label} to ${targetOrigin}`);
-      }
-      const shutdown = () => void daemon.stop().then(() => process.exit(0));
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
-      await new Promise(() => {});
+  if (cmd == "update") {
+    const alive = await daemonRpc("/update", { checkOnly: Boolean(flags.check) }, 25_000);
+    if (alive) {
+      console.log(JSON.stringify(alive, null, 2));
+      return;
     }
-
-    // Sign in in the foreground terminal first so the OAuth URL/code is never swallowed by a detached daemon.
-    if (!(await getAccessToken(targetOrigin, driver.label, { interactive: false }))) {
-      await login(targetOrigin, driver.label, { log });
+    const pinned = readPinnedOrigin();
+    if (!pinned) throw new Error("No pinned update origin in ~/.erga/update.json. Install via /plugin/install.sh or sign in first.");
+    const { fetchUpdateManifest, downloadAndSwap } = await import("./updater.ts");
+    const manifest = await fetchUpdateManifest(pinned);
+    if (flags.check || manifest.version == BRIDGE_VERSION) {
+      console.log(JSON.stringify({ ok: true, updated: false, version: BRIDGE_VERSION, latest: manifest.version }, null, 2));
+      return;
     }
-    await ensureDaemonRunning(agentName, targetOrigin, { autoApprove, mode });
-    if (docArg) {
-      const res = await daemonRpc<{ ok?: boolean; error?: string; url?: string; dir?: string; files?: string[]; liveAttached?: boolean }>(
-        agentName,
-        "/open",
-        {
-          origin: targetOrigin,
-          document: parseDocumentRef(docArg, targetOrigin).ref,
-          ...(fromDir ? { fromDir } : {}),
-          cwd: process.cwd(),
-          ...liveEnv,
-        }
-      );
-      if (!res?.ok) throw new Error(res?.error || "Could not mount document.");
-      console.log(
-        `Mounted ${res.url}\n  Local folder: ${res.dir}\n  Live session: ${res.liveAttached ? "attached" : "not attached"}\n  Files: ${(res.files ?? []).join(", ")}`
-      );
-    } else {
-      const res = await daemonRpc<{ ok?: boolean; error?: string; origin?: string }>(agentName, "/connect", { origin: targetOrigin });
-      if (!res?.ok) throw new Error(res?.error || "Could not connect bridge.");
-      console.log(`Connected ${driver.label} to ${res.origin} (background daemon).`);
-    }
+    const swapped = await downloadAndSwap(pinned, manifest);
+    console.log(JSON.stringify({ ok: true, updated: true, version: BRIDGE_VERSION, latest: swapped.version }, null, 2));
     return;
   }
 
   if (cmd == "status") {
-    const res = await daemonRpc(agentName, "/status", undefined, 3_000);
-    console.log(JSON.stringify(res ?? { running: false }, null, 2));
+    const res = await daemonRpc("/status", undefined, 3_000);
+    console.log(JSON.stringify(res ?? { running: false, version: BRIDGE_VERSION }, null, 2));
     return;
   }
 
   if (cmd == "stop") {
-    const res = await daemonRpc(agentName, "/stop", {}, 3_000);
+    const res = await daemonRpc<{ ok?: boolean }>("/stop", {}, 3_000);
     console.log(res?.ok ? "Stopped." : "Not running.");
     return;
   }

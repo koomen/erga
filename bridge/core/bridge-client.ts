@@ -1,18 +1,29 @@
 // Outbound WebSocket client to Erga's /api/agent/bridge endpoint.
 // Keeps one persistent connection per Erga server, auto-reconnects with
-// backoff, sends hello/bind/events/log/turn_done, and dispatches incoming
-// browser prompt/abort/reset/answer/model requests to the daemon.
+// backoff, replays document bindings (single terminal or whole space), and
+// dispatches incoming PTY attach/input/resize/send/interrupt/update messages.
 
-import { parseToBridge, type FromBridge, type ToBridge } from "../../shared/bridge-protocol.ts";
+import type { AttachScope, BackendKind, FromBridge, TerminalSummary, ToBridge } from "../../shared/bridge-protocol.ts";
+import { parseToBridge } from "../../shared/bridge-schema.ts";
 import { PING, PONG } from "../../shared/room-socket.ts";
 
 const PING_MS = 15_000;
 
+export interface BridgeBinding {
+  label?: string;
+  scope: AttachScope;
+  spaceId?: string | null;
+  spaceName?: string | null;
+  terminals: readonly TerminalSummary[];
+  activeTerminal?: string | null;
+}
+
 export interface BridgeClientOptions {
   origin: string;
   id: string;
-  agent: string;
+  backend: BackendKind;
   label: string;
+  version: string;
   token: () => Promise<string>;
   onMessage: (msg: ToBridge) => void;
   onStatus?: (connected: boolean) => void;
@@ -26,10 +37,8 @@ export class ErgaBridgeClient {
   private tries = 0;
   private hasConnected = false;
   private closed = false;
-  private readonly connThreadId = crypto.randomUUID();
-  /** Active document bindings replayed automatically on every reconnect (keeping the same threadId). */
-  private bindings = new Map<string, { label?: string; sessionId?: string | null; cwd?: string | null; threadId: string }>();
-  private openResolve: (() => void) | null = null;
+  /** Active document bindings replayed automatically on every reconnect. */
+  private bindings = new Map<string, BridgeBinding>();
 
   constructor(private readonly opts: BridgeClientOptions) {}
 
@@ -37,26 +46,25 @@ export class ErgaBridgeClient {
     return this.ws?.readyState == WebSocket.OPEN;
   }
 
-  /** Connects to /api/agent/bridge and sends hello + any existing doc bindings. */
   async start(): Promise<void> {
     if (this.connected) return;
     await this.connect();
   }
 
-  /** Binds a document to this bridge (auto-switches that document's panel to this agent's own thread). */
-  bind(doc: string, info: { label?: string; sessionId?: string | null; cwd?: string | null; threadId?: string | null } = {}): void {
-    const prev = this.bindings.get(doc);
-    const threadId = info.threadId || info.sessionId || (prev && !prev.sessionId ? prev.threadId : crypto.randomUUID());
-    const entry = { ...info, threadId };
-    this.bindings.set(doc, entry);
-    this.send({ type: "bind", doc, ...entry });
+  /** Binds a document to a single terminal or whole space (auto-switches that document's panel). */
+  bind(doc: string, info: BridgeBinding): void {
+    this.bindings.set(doc, info);
+    this.send({ type: "bind", doc, ...info });
   }
 
-  /** Rotates the stored threadId for `doc` after a browser reset so reconnects never resurrect the old thread. */
-  rotateThread(doc: string): void {
+  /** Updates the live terminal roster / OSC 7501 statuses for a bound document. */
+  updateTerminals(doc: string, terminals: readonly TerminalSummary[], spaceName?: string | null): void {
     const prev = this.bindings.get(doc);
-    if (!prev) return;
-    this.bindings.set(doc, { ...prev, sessionId: null, threadId: crypto.randomUUID() });
+    if (prev) {
+      prev.terminals = terminals;
+      if (spaceName !== undefined) prev.spaceName = spaceName;
+    }
+    this.send({ type: "terminals", doc, terminals, ...(spaceName !== undefined ? { spaceName } : {}) });
   }
 
   unbind(doc: string): void {
@@ -98,7 +106,6 @@ export class ErgaBridgeClient {
         settled = true;
         fn();
       };
-      this.openResolve = () => finish(resolve);
 
       const ws = new (WebSocket as unknown as new (url: string, opts: { headers: Record<string, string> }) => WebSocket)(wsUrl, {
         headers: { Authorization: `Bearer ${token}` },
@@ -112,12 +119,14 @@ export class ErgaBridgeClient {
         this.send({
           type: "hello",
           id: this.opts.id,
-          agent: this.opts.agent,
+          backend: this.opts.backend,
           label: this.opts.label,
-          threadId: this.connThreadId,
+          version: this.opts.version,
           ...(reconnect ? { reconnect: true } : {}),
         });
-        for (const [doc, info] of this.bindings) this.send({ type: "bind", doc, ...info, ...(reconnect ? { reconnect: true } : {}) });
+        for (const [doc, info] of this.bindings) {
+          this.send({ type: "bind", doc, ...info, ...(reconnect ? { reconnect: true } : {}) });
+        }
         if (this.pinger) clearInterval(this.pinger);
         this.pinger = setInterval(() => {
           try {
@@ -127,7 +136,7 @@ export class ErgaBridgeClient {
           }
         }, PING_MS);
         this.opts.onStatus?.(true);
-        this.openResolve?.();
+        finish(resolve);
       });
 
       ws.addEventListener("message", (ev) => {

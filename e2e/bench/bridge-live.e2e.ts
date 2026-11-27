@@ -1,42 +1,25 @@
-// A live check of the local agent bridge (bridge/core/cli.ts) against a real agent's CLI (`agy`, or
-// `claude`): it mounts a document's Yjs room into a temp folder, connects /api/agent/bridge on a bare
-// server with no API keys, enables the browser panel under "Connected agents", sends a prompt from the
-// browser, lets the real agent edit index.html on disk, verifies the edit lands in the open editor
-// without a reload, checks the streamed reply, and verifies the panel returns to off on disconnect.
+// Live verification of the herdr-core/rex bridge against an isolated local
+// herdr-core session (never touches the user's default session). Skipped in
+// normal `bun run test` unless ERGA_LIVE_BRIDGE=herdr-core is set.
 //
-// It calls the real agent, so it skips itself unless asked for: `bun run test` never runs it.
-//
-//   ERGA_LIVE_BRIDGE=antigravity bun run test:e2e e2e/bench/bridge-live.e2e.ts
-//   ERGA_LIVE_BRIDGE=claude-code bun run test:e2e e2e/bench/bridge-live.e2e.ts
-//
-// (Set AGY_BIN=/path/to/agy or CLAUDE_BIN=/path/to/claude if the CLI is not on PATH.)
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+//   ERGA_LIVE_BRIDGE=herdr-core bun run test:e2e e2e/bench/bridge-live.e2e.ts
+
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { openEditor, W, type Editor } from "../helpers/editor";
+import { openEditor, W } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, servers, test, until } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
-import { say } from "../agent/panel";
 
-const AGENTS: Record<string, string> = { antigravity: "Antigravity", "claude-code": "Claude Code" };
-const AGENT = process.env.ERGA_LIVE_BRIDGE ?? "";
-const ENABLED = AGENT in AGENTS;
+const ENABLED = process.env.ERGA_LIVE_BRIDGE == "herdr-core";
 const own = () => servers.of("bridge-live");
 if (ENABLED) await own();
 
-/** A live agent's turn can take up to two minutes. */
 const LIVE = {
-  timeout: 240_000,
-  skip: ENABLED ? false : "a live check: ERGA_LIVE_BRIDGE=antigravity or claude-code runs it with the local CLI",
+  timeout: 90_000,
+  skip: ENABLED ? false : "a live check: ERGA_LIVE_BRIDGE=herdr-core runs it with an isolated local hc server",
 };
-const TURN_MS = 180_000;
-
-const working = (ed: Editor) =>
-  ed.eval<boolean>(
-    `document.getElementById("agent-fab").classList.contains("busy") || !!document.querySelector("#agent-log .msg-user.pending")`
-  );
 
 function stopChild(child: ChildProcess | null): Promise<void> {
   if (!child || child.exitCode != null) return Promise.resolve();
@@ -48,7 +31,7 @@ function stopChild(child: ChildProcess | null): Promise<void> {
         /* gone */
       }
       resolve();
-    }, 5_000);
+    }, 3_000);
     child.once("exit", () => {
       clearTimeout(timer);
       resolve();
@@ -62,92 +45,68 @@ function stopChild(child: ChildProcess | null): Promise<void> {
   });
 }
 
-test(
-  "local agent bridge mounts the Yjs room, enables the panel with no API keys, edits index.html live, and disconnects cleanly",
-  LIVE,
-  async ({ tab }) => {
-    const server = await own();
-    await tab.page.setViewportSize({ width: 1280, height: 800 });
-    const ed = await openEditor(tab, server, "page");
-    await ed.openAgent();
-    await ed.frame(`${W}.__marker = 1`);
+test("live herdr-core bridge streams PTY in the browser panel and syncs Yjs edits", LIVE, async ({ tab }) => {
+  const server = await own();
+  await tab.page.setViewportSize({ width: 1280, height: 800 });
+  const ed = await openEditor(tab, server, "page");
+  await ed.openAgent();
+  await ed.frame(`${W}.__marker = 1`);
 
-    const docId = await ed.eval<string>(`document.querySelector('meta[name="erga-doc"]').content`);
-    const { token, error } = await newToken(server.root, { label: AGENTS[AGENT] });
-    expect(error, "agent token for live bridge").toBe("");
+  const docId = await ed.eval<string>(`document.querySelector('meta[name="erga-doc"]').content`);
+  const { token, error } = await newToken(server.root, { label: "Erga Bridge" });
+  expect(error, "agent token for live bridge").toBe("");
 
-    const scratch = mkdtempSync(join(tmpdir(), "erga-live-"));
-    const ergaHome = join(scratch, "erga");
-    const workDir = join(scratch, "work");
-    mkdirSync(ergaHome, { recursive: true });
-    mkdirSync(workDir, { recursive: true });
+  // Short path under /tmp so macOS 103-byte Unix socket limit is never exceeded.
+  const scratch = mkdtempSync("/tmp/erga-hc-live-");
+  const stateHome = join(scratch, "st");
+  const ergaHome = join(scratch, "eh");
+  mkdirSync(stateHome, { recursive: true });
+  mkdirSync(ergaHome, { recursive: true });
 
-    const logs: string[] = [];
-    const child = spawn(
-      "bun",
-      [join(ROOT, "bridge/core/cli.ts"), "connect", `${server.root}/d/${docId}`, "--agent", AGENT, "--foreground"],
-      {
-        cwd: workDir,
-        env: {
-          PATH: process.env.PATH ?? "",
-          HOME: process.env.ERGA_CHROME_HOME || homedir(),
-          // Claude Code finds its sign-in by the user's name.
-          ...(process.env.USER ? { USER: process.env.USER } : {}),
-          ERGA_HOME: ergaHome,
-          ERGA_TOKEN: token,
-          ...(process.env.AGY_BIN ? { AGY_BIN: process.env.AGY_BIN } : {}),
-          ...(process.env.CLAUDE_BIN ? { CLAUDE_BIN: process.env.CLAUDE_BIN } : {}),
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      }
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    XDG_STATE_HOME: stateHome,
+    HC_SESSION: "t",
+    ERGA_HOME: ergaHome,
+    ERGA_TOKEN: token,
+  };
+  delete env.HC_SOCKET;
+  delete env.HC_TERMINAL_SOCKET;
+  delete env.HC_TERMINAL_ID;
+  delete env.HC_SCOPE;
+  const started = spawnSync("hc", ["run", "--bg", "--name", "sh1", "--", "/bin/sh"], { env });
+  expect(started.status).toBe(0);
+
+  const logs: string[] = [];
+  const child = spawn("bun", [join(ROOT, "bridge/core/cli.ts"), "open", `${server.root}/d/${docId}`, "--terminal", "sh1", "--foreground"], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout?.on("data", (c) => logs.push(String(c)));
+  child.stderr?.on("data", (c) => logs.push(String(c)));
+
+  try {
+    await until(
+      () => ed.eval<boolean>(`!document.getElementById("agent-term-wrap")?.hidden && !!document.querySelector(".agent-term-host .xterm")`),
+      15_000,
+      "browser terminal pane mounted for live herdr-core session",
+      () => logs.join("").slice(-800)
     );
-    child.stdout?.on("data", (c) => logs.push(String(c)));
-    child.stderr?.on("data", (c) => logs.push(String(c)));
-
-    const dump = () => logs.join("").slice(-1200);
-    try {
-      await until(
-        () =>
-          ed.eval<boolean>(
-            `!!document.querySelector('#agent-model-select optgroup[label="Connected agents"] option') && document.getElementById("agent-hint").hidden`
-          ),
-        20_000,
-        "live bridge connects and enables the panel",
-        dump
-      );
-
-      await say(
-        tab.page,
-        'Edit index.html in the mounted Erga directory to change the <h1> text from "Launch notes" to "Live bridge notes", then reply "Done.".'
-      );
-
-      await until(() => working(ed), 15_000, "panel enters busy state", dump);
-      await until(
-        async () => {
-          const approve = tab.page.locator("#agent-log .msg-tool.asking").getByRole("button", { name: /Allow all|Approve/ });
-          if (await approve.isVisible().catch(() => false)) await approve.click();
-          const hasReply = await ed.eval<boolean>(`!!document.querySelector("#agent-log .msg-assistant")?.textContent?.trim()`);
-          return hasReply && !(await working(ed));
-        },
-        TURN_MS,
-        "live agent's turn finishes with a reply",
-        dump
-      );
-
-      await expect.poll(() => ed.textOf("h1"), { timeout: 15_000 }).toBe("Live bridge notes");
-      expect(ed.disk(), "edit reached server disk").toContain("<h1>Live bridge notes</h1>");
-      expect(await ed.frame<boolean>(`${W}.__marker == 1`), "edit arrived without a page reload").toBe(true);
-      expect(
-        await ed.eval<boolean>(`!!document.querySelector("#agent-log .msg-assistant")?.textContent?.trim()`),
-        "streamed assistant reply shown in panel"
-      ).toBe(true);
-    } finally {
-      await stopChild(child);
-      rmSync(scratch, { recursive: true, force: true });
-    }
-
-    await expect
-      .poll(() => ed.eval<string>(`document.getElementById("agent-hint").innerText`), { timeout: 10_000 })
-      .toBe("To enable the agent, add an LLM provider key. Or connect your own agent.");
+    // Type a real command in Erga's browser terminal pane and verify it executes inside the real herdr-core PTY!
+    const markerFile = join(scratch, "typed-ok.txt");
+    await tab.page.locator(".agent-term-host .xterm").click();
+    await tab.page.keyboard.type(`echo LIVE_HC_OK > ${markerFile}\n`);
+    await until(
+      () => existsSync(markerFile),
+      10_000,
+      "command typed in browser terminal ran inside real herdr-core PTY",
+      () => logs.join("").slice(-800)
+    );
+    if (process.env.ERGA_BRIDGE_SHOT) await tab.page.screenshot({ path: process.env.ERGA_BRIDGE_SHOT });
+    expect(await ed.frame<boolean>(`${W}.__marker == 1`)).toBe(true);
+  } finally {
+    await stopChild(child);
+    spawnSync("hc", ["server", "stop"], { env });
+    rmSync(scratch, { recursive: true, force: true });
   }
-);
+});

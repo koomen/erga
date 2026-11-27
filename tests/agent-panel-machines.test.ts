@@ -4,16 +4,7 @@
 import { expect, test } from "bun:test";
 import { sendStep, type SendEvent, type SendState } from "../client/agent/sends";
 import { canSend, type SendFacts } from "../client/agent/send-gate";
-import {
-  blockedStep,
-  IDLE_BLOCKED,
-  panelOpen,
-  panelStep,
-  panelVisit,
-  savePanel,
-  threadEventStep,
-  type Drawn,
-} from "../client/common/agent-panel";
+import { blockedStep, IDLE_BLOCKED, panelOpen, panelStep, panelVisit, savePanel, type Drawn } from "../client/common/agent-panel";
 
 const run = (events: SendEvent[], from: SendState = "pending") =>
   events.reduce<{ state: SendState; effects: string[] }>(
@@ -117,41 +108,4 @@ test("blockedStep auto-expands a collapsed panel once per blocked call, never fi
   expect(r).toEqual({ state: { at: "blocked", seen: ["c3"] }, expand: false });
   r = blockedStep(r.state, { t: "sync", asking: ["c3"], open: false });
   expect(r).toEqual({ state: { at: "blocked", seen: ["c3"] }, expand: false });
-});
-
-test("threadEventStep prevents cross-thread appends and signals clean swaps on thread changes", () => {
-  // Initial sync adopts the thread without claiming a switch.
-  expect(threadEventStep(null, { t: "sync", thread: "embedded" })).toEqual({
-    thread: "embedded",
-    effect: { action: "swap", switched: false },
-  });
-  // Matching agent event applies directly.
-  expect(threadEventStep("embedded", { t: "agent", thread: "embedded" })).toEqual({
-    thread: "embedded",
-    effect: { action: "apply" },
-  });
-  // An early local-agent event arriving before sync is refused (resyncs instead of appending to embedded).
-  expect(threadEventStep("embedded", { t: "agent", thread: "local:agy:s1" })).toEqual({
-    thread: "embedded",
-    effect: { action: "resync" },
-  });
-  expect(threadEventStep("embedded", { t: "log", thread: "local:agy:s1" })).toEqual({
-    thread: "embedded",
-    effect: { action: "resync" },
-  });
-  // Sync into the new local thread switches cleanly.
-  expect(threadEventStep("embedded", { t: "sync", thread: "local:agy:s1" })).toEqual({
-    thread: "local:agy:s1",
-    effect: { action: "swap", switched: true },
-  });
-  // Re-syncing the same thread (e.g. reconnect) is not a switch.
-  expect(threadEventStep("local:agy:s1", { t: "sync", thread: "local:agy:s1" })).toEqual({
-    thread: "local:agy:s1",
-    effect: { action: "swap", switched: false },
-  });
-  // A second local session triggers a clean switch.
-  expect(threadEventStep("local:agy:s1", { t: "sync", thread: "local:agy:s2" })).toEqual({
-    thread: "local:agy:s2",
-    effect: { action: "swap", switched: true },
-  });
 });

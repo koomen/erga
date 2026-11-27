@@ -46,6 +46,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, wri
 import { join, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { ASSET_PREFIX, namedBy, type AssetManifest } from "../shared/assets";
+import { MIN_HC_VERSION } from "../shared/bridge-protocol";
 
 const ROOT = resolve(import.meta.dir, "..");
 const OUT = join(ROOT, ".build");
@@ -258,6 +259,42 @@ async function build(): Promise<void> {
   // the shell, which live.ts compares with the server's.)
   files["editor.html"] = put(`editor-${hashOf(enc(editor))}.html`, enc(editor));
 
+  // Local bridge bundle (~200 KB JS, served at /plugin/bridge.js + /plugin/bridge.json for <200 ms self-updates).
+  const bridgeSrcHash = (() => {
+    const h = new Bun.CryptoHasher("sha256");
+    for (const dir of ["bridge/core", "bridge/backends"]) {
+      for (const f of readdirSync(join(ROOT, dir))
+        .filter((n) => n.endsWith(".ts"))
+        .sort()) {
+        h.update(`${dir}/${f}\0`)
+          .update(readFileSync(join(ROOT, dir, f)))
+          .update("\0");
+      }
+    }
+    for (const f of ["shared/bridge-protocol.ts", "shared/bridge-schema.ts"]) {
+      h.update(`${f}\0`)
+        .update(readFileSync(join(ROOT, f)))
+        .update("\0");
+    }
+    return h.digest("hex").slice(0, 10);
+  })();
+  const bridgeBuilt = await Bun.build({
+    entrypoints: [join(ROOT, "bridge/core/cli.ts")],
+    target: "bun",
+    format: "esm",
+    minify: true,
+    splitting: false,
+    sourcemap: "none",
+    define: { "process.env.ERGA_BRIDGE_VERSION": JSON.stringify(bridgeSrcHash) },
+  });
+  if (!bridgeBuilt.success) {
+    for (const l of bridgeBuilt.logs) console.error(l);
+    process.exit(1);
+  }
+  const bridgeBytes = new Uint8Array(await bridgeBuilt.outputs[0].arrayBuffer());
+  const bridgeSha256 = sha(bridgeBytes).digest("hex");
+  const bridgeFile = put(`bridge-${bridgeSrcHash}.js`, bridgeBytes);
+
   const manifest: AssetManifest = {
     files: Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b))),
     deps,
@@ -265,6 +302,7 @@ async function build(): Promise<void> {
     integrity: Object.fromEntries([...made].filter(([u]) => u.endsWith(".js")).sort(([a], [b]) => a.localeCompare(b)).map(([u, b]) => [u, integrityOf(b)])),
     fonts: { css: fontCss, preload: latin, page: pageFontCss },
     shell: editorShell(editor),
+    bridge: { file: bridgeFile, version: bridgeSrcHash, sha256: bridgeSha256, size: bridgeBytes.length, minHcVersion: MIN_HC_VERSION },
   };
 
   // Into place: the files, then the manifest that names them, then what neither this build nor the last one names.

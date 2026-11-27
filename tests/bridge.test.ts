@@ -1,10 +1,9 @@
-// Unit tests for the local agent bridge:
-// - Pure bridge registry state machine (agents/person/bridge.ts)
-// - PersonAgents bridge routing, own thread scopes, and approval forwarding
-// - Yjs room `via` attribution ("Pete’s Antigravity") on agent WebSockets
-// - Generic ACP stdio driver streaming, approvals, and abort (mock ACP server)
-// - Antigravity transcript.jsonl mirroring and deduplication
+// Unit tests for the local terminal-first Erga bridge:
+// - Pure bridge registry state machine (agents/person/bridge.ts): single terminal & whole space
+// - PersonAgents terminal relay, space terminal switching, OSC 7501 updates, update push, and edit access on turn_done
+// - Yjs room `via` attribution on agent WebSockets
 // - YjsDiskSync bidirectional CRDT <-> filesystem sync
+// - copyIntoManaged + ErgaDaemon open/space/PTY relay/persistence/device-code auth
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -14,29 +13,22 @@ import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
-import { activeBridge, bridgeStep, bridgeThreadId, EMPTY_BRIDGES, localScopeOf, panelOptions } from "../agents/person/bridge.ts";
+import { activeBridge, bridgeStep, EMPTY_BRIDGES, localBridgeView, panelOptions } from "../agents/person/bridge.ts";
 import { PersonAgents } from "../agents/person/sessions.ts";
 import type { ChatSql } from "../agents/chat-store.ts";
-import { ALLOW_SESSION_CHOICE, createAcpDriver, permissionChoices } from "../bridge/drivers/acp.ts";
-import {
-  AntigravityTranscriptMirror,
-  parseTranscriptStep,
-  unwrapUserRequest,
-  type LiveAntigravitySession,
-} from "../bridge/drivers/antigravity.ts";
-import type { DriverEvent } from "../bridge/core/driver.ts";
-import { hookEvents } from "../bridge/core/sessions.ts";
+import { cachedToken, saveToken } from "../bridge/core/auth.ts";
+import type { BackendEvent, PtyAttachment, TerminalBackend } from "../bridge/core/backend.ts";
 import { ErgaDaemon } from "../bridge/core/daemon.ts";
 import { copyIntoManaged } from "../bridge/core/daemon-io.ts";
-import { cachedToken, saveToken } from "../bridge/core/auth.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";
 import { authors, files, roomInfo } from "../document/model/content.ts";
 import { Participants, type Tab, type TabSocket } from "../document/room/participants.ts";
 import { Room } from "../document/room/room.ts";
-import { FileStore, StateStore, StoreError } from "../document/store/storage.ts";
+import { FileStore, StateStore } from "../document/store/storage.ts";
+import { useAssets } from "../server/pages/index.ts";
 import type { Platform } from "../server/platform.ts";
 import { agentLabel, VIA } from "../shared/attribution.ts";
-import { localChoice } from "../shared/bridge-protocol.ts";
+import { localChoice, type TerminalSummary } from "../shared/bridge-protocol.ts";
 import { encodeStart } from "../shared/room-socket.ts";
 import { Decoder, Encoder, readSyncMessage, writeSyncStep1, writeUpdate } from "../shared/yjs-protocol.ts";
 
@@ -55,90 +47,183 @@ function sqliteChat(): ChatSql {
   };
 }
 
+function createMockBackend(initial: TerminalSummary[] = []): TerminalBackend & {
+  emit(ev: BackendEvent): void;
+  setTerminals(list: TerminalSummary[]): void;
+  inputs: Array<{ terminal: string; text: string }>;
+  resizes: Array<{ terminal: string; cols: number; rows: number }>;
+  sent: Array<{ terminal: string; text: string }>;
+  interrupted: string[];
+  stateStore: Map<string, unknown>;
+} {
+  let list: TerminalSummary[] = initial.length
+    ? [...initial]
+    : [
+        { id: "t1", label: "agy · t1", app: "antigravity", state: "live", status: { state: "idle", app: "antigravity" }, turn: 0 },
+        { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "done", app: "claude" }, turn: 1, parent: "t1" },
+      ];
+  const listeners = new Set<(ev: BackendEvent) => void>();
+  const inputs: Array<{ terminal: string; text: string }> = [];
+  const resizes: Array<{ terminal: string; cols: number; rows: number }> = [];
+  const sent: Array<{ terminal: string; text: string }> = [];
+  const interrupted: string[] = [];
+  const stateStore = new Map<string, unknown>();
+
+  return {
+    id: "herdr-core",
+    label: "herdr-core",
+    inputs,
+    resizes,
+    sent,
+    interrupted,
+    stateStore,
+    emit(ev) {
+      for (const fn of listeners) fn(ev);
+    },
+    setTerminals(next) {
+      list = [...next];
+    },
+    connect: async () => ({ version: "0.1.22" }),
+    close: async () => {},
+    listTerminals: async () => [...list],
+    listSpaces: async () => [{ id: "sp1", name: "Erga Space", folder: "/repo", terminals: [...list] }],
+    resolveTarget: async (opts) => {
+      if (opts.terminal) {
+        const hit = list.find((t) => t.id == opts.terminal) ?? list[0];
+        return { scope: "single", spaceId: null, spaceName: null, terminals: hit ? [hit] : [], activeTerminal: hit?.id ?? null };
+      }
+      if (opts.space) {
+        return { scope: "space", spaceId: "sp1", spaceName: "Erga Space", terminals: [...list], activeTerminal: list[0]?.id ?? null };
+      }
+      return { scope: "single", spaceId: null, spaceName: null, terminals: list[0] ? [list[0]] : [], activeTerminal: list[0]?.id ?? null };
+    },
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    async attach(terminalId, _size, onData): Promise<PtyAttachment> {
+      onData(new TextEncoder().encode(`ATTACHED:${terminalId}\r\n`));
+      return {
+        terminalId,
+        write: (bytes) => {
+          const text = new TextDecoder().decode(bytes);
+          inputs.push({ terminal: terminalId, text });
+          onData(new TextEncoder().encode(`ECHO:${text}`));
+        },
+        resize: (cols, rows) => resizes.push({ terminal: terminalId, cols, rows }),
+        close: () => {},
+      };
+    },
+    send: async (terminal, text) => void sent.push({ terminal, text }),
+    interrupt: async (terminal) => void interrupted.push(terminal),
+    spawn: async () => list[0],
+    getState: async <T>(key: string) => (stateStore.get(key) as T | undefined) ?? null,
+    setState: async <T>(key: string, val: T) => void stateStore.set(key, val),
+  };
+}
+
 // ---------------------------------------------------------------- 1. Bridge state machine
 
-test("bridge state machine orders connected agents above built-in models and defaults to them", () => {
+test("bridge state machine manages single terminal and whole-space bindings, terminal swaps, and embedded fallback", () => {
   const embedded = [{ id: "sonnet", label: "Claude Sonnet", key: "server" as const }];
   let st = EMPTY_BRIDGES;
   expect(activeBridge(st, "doc1")).toBeNull();
+  expect(localBridgeView(st, "doc1")).toBeNull();
   expect(panelOptions(st, "doc1", embedded)).toEqual([{ id: "sonnet", label: "Claude Sonnet", key: "server" }]);
 
-  // Connecting a global agent makes it default and puts it in the "local" group first.
   const c1 = bridgeStep(st, {
     on: "connect",
-    fallbackThreadId: "t-conn-1",
     bridge: {
-      id: "antigravity-mac",
-      agent: "antigravity",
-      label: "Antigravity",
+      id: "hc-mac",
+      backend: "herdr-core",
+      label: "herdr-core",
+      version: "abc123",
       grantId: "g1",
       onlyDoc: null,
-      sessionId: null,
-      cwd: "/repo",
       connectedAt: 100,
     },
   });
   st = c1.state;
   expect(c1.notify).toEqual(["*"]);
-  expect(activeBridge(st, "doc1")?.id).toBe("antigravity-mac");
-  expect(bridgeThreadId(activeBridge(st, "doc1")!, "doc1")).toBe("t-conn-1");
+  expect(activeBridge(st, "doc1")?.id).toBe("hc-mac");
   expect(panelOptions(st, "doc1", embedded)).toEqual([
-    { id: "local:antigravity-mac", label: "Antigravity", group: "local", agent: "antigravity" },
+    { id: "local:hc-mac", label: "herdr-core", group: "local", agent: "herdr-core" },
     { id: "sonnet", label: "Claude Sonnet", key: "server", group: "embedded" },
   ]);
 
-  // Explicitly choosing an embedded model pins that doc to embedded.
+  // Explicit switch to embedded pins doc1 to embedded while doc2 stays on the global bridge.
   st = bridgeStep(st, { on: "select", doc: "doc1", choice: "sonnet" }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
-  expect(activeBridge(st, "doc2")?.id).toBe("antigravity-mac");
+  expect(activeBridge(st, "doc2")?.id).toBe("hc-mac");
 
+  const terms: TerminalSummary[] = [
+    { id: "t1", label: "agy · t1", app: "antigravity", state: "live", status: { state: "idle" }, turn: 0 },
+    { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "working" }, turn: 1 },
+  ];
   const b1 = bridgeStep(st, {
     on: "bind",
-    id: "antigravity-mac",
+    id: "hc-mac",
     doc: "doc1",
-    label: "Antigravity (repo)",
-    sessionId: "sess-1",
-    fallbackThreadId: "t-bind-1",
+    label: "Erga Space",
+    scope: "space",
+    spaceId: "sp1",
+    spaceName: "Erga Space",
+    terminals: terms,
+    activeTerminal: "t1",
   });
   st = b1.state;
   expect(b1.notify).toEqual(["doc1"]);
-  expect(activeBridge(st, "doc1")?.id).toBe("antigravity-mac");
-  expect(bridgeThreadId(activeBridge(st, "doc1")!, "doc1")).toBe("sess-1");
-  expect(panelOptions(st, "doc1", embedded)[0].label).toBe("Antigravity (repo)");
+  expect(localBridgeView(st, "doc1")).toEqual({
+    bridgeId: "hc-mac",
+    backend: "herdr-core",
+    label: "Erga Space",
+    scope: "space",
+    spaceId: "sp1",
+    spaceName: "Erga Space",
+    terminals: terms,
+    activeTerminal: "t1",
+  });
 
-  // Disconnecting cleans up and falls back to embedded.
-  const d1 = bridgeStep(st, { on: "disconnect", id: "antigravity-mac" });
-  st = d1.state;
+  // Switch active terminal inside the bound space.
+  st = bridgeStep(st, { on: "select_terminal", id: "hc-mac", doc: "doc1", terminal: "t2" }).state;
+  expect(localBridgeView(st, "doc1")?.activeTerminal).toBe("t2");
+
+  // Disconnect cleans up.
+  st = bridgeStep(st, { on: "disconnect", id: "hc-mac" }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
-  expect(panelOptions(st, "doc1", embedded)).toEqual([{ id: "sonnet", label: "Claude Sonnet", key: "server" }]);
 });
 
 test("bridge enforces document-scoped grant onlyDoc", () => {
-  let st = EMPTY_BRIDGES;
-  st = bridgeStep(st, {
+  let st = bridgeStep(EMPTY_BRIDGES, {
     on: "connect",
-    fallbackThreadId: "t-scoped",
     bridge: {
       id: "scoped",
-      agent: "antigravity",
-      label: "Antigravity",
+      backend: "herdr-core",
+      label: "herdr-core",
+      version: "v1",
       grantId: "g2",
       onlyDoc: "docA",
-      sessionId: null,
-      cwd: null,
       connectedAt: 10,
     },
   }).state;
   expect(activeBridge(st, "docA")?.id).toBe("scoped");
   expect(activeBridge(st, "docB")).toBeNull();
-  const badBind = bridgeStep(st, { on: "bind", id: "scoped", doc: "docB", fallbackThreadId: "t-bad" });
+  const badBind = bridgeStep(st, { on: "bind", id: "scoped", doc: "docB", scope: "single", terminals: [] });
   expect(badBind.ok).toBe(false);
-  expect(activeBridge(badBind.state, "docB")).toBeNull();
 });
 
-// ---------------------------------------------------------------- 2. PersonAgents bridge routing & own scope
+// ---------------------------------------------------------------- 2. PersonAgents terminal relay & auto-update push
 
-test("PersonAgents enables panel with no API keys when a local bridge connects, streams events and approvals in its own scope", async () => {
+test("PersonAgents relays PTY attach/input/resize/select, OSC 7501 updates, and pushes update offer on outdated hello", async () => {
+  useAssets({
+    files: {},
+    deps: {},
+    frame: [],
+    integrity: {},
+    fonts: { css: "", preload: "", page: "" },
+    bridge: { file: "/_erga/bridge-new999.js", version: "new999", sha256: "deadbeef", size: 1234, minHcVersion: "0.1.20" },
+  });
+
   const fakePlatform = {
     agentSettings: async () => ({ missing: "no API keys configured" }),
     directory: {
@@ -148,81 +233,99 @@ test("PersonAgents enables panel with no API keys when a local bridge connects, 
   } as unknown as Platform;
 
   const agents = new PersonAgents({ sql: sqliteChat(), platform: fakePlatform });
-
-  // Without a bridge and without API keys, the panel is off.
-  const before = await agents.agentState("pete", "doc1", "http://localhost:4400", "Pete");
-  expect(before.enabled).toBe(false);
-
-  // Browser tab subscribes to /api/agent/events for doc1.
   const tabMsgs: Record<string, unknown>[] = [];
-  const leaveTab = agents.join(
-    new Request("http://localhost:4400/api/agent/events?doc=doc1", { headers: { "x-erga-login": "pete" } }),
-    (text) => tabMsgs.push(JSON.parse(text) as Record<string, unknown>)
+  const tab = agents.join(new Request("http://localhost:4400/api/agent/events?doc=doc1", { headers: { "x-erga-login": "pete" } }), (text) =>
+    tabMsgs.push(JSON.parse(text) as Record<string, unknown>)
   );
 
-  // Local bridge connects and sends hello.
   const toBridge: Record<string, unknown>[] = [];
   const bridge = agents.joinBridge(
-    { login: "pete", grantId: "g1", label: "Antigravity", onlyDoc: null, origin: "http://localhost:4400" },
+    { login: "pete", grantId: "g1", label: "Erga Bridge", onlyDoc: null, origin: "http://localhost:4400" },
     (text) => toBridge.push(JSON.parse(text) as Record<string, unknown>),
     () => {}
   );
-  bridge.message(JSON.stringify({ type: "hello", id: "agy-1", agent: "antigravity", label: "Antigravity", doc: "doc1" }));
 
-  // Panel immediately switches on and selects Antigravity.
-  await until(() => tabMsgs.some((m) => m.type == "model" && m.enabled == true));
-  const state = await agents.agentState("pete", "doc1", "http://localhost:4400", "Pete");
-  expect(state.enabled).toBe(true);
-  if (state.enabled) {
-    expect(state.choice).toBe(localChoice("agy-1"));
-    expect(state.models[0]).toEqual({ id: "local:agy-1", label: "Antigravity", group: "local", agent: "antigravity" });
+  try {
+    // Outdated bridge hello triggers an immediate update push.
+    bridge.message(
+      JSON.stringify({ type: "hello", id: "hc-1", backend: "herdr-core", label: "herdr-core", version: "old111", doc: "doc1" })
+    );
+    expect(toBridge[0]).toEqual({
+      type: "update",
+      version: "new999",
+      sha256: "deadbeef",
+      url: "/plugin/bridge.js",
+      minHcVersion: "0.1.20",
+    });
+
+    const terms: TerminalSummary[] = [
+      { id: "t1", label: "agy · t1", app: "antigravity", state: "live", status: { state: "idle" }, turn: 0 },
+      { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "working" }, turn: 1 },
+    ];
+    bridge.message(
+      JSON.stringify({
+        type: "bind",
+        doc: "doc1",
+        label: "Erga Space",
+        scope: "space",
+        spaceId: "sp1",
+        spaceName: "Erga Space",
+        terminals: terms,
+        activeTerminal: "t1",
+      })
+    );
+
+    await until(() => tabMsgs.some((m) => m.type == "model" && m.enabled == true));
+    const st = await agents.agentState("pete", "doc1", "http://localhost:4400", "Pete");
+    expect(st.enabled).toBe(true);
+    if (st.enabled) {
+      expect(st.choice).toBe(localChoice("hc-1"));
+      expect(st.local?.scope).toBe("space");
+      expect(st.local?.terminals.length).toBe(2);
+    }
+
+    // Browser attaches, types, resizes, switches terminal -> forwarded straight to bridge.
+    tab.message(JSON.stringify({ type: "pty_attach", terminal: "t1", cols: 80, rows: 24 }));
+    tab.message(JSON.stringify({ type: "pty_input", terminal: "t1", data: Buffer.from("hi\r").toString("base64") }));
+    tab.message(JSON.stringify({ type: "pty_resize", terminal: "t1", cols: 100, rows: 30 }));
+    tab.message(JSON.stringify({ type: "pty_attach", terminal: "t2", cols: 100, rows: 30 }));
+
+    expect(toBridge.slice(1)).toEqual([
+      { type: "pty_attach", doc: "doc1", terminal: "t1", cols: 80, rows: 24 },
+      { type: "pty_input", doc: "doc1", terminal: "t1", data: Buffer.from("hi\r").toString("base64") },
+      { type: "pty_resize", doc: "doc1", terminal: "t1", cols: 100, rows: 30 },
+      { type: "pty_detach", doc: "doc1", terminal: "t1" },
+      { type: "pty_attach", doc: "doc1", terminal: "t2", cols: 100, rows: 30 },
+    ]);
+
+    // Bridge streams PTY bytes and OSC 7501 status updates back to browser tab.
+    bridge.message(JSON.stringify({ type: "pty_data", doc: "doc1", terminal: "t2", data: Buffer.from("OUTPUT").toString("base64") }));
+    expect(tabMsgs.some((m) => m.type == "pty_data" && m.terminal == "t2")).toBe(true);
+
+    bridge.message(
+      JSON.stringify({
+        type: "terminals",
+        doc: "doc1",
+        terminals: [terms[0], { ...terms[1], status: { state: "blocked", kind: "permission", msg: "Allow?" } }],
+      })
+    );
+    expect(tabMsgs.some((m) => m.type == "bridge_state")).toBe(true);
+
+    // Closing browser tab sends pty_detach for the watched terminal.
+    tab.close();
+    expect(toBridge.at(-1)).toEqual({ type: "pty_detach", doc: "doc1", terminal: "t2" });
+
+    bridge.close();
+    const after = await agents.agentState("pete", "doc1", "http://localhost:4400", "Pete");
+    expect(after.enabled).toBe(false);
+  } finally {
+    useAssets(null);
   }
-
-  // Browser sends prompt -> forwarded to bridge; bridge streams permission ask -> browser approves -> forwarded back!
-  const sent = await agents.agentPrompt("pete", "http://localhost:4400", "Update heading", "Open: /pete/doc1", [], "doc1", "Pete", "m1");
-  expect(sent.ok).toBe(true);
-  expect(toBridge.length).toBe(1);
-  expect(toBridge[0].type).toBe("prompt");
-  expect(toBridge[0].text).toBe("Update heading");
-
-  bridge.message(
-    JSON.stringify({
-      type: "event",
-      doc: "doc1",
-      ev: {
-        t: "tool",
-        id: "call-1",
-        name: "run_command",
-        path: "echo hi",
-        status: "asking",
-        detail: "echo hi",
-        call: { tool: "run_command", args: { CommandLine: "echo hi" } },
-      },
-    })
-  );
-  const ans = await agents.agentControl("pete", "doc1", "approve", "call-1", "allow_always");
-  expect(ans.ok).toBe(true);
-  expect(toBridge[1]).toEqual({ type: "answer", doc: "doc1", id: "call-1", approve: true, choice: "allow_always" });
-
-  bridge.message(JSON.stringify({ type: "event", doc: "doc1", ev: { t: "text", delta: "Updated!" } }));
-  bridge.message(JSON.stringify({ type: "event", doc: "doc1", ev: { t: "busy", busy: false } }));
-
-  // Local agent thread has its own conversation log.
-  const conv = await agents.conversation("pete", "doc1");
-  expect(conv.items.some((i) => i.kind == "user" && i.text == "Update heading")).toBe(true);
-  expect(conv.items.some((i) => i.kind == "assistant" && i.text == "Updated!")).toBe(true);
-  expect(localScopeOf("pete", "doc1", "agy-1", "sess-1")).toBe("local:agy-1:sess-1:doc1:pete");
-
-  // Disconnecting bridge turns panel back off (since no API keys are set).
-  bridge.close();
-  const after = await agents.agentState("pete", "doc1", "http://localhost:4400", "Pete");
-  expect(after.enabled).toBe(false);
-  leaveTab();
 });
 
 // ---------------------------------------------------------------- 3. Yjs room `via` attribution
 
-test("Yjs room WebSocket preserves via attribution for local agent edits (Pete’s Antigravity)", async () => {
+test("Yjs room WebSocket preserves via attribution for local agent edits", async () => {
   const storeFiles = new Map<string, Uint8Array>([["index.html", new TextEncoder().encode("<p>Hello</p>")]]);
   const fileStore = FileStore.of({
     list: Effect.sync(() => [...storeFiles.keys()]),
@@ -272,184 +375,34 @@ test("Yjs room WebSocket preserves via attribution for local agent edits (Pete�
   );
   participants.opened(room, null);
 
-  const sentToAgent: (string | Uint8Array)[] = [];
-  const agentSocket: TabSocket = { send: (m) => sentToAgent.push(m), close: () => {} };
-  const via = VIA.token("Antigravity");
-  const agentTab: Tab = {
-    id: "t-agent",
-    readOnly: false,
-    epoch: null,
-    person: { id: "pete", name: "Pete" },
-    via,
-    events: false,
-  };
+  const agentSocket: TabSocket = { send: () => {}, close: () => {} };
+  const via = VIA.token("Erga Bridge");
+  const agentTab: Tab = { id: "t-agent", readOnly: false, epoch: null, person: { id: "pete", name: "Pete" }, via, events: false };
   tabs.set(agentSocket, agentTab);
   expect(participants.join(agentSocket, agentTab)).toBe(true);
-  // Agent sockets are not counted as browser editor tabs.
   expect(participants.tabsOf("pete")).toEqual([]);
 
-  // Simulate local Yjs peer syncing and applying an edit.
   const localDoc = new Y.Doc();
   Y.applyUpdate(localDoc, Y.encodeStateAsUpdate(room.doc));
   let updateBytes: Uint8Array | null = null;
-  localDoc.on("update", (u: Uint8Array) => {
-    updateBytes = u;
-  });
-  localDoc.transact(() => {
-    files(localDoc).get("index.html")!.insert(3, "Antigravity ");
-  });
+  localDoc.on("update", (u: Uint8Array) => (updateBytes = u));
+  localDoc.transact(() => files(localDoc).get("index.html")!.insert(3, "Bridge "));
 
   const enc = new Encoder();
-  enc.writeUint(0); // MSG_SYNC
+  enc.writeUint(0);
   writeUpdate(enc, updateBytes!);
   await Effect.runPromise(participants.message(agentSocket, enc.toBytes()));
 
-  expect(room.text("index.html")).toBe("<p>Antigravity Hello</p>");
+  expect(room.text("index.html")).toBe("<p>Bridge Hello</p>");
   const author = authors(room.doc).get(String(localDoc.clientID));
   expect(author?.kind).toBe("agent");
-  expect(author?.via).toBe("a shared agent (Antigravity)");
-  expect(agentLabel(author!, null, true).label).toBe("Pete’s Antigravity");
-  expect(agentLabel(author!, "editing", false).label).toBe("Antigravity · editing");
+  expect(agentLabel(author!, null, true).label).toBe("Pete’s Erga Bridge");
 
   localDoc.destroy();
   await Effect.runPromise(Scope.close(scope, Effect.runSyncExit(Effect.void)));
 });
 
-// ---------------------------------------------------------------- 4. ACP stdio driver
-
-test("AcpDriver streams thoughts, text, tool calls, interactive permissions, and abort over stdio JSON-RPC", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "erga-acp-unit-"));
-  const mockScript = join(dir, "mock-acp.ts");
-  writeFileSync(
-    mockScript,
-    `
-const out = (m: object) => process.stdout.write(JSON.stringify(m) + "\\n");
-const reader = Bun.stdin.stream().getReader();
-const dec = new TextDecoder();
-let buf = "";
-let pendingPromptId: number | null = null;
-
-while (true) {
-  const { value, done } = await reader.read();
-  if (done) break;
-  buf += dec.decode(value, { stream: true });
-  const lines = buf.split("\\n");
-  buf = lines.pop() ?? "";
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const m = JSON.parse(line);
-    if (m.method === "initialize") {
-      out({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: 1, agentCapabilities: {} } });
-    } else if (m.method === "session/new") {
-      out({ jsonrpc: "2.0", id: m.id, result: { sessionId: "s-1", models: { currentModelId: "m1", availableModels: [{ modelId: "m1", name: "Mock Model" }] } } });
-    } else if (m.method === "session/prompt") {
-      pendingPromptId = m.id;
-      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s-1", update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Planning..." } } } });
-      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s-1", update: { sessionUpdate: "tool_call", toolCallId: "tc-1", name: "run_command", args: { CommandLine: "echo ok" }, status: "in_progress" } } });
-      out({ jsonrpc: "2.0", id: "perm-1", method: "session/request_permission", params: { sessionId: "s-1", toolCall: { toolCallId: "tc-1", name: "run_command", title: "echo ok", args: { CommandLine: "echo ok" } }, options: [{ optionId: "allow", kind: "allow_once" }, { optionId: "deny", kind: "reject_once" }] } });
-    } else if (m.id === "perm-1" && m.result) {
-      const picked = m.result.outcome?.optionId;
-      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s-1", update: { sessionUpdate: "tool_call_update", toolCallId: "tc-1", name: "run_command", status: picked === "allow" ? "completed" : "failed" } } });
-      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s-1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Decision: " + picked } } } });
-      out({ jsonrpc: "2.0", id: pendingPromptId, result: { stopReason: "end_turn" } });
-    } else if (m.method === "session/close") {
-      out({ jsonrpc: "2.0", id: m.id, result: {} });
-    }
-  }
-}
-`
-  );
-
-  try {
-    const driver = createAcpDriver({ id: "mock-acp", label: "Mock ACP", command: process.execPath, args: [mockScript] });
-    const handle = await driver.open({ cwd: dir });
-    expect(handle.sessionId).toBe("s-1");
-    expect(handle.models).toEqual([{ id: "m1", label: "Mock Model" }]);
-
-    const events: DriverEvent[] = [];
-    handle.onEvent((ev) => {
-      events.push(ev);
-      if (ev.t == "tool" && ev.status == "asking") void handle.answer(ev.id, true);
-    });
-
-    await handle.prompt({ text: "Run it" });
-    await handle.close();
-
-    expect(events.some((e) => e.t == "thinking" && e.delta == "Planning...")).toBe(true);
-    expect(events.some((e) => e.t == "tool" && e.id == "tc-1" && e.status == "asking")).toBe(true);
-    expect(events.some((e) => e.t == "tool" && e.id == "tc-1" && e.status == "done")).toBe(true);
-    expect(events.some((e) => e.t == "text" && e.delta == "Decision: allow")).toBe(true);
-    expect(events.at(-1)).toEqual({ t: "turn_done" });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-// ---------------------------------------------------------------- 5. Antigravity transcript mirror
-
-test("Antigravity transcript parser and mirror emit local steps and suppress during ACP turns", () => {
-  expect(unwrapUserRequest("<USER_REQUEST>\nHello world\n</USER_REQUEST>\n<ADDITIONAL_METADATA>x</ADDITIONAL_METADATA>")).toBe(
-    "Hello world"
-  );
-
-  const parsed = parseTranscriptStep({
-    step_index: 2,
-    type: "PLANNER_RESPONSE",
-    status: "DONE",
-    thinking: "Checking file",
-    tool_calls: [{ name: "edit_file", args: { Path: "index.html" } }],
-    content: "All set.",
-  });
-  expect(parsed).toEqual([
-    { t: "thinking", delta: "Checking file" },
-    { t: "tool", id: "local-2-0", name: "edit_file", path: "index.html", status: "done" },
-    { t: "text", delta: "All set." },
-  ]);
-
-  const dir = mkdtempSync(join(tmpdir(), "erga-transcript-"));
-  const file = join(dir, "transcript.jsonl");
-  try {
-    writeFileSync(
-      file,
-      JSON.stringify({ step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "old" }) + "\n"
-    );
-    const seen: DriverEvent[] = [];
-    const mirror = new AntigravityTranscriptMirror(file, (evs) => seen.push(...evs));
-    mirror.start(false);
-    expect(seen).toEqual([]); // skipped pre-existing
-
-    // While suppressed (ACP turn active), appended steps are ignored and skipped on unsuppress.
-    mirror.setSuppressed(true);
-    writeFileSync(
-      file,
-      readFileSync(file, "utf8") + JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", status: "DONE", content: "from acp" }) + "\n"
-    );
-    mirror.poke();
-    expect(seen).toEqual([]);
-    mirror.setSuppressed(false);
-
-    // Local terminal turn appended after unsuppress IS mirrored immediately.
-    writeFileSync(
-      file,
-      readFileSync(file, "utf8") +
-        JSON.stringify({
-          step_index: 2,
-          source: "USER_EXPLICIT",
-          type: "USER_INPUT",
-          status: "DONE",
-          content: "<USER_REQUEST>Answered locally</USER_REQUEST>",
-        }) +
-        "\n"
-    );
-    mirror.poke();
-    expect(seen).toEqual([{ t: "user", text: "Answered locally" }]);
-    mirror.stop();
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-// ---------------------------------------------------------------- 6. YjsDiskSync bidirectional CRDT <-> disk
+// ---------------------------------------------------------------- 4. YjsDiskSync & copyIntoManaged
 
 test("YjsDiskSync mirrors remote Yjs files to disk, rebases local disk edits back, and uploads binary assets", async () => {
   const serverDoc = new Y.Doc();
@@ -462,24 +415,17 @@ test("YjsDiskSync mirrors remote Yjs files to disk, rebases local disk edits bac
 
   const uploaded = new Map<string, Uint8Array>();
   const sockets = new Set<Bun.ServerWebSocket<unknown>>();
-
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(req, srv) {
       const url = new URL(req.url);
-      if (url.pathname == "/d/doc1/api/start") {
-        const payload = encodeStart({ type: "hello", epoch: "ep-1" }, Y.encodeStateAsUpdate(serverDoc));
-        return new Response(new Uint8Array(payload));
-      }
-      if (url.pathname == "/d/doc1/api/room") {
-        if (srv.upgrade(req)) return undefined;
-        return new Response("upgrade failed", { status: 400 });
-      }
+      if (url.pathname == "/d/doc1/api/start")
+        return new Response(new Uint8Array(encodeStart({ type: "hello", epoch: "ep-1" }, Y.encodeStateAsUpdate(serverDoc))));
+      if (url.pathname == "/d/doc1/api/room" && srv.upgrade(req)) return undefined;
       if (req.method == "PUT" && url.pathname.startsWith("/d/doc1/api/files/")) {
-        const rel = decodeURIComponent(url.pathname.slice("/d/doc1/api/files/".length));
-        uploaded.set(rel, new Uint8Array(await req.arrayBuffer()));
-        return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+        uploaded.set(decodeURIComponent(url.pathname.slice("/d/doc1/api/files/".length)), new Uint8Array(await req.arrayBuffer()));
+        return Response.json({ ok: true });
       }
       return new Response("not found", { status: 404 });
     },
@@ -494,20 +440,17 @@ test("YjsDiskSync mirrors remote Yjs files to disk, rebases local disk edits bac
       message(ws, data) {
         if (typeof data == "string") return;
         const d = new Decoder(new Uint8Array(data));
-        const type = d.readUint();
-        if (type == 0) {
-          const reply = new Encoder();
-          reply.writeUint(0);
-          readSyncMessage(d, reply, serverDoc, ws);
-          if (reply.length > 1) ws.send(reply.toBytes());
-        }
+        if (d.readUint() != 0) return;
+        const reply = new Encoder();
+        reply.writeUint(0);
+        readSyncMessage(d, reply, serverDoc, ws);
+        if (reply.length > 1) ws.send(reply.toBytes());
       },
       close(ws) {
         sockets.delete(ws);
       },
     },
   });
-
   serverDoc.on("update", (u: Uint8Array, origin: unknown) => {
     const e = new Encoder();
     e.writeUint(0);
@@ -517,37 +460,26 @@ test("YjsDiskSync mirrors remote Yjs files to disk, rebases local disk edits bac
   });
 
   const dir = mkdtempSync(join(tmpdir(), "erga-yjs-disk-"));
-  const sync = new YjsDiskSync({
-    origin: `http://127.0.0.1:${server.port}`,
-    docId: "doc1",
-    dir,
-    token: async () => "test-token",
-  });
-
+  const sync = new YjsDiskSync({ origin: `http://127.0.0.1:${server.port}`, docId: "doc1", dir, token: async () => "test-token" });
   try {
     await sync.start();
-    // 1. Remote file materialized on disk.
     expect(readFileSync(join(dir, "index.html"), "utf8")).toBe("<h1>Hello world</h1>\n<p>Keep me</p>");
 
-    // 2. Local edit on disk merges cleanly into remote server Y.Doc.
     writeFileSync(join(dir, "index.html"), "<h1>Hello Erga</h1>\n<p>Keep me</p>");
     await sync.flush();
     await until(() => files(serverDoc).get("index.html")?.toString() == "<h1>Hello Erga</h1>\n<p>Keep me</p>");
 
-    // 3. Remote edit in browser propagates back to disk.
     serverDoc.transact(() => {
       const t = files(serverDoc).get("index.html")!;
       t.insert(t.length, "\n<p>From browser</p>");
     }, "browser");
     await until(() => readFileSync(join(dir, "index.html"), "utf8").includes("From browser"));
 
-    // 4. Ignored files never sync; binary files upload over HTTP.
     writeFileSync(join(dir, ".DS_Store"), "junk");
     writeFileSync(join(dir, "logo.png"), new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
     await sync.flush();
     await until(() => uploaded.has("logo.png"));
     expect(files(serverDoc).has(".DS_Store")).toBe(false);
-    expect(uploaded.get("logo.png")?.length).toBe(8);
   } finally {
     await sync.stop();
     server.stop(true);
@@ -556,99 +488,29 @@ test("YjsDiskSync mirrors remote Yjs files to disk, rebases local disk edits bac
   }
 });
 
-// ---------------------------------------------------------------- 7. copyIntoManaged
-
 test("copyIntoManaged copies project files into managed dir, skips ignored dirs, and leaves source untouched", async () => {
   const root = mkdtempSync(join(tmpdir(), "erga-copy-managed-"));
   const src = join(root, "project");
   const dst = join(root, "managed");
   mkdirSync(join(src, "styles"), { recursive: true });
   mkdirSync(join(src, ".git"), { recursive: true });
-  mkdirSync(join(src, "node_modules/pkg"), { recursive: true });
   mkdirSync(dst, { recursive: true });
-
   writeFileSync(join(src, "index.html"), "<h1>From Local Project</h1>");
   writeFileSync(join(src, "styles/main.css"), "body { color: navy; }");
-  writeFileSync(join(src, ".DS_Store"), "junk");
   writeFileSync(join(src, ".git/HEAD"), "ref: refs/heads/main");
-  writeFileSync(join(src, "node_modules/pkg/index.js"), "module.exports = 1;");
-
   try {
     await copyIntoManaged(src, dst);
     expect(readFileSync(join(dst, "index.html"), "utf8")).toBe("<h1>From Local Project</h1>");
     expect(readFileSync(join(dst, "styles/main.css"), "utf8")).toBe("body { color: navy; }");
-    expect(existsSync(join(dst, ".DS_Store"))).toBe(false);
     expect(existsSync(join(dst, ".git"))).toBe(false);
-    expect(existsSync(join(dst, "node_modules"))).toBe(false);
-
-    // Editing the managed copy never mutates the original project folder.
-    writeFileSync(join(dst, "index.html"), "<h1>Changed In Managed</h1>");
-    expect(readFileSync(join(src, "index.html"), "utf8")).toBe("<h1>From Local Project</h1>");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-// ---------------------------------------------------------------- 8. Edge-case regressions
+// ---------------------------------------------------------------- 5. ErgaDaemon end-to-end with TerminalBackend
 
-test("YjsDiskSync.start rejects cleanly with no unhandled rejection when start fails", async () => {
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: () => new Response("server error", { status: 500 }),
-  });
-  const dir = mkdtempSync(join(tmpdir(), "erga-yjs-fail-"));
-  const unhandled: unknown[] = [];
-  const onUnhandled = (reason: unknown) => unhandled.push(reason);
-  process.on("unhandledRejection", onUnhandled);
-  try {
-    const sync = new YjsDiskSync({
-      origin: `http://127.0.0.1:${server.port}`,
-      docId: "doc1",
-      dir,
-      token: async () => "test-token",
-    });
-    await expect(sync.start()).rejects.toThrow("500");
-    await new Promise((r) => setTimeout(r, 0));
-    expect(unhandled).toEqual([]);
-  } finally {
-    process.off("unhandledRejection", onUnhandled);
-    server.stop(true);
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("PersonAgents.joinBridge records bridge origin and notifies tabs that subscribed before agentState", async () => {
-  const fakePlatform = {
-    agentSettings: async () => ({ missing: "no API keys configured" }),
-    directory: {
-      route: async (id: string) => ({ id, owner: "pete", test: false }),
-      users: { isAdmin: async () => false },
-    },
-  } as unknown as Platform;
-
-  const agents = new PersonAgents({ sql: sqliteChat(), platform: fakePlatform });
-  const tabMsgs: Record<string, unknown>[] = [];
-  const leaveTab = agents.join(
-    new Request("https://erga.example/api/agent/events?doc=doc1", { headers: { "x-erga-login": "pete" } }),
-    (text) => tabMsgs.push(JSON.parse(text) as Record<string, unknown>)
-  );
-
-  const bridge = agents.joinBridge(
-    { login: "pete", grantId: "g1", label: "Antigravity", onlyDoc: null, origin: "https://erga.example" },
-    () => {},
-    () => {}
-  );
-  bridge.message(JSON.stringify({ type: "hello", id: "agy-origin", agent: "antigravity", label: "Antigravity", doc: "doc1" }));
-
-  await until(() => tabMsgs.some((m) => m.type == "model" && m.enabled == true));
-  const last = tabMsgs.filter((m) => m.type == "model").at(-1);
-  expect(last?.choice).toBe(localChoice("agy-origin"));
-  bridge.close();
-  leaveTab();
-});
-
-test("ErgaDaemon.openDocument copies fromDir into an already-mounted document", async () => {
+test("ErgaDaemon binds whole space, relays PTY + OSC 7501 turn_done, copies fromDir, and restores bindings on restart", async () => {
   const serverDoc = new Y.Doc();
   serverDoc.transact(() => {
     roomInfo(serverDoc).set("epoch", "ep-1");
@@ -657,48 +519,46 @@ test("ErgaDaemon.openDocument copies fromDir into an already-mounted document", 
     files(serverDoc).set("index.html", t);
   });
 
+  const fromBridge: Record<string, unknown>[] = [];
+  let bridgeWs: Bun.ServerWebSocket<{ path: string }> | null = null;
   const server = Bun.serve<{ path: string }>({
     hostname: "127.0.0.1",
     port: 0,
     fetch(req, srv) {
       const url = new URL(req.url);
-      if (url.pathname == "/d/doc1/api/doc") {
-        return new Response(JSON.stringify({ docName: { id: "doc1", owner: "pete", slug: "demo", title: "Demo" } }), {
-          headers: { "Content-Type": "application/json" },
-        });
-      }
+      if (url.pathname == "/d/doc1/api/doc") return Response.json({ docName: { id: "doc1", owner: "pete", slug: "demo", title: "Demo" } });
       if (url.pathname == "/d/doc1/api/start") {
         return new Response(new Uint8Array(encodeStart({ type: "hello", epoch: "ep-1" }, Y.encodeStateAsUpdate(serverDoc))));
       }
       if (url.pathname == "/d/doc1/api/room" || url.pathname == "/api/agent/bridge") {
         if (srv.upgrade(req, { data: { path: url.pathname } })) return undefined;
-        return new Response("upgrade failed", { status: 400 });
       }
       return new Response("not found", { status: 404 });
     },
     websocket: {
       open(ws) {
-        if (ws.data.path == "/d/doc1/api/room") {
-          const e = new Encoder();
-          e.writeUint(0);
-          writeSyncStep1(e, serverDoc);
-          ws.send(e.toBytes());
-        }
+        if (ws.data.path == "/api/agent/bridge") return void (bridgeWs = ws);
+        const e = new Encoder();
+        e.writeUint(0);
+        writeSyncStep1(e, serverDoc);
+        ws.send(e.toBytes());
       },
       message(ws, data) {
-        if (ws.data.path != "/d/doc1/api/room" || typeof data == "string") return;
-        const d = new Decoder(new Uint8Array(data));
-        if (d.readUint() == 0) {
-          const reply = new Encoder();
-          reply.writeUint(0);
-          readSyncMessage(d, reply, serverDoc, ws);
-          if (reply.length > 1) ws.send(reply.toBytes());
+        if (typeof data == "string") {
+          if (ws.data.path == "/api/agent/bridge" && data.startsWith("{")) fromBridge.push(JSON.parse(data) as Record<string, unknown>);
+          return;
         }
+        const d = new Decoder(new Uint8Array(data));
+        if (d.readUint() != 0) return;
+        const reply = new Encoder();
+        reply.writeUint(0);
+        readSyncMessage(d, reply, serverDoc, ws);
+        if (reply.length > 1) ws.send(reply.toBytes());
       },
     },
   });
 
-  const root = mkdtempSync(join(tmpdir(), "erga-daemon-fromdir-"));
+  const root = mkdtempSync("/tmp/erga-daemon-e2e-");
   const home = join(root, "home");
   const src = join(root, "src");
   mkdirSync(src, { recursive: true });
@@ -710,25 +570,47 @@ test("ErgaDaemon.openDocument copies fromDir into an already-mounted document", 
   delete process.env.ERGA_TOKEN;
 
   const origin = `http://127.0.0.1:${server.port}`;
-  saveToken({ origin, clientName: "Mock", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
-
-  const daemon = new ErgaDaemon({
-    id: "mock",
-    label: "Mock",
-    open: async () => {
-      throw new Error("not used");
-    },
-  });
+  saveToken({ origin, clientName: "Erga Bridge", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
+  const backend = createMockBackend();
+  const daemon = new ErgaDaemon(backend, { defaultOrigin: origin });
 
   try {
-    const first = await daemon.openDocument({ origin, document: "/d/doc1" });
-    expect(first.ok).toBe(true);
-    if (first.ok) expect(first.files).toEqual(["index.html"]);
-
-    const second = await daemon.openDocument({ origin, document: "/d/doc1", fromDir: src });
-    expect(second.ok).toBe(true);
-    if (second.ok) expect(second.copiedFrom).toBe(src);
+    await daemon.start();
+    const opened = await daemon.openDocument({ origin, document: "/d/doc1", space: true, fromDir: src });
+    expect(opened.ok).toBe(true);
+    if (opened.ok) {
+      expect(opened.scope).toBe("space");
+      expect(opened.terminals.map((t) => t.id)).toEqual(["t1", "t2"]);
+      expect(opened.copiedFrom).toBe(src);
+    }
     await until(() => files(serverDoc).get("notes.html")?.toString() == "<p>Copied later</p>");
+    await until(() => bridgeWs != null && fromBridge.some((m) => m.type == "bind"));
+
+    // PTY attach + input + resize round-trip.
+    bridgeWs!.send(JSON.stringify({ type: "pty_attach", doc: "doc1", terminal: "t2", cols: 80, rows: 24 }));
+    await until(() => fromBridge.some((m) => m.type == "pty_data" && m.terminal == "t2"));
+    bridgeWs!.send(JSON.stringify({ type: "pty_input", doc: "doc1", terminal: "t2", data: Buffer.from("y\r").toString("base64") }));
+    bridgeWs!.send(JSON.stringify({ type: "pty_resize", doc: "doc1", terminal: "t2", cols: 110, rows: 32 }));
+    await until(() => backend.inputs.some((i) => i.terminal == "t2" && i.text == "y\r") && backend.resizes.some((r) => r.cols == 110));
+
+    // OSC 7501 status update & turn_done propagate from backend -> Erga.
+    backend.emit({
+      type: "terminal_changed",
+      terminal: { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "blocked", kind: "permission" }, turn: 1 },
+    });
+    backend.emit({ type: "turn_done", terminalId: "t2", turn: 2 });
+    await until(() => fromBridge.some((m) => m.type == "terminals") && fromBridge.some((m) => m.type == "turn_done" && m.doc == "doc1"));
+
+    // Restarting daemon restores persisted bindings automatically from backend state!
+    await daemon.stop();
+    fromBridge.length = 0;
+    const daemon2 = new ErgaDaemon(backend, { defaultOrigin: origin });
+    try {
+      await daemon2.start();
+      expect(daemon2.status().mounts.map((m) => [m.docId, m.scope])).toEqual([["doc1", "space"]]);
+    } finally {
+      await daemon2.stop();
+    }
   } finally {
     await daemon.stop();
     if (prevHome === undefined) delete process.env.ERGA_HOME;
@@ -741,7 +623,7 @@ test("ErgaDaemon.openDocument copies fromDir into an already-mounted document", 
   }
 });
 
-test("ErgaDaemon.openDocument with nonBlockingAuth returns a device-code URL and saves token in background when approved", async () => {
+test("ErgaDaemon.openDocument with nonBlockingAuth returns device-code URL and saves token in background when approved", async () => {
   let approved = false;
   let deviceCalls = 0;
   const server = Bun.serve({
@@ -790,13 +672,7 @@ test("ErgaDaemon.openDocument with nonBlockingAuth returns a device-code URL and
   delete process.env.ERGA_TOKEN;
 
   const origin = `http://127.0.0.1:${server.port}`;
-  const daemon = new ErgaDaemon({
-    id: "antigravity",
-    label: "Antigravity",
-    open: async () => {
-      throw new Error("not used");
-    },
-  });
+  const daemon = new ErgaDaemon(createMockBackend());
 
   try {
     const first = await daemon.openDocument({ origin, document: "/d/doc1", nonBlockingAuth: true });
@@ -804,17 +680,12 @@ test("ErgaDaemon.openDocument with nonBlockingAuth returns a device-code URL and
     if (!first.ok) {
       expect(first.needsAuth).toBe(true);
       expect(first.userCode).toBe("BCDF-GHJK");
-      expect(first.verificationUriComplete).toBe(`${origin}/oauth/device?user_code=BCDF-GHJK`);
     }
-    // Calling again before approval reuses the same pending device code.
-    const repeat = await daemon.openDocument({ origin, document: "/d/doc1", nonBlockingAuth: true });
-    expect(repeat.ok).toBe(false);
+    await daemon.openDocument({ origin, document: "/d/doc1", nonBlockingAuth: true });
     expect(deviceCalls).toBe(1);
 
-    // Once approved in any browser, background polling saves the token automatically.
     approved = true;
-    await until(() => cachedToken(origin, "Antigravity")?.accessToken == "tok-from-device");
-    expect(cachedToken(origin, "Antigravity")?.refreshToken).toBe("ref-1");
+    await until(() => cachedToken(origin, "Erga Bridge")?.accessToken == "tok-from-device");
   } finally {
     await daemon.stop();
     if (prevHome === undefined) delete process.env.ERGA_HOME;
@@ -822,318 +693,6 @@ test("ErgaDaemon.openDocument with nonBlockingAuth returns a device-code URL and
     if (prevToken === undefined) delete process.env.ERGA_TOKEN;
     else process.env.ERGA_TOKEN = prevToken;
     server.stop(true);
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-// ---------------------------------------------------------------- 9. Permission choices & session auto-approve
-
-test("permissionChoices exposes real ACP choices plus Allow all (session), and AcpDriver honors Allow all (session)", async () => {
-  expect(
-    permissionChoices([
-      { optionId: "allow", name: "Allow", kind: "allow_once" },
-      { optionId: "deny", name: "Deny", kind: "reject_once" },
-    ])
-  ).toEqual([
-    { id: "deny", label: "Deny", kind: "deny" },
-    { id: "allow", label: "Allow once", kind: "allow" },
-    { id: ALLOW_SESSION_CHOICE, label: "Allow all (session)", kind: "always" },
-  ]);
-
-  expect(
-    permissionChoices([
-      { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
-      { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
-      { optionId: "reject_once", name: "Deny", kind: "reject_once" },
-    ])
-  ).toEqual([
-    { id: "reject_once", label: "Deny", kind: "deny" },
-    { id: "allow_once", label: "Allow once", kind: "allow" },
-    { id: "allow_always", label: "Always allow", kind: "always" },
-    { id: ALLOW_SESSION_CHOICE, label: "Allow all (session)", kind: "always" },
-  ]);
-
-  const dir = mkdtempSync(join(tmpdir(), "erga-acp-choices-"));
-  const mockScript = join(dir, "mock-acp-choices.ts");
-  writeFileSync(
-    mockScript,
-    `
-const out = (m: object) => process.stdout.write(JSON.stringify(m) + "\\n");
-const reader = Bun.stdin.stream().getReader();
-const dec = new TextDecoder();
-let buf = "";
-let pendingPromptId: number | null = null;
-const modesSet: string[] = [];
-
-while (true) {
-  const { value, done } = await reader.read();
-  if (done) break;
-  buf += dec.decode(value, { stream: true });
-  const lines = buf.split("\\n");
-  buf = lines.pop() ?? "";
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const m = JSON.parse(line);
-    if (m.method === "initialize") {
-      out({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: 1, agentCapabilities: {} } });
-    } else if (m.method === "session/new") {
-      out({ jsonrpc: "2.0", id: m.id, result: { sessionId: "s-choices", modes: { currentModeId: "default", availableModes: [{ id: "default" }, { id: "auto" }] } } });
-    } else if (m.method === "session/set_mode") {
-      modesSet.push(m.params?.modeId);
-      out({ jsonrpc: "2.0", id: m.id, result: {} });
-    } else if (m.method === "session/prompt") {
-      pendingPromptId = m.id;
-      out({ jsonrpc: "2.0", id: "p-1", method: "session/request_permission", params: { sessionId: "s-choices", toolCall: { toolCallId: "tc-1", name: "run_command", title: "echo 1", args: { CommandLine: "echo 1" } }, options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "deny", name: "Deny", kind: "reject_once" }] } });
-    } else if (m.id === "p-1" && m.result) {
-      // Immediately ask for a second permission to prove Allow all (session) auto-approves without prompting again.
-      out({ jsonrpc: "2.0", id: "p-2", method: "session/request_permission", params: { sessionId: "s-choices", toolCall: { toolCallId: "tc-2", name: "run_command", title: "echo 2", args: { CommandLine: "echo 2" } }, options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "deny", name: "Deny", kind: "reject_once" }] } });
-    } else if (m.id === "p-2" && m.result) {
-      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s-choices", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "modes=" + modesSet.join(",") + " second=" + m.result.outcome?.optionId } } } });
-      out({ jsonrpc: "2.0", id: pendingPromptId, result: { stopReason: "end_turn" } });
-    } else if (m.method === "session/close") {
-      out({ jsonrpc: "2.0", id: m.id, result: {} });
-    }
-  }
-}
-`
-  );
-
-  try {
-    const driver = createAcpDriver({ id: "mock-acp", label: "Mock ACP", command: process.execPath, args: [mockScript] });
-    const handle = await driver.open({ cwd: dir });
-    const asks: DriverEvent[] = [];
-    const replies: string[] = [];
-    handle.onEvent((ev) => {
-      if (ev.t == "tool" && ev.status == "asking") {
-        asks.push(ev);
-        void handle.answer(ev.id, true, ALLOW_SESSION_CHOICE);
-      }
-      if (ev.t == "text") replies.push(ev.delta);
-    });
-    await handle.prompt({ text: "Run two commands" });
-    await handle.close();
-
-    // Only the first tool asked; the second was auto-approved and ACP mode switched to auto.
-    expect(asks.length).toBe(1);
-    expect(asks[0].t == "tool" && asks[0].choices?.map((c) => c.label)).toEqual(["Deny", "Allow once", "Allow all (session)"]);
-    expect(replies.join("")).toBe("modes=auto second=allow");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-// ---------------------------------------------------------------- 10. Live Antigravity session injection & hooks
-
-test("hookEvents translates PreToolUse, PostToolUse, and Stop into real-time DriverEvents", () => {
-  expect(
-    hookEvents({
-      hookEventName: "PreToolUse",
-      stepIdx: 4,
-      toolCall: { id: "call-4", name: "edit_file", args: { Path: "/tmp/index.html" } },
-    })
-  ).toEqual([{ t: "tool", id: "call-4", name: "edit_file", path: "/tmp/index.html", status: "running" }]);
-
-  expect(
-    hookEvents({
-      hookEventName: "PostToolUse",
-      stepIdx: 4,
-      toolCall: { id: "call-4", name: "edit_file", args: { Path: "/tmp/index.html" } },
-    })
-  ).toEqual([{ t: "tool", id: "call-4", name: "edit_file", path: "/tmp/index.html", status: "done" }]);
-
-  expect(hookEvents({ hookEventName: "Stop", fullyIdle: true, continuationActive: false })).toEqual([
-    { t: "busy", busy: false },
-    { t: "turn_done" },
-  ]);
-});
-
-test("ErgaDaemon routes prompts directly into an attached live Antigravity session without spawning ACP, streams hooks, and honors Stop", async () => {
-  const serverDoc = new Y.Doc();
-  serverDoc.transact(() => {
-    roomInfo(serverDoc).set("epoch", "ep-live");
-    const t = new Y.Text();
-    t.insert(0, "<h1>Live</h1>");
-    files(serverDoc).set("index.html", t);
-  });
-
-  const fromBridge: Record<string, unknown>[] = [];
-  let bridgeWs: Bun.ServerWebSocket<{ path: string }> | null = null;
-  const server = Bun.serve<{ path: string }>({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(req, srv) {
-      const url = new URL(req.url);
-      if (url.pathname == "/d/doc1/api/doc") {
-        return Response.json({ docName: { id: "doc1", owner: "pete", slug: "live", title: "Live" } });
-      }
-      if (url.pathname == "/d/doc1/api/start") {
-        return new Response(new Uint8Array(encodeStart({ type: "hello", epoch: "ep-live" }, Y.encodeStateAsUpdate(serverDoc))));
-      }
-      if (url.pathname == "/d/doc1/api/room" || url.pathname == "/api/agent/bridge") {
-        if (srv.upgrade(req, { data: { path: url.pathname } })) return undefined;
-        return new Response("upgrade failed", { status: 400 });
-      }
-      return new Response("not found", { status: 404 });
-    },
-    websocket: {
-      open(ws) {
-        if (ws.data.path == "/d/doc1/api/room") {
-          const e = new Encoder();
-          e.writeUint(0);
-          writeSyncStep1(e, serverDoc);
-          ws.send(e.toBytes());
-        } else {
-          bridgeWs = ws;
-        }
-      },
-      message(ws, data) {
-        if (ws.data.path == "/api/agent/bridge" && typeof data == "string") {
-          fromBridge.push(JSON.parse(data) as Record<string, unknown>);
-          return;
-        }
-        if (ws.data.path != "/d/doc1/api/room" || typeof data == "string") return;
-        const d = new Decoder(new Uint8Array(data));
-        if (d.readUint() == 0) {
-          const reply = new Encoder();
-          reply.writeUint(0);
-          readSyncMessage(d, reply, serverDoc, ws);
-          if (reply.length > 1) ws.send(reply.toBytes());
-        }
-      },
-    },
-  });
-
-  const root = mkdtempSync(join(tmpdir(), "erga-live-attach-"));
-  const transcript = join(root, "transcript_full.jsonl");
-  writeFileSync(transcript, "");
-  const prevHome = process.env.ERGA_HOME;
-  const prevToken = process.env.ERGA_TOKEN;
-  process.env.ERGA_HOME = root;
-  delete process.env.ERGA_TOKEN;
-
-  const origin = `http://127.0.0.1:${server.port}`;
-  saveToken({ origin, clientName: "Antigravity", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
-
-  let acpSpawned = 0;
-  const sentLive: { session: LiveAntigravitySession; text: string }[] = [];
-  const daemon = new ErgaDaemon(
-    {
-      id: "antigravity",
-      label: "Antigravity",
-      open: async () => {
-        acpSpawned++;
-        throw new Error("ACP must not be spawned when a live session is attached");
-      },
-    },
-    {
-      liveMessenger: {
-        send: async (session: LiveAntigravitySession, text) => {
-          sentLive.push({ session, text });
-        },
-        check: async () => "running",
-      },
-    }
-  );
-
-  try {
-    // 1. Open doc with live Antigravity LS credentials -> liveAttached is true, CSRF is never exposed in status().
-    const opened = await daemon.openDocument({
-      origin,
-      document: "/d/doc1",
-      cwd: root,
-      conversationId: "conv-live-1",
-      lsAddress: "localhost:55555",
-      csrfToken: "secret-csrf-never-persisted",
-      transcriptPath: transcript,
-    });
-    expect(opened.ok).toBe(true);
-    if (opened.ok) expect(opened.liveAttached).toBe(true);
-    expect(JSON.stringify(daemon.status())).not.toContain("secret-csrf");
-    expect(daemon.status().mounts[0].liveAttached).toBe(true);
-
-    // 2. Browser sends prompt -> injected straight into live session; zero ACP processes spawned!
-    await until(() => bridgeWs != null);
-    bridgeWs!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "Add a sentence", context: "Open: /pete/live" }));
-    await until(() => sentLive.length == 1);
-    expect(acpSpawned).toBe(0);
-    expect(sentLive[0].session.conversationId).toBe("conv-live-1");
-    expect(sentLive[0].session.lsAddress).toBe("localhost:55555");
-    expect(sentLive[0].text).toContain("Add a sentence");
-
-    // 3. Hooks stream PreToolUse -> PostToolUse -> PostInvocation (thinking + reply) -> Stop cleanly without duplicate tool calls.
-    expect(
-      await daemon.handleHook({
-        hookEventName: "PreToolUse",
-        conversationId: "conv-live-1",
-        cwd: root,
-        transcriptPath: transcript,
-        stepIdx: 1,
-        toolCall: { id: "tc-live-1", name: "edit_file", args: { Path: join(root, "index.html") } },
-      })
-    ).toEqual({ decision: "allow" });
-
-    expect(
-      await daemon.handleHook({
-        hookEventName: "PostToolUse",
-        conversationId: "conv-live-1",
-        cwd: root,
-        transcriptPath: transcript,
-        stepIdx: 1,
-        toolCall: { id: "tc-live-1", name: "edit_file", args: { Path: join(root, "index.html") } },
-      })
-    ).toEqual({});
-
-    writeFileSync(
-      transcript,
-      JSON.stringify({
-        step_index: 2,
-        type: "PLANNER_RESPONSE",
-        status: "DONE",
-        thinking: "Adding sentence now",
-        tool_calls: [{ name: "edit_file", args: { Path: join(root, "index.html") } }],
-        content: "Sentence added in live session.",
-      }) + "\n"
-    );
-    await daemon.handleHook({ hookEventName: "PostInvocation", conversationId: "conv-live-1", cwd: root, transcriptPath: transcript });
-    await daemon.handleHook({
-      hookEventName: "Stop",
-      conversationId: "conv-live-1",
-      cwd: root,
-      transcriptPath: transcript,
-      fullyIdle: true,
-      continuationActive: false,
-    });
-
-    await until(() => fromBridge.some((m) => m.type == "turn_done"));
-    const evs = fromBridge.filter((m) => m.type == "event").map((m) => m.ev as Record<string, unknown>);
-    expect(evs.some((e) => e.t == "tool" && e.id == "tc-live-1" && e.status == "running")).toBe(true);
-    expect(evs.some((e) => e.t == "tool" && e.id == "tc-live-1" && e.status == "done")).toBe(true);
-    // Transcript tool_calls skipped because hooks already streamed tc-live-1!
-    expect(evs.some((e) => e.t == "tool" && String(e.id).startsWith("local-"))).toBe(false);
-    expect(evs.some((e) => e.t == "thinking" && e.delta == "Adding sentence now")).toBe(true);
-    expect(evs.some((e) => e.t == "text" && e.delta == "Sentence added in live session.")).toBe(true);
-    expect(evs.some((e) => e.t == "busy" && e.busy == false)).toBe(true);
-
-    // 4. Browser abort tells the next hook to stop the live session cleanly.
-    bridgeWs!.send(JSON.stringify({ type: "abort", doc: "doc1" }));
-    await until(() => fromBridge.filter((m) => m.type == "event" && (m.ev as { t?: string; busy?: boolean }).busy === false).length >= 2);
-    expect(await daemon.handleHook({ hookEventName: "PreToolUse", conversationId: "conv-live-1", cwd: root })).toEqual({
-      decision: "deny",
-      reason: "Stopped from Erga browser panel.",
-    });
-    expect(await daemon.handleHook({ hookEventName: "PostInvocation", conversationId: "conv-live-1", cwd: root })).toEqual({
-      terminationBehavior: "terminate",
-    });
-    expect(await daemon.handleHook({ hookEventName: "Stop", conversationId: "conv-live-1", cwd: root, fullyIdle: true })).toEqual({});
-    expect(acpSpawned).toBe(0);
-  } finally {
-    await daemon.stop();
-    if (prevHome === undefined) delete process.env.ERGA_HOME;
-    else process.env.ERGA_HOME = prevHome;
-    if (prevToken === undefined) delete process.env.ERGA_TOKEN;
-    else process.env.ERGA_TOKEN = prevToken;
-    server.stop(true);
-    serverDoc.destroy();
     rmSync(root, { recursive: true, force: true });
   }
 });

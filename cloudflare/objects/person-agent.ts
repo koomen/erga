@@ -82,9 +82,10 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
     if (request.headers.get("Upgrade")?.toLowerCase() != "websocket") return this.agents.fetch(request);
     const { 0: client, 1: server } = new WebSocketPair();
     server.accept();
-    const leave = this.agents.join(request, (text) => server.send(text));
-    server.addEventListener("close", leave);
-    server.addEventListener("error", leave);
+    const tab = this.agents.join(request, (text) => server.send(text));
+    server.addEventListener("message", (ev) => tab.message(String(ev.data)));
+    server.addEventListener("close", () => tab.close());
+    server.addEventListener("error", () => tab.close());
     return new Response(null, { status: 101, webSocket: client });
   }
 

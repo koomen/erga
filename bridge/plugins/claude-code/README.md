@@ -1,41 +1,24 @@
-# Erga for Claude Code
+# Erga plugin
 
-The plugin connects a Claude Code session to an Erga document:
-
-- `erga-agent open` (via `/erga:open`) makes a live copy of the document in `~/.erga/docs/`. Claude Code
-  edits the files there, and each edit shows in the browser at once.
-- The session has Erga's tools (`documents`, `read`, `edit`, `page`).
-- The document's agent panel shows the session's turns. A prompt typed in the
-  panel runs in the same session, and the terminal shows it as hook feedback.
-  When Claude Code asks for a permission, the panel shows a card: answer there
-  or in the terminal.
-- After the session's terminal closes, a prompt typed in the panel runs in a
-  second Claude Code session, in the background.
+Connects local `herdr-core` or `rex` terminals (single terminal or whole space) to Erga documents with live Yjs file sync, live browser terminal streaming, OSC 7501 status updates, and Erga MCP tools.
 
 ## Install
 
-Build the plugin (it holds the `erga-agent` binary):
+```sh
+curl -fsSL https://erga.dev/plugin/install.sh | sh
+```
 
-    bun bridge/build.ts
+Or build locally from the repo:
 
-For one session only:
+```sh
+bun bridge/build.ts
+claude --plugin-dir dist/plugins/claude-code
+```
 
-    claude --plugin-dir dist/plugins/claude-code
+## Usage
 
-To keep it:
-
-    claude plugin marketplace add ./dist/plugins
-    claude plugin install erga@erga
-
-## Connect a session to a document
-
-In Claude Code, give it the document:
-
-    /erga:open https://<your Erga server>/<owner>/<slug>
-
-The first time, Claude Code shows a link and a code. Open the link in your
-browser and approve the code. Then tell Claude Code to continue.
-
-`erga-agent status --agent claude-code` shows what is open.
-`erga-agent unmount --agent claude-code <doc-id>` closes one mounted document.
-`erga-agent stop --agent claude-code` ends the background bridge.
+- `erga-agent open <url>` — mount document and bind the current terminal.
+- `erga-agent open --space <url>` — mount document and bind your entire Herdr space or Rex session.
+- `erga-agent spaces` — list available spaces and live terminals.
+- `erga-agent update` — check for and apply bridge updates from your pinned Erga origin.
+- `erga-agent unmount <docId>` — close the Yjs mount and unbind the document.

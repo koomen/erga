@@ -1,17 +1,36 @@
+// Tests for the MCP proxy (`erga-agent mcp`) and CLI unmount (`erga-agent unmount`).
+
 import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Y from "yjs";
 import { saveToken } from "../bridge/core/auth.ts";
+import type { TerminalBackend } from "../bridge/core/backend.ts";
 import { ErgaDaemon } from "../bridge/core/daemon.ts";
-import { BRIDGE_SESSION_ENV } from "../bridge/core/driver.ts";
-import { createAntigravityDriver } from "../bridge/drivers/antigravity.ts";
 import { files, roomInfo } from "../document/model/content.ts";
 import { encodeStart } from "../shared/room-socket.ts";
 import { Decoder, Encoder, readSyncMessage, writeSyncStep1 } from "../shared/yjs-protocol.ts";
 
 const CLI = join(import.meta.dir, "..", "bridge", "core", "cli.ts");
+
+function fakeBackend(): TerminalBackend {
+  const t = { id: "t1", label: "agy · t1", app: "antigravity", state: "live" as const, status: null, turn: 0 };
+  return {
+    id: "herdr-core",
+    label: "herdr-core",
+    connect: async () => ({ version: "0.1.22" }),
+    close: async () => {},
+    listTerminals: async () => [t],
+    listSpaces: async () => [],
+    resolveTarget: async () => ({ scope: "single", spaceId: null, spaceName: null, terminals: [t], activeTerminal: "t1" }),
+    subscribe: () => () => {},
+    attach: async () => ({ terminalId: "t1", write: () => {}, resize: () => {}, close: () => {} }),
+    send: async () => {},
+    interrupt: async () => {},
+    spawn: async () => t,
+  };
+}
 
 function makeMcpClient(args: string[], env: Record<string, string>) {
   const proc = Bun.spawn([process.execPath, CLI, ...args], {
@@ -65,7 +84,7 @@ function makeMcpClient(args: string[], env: Record<string, string>) {
   };
 }
 
-test("erga-agent mcp proxies remote Erga tools without duplicate local tools", async () => {
+test("erga-agent mcp proxies remote Erga tools without duplicate local tools or permission hacks", async () => {
   const remoteTools = [
     { name: "documents", description: "Manage documents", inputSchema: { type: "object", properties: {} } },
     { name: "page", description: "Inspect live page", inputSchema: { type: "object", properties: {} } },
@@ -99,38 +118,29 @@ test("erga-agent mcp proxies remote Erga tools without duplicate local tools", a
 
   const home = mkdtempSync(join(tmpdir(), "erga-mcp-proxy-"));
   const origin = `http://127.0.0.1:${server.port}`;
-  // Start without --server (matching plugin mcp_config.json) so signing in later via CLI updates the default origin dynamically.
   const env = { ERGA_HOME: home, ERGA_TOKEN: "", ERGA_SERVER: "" };
-  const client = makeMcpClient(["mcp", "--agent", "antigravity"], env);
+  const client = makeMcpClient(["mcp"], env);
 
   try {
     const init = (await client.rpc("initialize", { protocolVersion: "2025-06-18" })) as {
       result?: { instructions?: string };
     };
     expect(init.result?.instructions).toContain("erga-agent open");
-    expect(init.result?.instructions).not.toContain("erga_open");
 
-    // Signed out: only the fallback remote API tool is listed; no duplicate local tools.
     const beforeAuth = (await client.rpc("tools/list")) as { result?: { tools?: Array<{ name: string }> } };
-    const beforeNames = (beforeAuth.result?.tools ?? []).map((t) => t.name);
-    expect(beforeNames).toEqual(["erga_api"]);
-    for (const removed of ["erga_open", "erga_unmount", "erga_status", "erga_permission"]) {
-      expect(beforeNames).not.toContain(removed);
-    }
+    expect((beforeAuth.result?.tools ?? []).map((t) => t.name)).toEqual(["erga_api"]);
 
-    // Once the CLI signs in and saves a token to ERGA_HOME, tools/list picks up the full remote catalog.
     const prevHome = process.env.ERGA_HOME;
     process.env.ERGA_HOME = home;
     try {
-      saveToken({ origin, clientName: "Antigravity", clientId: "c1", accessToken: "tok-mcp", expiresAt: Date.now() + 60_000 });
+      saveToken({ origin, clientName: "Erga Bridge", clientId: "c1", accessToken: "tok-mcp", expiresAt: Date.now() + 60_000 });
     } finally {
       if (prevHome === undefined) delete process.env.ERGA_HOME;
       else process.env.ERGA_HOME = prevHome;
     }
 
     const afterAuth = (await client.rpc("tools/list")) as { result?: { tools?: Array<{ name: string }> } };
-    const afterNames = (afterAuth.result?.tools ?? []).map((t) => t.name);
-    expect(afterNames).toEqual(["documents", "page"]);
+    expect((afterAuth.result?.tools ?? []).map((t) => t.name)).toEqual(["documents", "page"]);
 
     const callRes = (await client.rpc("tools/call", { name: "documents", arguments: { op: "list" } })) as {
       result?: { content?: Array<{ text?: string }> };
@@ -140,23 +150,6 @@ test("erga-agent mcp proxies remote Erga tools without duplicate local tools", a
   } finally {
     await client.close();
     server.stop(true);
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("erga-agent mcp exposes erga_permission only inside bridge-spawned sessions", async () => {
-  const home = mkdtempSync(join(tmpdir(), "erga-mcp-perm-"));
-  const client = makeMcpClient(["mcp", "--agent", "claude-code", "--server", "http://127.0.0.1:1"], {
-    ERGA_HOME: home,
-    ERGA_TOKEN: "",
-    [BRIDGE_SESSION_ENV]: "sess-1",
-  });
-  try {
-    await client.rpc("initialize", { protocolVersion: "2025-06-18" });
-    const list = (await client.rpc("tools/list")) as { result?: { tools?: Array<{ name: string }> } };
-    expect((list.result?.tools ?? []).map((t) => t.name)).toEqual(["erga_api", "erga_permission"]);
-  } finally {
-    await client.close();
     rmSync(home, { recursive: true, force: true });
   }
 });
@@ -194,18 +187,17 @@ test("erga-agent mcp dispatches stdio requests concurrently so a slow tool call 
   const prevHome = process.env.ERGA_HOME;
   process.env.ERGA_HOME = home;
   try {
-    saveToken({ origin, clientName: "Antigravity", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
+    saveToken({ origin, clientName: "Erga Bridge", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
   } finally {
     if (prevHome === undefined) delete process.env.ERGA_HOME;
     else process.env.ERGA_HOME = prevHome;
   }
 
-  const client = makeMcpClient(["mcp", "--agent", "antigravity", "--server", origin], { ERGA_HOME: home, ERGA_TOKEN: "" });
+  const client = makeMcpClient(["mcp", "--server", origin], { ERGA_HOME: home, ERGA_TOKEN: "" });
   try {
     await client.rpc("initialize", { protocolVersion: "2025-06-18" });
     client.sendRaw({ jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "page", arguments: { op: "view_page" } } });
     await started;
-    // Ping arrives while tools/call #10 is still blocked on toolGate and must return first.
     client.sendRaw({ jsonrpc: "2.0", id: 11, method: "ping", params: {} });
     const first = await client.readMsg();
     expect(first.id).toBe(11);
@@ -220,7 +212,7 @@ test("erga-agent mcp dispatches stdio requests concurrently so a slow tool call 
   }
 });
 
-test("erga-agent unmount closes a mounted document without requiring --server", async () => {
+test("erga-agent unmount closes a mounted document over bridge.sock without requiring --server", async () => {
   const serverDoc = new Y.Doc();
   serverDoc.transact(() => {
     roomInfo(serverDoc).set("epoch", "ep-1");
@@ -263,7 +255,7 @@ test("erga-agent unmount closes a mounted document without requiring --server", 
     },
   });
 
-  const root = mkdtempSync(join(tmpdir(), "erga-cli-unmount-"));
+  const root = mkdtempSync("/tmp/erga-cli-unm-");
   const home = join(root, "home");
   const work = join(root, "work");
   mkdirSync(work, { recursive: true });
@@ -273,16 +265,17 @@ test("erga-agent unmount closes a mounted document without requiring --server", 
   delete process.env.ERGA_TOKEN;
 
   const origin = `http://127.0.0.1:${server.port}`;
-  saveToken({ origin, clientName: "Antigravity", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
-  const daemon = new ErgaDaemon(createAntigravityDriver(), { defaultOrigin: origin, defaultCwd: work });
+  saveToken({ origin, clientName: "Erga Bridge", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
+  const daemon = new ErgaDaemon(fakeBackend(), { defaultOrigin: origin });
 
   try {
+    await daemon.start();
     daemon.startSocket();
     const opened = await daemon.openDocument({ origin, document: "/d/doc1", cwd: work });
     expect(opened.ok).toBe(true);
     expect(daemon.status().mounts.map((m) => m.docId)).toEqual(["doc1"]);
 
-    const proc = Bun.spawn([process.execPath, CLI, "unmount", "doc1", "--agent", "antigravity"], {
+    const proc = Bun.spawn([process.execPath, CLI, "unmount", "doc1"], {
       env: { ...process.env, ERGA_HOME: home },
       stdout: "pipe",
       stderr: "pipe",

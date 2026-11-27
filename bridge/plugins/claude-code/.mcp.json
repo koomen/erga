@@ -2,7 +2,7 @@
   "mcpServers": {
     "erga": {
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/erga-agent",
-      "args": ["mcp", "--agent", "claude-code"]
+      "args": ["mcp"]
     }
   }
 }

@@ -1,5 +1,5 @@
-// Local daemon IO helpers: Unix socket RPC, Erga document lookup, and copying
-// local folders into a document's managed directory.
+// Local daemon IO helpers: single Unix socket RPC (~/.erga/bridge.sock),
+// Erga document lookup, and copying local folders into a managed directory.
 
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir } from "node:fs/promises";
@@ -7,8 +7,9 @@ import { join, resolve } from "node:path";
 import { ignored } from "../../document/model/pages.ts";
 import { defaultOrigin, ergaFetch, ergaHome, normalizeOrigin } from "./auth.ts";
 
-export function daemonSocketPath(agentId: string): string {
-  return join(ergaHome(), `daemon.${agentId}.sock`);
+/** Single local Unix socket for the Erga bridge daemon (mode 0600). */
+export function daemonSocketPath(home = ergaHome()): string {
+  return join(home, "bridge.sock");
 }
 
 /** Parses an Erga document URL, `/<owner>/<slug>`, `/d/<id>`, or bare id. */
@@ -25,7 +26,7 @@ export function parseDocumentRef(ref: string, fallbackOrigin = defaultOrigin()):
 /** Resolves an Erga document reference (`/d/<id>`, `/<owner>/<slug>`, or bare id) to its metadata. */
 export async function resolveDocument(
   origin: string,
-  driverLabel: string,
+  clientName: string,
   ref: string
 ): Promise<{ id: string; owner: string; slug: string; title: string }> {
   const clean = ref.replace(/^\/+|\/+$/g, "");
@@ -36,7 +37,7 @@ export async function resolveDocument(
       : parts.length >= 2
         ? `/${parts[0]}/${parts[1]}/api/doc`
         : `/d/${parts[0]}/api/doc`;
-  const res = await ergaFetch(origin, driverLabel, docPath, {}, { interactive: true });
+  const res = await ergaFetch(origin, clientName, docPath, {}, { interactive: true });
   if (res.ok) {
     const info = (await res.json()) as {
       docName?: { id?: string; owner?: string; slug?: string; title?: string; address?: string };
@@ -53,7 +54,7 @@ export async function resolveDocument(
   }
   const listRes = await ergaFetch(
     origin,
-    driverLabel,
+    clientName,
     "/api/tools/list_documents",
     {
       method: "POST",
@@ -97,14 +98,14 @@ export async function copyIntoManaged(srcDir: string, dstDir: string, sub = ""):
   }
 }
 
-/** Sends one RPC request to a running local daemon over its Unix socket; null if not running. */
+/** Sends one RPC request to the running local bridge daemon over ~/.erga/bridge.sock; null if not running. */
 export async function daemonRpc<T = Record<string, unknown>>(
-  agentId: string,
   path: string,
   body?: unknown,
-  timeoutMs = 180_000
+  timeoutMs = 180_000,
+  home = ergaHome()
 ): Promise<T | null> {
-  const sock = daemonSocketPath(agentId);
+  const sock = daemonSocketPath(home);
   if (!existsSync(sock)) return null;
   try {
     const res = await fetch(`http://localhost${path}`, {

@@ -27,7 +27,7 @@ export interface LiveSocket {
 }
 
 /** A live socket, stopped: `start` connects it, and it stays connected until `stop`. */
-export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
+export function liveSocket(o: LiveSocket): { start(): void; stop(): void; send(text: string): boolean } {
   const step = socketStep(o.rules);
   let phase: SocketPhase = { at: "stopped" },
     socket: WebSocket | null = null,
@@ -112,5 +112,14 @@ export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
       go({ type: "start" });
     },
     stop: () => go({ type: "stop" }),
+    send: (text: string) => {
+      if (socket?.readyState != WebSocket.OPEN) return false;
+      try {
+        socket.send(text);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   };
 }

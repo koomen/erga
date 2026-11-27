@@ -1,22 +1,59 @@
-// The wire protocol between a local agent bridge (bridge/) and a person's
-// PersonAgent Durable Object (agents/person/sessions.ts), over the
-// /api/agent/bridge WebSocket. Shared by the server, browser and local bridge
-// so every side agrees on the exact JSON shapes and choice prefixes.
+// Wire protocol between the local Erga bridge (bridge/), a person's PersonAgent
+// Durable Object (agents/person/sessions.ts), and the browser terminal pane
+// (client/agent/terminal.ts). Pure types and tiny helpers only (no Effect
+// import) so browser bundles can import this file directly without pulling in
+// server dependencies. Effect Schema decoders live in shared/bridge-schema.ts.
 
-import * as Schema from "effect/Schema";
-import type { Log, LogEvent } from "./agent-log.ts";
-import type { Attachment } from "./attach.ts";
-
-/** Prefix for a connected local agent in the panel's model/agent dropdown. */
+/** Prefix for a connected local bridge in the panel's model/agent dropdown. */
 export const LOCAL_PREFIX = "local:";
-export const EMBEDDED_THREAD = "embedded";
 export const localChoice = (bridgeId: string): string => `${LOCAL_PREFIX}${bridgeId}`;
-export const localThreadKey = (bridgeId: string, threadId: string): string => `${LOCAL_PREFIX}${bridgeId}:${threadId}`;
 export const isLocalChoice = (choice: string | null | undefined): choice is string =>
   typeof choice == "string" && choice.startsWith(LOCAL_PREFIX) && choice.length > LOCAL_PREFIX.length;
 export const bridgeIdOf = (choice: string): string | null => (isLocalChoice(choice) ? choice.slice(LOCAL_PREFIX.length) : null);
 
-/** One option in the agent panel's dropdown: either a connected local agent or an embedded model. */
+export type BackendKind = "herdr-core" | "rex";
+export type AttachScope = "single" | "space";
+
+/** OSC 7501 Program Status Protocol states and blocked sub-kinds. */
+export type Osc7501State = "idle" | "working" | "done" | "blocked" | "error";
+export type Osc7501Kind = "permission" | "question" | "auth";
+
+/** One OSC 7501 status record reported by a program running inside a terminal. */
+export interface TerminalStatus {
+  readonly state: Osc7501State;
+  readonly kind?: Osc7501Kind | null;
+  readonly progress?: number | null;
+  readonly app?: string;
+  readonly title?: string;
+  readonly msg?: string;
+}
+
+/** One live (or finished) terminal exposed by herdr-core or rex. */
+export interface TerminalSummary {
+  readonly id: string;
+  readonly label: string;
+  readonly app: string;
+  readonly cwd?: string;
+  readonly state: "live" | "finished";
+  readonly status: TerminalStatus | null;
+  readonly turn: number;
+  readonly parent?: string | null;
+  readonly host?: string | null;
+}
+
+/** Snapshot of an active local bridge binding sent to the browser agent panel. */
+export interface LocalBridgeView {
+  readonly bridgeId: string;
+  readonly backend: BackendKind;
+  readonly label: string;
+  readonly scope: AttachScope;
+  readonly spaceId: string | null;
+  readonly spaceName: string | null;
+  readonly terminals: readonly TerminalSummary[];
+  readonly activeTerminal: string | null;
+}
+
+/** One option in the agent panel's dropdown: either a connected local bridge or an embedded model. */
 export interface PanelOption {
   id: string;
   label: string;
@@ -25,43 +62,26 @@ export interface PanelOption {
   agent?: string;
 }
 
-/** A model that a connected local agent offers (optional: for future sub-selection or display). */
-export const BridgeModel = Schema.Struct({
-  id: Schema.String,
-  label: Schema.String,
-});
-export type BridgeModel = typeof BridgeModel.Type;
-
-/**
- * Messages the local bridge sends to PersonAgent over /api/agent/bridge.
- * `hello`: introduces the bridge (its stable id, agent kind, display label, and optional single doc binding).
- * `bind`: binds this bridge to a document (so its panel auto-switches to this local agent).
- * `unbind`: detaches a document binding without closing the bridge.
- * `event`: streams one LogEvent (text, thinking, tool, asking, user, busy, error, reset) for a document thread.
- * `log`: replaces the stored transcript for a document thread (e.g. when attaching an existing local session).
- * `turn_done`: tells Erga that a turn finished on `doc`, so the document cuts a version.
- */
+/** Messages the local bridge daemon sends to PersonAgent over /api/agent/bridge. */
 export type FromBridge =
   | {
       type: "hello";
       id: string;
-      agent: string;
+      backend: BackendKind;
       label: string;
+      version: string;
       doc?: string | null;
-      sessionId?: string | null;
-      threadId?: string | null;
-      cwd?: string | null;
-      model?: string | null;
-      models?: readonly BridgeModel[];
       reconnect?: boolean;
     }
   | {
       type: "bind";
       doc: string;
       label?: string;
-      sessionId?: string | null;
-      threadId?: string | null;
-      cwd?: string | null;
+      scope: AttachScope;
+      spaceId?: string | null;
+      spaceName?: string | null;
+      terminals: readonly TerminalSummary[];
+      activeTerminal?: string | null;
       reconnect?: boolean;
     }
   | {
@@ -69,141 +89,84 @@ export type FromBridge =
       doc: string;
     }
   | {
-      type: "event";
+      type: "terminals";
       doc: string | null;
-      ev: LogEvent;
+      terminals: readonly TerminalSummary[];
+      spaceName?: string | null;
     }
   | {
-      type: "log";
+      type: "pty_data";
       doc: string | null;
-      log: Log;
+      terminal: string;
+      /** Base64-encoded raw PTY bytes. */
+      data: string;
+    }
+  | {
+      type: "pty_closed";
+      doc: string | null;
+      terminal: string;
+      reason?: string;
     }
   | {
       type: "turn_done";
       doc: string | null;
+      terminal?: string;
     };
 
-/**
- * Messages PersonAgent sends to the local bridge over /api/agent/bridge.
- * `prompt`: a user message from the browser panel (or @erga comment) for `doc`.
- * `abort`: stop the current turn on `doc`.
- * `reset`: start a fresh conversation on `doc`.
- * `answer`: the user's Approve/Deny answer to a pending permission/question card `id`.
- * `model`: optional model change inside the local agent.
- */
+/** Messages PersonAgent sends to the local bridge daemon over /api/agent/bridge. */
 export type ToBridge =
   | {
-      type: "prompt";
+      type: "pty_attach";
       doc: string | null;
-      docAddress?: string | null;
+      terminal: string;
+      cols: number;
+      rows: number;
+    }
+  | {
+      type: "pty_detach";
+      doc: string | null;
+      terminal: string;
+    }
+  | {
+      type: "pty_input";
+      doc: string | null;
+      terminal: string;
+      /** Base64-encoded raw input bytes. */
+      data: string;
+    }
+  | {
+      type: "pty_resize";
+      doc: string | null;
+      terminal: string;
+      cols: number;
+      rows: number;
+    }
+  | {
+      type: "send";
+      doc: string | null;
+      terminal: string | null;
       text: string;
-      context: string | null;
-      files?: Attachment[];
-      id?: string;
     }
   | {
-      type: "abort";
+      type: "interrupt";
       doc: string | null;
+      terminal: string | null;
     }
   | {
-      type: "reset";
-      doc: string | null;
-    }
-  | {
-      type: "answer";
-      doc: string | null;
-      id: string;
-      approve: boolean;
-      choice?: string;
-    }
-  | {
-      type: "model";
-      doc: string | null;
-      model: string;
+      type: "update";
+      version: string;
+      sha256: string;
+      url: string;
+      minHcVersion?: string;
     };
 
-// Loose structural validation for incoming WebSocket frames from the bridge.
-const Hello = Schema.Struct({
-  type: Schema.Literal("hello"),
-  id: Schema.String,
-  agent: Schema.String,
-  label: Schema.String,
-  doc: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  sessionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  threadId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  model: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  models: Schema.optionalKey(Schema.Array(BridgeModel)),
-  reconnect: Schema.optionalKey(Schema.Boolean),
-});
-const Bind = Schema.Struct({
-  type: Schema.Literal("bind"),
-  doc: Schema.String,
-  label: Schema.optionalKey(Schema.String),
-  sessionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  threadId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  reconnect: Schema.optionalKey(Schema.Boolean),
-});
-const Unbind = Schema.Struct({
-  type: Schema.Literal("unbind"),
-  doc: Schema.String,
-});
-const EventMsg = Schema.Struct({
-  type: Schema.Literal("event"),
-  doc: Schema.NullOr(Schema.String),
-  ev: Schema.Record(Schema.String, Schema.Unknown),
-});
-const LogMsg = Schema.Struct({
-  type: Schema.Literal("log"),
-  doc: Schema.NullOr(Schema.String),
-  log: Schema.Struct({
-    items: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
-    busy: Schema.Boolean,
-    undoable: Schema.Number,
-  }),
-});
-const TurnDone = Schema.Struct({
-  type: Schema.Literal("turn_done"),
-  doc: Schema.NullOr(Schema.String),
-});
+/** Messages the browser terminal pane sends over /api/agent/events WebSocket. */
+export type BrowserToAgent =
+  | { type: "pty_attach"; terminal: string; cols: number; rows: number }
+  | { type: "pty_detach"; terminal?: string }
+  | { type: "pty_input"; terminal: string; data: string }
+  | { type: "pty_resize"; terminal: string; cols: number; rows: number }
+  | { type: "pty_select"; terminal: string };
 
-const FromBridgeSchema = Schema.fromJsonString(Schema.Union([Hello, Bind, Unbind, EventMsg, LogMsg, TurnDone]));
-const decodeFromBridgeOption = Schema.decodeUnknownOption(FromBridgeSchema);
-
-/** Parses one JSON text frame from a local bridge; null if malformed or unknown. */
-export function parseFromBridge(raw: string): FromBridge | null {
-  const res = decodeFromBridgeOption(raw);
-  return res._tag == "Some" ? (res.value as unknown as FromBridge) : null;
-}
-
-const ToBridgeSchema = Schema.fromJsonString(
-  Schema.Union([
-    Schema.Struct({
-      type: Schema.Literal("prompt"),
-      doc: Schema.NullOr(Schema.String),
-      docAddress: Schema.optionalKey(Schema.NullOr(Schema.String)),
-      text: Schema.String,
-      context: Schema.NullOr(Schema.String),
-      files: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
-      id: Schema.optionalKey(Schema.String),
-    }),
-    Schema.Struct({ type: Schema.Literal("abort"), doc: Schema.NullOr(Schema.String) }),
-    Schema.Struct({ type: Schema.Literal("reset"), doc: Schema.NullOr(Schema.String) }),
-    Schema.Struct({
-      type: Schema.Literal("answer"),
-      doc: Schema.NullOr(Schema.String),
-      id: Schema.String,
-      approve: Schema.Boolean,
-      choice: Schema.optionalKey(Schema.String),
-    }),
-    Schema.Struct({ type: Schema.Literal("model"), doc: Schema.NullOr(Schema.String), model: Schema.String }),
-  ])
-);
-const decodeToBridgeOption = Schema.decodeUnknownOption(ToBridgeSchema);
-
-/** Parses one JSON text frame from PersonAgent; null if malformed or unknown. */
-export function parseToBridge(raw: string): ToBridge | null {
-  const res = decodeToBridgeOption(raw);
-  return res._tag == "Some" ? (res.value as unknown as ToBridge) : null;
-}
+/** Minimum herdr-core version required by this bridge. */
+export const MIN_HC_VERSION = "0.1.20";
