@@ -7,26 +7,31 @@
 <style>
   :root {
     --bg: #f7f8fa; --ink: #1b2330; --muted: #5b6676; --accent: #1f5f8b;
+    --code-bg: #eef1f6; --code-line: #dce2ea;
     --display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
     --body: "Literata", Georgia, "Times New Roman", serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) { --bg: #12161d; --ink: #e4e8ee; --muted: #9aa5b4; --accent: #7fb6e0; }
+    :root:not([data-theme="light"]) { --bg: #12161d; --ink: #e4e8ee; --muted: #9aa5b4; --accent: #7fb6e0; --code-bg: #1a202b; --code-line: #2a3342; }
   }
-  :root[data-theme="dark"] { --bg: #12161d; --ink: #e4e8ee; --muted: #9aa5b4; --accent: #7fb6e0; color-scheme: dark; }
+  :root[data-theme="dark"] { --bg: #12161d; --ink: #e4e8ee; --muted: #9aa5b4; --accent: #7fb6e0; --code-bg: #1a202b; --code-line: #2a3342; color-scheme: dark; }
   :root[data-theme="light"] { color-scheme: light; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; }
-  .page { max-width: 44rem; margin: 0 auto; padding: 56px 16px 96px; display: grid; gap: 28px; }
+  .page { max-width: 44rem; margin: 0 auto; padding: 56px 16px 96px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
   h1, h2, h3 { font-family: var(--display); line-height: 1.15; margin: 0; text-wrap: balance; }
   h1 { font-size: 2.3rem; font-weight: 700; letter-spacing: -.01em; }
   h2 { font-size: 1.3rem; font-weight: 600; }
   h3 { font-size: 1rem; font-weight: 600; }
-  p, ul, ol { margin: 0; }
+  p, ul, ol, pre { margin: 0; }
   a { color: var(--accent); }
-  section { display: grid; gap: 12px; }
-  @media (max-width: 480px) { body { font-size: 16px; } h1 { font-size: 1.9rem; } }
+  code { font-family: var(--mono); font-size: .84em; background: var(--code-bg); border: 1px solid var(--code-line); padding: .1em .36em; border-radius: 5px; overflow-wrap: anywhere; }
+  pre { background: var(--code-bg); border: 1px solid var(--code-line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; font-family: var(--mono); font-size: .875rem; line-height: 1.55; tab-size: 2; }
+  pre code { background: none; border: 0; padding: 0; border-radius: 0; font-size: inherit; overflow-wrap: normal; }
+  section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 480px) { body { font-size: 16px; } h1 { font-size: 1.9rem; } pre { padding: 12px 14px; font-size: .84rem; } }
 </style>
 </head>
 <body>

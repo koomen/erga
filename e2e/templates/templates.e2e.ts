@@ -172,6 +172,53 @@ journey("a new document from the picker", () => {
     // The second document asks for the same font files as the first: the browser has them, and fetches none again
     // (on a deployed server, where the documents' hosts are one site; here each document's host is a site of its own).
     await expect.poll(fontFiles).toEqual(fonts);
+    // Code blocks and inline code in the Document template have distinct surfaces, reset inner <code>, and scroll without page blowout.
+    const code = await inPage<{
+      preSurface: boolean;
+      preRadius: string;
+      preOverflowX: string;
+      preCodeReset: boolean;
+      inlineSurface: boolean;
+      inlineRadius: string;
+      scrollsInPre: boolean;
+      noPageOverflow: boolean;
+    }>(
+      page,
+      `(() => {
+        const sec = document.querySelector("section");
+        const p = document.createElement("p");
+        p.innerHTML = 'Inline <code>npm test</code> check.';
+        const pre = document.createElement("pre");
+        const pc = document.createElement("code");
+        pc.textContent = "x".repeat(240);
+        pre.append(pc);
+        sec.append(p, pre);
+        const bodyBg = getComputedStyle(document.body).backgroundColor;
+        const preS = getComputedStyle(pre), pcS = getComputedStyle(pc), inS = getComputedStyle(p.querySelector("code"));
+        const res = {
+          preSurface: preS.backgroundColor != bodyBg && preS.backgroundColor != "rgba(0, 0, 0, 0)",
+          preRadius: preS.borderTopLeftRadius,
+          preOverflowX: preS.overflowX,
+          preCodeReset: pcS.backgroundColor == "rgba(0, 0, 0, 0)" && pcS.paddingLeft == "0px",
+          inlineSurface: inS.backgroundColor != bodyBg && inS.backgroundColor != "rgba(0, 0, 0, 0)",
+          inlineRadius: inS.borderTopLeftRadius,
+          scrollsInPre: pre.scrollWidth > pre.clientWidth,
+          noPageOverflow: document.documentElement.scrollWidth <= innerWidth,
+        };
+        p.remove(); pre.remove();
+        return res;
+      })()`
+    );
+    expect(code).toEqual({
+      preSurface: true,
+      preRadius: "10px",
+      preOverflowX: "auto",
+      preCodeReset: true,
+      inlineSurface: true,
+      inlineRadius: "5px",
+      scrollsInPre: true,
+      noPageOverflow: true,
+    });
   });
 
   test("signed out, the homepage's + opens the picker, with Clone last, and a template goes to sign-in and comes back to make the document", async ({
