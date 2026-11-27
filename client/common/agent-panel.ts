@@ -17,6 +17,7 @@ export interface Drawn {
   log: string;
   model: string;
   choice?: string;
+  thread?: string;
   top: number;
   bottom: boolean;
 }
@@ -121,4 +122,37 @@ export function blockedStep(s: BlockedState, ev: BlockedEvent): { state: Blocked
   const prev = s.at == "blocked" ? s.seen : [];
   const fresh = ev.asking.some((id) => !prev.includes(id));
   return { state: { at: "blocked", seen: [...ev.asking] }, expand: fresh && !ev.open };
+}
+
+/** Whether a panel choice/thread identifier refers to a connected local agent rather than the embedded agent. */
+export const isLocalChoiceId = (choice: string | null | undefined): boolean =>
+  typeof choice == "string" && choice.startsWith("local:") && choice.length > "local:".length;
+
+export type ThreadEvent =
+  | { readonly t: "sync"; readonly thread: string }
+  | { readonly t: "agent"; readonly thread?: string }
+  | { readonly t: "log"; readonly thread?: string };
+
+export type ThreadEffect =
+  | { readonly action: "apply" }
+  | { readonly action: "swap"; readonly switched: boolean }
+  | { readonly action: "resync" };
+
+/**
+ * Pure guard for the active thread shown in the agent panel.
+ * Prevents an event or log tagged for another thread (e.g. a newly bound local agent arriving before
+ * async panelState finishes) from ever appending onto whatever conversation is currently drawn.
+ */
+export function threadEventStep(
+  current: string | null,
+  ev: ThreadEvent
+): { readonly thread: string | null; readonly effect: ThreadEffect } {
+  if (ev.t == "sync") {
+    const switched = current != null && current != ev.thread;
+    return { thread: ev.thread, effect: { action: "swap", switched } };
+  }
+  if (ev.thread && current && ev.thread != current) {
+    return { thread: current, effect: { action: "resync" } };
+  }
+  return { thread: ev.thread ?? current, effect: { action: "apply" } };
 }

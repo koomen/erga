@@ -60,6 +60,8 @@ export interface Chat {
   failed(id: string, reason: string): void;
   /** A message is on its way: sent, and the transcript doesn't have it yet. */
   sending(): boolean;
+  /** Drops pending/failed outgoing bubbles when switching to a different thread. */
+  clearPending(): void;
 }
 
 export function chat(opts: ChatOptions): Chat {
@@ -289,6 +291,12 @@ export function chat(opts: ChatOptions): Chat {
     return els.map((el) => el.outerHTML).join("");
   };
 
+  function clearPending() {
+    for (const m of sends.values()) m.el.remove();
+    sends.clear();
+    awaited = false;
+  }
+
   return {
     log,
     render,
@@ -299,5 +307,6 @@ export function chat(opts: ChatOptions): Chat {
     pending,
     failed: (id, reason) => step(id, { t: "fail", reason }),
     sending,
+    clearPending,
   };
 }

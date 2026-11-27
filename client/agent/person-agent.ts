@@ -29,7 +29,17 @@ import { sleep } from "../../shared/time";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
-import { blockedStep, IDLE_BLOCKED, pageDoc, panelStep, savePanel, type BlockedState, type PanelPhase } from "../common/agent-panel";
+import {
+  blockedStep,
+  IDLE_BLOCKED,
+  isLocalChoiceId,
+  pageDoc,
+  panelStep,
+  savePanel,
+  threadEventStep,
+  type BlockedState,
+  type PanelPhase,
+} from "../common/agent-panel";
 import { mountTurn, type TurnFacts } from "./turn-summary";
 import { mountVoice, type VoiceControl } from "./voice";
 
@@ -38,6 +48,7 @@ interface AgentState {
   reason?: string;
   model?: string | null;
   choice?: string | null;
+  thread?: string;
   models?: { id: string; label: string; group?: "local" | "embedded"; key?: "own" | "server"; agent?: string }[];
   log?: Log;
 }
@@ -445,11 +456,41 @@ window.addEventListener("erga:agent-shown", (e) => {
   window.ergaAlerts?.end(TURN_FAILED);
 });
 
+let activeThread: string | null = $("agent").dataset.thread || null;
+
 function swapLog(l: Log) {
   log.items = l.items;
   log.busy = l.busy;
   log.undoable = l.undoable;
   talk.render();
+}
+
+function updateThreadChrome(choice?: string | null, label?: string | null) {
+  const isLocal = isLocalChoiceId(choice);
+  $("agent").querySelector(".agent-head")?.classList.toggle("is-local", isLocal);
+  const logEl = $("agent-log");
+  if (isLocal && label) logEl.dataset.threadNote = `Connected to ${label} · New thread`;
+  else delete logEl.dataset.threadNote;
+}
+
+function applyThreadState(nextThread: string | undefined, nextLog: Log | undefined, choice?: string | null, label?: string | null) {
+  const target = nextThread ?? activeThread ?? "embedded";
+  const res = threadEventStep(activeThread, { t: "sync", thread: target });
+  const switched = res.effect.action == "swap" && res.effect.switched;
+  activeThread = res.thread;
+  if (activeThread) $("agent").dataset.thread = activeThread;
+  if (switched) {
+    blocked = IDLE_BLOCKED;
+    talk.clearPending();
+    if (!hint.dataset.off && !hint.dataset.voice) hideHint();
+    turn?.facts(null);
+    void readUndo();
+  }
+  updateThreadChrome(choice, label);
+  if (nextLog) {
+    if (switched) wasBusy = nextLog.busy;
+    swapLog(nextLog);
+  }
 }
 
 // Which model or connected local agent the panel talks to: connected agents show in a section above built-in models.
@@ -496,10 +537,8 @@ function renderModel(m: AgentState | null) {
       showHint("Couldn't switch models.");
       return;
     }
-    if (r.log) {
-      swapLog(r.log);
-      renderBusy();
-    }
+    applyThreadState(r.thread, r.log, r.choice ?? sel.value, r.model ?? sel.selectedOptions[0]?.text);
+    renderBusy();
     showHint(log.busy ? `${sel.selectedOptions[0]?.text}: from your next message` : `Switched to ${sel.selectedOptions[0]?.text}`);
   });
   el.append(sel);
@@ -539,14 +578,13 @@ async function load(tries = 0, fresh = false): Promise<void> {
   // The server restarting (a redeploy): ask again shortly, as the panel was, rather than call the agent off.
   if (!a.enabled && again && down < 8) { downTimer = window.setTimeout(() => load(), backoff(down++)); return; }
   down = 0;
-  const l = (await kept)?.log ?? a.log;
+  const l = a.log ?? (await kept)?.log;
   if (heard != was && tries < 5) return load(tries + 1, fresh);
   off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
   // The editor's buttons that ask the agent (an alert's fix: client/shell/alerts.ts) follow its state.
   window.dispatchEvent(new Event("erga:agent-state"));
   renderModel(a);
-  if (l) { log.items = l.items; log.busy = l.busy; log.undoable = l.undoable; }
-  talk.render();
+  applyThreadState(a.thread, l, a.enabled ? a.choice : null, a.enabled ? a.model : null);
   phase = panelStep(phase, { t: "loaded" }).state;
   renderBusy();
 }
@@ -572,17 +610,36 @@ const events = liveSocket({
         off = null;
         renderModel({ ...m, enabled: true });
       }
-      if (m.log) swapLog(m.log);
+      applyThreadState(
+        m.enabled === false ? "embedded" : m.thread,
+        m.log,
+        m.enabled === false ? null : m.choice,
+        m.enabled === false ? null : m.model
+      );
       window.dispatchEvent(new Event("erga:agent-state"));
       renderBusy();
     }
     if (m.type == "log" && m.log) {
       heard++;
+      const step = threadEventStep(activeThread, { t: "log", thread: m.thread });
+      if (step.effect.action == "resync") {
+        void load();
+        return;
+      }
+      activeThread = step.thread;
+      if (activeThread) $("agent").dataset.thread = activeThread;
       swapLog(m.log);
       renderBusy();
     }
     if (m.type == "agent" && m.ev) {
       heard++;
+      const step = threadEventStep(activeThread, { t: "agent", thread: m.thread });
+      if (step.effect.action == "resync") {
+        void load();
+        return;
+      }
+      activeThread = step.thread;
+      if (activeThread) $("agent").dataset.thread = activeThread;
       talk.apply(m.ev);
       renderBusy();
       // The agent stopped on an error, with its panel closed: in the editor, an alert says so (client/shell/alerts.ts).
@@ -642,6 +699,7 @@ window.addEventListener("pagehide", () => {
       log: talk.drawn(),
       model: model.innerHTML,
       choice: model.querySelector("select")?.value,
+      thread: activeThread ?? undefined,
       top: l.scrollTop,
       bottom: l.scrollHeight - l.scrollTop - l.clientHeight <= 8,
     },

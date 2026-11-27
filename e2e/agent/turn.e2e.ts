@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ErgaBridgeClient } from "../../bridge/core/bridge-client";
 import { YjsDiskSync } from "../../bridge/core/yjs-sync";
+import type { LogEvent } from "../../shared/agent-log";
 import type { ToBridge } from "../../shared/bridge-protocol";
 import { agentClosed, expect, goto, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
@@ -792,7 +793,7 @@ journey("the agent on the documents' list", () => {
   });
 });
 
-test("with no key, the panel says the agent is off; a connected local bridge enables it, routes prompts and approvals, and syncs edits", async ({
+test("with no key, the panel is off; a connected local bridge enables it, routes turns/approvals, and isolates threads", async ({
   tab,
 }) => {
   const ed = await openEditor(tab, off, "page");
@@ -801,9 +802,10 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
     ed.eval<{ hint: string; hidden: boolean; disabled: string | null; title: string }>(
       `(() => { const h = document.getElementById("agent-hint"), b = document.getElementById("agent-send"); return { hint: h.innerText, hidden: h.hidden, disabled: b.getAttribute("aria-disabled"), title: b.title }; })()`
     );
+  const offHint = "To enable the agent, add an LLM provider key. Or connect your own agent.";
   await expect.poll(async () => (await state()).hidden).toBe(false);
   let st = await state();
-  expect(st.hint).toBe("To enable the agent, add an LLM provider key. Or connect your own agent.");
+  expect(st.hint).toBe(offHint);
   expect(st.disabled).toBe("true");
   expect(st.title).toMatch(/agent is off.*ANTHROPIC_API_KEY/);
   await ed.type("hello");
@@ -811,14 +813,12 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
   await ed.settle();
   st = await state();
   expect(st.hidden).toBe(false);
-  expect(st.hint).toBe("To enable the agent, add an LLM provider key. Or connect your own agent.");
+  expect(st.hint).toBe(offHint);
   expect(await ed.eval<string>(`document.getElementById("agent-input").value`)).toBe("hello");
 
-  // Connecting a local agent bridge enables the panel with no API keys, routes prompts & approvals,
-  // syncs local Yjs disk edits into the editor, and falls back to off when it disconnects.
   const docId = await ed.eval<string>(`document.querySelector('meta[name="erga-doc"]').content`);
   const { token, error } = await newToken(off.root, { label: "Antigravity" });
-  expect(error, "agent token for local bridge").toBe("");
+  expect(error, "agent token").toBe("");
   const syncDir = mkdtempSync(join(tmpdir(), "erga-bridge-e2e-"));
   const sync = new YjsDiskSync({ origin: off.root, docId, dir: syncDir, token: async () => token });
   const received: ToBridge[] = [];
@@ -830,36 +830,29 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
     token: async () => token,
     onMessage(msg) {
       received.push(msg);
+      const sendEv = (ev: LogEvent) => bridge.send({ type: "event", doc: msg.doc, ev });
       if (msg.type == "prompt") {
-        bridge.send({
-          type: "event",
-          doc: msg.doc,
-          ev: {
-            t: "tool",
-            id: "bridge-call-1",
-            name: "run_command",
-            path: "echo ok",
-            status: "asking",
-            detail: "Run local command",
-            call: { tool: "run_command", args: { CommandLine: "echo ok" } },
-            choices: [
-              { id: "deny", label: "Deny", kind: "deny" },
-              { id: "allow", label: "Allow once", kind: "allow" },
-              { id: "__erga_allow_session__", label: "Allow all (session)", kind: "always" },
-            ],
-          },
+        sendEv({
+          t: "tool",
+          id: "bridge-call-1",
+          name: "run_command",
+          path: "echo ok",
+          status: "asking",
+          detail: "Run local command",
+          call: { tool: "run_command", args: { CommandLine: "echo ok" } },
+          choices: [
+            { id: "deny", label: "Deny", kind: "deny" },
+            { id: "allow", label: "Allow once", kind: "allow" },
+            { id: "__erga_allow_session__", label: "Allow all (session)", kind: "always" },
+          ],
         });
       } else if (msg.type == "answer" && msg.id == "bridge-call-1" && msg.approve) {
-        const file = join(syncDir, "index.html");
-        writeFileSync(file, readFileSync(file, "utf8").replace("<h1>Launch notes</h1>", "<h1>Edited by local bridge</h1>"));
+        const f = join(syncDir, "index.html");
+        writeFileSync(f, readFileSync(f, "utf8").replace("<h1>Launch notes</h1>", "<h1>Edited by local bridge</h1>"));
         void sync.flush().then(() => {
-          bridge.send({
-            type: "event",
-            doc: msg.doc,
-            ev: { t: "tool", id: "bridge-call-1", name: "run_command", path: "echo ok", status: "done" },
-          });
-          bridge.send({ type: "event", doc: msg.doc, ev: { t: "text", delta: "Updated from local Antigravity." } });
-          bridge.send({ type: "event", doc: msg.doc, ev: { t: "busy", busy: false } });
+          sendEv({ t: "tool", id: "bridge-call-1", name: "run_command", path: "echo ok", status: "done" });
+          sendEv({ t: "text", delta: "Updated from local Antigravity." });
+          sendEv({ t: "busy", busy: false });
           bridge.send({ type: "turn_done", doc: msg.doc });
         });
       }
@@ -868,28 +861,27 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
   try {
     await sync.start();
     await bridge.start();
-    bridge.bind(docId, { label: "Antigravity (repo)" });
+    bridge.bind(docId, { label: "Antigravity (repo)", sessionId: "e2e-s1" });
     await until(
       () =>
         ed.eval<boolean>(
-          `document.querySelector('#agent-model-select optgroup[label="Connected agents"] option')?.textContent == "Antigravity (repo)" && document.getElementById("agent-hint").hidden`
+          `document.querySelector('#agent-model-select optgroup[label="Connected agents"] option')?.textContent == "Antigravity (repo)" && document.getElementById("agent-hint").hidden && document.querySelector(".agent-head")?.classList.contains("is-local")`
         ),
       5_000,
-      "local bridge enables panel and appears under Connected agents"
+      "bridge enables panel"
     );
     await tab.page.fill("#agent-input", "");
     await say(tab.page, "Update the heading");
     const card = tab.page.locator("#agent-log .msg-tool.asking");
-    const allowSession = card.getByRole("button", { name: "Allow all (session)" });
-    await until(() => allowSession.isVisible(), 5_000, "local bridge permission card shows real choices");
+    const allow = card.getByRole("button", { name: "Allow all (session)" });
+    await until(() => allow.isVisible(), 5_000, "permission choices");
     expect(await card.locator(".ask-acts button").allTextContents()).toEqual(["Deny", "Allow once", "Allow all (session)"]);
-    await allowSession.click();
+    await allow.click();
     await answered(tab.page, "Updated from local Antigravity.", 5_000);
     await expect.poll(() => ed.textOf("h1")).toBe("Edited by local bridge");
     expect(received.map((m) => m.type)).toEqual(["prompt", "answer"]);
     expect(received[1]).toMatchObject({ type: "answer", id: "bridge-call-1", approve: true, choice: "__erga_allow_session__" });
 
-    // A collapsed panel auto-expands when blocked without overwriting localStorage, and stays shut if dismissed.
     await tab.page.click("#agent-close");
     await expect.poll(() => paneOpen(tab.page)).toBe(false);
     const ask2 = { t: "tool" as const, id: "bridge-call-2", name: "run_command", path: "check" };
@@ -902,10 +894,24 @@ test("with no key, the panel says the agent is off; a connected local bridge ena
     await settle(tab.page);
     expect(await paneOpen(tab.page)).toBe(false);
     bridge.send({ type: "event", doc: docId, ev: { ...ask2, status: "done" } });
+
+    await tab.page.click("#agent-fab");
+    bridge.bind(docId, { label: "Antigravity (repo)", sessionId: "e2e-s2" });
+    await until(
+      () =>
+        ed.eval<boolean>(
+          `document.getElementById("agent").dataset.thread == "local:e2e-antigravity:e2e-s2" && !document.getElementById("agent-log").children.length`
+        ),
+      5_000,
+      "2nd local thread"
+    );
+    bridge.send({ type: "event", doc: docId, ev: { t: "text", delta: "Fresh thread." } });
+    await answered(tab.page, "Fresh thread.", 5_000);
+    expect(await answers(tab.page)).toEqual(["Fresh thread."]);
   } finally {
     bridge.stop();
     await sync.stop();
     rmSync(syncDir, { recursive: true, force: true });
   }
-  await expect.poll(async () => (await state()).hint).toBe("To enable the agent, add an LLM provider key. Or connect your own agent.");
+  await expect.poll(async () => (await state()).hint).toBe(offHint);
 });

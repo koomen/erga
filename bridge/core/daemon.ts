@@ -767,12 +767,18 @@ export class ErgaDaemon {
     return { behavior: ok ? "allow" : "deny" };
   }
 
-  /** The agent's process goes on in a new session (Claude Code: /clear). The documents that the process opened go with it. */
+  /** The agent's process goes on in a new session (Claude Code: /clear). The documents that the process opened go with it, in a fresh thread. */
   private adopt(cid: string, pid: number | undefined): void {
     for (const m of this.mounts.values()) {
       if (!pid || m.pid != pid || m.conversationId == cid) continue;
       if (m.conversationId) this.liveSessions.delete(m.conversationId);
       m.conversationId = cid;
+      const b = this.bridges.get(m.origin);
+      if (b) {
+        const folderLabel = basename(m.cwd);
+        const label = folderLabel && m.cwd != m.dir ? `${this.driver.label} (${folderLabel})` : this.driver.label;
+        b.bind(m.docId, { label, sessionId: cid, cwd: m.cwd });
+      }
     }
   }
 
@@ -833,6 +839,7 @@ export class ErgaDaemon {
         mountedForDoc.mirror?.stop();
         mountedForDoc.mirror = null;
         mountedForDoc.transcriptPath = null;
+        bridge.rotateThread(mountedForDoc.docId);
       }
       return;
     }

@@ -20,9 +20,11 @@ declare global {
  */
 function drawAsLeft(kept: Drawn | null, doc: string | null) {
   try {
-    if (!kept || kept.person != document.getElementById("agent")!.dataset.person || kept.doc != doc) return;
+    const agent = document.getElementById("agent")!;
+    if (!kept || kept.person != agent.dataset.person || kept.doc != doc) return;
     const log = document.getElementById("agent-log")!,
       model = document.getElementById("agent-model")!;
+    if (kept.thread) agent.dataset.thread = kept.thread;
     log.innerHTML = kept.log;
     model.innerHTML = kept.model;
     if (kept.choice) model.querySelector("select")!.value = kept.choice;

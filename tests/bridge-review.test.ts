@@ -315,6 +315,7 @@ test("PersonAgents removes dead bridges on send failure and enforces edit access
 test("bridge reconnect preserves explicit switch to an embedded model", async () => {
   let st = bridgeStep(EMPTY_BRIDGES, {
     on: "connect",
+    fallbackThreadId: "conn-1",
     bridge: {
       id: "agy-1",
       agent: "antigravity",
@@ -326,7 +327,7 @@ test("bridge reconnect preserves explicit switch to an embedded model", async ()
       connectedAt: 1,
     },
   }).state;
-  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1" }).state;
+  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1", fallbackThreadId: "bind-1" }).state;
   expect(activeBridge(st, "doc1")?.id).toBe("agy-1");
 
   // User explicitly picks an embedded model on doc1.
@@ -338,6 +339,7 @@ test("bridge reconnect preserves explicit switch to an embedded model", async ()
   st = bridgeStep(st, {
     on: "connect",
     reconnect: true,
+    fallbackThreadId: "conn-2",
     bridge: {
       id: "agy-1",
       agent: "antigravity",
@@ -349,12 +351,12 @@ test("bridge reconnect preserves explicit switch to an embedded model", async ()
       connectedAt: 2,
     },
   }).state;
-  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1", reconnect: true }).state;
+  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1", reconnect: true, fallbackThreadId: "bind-2" }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
   expect(panelOptions(st, "doc1", [{ id: "sonnet", label: "Sonnet" }]).map((o) => o.id)).toEqual(["local:agy-1", "sonnet"]);
 
   // Explicit new bind (without reconnect) switches back to the local bridge.
-  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1" }).state;
+  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1", fallbackThreadId: "bind-3" }).state;
   expect(activeBridge(st, "doc1")?.id).toBe("agy-1");
 
   // Verify ErgaBridgeClient sets reconnect: true only on subsequent opens.

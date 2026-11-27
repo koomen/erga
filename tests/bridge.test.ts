@@ -14,7 +14,7 @@ import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
-import { activeBridge, bridgeStep, EMPTY_BRIDGES, localScopeOf, panelOptions } from "../agents/person/bridge.ts";
+import { activeBridge, bridgeStep, bridgeThreadId, EMPTY_BRIDGES, localScopeOf, panelOptions } from "../agents/person/bridge.ts";
 import { PersonAgents } from "../agents/person/sessions.ts";
 import type { ChatSql } from "../agents/chat-store.ts";
 import { ALLOW_SESSION_CHOICE, createAcpDriver, permissionChoices } from "../bridge/drivers/acp.ts";
@@ -66,6 +66,7 @@ test("bridge state machine orders connected agents above built-in models and def
   // Connecting a global agent makes it default and puts it in the "local" group first.
   const c1 = bridgeStep(st, {
     on: "connect",
+    fallbackThreadId: "t-conn-1",
     bridge: {
       id: "antigravity-mac",
       agent: "antigravity",
@@ -80,6 +81,7 @@ test("bridge state machine orders connected agents above built-in models and def
   st = c1.state;
   expect(c1.notify).toEqual(["*"]);
   expect(activeBridge(st, "doc1")?.id).toBe("antigravity-mac");
+  expect(bridgeThreadId(activeBridge(st, "doc1")!, "doc1")).toBe("t-conn-1");
   expect(panelOptions(st, "doc1", embedded)).toEqual([
     { id: "local:antigravity-mac", label: "Antigravity", group: "local", agent: "antigravity" },
     { id: "sonnet", label: "Claude Sonnet", key: "server", group: "embedded" },
@@ -90,11 +92,18 @@ test("bridge state machine orders connected agents above built-in models and def
   expect(activeBridge(st, "doc1")).toBeNull();
   expect(activeBridge(st, "doc2")?.id).toBe("antigravity-mac");
 
-  // Binding a document to the local agent switches that doc back to the local agent.
-  const b1 = bridgeStep(st, { on: "bind", id: "antigravity-mac", doc: "doc1", label: "Antigravity (repo)" });
+  const b1 = bridgeStep(st, {
+    on: "bind",
+    id: "antigravity-mac",
+    doc: "doc1",
+    label: "Antigravity (repo)",
+    sessionId: "sess-1",
+    fallbackThreadId: "t-bind-1",
+  });
   st = b1.state;
   expect(b1.notify).toEqual(["doc1"]);
   expect(activeBridge(st, "doc1")?.id).toBe("antigravity-mac");
+  expect(bridgeThreadId(activeBridge(st, "doc1")!, "doc1")).toBe("sess-1");
   expect(panelOptions(st, "doc1", embedded)[0].label).toBe("Antigravity (repo)");
 
   // Disconnecting cleans up and falls back to embedded.
@@ -108,6 +117,7 @@ test("bridge enforces document-scoped grant onlyDoc", () => {
   let st = EMPTY_BRIDGES;
   st = bridgeStep(st, {
     on: "connect",
+    fallbackThreadId: "t-scoped",
     bridge: {
       id: "scoped",
       agent: "antigravity",
@@ -121,7 +131,7 @@ test("bridge enforces document-scoped grant onlyDoc", () => {
   }).state;
   expect(activeBridge(st, "docA")?.id).toBe("scoped");
   expect(activeBridge(st, "docB")).toBeNull();
-  const badBind = bridgeStep(st, { on: "bind", id: "scoped", doc: "docB" });
+  const badBind = bridgeStep(st, { on: "bind", id: "scoped", doc: "docB", fallbackThreadId: "t-bad" });
   expect(badBind.ok).toBe(false);
   expect(activeBridge(badBind.state, "docB")).toBeNull();
 });
@@ -201,7 +211,7 @@ test("PersonAgents enables panel with no API keys when a local bridge connects, 
   const conv = await agents.conversation("pete", "doc1");
   expect(conv.items.some((i) => i.kind == "user" && i.text == "Update heading")).toBe(true);
   expect(conv.items.some((i) => i.kind == "assistant" && i.text == "Updated!")).toBe(true);
-  expect(localScopeOf("pete", "doc1", "agy-1")).toBe("local:agy-1:doc1:pete");
+  expect(localScopeOf("pete", "doc1", "agy-1", "sess-1")).toBe("local:agy-1:sess-1:doc1:pete");
 
   // Disconnecting bridge turns panel back off (since no API keys are set).
   bridge.close();

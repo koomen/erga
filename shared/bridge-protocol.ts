@@ -9,7 +9,9 @@ import type { Attachment } from "./attach.ts";
 
 /** Prefix for a connected local agent in the panel's model/agent dropdown. */
 export const LOCAL_PREFIX = "local:";
+export const EMBEDDED_THREAD = "embedded";
 export const localChoice = (bridgeId: string): string => `${LOCAL_PREFIX}${bridgeId}`;
+export const localThreadKey = (bridgeId: string, threadId: string): string => `${LOCAL_PREFIX}${bridgeId}:${threadId}`;
 export const isLocalChoice = (choice: string | null | undefined): choice is string =>
   typeof choice == "string" && choice.startsWith(LOCAL_PREFIX) && choice.length > LOCAL_PREFIX.length;
 export const bridgeIdOf = (choice: string): string | null => (isLocalChoice(choice) ? choice.slice(LOCAL_PREFIX.length) : null);
@@ -47,6 +49,7 @@ export type FromBridge =
       label: string;
       doc?: string | null;
       sessionId?: string | null;
+      threadId?: string | null;
       cwd?: string | null;
       model?: string | null;
       models?: readonly BridgeModel[];
@@ -57,6 +60,7 @@ export type FromBridge =
       doc: string;
       label?: string;
       sessionId?: string | null;
+      threadId?: string | null;
       cwd?: string | null;
       reconnect?: boolean;
     }
@@ -126,6 +130,7 @@ const Hello = Schema.Struct({
   label: Schema.String,
   doc: Schema.optionalKey(Schema.NullOr(Schema.String)),
   sessionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  threadId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
   model: Schema.optionalKey(Schema.NullOr(Schema.String)),
   models: Schema.optionalKey(Schema.Array(BridgeModel)),
@@ -136,6 +141,7 @@ const Bind = Schema.Struct({
   doc: Schema.String,
   label: Schema.optionalKey(Schema.String),
   sessionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  threadId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
   reconnect: Schema.optionalKey(Schema.Boolean),
 });

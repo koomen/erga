@@ -26,8 +26,9 @@ export class ErgaBridgeClient {
   private tries = 0;
   private hasConnected = false;
   private closed = false;
-  /** Active document bindings replayed automatically on every reconnect. */
-  private bindings = new Map<string, { label?: string; sessionId?: string | null; cwd?: string | null }>();
+  private readonly connThreadId = crypto.randomUUID();
+  /** Active document bindings replayed automatically on every reconnect (keeping the same threadId). */
+  private bindings = new Map<string, { label?: string; sessionId?: string | null; cwd?: string | null; threadId: string }>();
   private openResolve: (() => void) | null = null;
 
   constructor(private readonly opts: BridgeClientOptions) {}
@@ -42,10 +43,20 @@ export class ErgaBridgeClient {
     await this.connect();
   }
 
-  /** Binds a document to this bridge (auto-switches that document's panel to this agent). */
-  bind(doc: string, info: { label?: string; sessionId?: string | null; cwd?: string | null } = {}): void {
-    this.bindings.set(doc, info);
-    this.send({ type: "bind", doc, ...info });
+  /** Binds a document to this bridge (auto-switches that document's panel to this agent's own thread). */
+  bind(doc: string, info: { label?: string; sessionId?: string | null; cwd?: string | null; threadId?: string | null } = {}): void {
+    const prev = this.bindings.get(doc);
+    const threadId = info.threadId || info.sessionId || (prev && !prev.sessionId ? prev.threadId : crypto.randomUUID());
+    const entry = { ...info, threadId };
+    this.bindings.set(doc, entry);
+    this.send({ type: "bind", doc, ...entry });
+  }
+
+  /** Rotates the stored threadId for `doc` after a browser reset so reconnects never resurrect the old thread. */
+  rotateThread(doc: string): void {
+    const prev = this.bindings.get(doc);
+    if (!prev) return;
+    this.bindings.set(doc, { ...prev, sessionId: null, threadId: crypto.randomUUID() });
   }
 
   unbind(doc: string): void {
@@ -103,6 +114,7 @@ export class ErgaBridgeClient {
           id: this.opts.id,
           agent: this.opts.agent,
           label: this.opts.label,
+          threadId: this.connThreadId,
           ...(reconnect ? { reconnect: true } : {}),
         });
         for (const [doc, info] of this.bindings) this.send({ type: "bind", doc, ...info, ...(reconnect ? { reconnect: true } : {}) });

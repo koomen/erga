@@ -7,7 +7,17 @@
 // SQLite and forwards the calls. The routes that reach it (/api/agent...) are routes.ts's.
 
 import { startAgent, type AgentSession } from "./agent.ts";
-import { activeBridge, bridgeLabelFor, bridgeStep, EMPTY_BRIDGES, localScopeOf, panelOptions, type BridgeState } from "./bridge.ts";
+import {
+  activeBridge,
+  bridgeLabelFor,
+  bridgeStep,
+  bridgeThreadId,
+  EMPTY_BRIDGES,
+  localScopeOf,
+  panelOptions,
+  threadKeyFor,
+  type BridgeState,
+} from "./bridge.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
 import { agentTools, opsOf, toolsFor } from "../tools.ts";
@@ -17,7 +27,15 @@ import { isModelChoice, type AgentSettings } from "../models.ts";
 import { emptyLog, reduce, type Log, type LogEvent } from "../../shared/agent-log.ts";
 import { checkAttachments, fileRefs } from "../../shared/attach.ts";
 import { VIA } from "../../shared/attribution.ts";
-import { isLocalChoice, localChoice, parseFromBridge, type PanelOption, type ToBridge } from "../../shared/bridge-protocol.ts";
+import {
+  EMBEDDED_THREAD,
+  isLocalChoice,
+  localChoice,
+  localThreadKey,
+  parseFromBridge,
+  type PanelOption,
+  type ToBridge,
+} from "../../shared/bridge-protocol.ts";
 import { PING, PONG } from "../../shared/room-socket.ts";
 import { authOps } from "../../server/identity/index.ts";
 import type { Platform } from "../../server/platform.ts";
@@ -128,6 +146,8 @@ export class PersonAgents {
   private bridgeSockets = new Map<string, BridgeSocket>();
   /** In-memory transcript for each connected local agent's own thread scope. */
   private localLogs = new Map<string, Log>();
+  /** Monotonic notify sequence per `${login}\n${doc ?? ""}` so stale async panelState() snapshots never overwrite newer ones. */
+  private panelSeqs = new Map<string, number>();
   /** Last known origin for a person's pages (used when notifying tabs on bridge state changes). */
   private origins = new Map<string, string>();
   private beat: Fiber.Fiber<void> | null = null;
@@ -218,7 +238,7 @@ export class PersonAgents {
       modelChanged: () => {
         if (!activeBridge(this.bridgesOf(login), doc)) {
           const models = panelOptions(this.bridgesOf(login), doc, modelState(agent).models);
-          this.event({ type: "model", enabled: true, ...modelState(agent), models }, login, scope);
+          this.event({ type: "model", enabled: true, thread: EMBEDDED_THREAD, ...modelState(agent), models }, login, scope);
         }
       },
       limit: () => dailyLimit(this.platform.directory, login),
@@ -240,7 +260,7 @@ export class PersonAgents {
       state.turn = null;
     });
     agent.subscribe((ev) => {
-      if (!activeBridge(this.bridgesOf(login), doc)) this.event({ type: "agent", ev }, login, scope);
+      if (!activeBridge(this.bridgesOf(login), doc)) this.event({ type: "agent", thread: EMBEDDED_THREAD, ev }, login, scope);
     });
     s = Object.assign(state, { agent });
     this.agents.set(scope, s);
@@ -253,8 +273,8 @@ export class PersonAgents {
     return this.bridgeStates.get(login) ?? EMPTY_BRIDGES;
   }
 
-  private localLogOf(login: string, doc: string | null, bridgeId: string): Log {
-    const scope = localScopeOf(login, doc, bridgeId);
+  private localLogOf(login: string, doc: string | null, bridgeId: string, threadId: string): Log {
+    const scope = localScopeOf(login, doc, bridgeId, threadId);
     let log = this.localLogs.get(scope);
     if (!log) {
       const stored = this.chats.load(scope);
@@ -264,8 +284,8 @@ export class PersonAgents {
     return log;
   }
 
-  private saveLocalLog(login: string, doc: string | null, bridgeId: string, log: Log): void {
-    const scope = localScopeOf(login, doc, bridgeId);
+  private saveLocalLog(login: string, doc: string | null, bridgeId: string, threadId: string, log: Log): void {
+    const scope = localScopeOf(login, doc, bridgeId, threadId);
     this.localLogs.set(scope, log);
     // running: false so the DO alarm never tries to resume a local bridge run as an embedded LLM checkpoint.
     this.chats.save(scope, {
@@ -278,7 +298,7 @@ export class PersonAgents {
         model: localChoice(bridgeId),
         bound: null,
         stable: log.items.length,
-        meta: { login, bridge: bridgeId, ...(doc ? { doc } : {}) },
+        meta: { login, bridge: bridgeId, thread: threadId, ...(doc ? { doc } : {}) },
         at: Date.now(),
       },
     });
@@ -321,17 +341,19 @@ export class PersonAgents {
     const models: PanelOption[] = panelOptions(bState, doc, embeddedModels);
     const active = activeBridge(bState, doc);
     if (active) {
-      const log = this.localLogOf(login, doc, active.id);
+      const tid = bridgeThreadId(active, doc);
+      const log = this.localLogOf(login, doc, active.id, tid);
       return {
         enabled: true as const,
         model: bridgeLabelFor(active, doc),
         choice: localChoice(active.id),
+        thread: localThreadKey(active.id, tid),
         models,
         log,
       };
     }
     if (embedded) {
-      return { enabled: true as const, ...modelState(embedded.agent), models, log: embedded.agent.log() };
+      return { enabled: true as const, ...modelState(embedded.agent), thread: EMBEDDED_THREAD, models, log: embedded.agent.log() };
     }
     return { enabled: false as const, reason: typeof s == "string" ? s : "the agent is off" };
   }
@@ -348,7 +370,11 @@ export class PersonAgents {
     for (const who of this.sockets.values()) collect(who);
     const origin = this.origins.get(login) ?? "http://localhost";
     for (const doc of wanted) {
+      const seqKey = `${login}\n${doc ?? ""}`;
+      const seq = (this.panelSeqs.get(seqKey) ?? 0) + 1;
+      this.panelSeqs.set(seqKey, seq);
       void this.panelState(login, doc, origin).then((state) => {
+        if (this.panelSeqs.get(seqKey) !== seq) return;
         this.event({ type: "model", ...state }, login, scopeOf(login, doc));
       });
     }
@@ -378,7 +404,9 @@ export class PersonAgents {
     this.origins.set(login, origin);
     const active = activeBridge(this.bridgesOf(login), targetDoc);
     if (active) {
-      const log = this.localLogOf(login, targetDoc, active.id);
+      const tid = bridgeThreadId(active, targetDoc);
+      const thread = localThreadKey(active.id, tid);
+      const log = this.localLogOf(login, targetDoc, active.id, tid);
       if (id && log.items.some((i) => i.kind == "user" && i.id == id)) return { ok: true };
       const files = checkAttachments(attached);
       if (typeof files == "string") return { ok: false, reason: files };
@@ -390,10 +418,10 @@ export class PersonAgents {
       const busyEv: LogEvent = { t: "busy", busy: true };
       reduce(log, userEv);
       reduce(log, busyEv);
-      this.saveLocalLog(login, targetDoc, active.id, log);
+      this.saveLocalLog(login, targetDoc, active.id, tid, log);
       const scope = scopeOf(login, targetDoc);
-      this.event({ type: "agent", ev: userEv }, login, scope);
-      this.event({ type: "agent", ev: busyEv }, login, scope);
+      this.event({ type: "agent", thread, ev: userEv }, login, scope);
+      this.event({ type: "agent", thread, ev: busyEv }, login, scope);
       const route = targetDoc ? await this.platform.directory.route(targetDoc).catch(() => null) : null;
       const sent = this.sendBridge(login, active.id, {
         type: "prompt",
@@ -409,9 +437,9 @@ export class PersonAgents {
         const idleEv: LogEvent = { t: "busy", busy: false };
         reduce(log, errEv);
         reduce(log, idleEv);
-        this.saveLocalLog(login, targetDoc, active.id, log);
-        this.event({ type: "agent", ev: errEv }, login, scope);
-        this.event({ type: "agent", ev: idleEv }, login, scope);
+        this.saveLocalLog(login, targetDoc, active.id, tid, log);
+        this.event({ type: "agent", thread, ev: errEv }, login, scope);
+        this.event({ type: "agent", thread, ev: idleEv }, login, scope);
         return { ok: false, reason: `${bridgeLabelFor(active, targetDoc)} disconnected` };
       }
       return { ok: true };
@@ -441,7 +469,7 @@ export class PersonAgents {
   /** A thread's conversation: the active local agent's, or the live/stored embedded one. */
   async conversation(login: string, doc: string | null): Promise<Log> {
     const active = activeBridge(this.bridgesOf(login), doc);
-    if (active) return this.localLogOf(login, doc, active.id);
+    if (active) return this.localLogOf(login, doc, active.id, bridgeThreadId(active, doc));
     const scope = scopeOf(login, doc);
     const live = this.agents.get(scope)?.agent.log();
     if (live) return live;
@@ -461,11 +489,15 @@ export class PersonAgents {
   async clearConversation(login: string, doc: string | null): Promise<Log> {
     const active = activeBridge(this.bridgesOf(login), doc);
     if (active) {
-      const lScope = localScopeOf(login, doc, active.id);
+      const tid = bridgeThreadId(active, doc);
+      const lScope = localScopeOf(login, doc, active.id, tid);
       this.localLogs.set(lScope, emptyLog());
       this.chats.clear(lScope);
+      const res = bridgeStep(this.bridgesOf(login), { on: "reset", id: active.id, doc, nextThreadId: crypto.randomUUID() });
+      this.bridgeStates.set(login, res.state);
       this.sendBridge(login, active.id, { type: "reset", doc });
-      this.event({ type: "agent", ev: { t: "reset" } }, login, scopeOf(login, doc));
+      this.event({ type: "agent", thread: localThreadKey(active.id, tid), ev: { t: "reset" } }, login, scopeOf(login, doc));
+      if (res.notify) this.notifyPanels(login, res.notify);
       return emptyLog();
     }
     const scope = scopeOf(login, doc);
@@ -473,7 +505,7 @@ export class PersonAgents {
     if (s) await s.agent.reset();
     else {
       this.chats.clear(scope);
-      this.event({ type: "agent", ev: { t: "reset" } }, login, scope);
+      this.event({ type: "agent", thread: EMBEDDED_THREAD, ev: { t: "reset" } }, login, scope);
     }
     return emptyLog();
   }
@@ -487,14 +519,14 @@ export class PersonAgents {
   ) {
     const scope = scopeOf(login, doc);
     if (op == "model") {
-      const wasBridge = activeBridge(this.bridgesOf(login), doc);
+      const wasThread = threadKeyFor(activeBridge(this.bridgesOf(login), doc), doc);
       if (isLocalChoice(model)) {
         const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
         if (!res.ok) return { ok: false, reason: "that connected agent isn't available" };
         this.bridgeStates.set(login, res.state);
         const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-        const nowBridge = activeBridge(res.state, doc);
-        const payload = wasBridge?.id == nowBridge?.id ? { ...state, log: undefined } : state;
+        const nowThread = threadKeyFor(activeBridge(res.state, doc), doc);
+        const payload = wasThread == nowThread ? { ...state, log: undefined } : state;
         this.event({ type: "model", ...payload }, login, scope);
         return { ok: true, ...payload };
       }
@@ -504,21 +536,23 @@ export class PersonAgents {
       const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
       this.bridgeStates.set(login, res.state);
       const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-      // Only send a log replacement when switching scopes (local bridge -> embedded), never between two embedded models.
-      const payload = wasBridge ? state : { ...state, log: undefined };
+      // Only send a log replacement when switching threads (local bridge <-> embedded), never between two embedded models.
+      const nowThread = threadKeyFor(activeBridge(res.state, doc), doc);
+      const payload = wasThread == nowThread ? { ...state, log: undefined } : state;
       this.event({ type: "model", ...payload }, login, scope);
       return { ok: true, ...payload };
     }
     const active = activeBridge(this.bridgesOf(login), doc);
     if (active) {
       if (op == "abort") {
+        const tid = bridgeThreadId(active, doc);
         this.sendBridge(login, active.id, { type: "abort", doc });
-        const log = this.localLogOf(login, doc, active.id);
+        const log = this.localLogOf(login, doc, active.id, tid);
         if (log.busy) {
           const ev: LogEvent = { t: "busy", busy: false };
           reduce(log, ev);
-          this.saveLocalLog(login, doc, active.id, log);
-          this.event({ type: "agent", ev }, login, scope);
+          this.saveLocalLog(login, doc, active.id, tid, log);
+          this.event({ type: "agent", thread: localThreadKey(active.id, tid), ev }, login, scope);
         }
         return { ok: true };
       }
@@ -544,7 +578,7 @@ export class PersonAgents {
       // A run kept from before a restart, that no agent goes on with yet: Stop ends it, and the alarm wakes nothing.
       if (op == "abort" && this.chats.running().some((r) => r.scope == scope)) {
         this.chats.stop(scope);
-        this.event({ type: "agent", ev: { t: "busy", busy: false } }, login, scope);
+        this.event({ type: "agent", thread: EMBEDDED_THREAD, ev: { t: "busy", busy: false } }, login, scope);
       }
       return { ok: op == "abort" || op == "reset", reason: "the agent hasn't started" };
     }
@@ -600,6 +634,7 @@ export class PersonAgents {
           applyAndNotify(
             bridgeStep(this.bridgesOf(info.login), {
               on: "connect",
+              fallbackThreadId: crypto.randomUUID(),
               ...(msg.reconnect ? { reconnect: true } : {}),
               bridge: {
                 id: msg.id,
@@ -609,6 +644,7 @@ export class PersonAgents {
                 onlyDoc: info.onlyDoc,
                 doc: doc ?? info.onlyDoc,
                 sessionId: msg.sessionId ?? null,
+                threadId: msg.threadId ?? null,
                 cwd: msg.cwd ?? null,
                 connectedAt: Date.now(),
               },
@@ -626,6 +662,8 @@ export class PersonAgents {
               doc: msg.doc,
               label: msg.label,
               sessionId: msg.sessionId,
+              threadId: msg.threadId,
+              fallbackThreadId: crypto.randomUUID(),
               cwd: msg.cwd,
               ...(msg.reconnect ? { reconnect: true } : {}),
             })
@@ -638,19 +676,27 @@ export class PersonAgents {
         }
         if (msg.type == "event") {
           if (info.onlyDoc && msg.doc != info.onlyDoc) return;
-          const log = this.localLogOf(info.login, msg.doc, bridgeId);
+          const bState = this.bridgesOf(info.login);
+          const b = bState.bridges.find((x) => x.id == bridgeId);
+          if (!b) return;
+          const tid = bridgeThreadId(b, msg.doc);
+          const log = this.localLogOf(info.login, msg.doc, bridgeId, tid);
           reduce(log, msg.ev);
-          this.saveLocalLog(info.login, msg.doc, bridgeId, log);
-          if (activeBridge(this.bridgesOf(info.login), msg.doc)?.id == bridgeId) {
-            this.event({ type: "agent", ev: msg.ev }, info.login, scopeOf(info.login, msg.doc));
+          this.saveLocalLog(info.login, msg.doc, bridgeId, tid, log);
+          if (activeBridge(bState, msg.doc)?.id == bridgeId) {
+            this.event({ type: "agent", thread: localThreadKey(bridgeId, tid), ev: msg.ev }, info.login, scopeOf(info.login, msg.doc));
           }
           return;
         }
         if (msg.type == "log") {
           if (info.onlyDoc && msg.doc != info.onlyDoc) return;
-          this.saveLocalLog(info.login, msg.doc, bridgeId, msg.log);
-          if (activeBridge(this.bridgesOf(info.login), msg.doc)?.id == bridgeId) {
-            this.event({ type: "log", log: msg.log }, info.login, scopeOf(info.login, msg.doc));
+          const bState = this.bridgesOf(info.login);
+          const b = bState.bridges.find((x) => x.id == bridgeId);
+          if (!b) return;
+          const tid = bridgeThreadId(b, msg.doc);
+          this.saveLocalLog(info.login, msg.doc, bridgeId, tid, msg.log);
+          if (activeBridge(bState, msg.doc)?.id == bridgeId) {
+            this.event({ type: "log", thread: localThreadKey(bridgeId, tid), log: msg.log }, info.login, scopeOf(info.login, msg.doc));
           }
           return;
         }

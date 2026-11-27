@@ -2,10 +2,10 @@
 // state machine with no IO. A local bridge connects over /api/agent/bridge and
 // advertises itself (globally, or bound to specific documents). Connected
 // agents show above built-in models in the panel dropdown, become the default
-// when connected, and keep their own conversation scope apart from the
-// embedded agent's.
+// when connected, and keep their own per-session conversation scope apart from
+// the embedded agent's and from previous local agent sessions.
 
-import { bridgeIdOf, isLocalChoice, localChoice, type PanelOption } from "../../shared/bridge-protocol.ts";
+import { bridgeIdOf, EMBEDDED_THREAD, isLocalChoice, localChoice, localThreadKey, type PanelOption } from "../../shared/bridge-protocol.ts";
 
 /** One connected local agent bridge. */
 export interface ConnectedBridge {
@@ -18,6 +18,10 @@ export interface ConnectedBridge {
   readonly docs: readonly string[];
   /** Optional per-document display label override. */
   readonly docLabels: Readonly<Record<string, string>>;
+  /** Per-document thread identity (sessionId or per-bind UUID) so each local session gets its own thread. */
+  readonly docThreads: Readonly<Record<string, string>>;
+  /** Default thread identity for this bridge connection (global / unbound documents). */
+  readonly threadId: string;
   readonly sessionId: string | null;
   readonly cwd: string | null;
   readonly connectedAt: number;
@@ -40,14 +44,26 @@ export const EMBEDDED_PICK = "embedded";
 
 export const threadKey = (doc: string | null): string => doc ?? "";
 
-/** Separate ChatTables scope for one connected bridge on one thread. */
-export const localScopeOf = (login: string, doc: string | null, bridgeId: string): string =>
-  doc ? `local:${bridgeId}:${doc}:${login}` : `local:${bridgeId}:you:${login}`;
+/** Thread identity of `bridge` on `doc`. */
+export const bridgeThreadId = (bridge: ConnectedBridge, doc: string | null): string =>
+  (doc != null ? bridge.docThreads[doc] : undefined) ?? bridge.threadId;
+
+/** Stable wire/client thread identifier for the active agent on `doc`. */
+export const threadKeyFor = (bridge: ConnectedBridge | null, doc: string | null): string =>
+  bridge ? localThreadKey(bridge.id, bridgeThreadId(bridge, doc)) : EMBEDDED_THREAD;
+
+/** Separate ChatTables scope for one connected bridge session on one document. */
+export const localScopeOf = (login: string, doc: string | null, bridgeId: string, threadId: string): string =>
+  doc ? `local:${bridgeId}:${threadId}:${doc}:${login}` : `local:${bridgeId}:${threadId}:you:${login}`;
 
 export type BridgeEvent =
   | {
       readonly on: "connect";
-      readonly bridge: Omit<ConnectedBridge, "docs" | "docLabels"> & { readonly doc?: string | null };
+      readonly bridge: Omit<ConnectedBridge, "docs" | "docLabels" | "docThreads" | "threadId"> & {
+        readonly doc?: string | null;
+        readonly threadId?: string | null;
+      };
+      readonly fallbackThreadId: string;
       readonly reconnect?: boolean;
     }
   | {
@@ -56,10 +72,13 @@ export type BridgeEvent =
       readonly doc: string;
       readonly label?: string;
       readonly sessionId?: string | null;
+      readonly threadId?: string | null;
+      readonly fallbackThreadId: string;
       readonly cwd?: string | null;
       readonly reconnect?: boolean;
     }
   | { readonly on: "unbind"; readonly id: string; readonly doc: string }
+  | { readonly on: "reset"; readonly id: string; readonly doc: string | null; readonly nextThreadId: string }
   | { readonly on: "disconnect"; readonly id: string }
   | { readonly on: "select"; readonly doc: string | null; readonly choice: string };
 
@@ -132,13 +151,20 @@ export function panelOptions(
 export function bridgeStep(state: BridgeState, ev: BridgeEvent): BridgeStepResult {
   switch (ev.on) {
     case "connect": {
-      const { doc, ...rest } = ev.bridge;
+      const { doc, threadId: incomingThreadId, ...rest } = ev.bridge;
       const prev = state.bridges.find((b) => b.id == rest.id);
       const docs = doc ? [doc] : rest.onlyDoc ? [rest.onlyDoc] : [];
+      const threadId = rest.sessionId || incomingThreadId || (ev.reconnect && prev ? prev.threadId : ev.fallbackThreadId);
+      const docThreads: Record<string, string> = ev.reconnect && prev ? { ...prev.docThreads } : {};
+      for (const d of docs) {
+        docThreads[d] = rest.sessionId || incomingThreadId || (ev.reconnect && prev?.docThreads[d] ? prev.docThreads[d] : threadId);
+      }
       const bridge: ConnectedBridge = {
         ...rest,
         docs,
         docLabels: prev?.docLabels ?? {},
+        docThreads,
+        threadId,
       };
       const bridges = [...state.bridges.filter((b) => b.id != bridge.id), bridge];
       // When a local agent connects initially, switch/default affected threads to it; a transient reconnect keeps explicit picks.
@@ -163,10 +189,14 @@ export function bridgeStep(state: BridgeState, ev: BridgeEvent): BridgeStepResul
       if (!target || (target.onlyDoc != null && target.onlyDoc != ev.doc)) return { state, notify: null, ok: false };
       const docs = target.docs.includes(ev.doc) ? target.docs : [...target.docs, ev.doc];
       const docLabels = ev.label ? { ...target.docLabels, [ev.doc]: ev.label } : target.docLabels;
+      const nextThread =
+        ev.sessionId || ev.threadId || (ev.reconnect && target.docThreads[ev.doc] ? target.docThreads[ev.doc] : ev.fallbackThreadId);
+      const docThreads = { ...target.docThreads, [ev.doc]: nextThread };
       const updated: ConnectedBridge = {
         ...target,
         docs,
         docLabels,
+        docThreads,
         sessionId: ev.sessionId !== undefined ? ev.sessionId : target.sessionId,
         cwd: ev.cwd !== undefined ? ev.cwd : target.cwd,
       };
@@ -180,10 +210,22 @@ export function bridgeStep(state: BridgeState, ev: BridgeEvent): BridgeStepResul
       const docs = target.docs.filter((d) => d != ev.doc);
       const docLabels = { ...target.docLabels };
       delete docLabels[ev.doc];
-      const bridges = state.bridges.map((b) => (b.id == ev.id ? { ...b, docs, docLabels } : b));
+      const docThreads = { ...target.docThreads };
+      delete docThreads[ev.doc];
+      const bridges = state.bridges.map((b) => (b.id == ev.id ? { ...b, docs, docLabels, docThreads } : b));
       const picks = { ...state.picks };
       if (picks[threadKey(ev.doc)] == localChoice(ev.id)) delete picks[threadKey(ev.doc)];
       return { state: { bridges, picks }, notify: [ev.doc], ok: true };
+    }
+    case "reset": {
+      const target = state.bridges.find((b) => b.id == ev.id);
+      if (!target) return { state, notify: null, ok: false };
+      const updated: ConnectedBridge =
+        ev.doc != null
+          ? { ...target, docThreads: { ...target.docThreads, [ev.doc]: ev.nextThreadId } }
+          : { ...target, threadId: ev.nextThreadId };
+      const bridges = state.bridges.map((b) => (b.id == ev.id ? updated : b));
+      return { state: { ...state, bridges }, notify: [ev.doc ?? ""], ok: true };
     }
     case "disconnect": {
       const had = state.bridges.find((b) => b.id == ev.id);
