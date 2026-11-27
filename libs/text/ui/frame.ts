@@ -43,6 +43,7 @@ import { sourceNear } from "../../../shared/feedback-context";
 import { sourceDigest } from "../../../shared/page-html";
 import { sleep } from "../../../shared/time";
 import { isAppShortcut, isMac } from "../../../client/common/app-keys";
+import { isPageDoc } from "../../../client/common/live-scope";
 import { placeOf } from "../../../client/common/link-target";
 import { keepOffline } from "../../../client/common/offline";
 import { keepPage } from "./offline-page";
@@ -344,18 +345,18 @@ function join(run: number) {
       if (page.stale) refreshSoon();
       queuePeers();
     },
-    // Another file of the folder (a stylesheet, a script, an image) changed: a stylesheet's new rules go into the page
-    // as it is (the page's first script: restyle), at once; for anything else the page is made again from its files.
+    // Another file of the folder (a stylesheet, a script, an image) changed: skip files this page never loaded or
+    // referenced; a used stylesheet's new rules go in place at once; for anything else used, the page reloads.
     // Not another page's text, which this page doesn't show. A file that was on its way (a drop, an agent's file) is
     // loaded in place by the elements that show it (pending.ts).
     onFiles: (paths) => {
       if (!page) return;
       for (const p of paths) if (awaited.has(p)) pending.arrived(p);
-      const changed = paths.filter((p) => !/\.(html?|md)$/i.test(p) && !awaited.has(p));
+      const changed = paths.filter((p) => !isPageDoc(p) && !awaited.has(p));
       if (!changed.length) return;
-      void (window.__ergaReader?.restyle?.(changed) ?? Promise.resolve(false)).then((done) => {
-        if (!done) refreshSoon();
-        else controls?.queue();
+      void (window.__ergaReader?.applyFiles?.(changed) ?? Promise.resolve("reload" as const)).then((result) => {
+        if (result == "reload") refreshSoon();
+        else if (result == "restyled") controls?.queue();
       });
     },
     onPresence: () => queuePeers(),

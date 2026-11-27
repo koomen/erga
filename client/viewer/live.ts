@@ -11,56 +11,90 @@
 
 import { liveSocket } from "../live/socket";
 import { DELETED_NOTE } from "../../shared/room-socket";
+import { normalizePagePath, scopeViewPaths } from "../common/live-scope";
 import { DONE_MS, QUIET_MS, writerName, writerStep, writerText, type WriterEvent, type WriterPhase } from "../common/writer-phase";
 
 export function viewerLive(base: string): void {
   // (The version is in a meta, not an argument: the page's build is its scripts, server/live.ts.)
   const ver = document.querySelector<HTMLMetaElement>('meta[name="erga-ver"]')!.content;
+  const currentPage = () => normalizePagePath(document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content);
   let shown = ver,
     wanted = ver,
-    // The files that changed since the version shown; null: not known (a version heard as the socket opened).
+    // The files that changed since the version shown; null: not known (a version heard as the socket opened, or >100 files).
     changed: Set<string> | null = new Set(),
+    pendingBy = "",
     asks = 0,
     last = 0,
     timer: ReturnType<typeof setTimeout> | undefined;
   // (erga-commenting: a commenter's page shows each change in place itself, client/viewer/comment.ts.)
   const editing = () => document.body.classList.contains("erga-editing") || document.body.classList.contains("erga-commenting");
-  /** Loads the version wanted, if it isn't the one shown: now, or once the last load is 2 s old. */
+  /** Updates the reader's versioned files prefix to `to` without reloading the frame. */
+  function advanceVersion(to: string): HTMLMetaElement | null {
+    shown = to;
+    // A reader's files are at an address with the version in it (server/documents/view.ts): the new version's address.
+    const pages = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]');
+    if (pages) pages.content = pages.content.replace(/\/@[^/]+\/$/, "/@" + to + "/");
+    return pages;
+  }
+  const noteWriter = (by: string) => {
+    if (by && !editing()) writer({ type: "change", by: writerName(by.slice(0, 200)) });
+  };
+  /** Loads or restyles the version wanted if it affects this page: now, or once the last load is 2 s old. */
   function show() {
     if (wanted == shown || document.hidden || editing()) return;
+    const scoped = scopeViewPaths(currentPage(), changed ? [...changed] : null);
+    if (scoped.action == "skip") {
+      changed = new Set();
+      pendingBy = "";
+      advanceVersion(wanted);
+      return;
+    }
     const wait = last + 2000 - Date.now();
     clearTimeout(timer);
     if (wait > 0) {
       timer = setTimeout(show, wait);
       return;
     }
-    last = Date.now();
-    shown = wanted;
-    // A reader's files are at an address with the version in it (server/documents/view.ts): the new version's address.
-    const pages = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]');
-    if (pages) pages.content = pages.content.replace(/\/@[^/]+\/$/, "/@" + wanted + "/");
+    const targetVer = wanted;
+    const by = pendingBy;
+    pendingBy = "";
+    changed = new Set();
+    const pages = advanceVersion(targetVer);
     // With no new entry in the tab's history (Back would show the old version of the same page). ?erga-v: a new
     // address for each version (the trap above).
-    const reload = () => ergaFrames.reload("?erga-v=" + shown);
-    const paths = changed ? [...changed] : [];
-    changed = new Set();
-    // Stylesheets only: the page takes their new rules in place (client/inline/reader.ts, restyle), and keeps its view
-    // and its scripts' state. If it can't, or doesn't answer, it loads again.
-    if (!paths.length || !paths.every((p) => /\.css$/i.test(p)) || !pages) return reload();
+    const reload = () => {
+      last = Date.now();
+      noteWriter(by);
+      ergaFrames.reload("?erga-v=" + targetVer);
+    };
+    if (scoped.action == "reload" || !pages) return reload();
+    // Non-HTML files only: ask the page whether it uses any of them (skip unused, restyle CSS in place, or reload).
     const id = ++asks;
-    const done = (ok: boolean) => {
+    const done = (result: "skip" | "restyled" | "reload") => {
       removeEventListener("message", heard);
       clearTimeout(late);
-      if (!ok) reload();
+      if (result == "skip") return;
+      last = Date.now();
+      noteWriter(by);
+      if (result == "reload") ergaFrames.reload("?erga-v=" + targetVer);
     };
     const heard = (e: MessageEvent) => {
-      if (ergaFrames.from(e) && e.data?.type == "erga-restyled" && e.data.id === id) done(e.data.ok === true);
+      if (!ergaFrames.from(e) || e.data?.type != "erga-files-done" || e.data.id !== id) return;
+      const r = e.data.result;
+      done(r == "skip" || r == "restyled" ? r : "reload");
     };
-    const late = setTimeout(() => done(false), 3000);
+    const late = setTimeout(() => done("reload"), 3000);
     addEventListener("message", heard);
-    ergaFrames.send({ type: "erga-restyle", id, paths, files: pages.content });
+    ergaFrames.send({ type: "erga-files", id, paths: scoped.paths, files: pages.content });
   }
   document.addEventListener("visibilitychange", show);
+  // In-frame navigation loaded a fresh page from the server: drop pending paths from the previous page.
+  addEventListener("message", (e) => {
+    if (!ergaFrames.from(e) || e.data?.type != "erga-nav") return;
+    changed = new Set();
+    pendingBy = "";
+    shown = wanted;
+  });
   // Who writes (an experiment): a small pill at the top of the page while changes come, then "Updated now", then gone
   // (client/common/writer-phase.ts). Never over the text, which gets no highlight.
   let writing: WriterPhase = { at: "none" };
@@ -92,10 +126,17 @@ export function viewerLive(base: string): void {
       try {
         const m = JSON.parse(e.data) as { type?: string; ver?: string; by?: string; paths?: string[] };
         if (m.type == "view" && m.ver) {
-          // Someone changed it (not the version it hears as the socket opens): the pill says who writes.
-          if (m.ver != wanted && typeof m.by == "string" && m.by && !editing())
-            writer({ type: "change", by: writerName(m.by.slice(0, 200)) });
-          if (m.ver != wanted) changed = changed && Array.isArray(m.paths) ? new Set([...changed, ...m.paths]) : null;
+          if (m.ver != wanted) {
+            const by = typeof m.by == "string" ? m.by : "";
+            changed = changed && Array.isArray(m.paths) ? new Set([...changed, ...m.paths]) : null;
+            // If this page's HTML was edited (or unknown diff), show the writer pill right away even during throttle waits.
+            if (by && !document.hidden && scopeViewPaths(currentPage(), Array.isArray(m.paths) ? m.paths : null).action == "reload") {
+              noteWriter(by);
+              pendingBy = "";
+            } else if (by) {
+              pendingBy = by;
+            }
+          }
           wanted = m.ver;
           show();
         }

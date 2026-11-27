@@ -26,6 +26,7 @@ import { linkTarget, placeOf } from "../common/link-target";
 import { BOTTOM_ROOM, TOP_ROOM, topRoom, type Seat } from "../common/top-room";
 import { readView, showView, viewOf, type View } from "../common/page-view";
 import { isAppShortcut, isMac } from "../common/app-keys";
+import { extractDocPath, parseSrcset, usedChangedPaths } from "../common/live-scope";
 import { catchZoomGestures, zoomKey, type ZoomAim, type Zoomed } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
 
@@ -245,7 +246,7 @@ export default function reader(C: ReaderConfig): void {
   window.__ergaReader = {
     config: C,
     keys: { held: keys, letGo: () => removeEventListener("keydown", holdKey, true) },
-    restyle,
+    applyFiles,
     // (The editor puts the page back where it was: with its room for the bars.)
     placed: () => {
       keepRoom();
@@ -493,10 +494,43 @@ export default function reader(C: ReaderConfig): void {
     },
     { capture: true, passive: true }
   );
-  // Stylesheets of the document changed (`paths`, in the document): their new rules take the old ones' place in the
-  // page as it is, at once, so the page keeps its view and its scripts' state. `files`: where the document's files are
-  // now (a reader's address has the version in it), else where this page's are. False when it can't (a path that is no
-  // stylesheet linked from this page, or one with an @import): then the page loads again.
+  // Non-HTML files of the document changed (`paths`, in the document): skip those this page never loaded or referenced;
+  // for used stylesheets, replace their rules in place so the page keeps its view and its scripts' state; for used
+  // scripts, images, data, or stylesheets with @import, ask the viewer/editor to reload the page.
+  let resourceOverflow = false;
+  try {
+    performance.addEventListener("resourcetimingbufferfull", () => {
+      resourceOverflow = true;
+    });
+  } catch {}
+  const docPath = (href: string) => extractDocPath(href, location.origin, C.prefix, location.href);
+  function usedDocFiles(): Set<string> {
+    const used = new Set<string>();
+    const add = (href: string | null | undefined) => {
+      if (!href) return;
+      const p = docPath(href);
+      if (p) used.add(p);
+    };
+    for (const el of document.querySelectorAll(
+      "link[href], script[src], img[src], source[src], video[src], audio[src], iframe[src], embed[src], object[data]"
+    )) {
+      if (el.hasAttribute("data-erga")) continue;
+      add(el.getAttribute("href") || el.getAttribute("src") || el.getAttribute("data"));
+    }
+    for (const el of document.querySelectorAll("img[srcset], source[srcset]")) {
+      for (const u of parseSrcset(el.getAttribute("srcset") || "")) add(u);
+    }
+    try {
+      for (const entry of performance.getEntriesByType("resource")) add(entry.name);
+    } catch {}
+    return used;
+  }
+  async function applyFiles(paths: string[], files = location.origin + C.prefix): Promise<"skip" | "restyled" | "reload"> {
+    const decision = usedChangedPaths(paths, usedDocFiles(), resourceOverflow);
+    if (decision.action == "skip") return "skip";
+    if (decision.action == "reload") return "reload";
+    return (await restyle(decision.paths, files)) ? "restyled" : "reload";
+  }
   let styling: Promise<boolean> = Promise.resolve(true);
   function restyle(paths: string[], files = location.origin + C.prefix): Promise<boolean> {
     // (One change after another: the newest rules go in last.)
@@ -504,20 +538,10 @@ export default function reader(C: ReaderConfig): void {
     return styling;
   }
   async function styled(paths: string[], files: string): Promise<boolean> {
-    const fileOf = (href: string) => {
-      try {
-        const u = new URL(href, location.href);
-        return u.origin == location.origin && u.pathname.indexOf(C.prefix) == 0
-          ? decodeURIComponent(u.pathname.slice(C.prefix.length))
-          : null;
-      } catch {
-        return null;
-      }
-    };
     const links = [...document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet" i][href]')];
     const jobs: Promise<[CSSStyleSheet, string[]] | null>[] = [];
     for (const path of paths) {
-      const hit = links.filter((l) => fileOf(l.href) == path);
+      const hit = links.filter((l) => docPath(l.href) == path);
       if (!/\.css$/i.test(path) || !hit.length) return false;
       const text = fetch(files + path.split("/").map(encodeURIComponent).join("/"), { cache: "no-store" }).then((r) =>
         r.ok ? r.text() : null
@@ -936,11 +960,11 @@ export default function reader(C: ReaderConfig): void {
     else if (type == "erga-print") print();
     // The viewer's frame has the focus: this page takes it (client/inline/viewer-frames.ts).
     else if (type == "erga-focus") focus();
-    // The viewer says that stylesheets changed (client/viewer/live.ts): in place, and whether that worked.
-    else if (type == "erga-restyle" && Array.isArray(e.data.paths) && typeof e.data.files == "string") {
+    // The viewer says that non-HTML files changed (client/viewer/live.ts): skip if unused, hot-swap CSS, or ask to reload.
+    else if (type == "erga-files" && Array.isArray(e.data.paths) && typeof e.data.files == "string") {
       const ok = e.data.files.indexOf(location.origin + "/") == 0 && e.data.paths.every((p: unknown) => typeof p == "string");
-      void (ok ? restyle(e.data.paths, e.data.files) : Promise.resolve(false)).then((done) =>
-        tell({ type: "erga-restyled", id: e.data.id, ok: done })
+      void (ok ? applyFiles(e.data.paths, e.data.files) : Promise.resolve("reload" as const)).then((result) =>
+        tell({ type: "erga-files-done", id: e.data.id, result })
       );
     } else if (type == "erga-live") {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);

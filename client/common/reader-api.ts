@@ -18,8 +18,8 @@ declare global {
       keys: { held: { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean }[]; letGo(): void };
       /** The editor put the page back where it was. */
       placed?(): void;
-      /** Stylesheets of the document changed (their paths in it): their new rules, in the page as it is. False: it can't. */
-      restyle?(paths: string[]): Promise<boolean>;
+      /** Non-HTML files of the document changed (their paths in it): "skip" if unused, "restyled" if hot-swapped, else "reload". */
+      applyFiles?(paths: string[]): Promise<"skip" | "restyled" | "reload">;
       /** The viewer's last word on editing (erga-mode), which the editor reads as it loads, and hears after. */
       mode?: unknown;
       /** The viewer's last word on the zoom (erga-zoomed), which the editor reads as it loads, and hears after. */

@@ -104,6 +104,22 @@ journey("a reader's open page shows an agent's change", () => {
     // (No pill while nobody writes: not for the version that the page hears as it opens.)
     expect(await pill()).toBeNull();
 
+    // A second tab viewing index.html stays untouched when second.html is edited: no reload and no writer pill.
+    const indexTab = await page.context().newPage();
+    const indexHeard: string[] = [];
+    indexTab.on("websocket", (ws) => {
+      if (!/watch=view/.test(ws.url())) return;
+      ws.on("framereceived", ({ payload }) => {
+        const ver = /"type":"view","ver":"([^"]+)"/.exec(String(payload))?.[1];
+        if (ver) indexHeard.push(ver);
+      });
+    });
+    await openViewer(indexTab, `${s.root}${path}?user=${reader}`);
+    await expect.poll(() => inDoc<string>(indexTab, `document.body?.innerText ?? ""`)).toContain("First page");
+    await expect.poll(() => indexHeard.length).toBeGreaterThan(0);
+    const indexVerBefore = indexHeard.at(-1)!;
+    await inDoc(indexTab, "window.__stay = true");
+
     // The agent's line takes the place of the draft's: an edit through the tools.
     const changed = await agent("edit", { path: "second.html", edits: [{ oldText: DRAFT, newText: WRITTEN }] });
     expect(changed.ok, changed.text).toBe(true);
@@ -129,6 +145,17 @@ journey("a reader's open page shows an agent's change", () => {
     expect(await frameAt()).toMatch(/^\/t\/[^/]+\/@[^/]+\/second\.html$/);
     expect(await frameAt()).not.toBe(before);
     await expect.poll(pill).toBe("Live viewer agent is writing…");
+    // The tab on index.html heard the new version, updated its meta prefix, and neither reloaded nor flashed the writer pill.
+    await expect.poll(() => indexHeard.at(-1)).not.toBe(indexVerBefore);
+    expect(await inDoc<boolean>(indexTab, "window.__stay === true"), "index.html tab did not reload").toBe(true);
+    expect(
+      await indexTab.evaluate(() => {
+        const e = document.getElementById("erga-writer");
+        return e && !e.hidden ? e.textContent : null;
+      }),
+      "index.html tab shows no writer pill"
+    ).toBeNull();
+    await indexTab.close();
     // The change adds no entry to the tab's history: Back goes to the page before, not to the old version of this one.
     await page.evaluate(() => history.back());
     await expect.poll(shown).toContain("First page");
@@ -250,7 +277,25 @@ journey("a reader's open page shows an agent's change", () => {
       "</head>",
       `<link rel="stylesheet" href="style.css"></head>`
     );
-    const own = await openOwn("Live board", { "index.html": pan, "style.css": "h2 { color: rgb(200, 0, 0) }" });
+    const own = await openOwn("Live board", {
+      "index.html": pan,
+      "style.css": "h2 { color: rgb(200, 0, 0) }",
+      "other.html": "<!doctype html><title>Other</title><h1>Other</h1>",
+    });
+    const otherTab = await page.context().newPage();
+    const otherHeard: string[] = [];
+    otherTab.on("websocket", (ws) => {
+      if (!/watch=view/.test(ws.url())) return;
+      ws.on("framereceived", ({ payload }) => {
+        const ver = /"type":"view","ver":"([^"]+)"/.exec(String(payload))?.[1];
+        if (ver) otherHeard.push(ver);
+      });
+    });
+    await openViewer(otherTab, `${s.root}${own.address}/other`);
+    await expect.poll(() => inDoc<string>(otherTab, `document.body?.innerText ?? ""`)).toContain("Other");
+    await expect.poll(() => otherHeard.length).toBeGreaterThan(0);
+    const otherVerBefore = otherHeard.at(-1)!;
+    await inDoc(otherTab, "window.__stay = true");
     await wheel(300, 300, -140, -110);
     await wheel(1100, 300, 0, 420);
     const view = () =>
@@ -265,6 +310,17 @@ journey("a reader's open page shows an agent's change", () => {
       expect(changed.ok, changed.text).toBe(true);
       await expect.poll(() => inDoc<string>(page, `getComputedStyle(document.querySelector("h2")).color`)).toBe("rgb(0, 0, 200)");
     });
+    // The tab on other.html does not link style.css: it skips reloading and shows no writer pill.
+    await expect.poll(() => otherHeard.at(-1)).not.toBe(otherVerBefore);
+    expect(await inDoc<boolean>(otherTab, "window.__stay === true"), "other.html tab did not reload on unlinked CSS").toBe(true);
+    expect(
+      await otherTab.evaluate(() => {
+        const e = document.getElementById("erga-writer");
+        return e && !e.hidden ? e.textContent : null;
+      }),
+      "other.html tab shows no writer pill"
+    ).toBeNull();
+    await otherTab.close();
     expect(edited, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
     expect(await view(), "the same page: its camera, its pane, its place").toEqual(["translate(140px, 110px)", 420, "#place", true]);
     // Loaded again by the person: Erga brings back what the browser holds (the pane's scroll, the address). The

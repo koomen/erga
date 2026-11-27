@@ -82,8 +82,12 @@ export class DocumentView {
   private kept = true;
   /** When a file last changed while this object ran (0: not since it started). */
   private lastChange = 0;
-  /** The files that changed since the viewers' pages were last told. */
-  private touched = new Set<string>();
+  /** The files that changed since the viewers' pages were last told; null: too many (>100), so each page reloads. */
+  private touched: Set<string> | null = new Set();
+  /** Incremented on every `changed()` call so `news()` never clears paths that arrived during `await this.current()`. */
+  private changeSeq = 0;
+  /** The last version broadcast to open viewers. */
+  private lastToldVer: string | null = null;
 
   constructor(private o: ViewOptions) {}
 
@@ -95,7 +99,11 @@ export class DocumentView {
 
   /** Files changed (`paths`): what viewers see is worked out again. */
   changed(paths: string[]): void {
-    for (const p of paths) this.touched.add(p);
+    this.changeSeq++;
+    if (this.touched) {
+      for (const p of paths) this.touched.add(p);
+      if (this.touched.size > 100) this.touched = null;
+    }
     // The first change after a quiet while: a viewer's answer kept meanwhile (view's `quiet`) is out of date.
     if (Date.now() - this.lastChange > QUIET_MS) this.o.changedAfterQuiet?.();
     this.lastChange = Date.now();
@@ -187,11 +195,16 @@ export class DocumentView {
 
   /** The open viewers' pages hear the version now, at most every TELL_EVERY_MS however fast the files change; the last always lands. */
   private news = throttle(async () => {
+    const before = this.changeSeq;
     const ver = await this.current();
     if (!ver) return;
     // (A change to very many files, a folder uploaded again, say: no list, and each page loads again.)
-    this.o.tell(ver, this.touched.size > 100 ? undefined : [...this.touched]);
-    this.touched.clear();
+    // Only clear `touched` when no new edit landed during `await this.current()`; otherwise keep it for the trailing tick.
+    const paths = this.touched ? [...this.touched] : undefined;
+    if (this.changeSeq == before) this.touched = new Set();
+    if (ver == this.lastToldVer && paths && paths.length == 0) return;
+    this.lastToldVer = ver;
+    this.o.tell(ver, paths);
   }, TELL_EVERY_MS);
 
   /** The answer for someone who may view (`role`, or anyone): which file the address `page` is, in what viewers see now, and that version. */
