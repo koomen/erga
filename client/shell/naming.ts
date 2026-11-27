@@ -278,7 +278,10 @@ export function mountNaming(shell: Shell) {
     if (open != pagesCard.hidden) return;
     pagesCard.hidden = !open;
     titleBtn.setAttribute("aria-expanded", String(open || !naming.hidden));
-    if (!open) return;
+    if (!open) {
+      tree?.closeMenu();
+      return;
+    }
     shell.chrome.cardOpened("pages");
     // The tree was made, and read, once the editor was idle (ready): it shows at once, and is read again behind.
     if (tree) { tree.refresh(); tree.focus(); return; }

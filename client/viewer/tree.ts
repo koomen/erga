@@ -71,7 +71,10 @@ export function mountTree(script: string, id: string, base: string, query: strin
     if (open == !card!.hidden) return;
     card!.hidden = !open;
     button!.setAttribute("aria-expanded", String(open));
-    if (!open) return;
+    if (!open) {
+      tree?.closeMenu();
+      return;
+    }
     if (tree) {
       tree.refresh();
       tree.focus();

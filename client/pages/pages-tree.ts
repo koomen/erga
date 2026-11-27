@@ -98,6 +98,7 @@ export interface TreeHandle {
   focus(): void;
   /** Starts a new page at the top level: its name to type, in place (New page). */
   newPage(): void;
+  closeMenu(): void;
   destroy(): void;
 }
 
@@ -938,7 +939,9 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   document.addEventListener("pointerdown", outside, true);
   const onScroll = (e: Event) => { if (menu && !menu.contains(e.target as globalThis.Node)) closeMenu(); };
   window.addEventListener("scroll", onScroll, true);
-  window.addEventListener("resize", () => closeMenu());
+  const onClose = () => closeMenu();
+  window.addEventListener("resize", onClose);
+  window.addEventListener("blur", onClose);
 
   if (opts.initial) set(opts.initial.entries, opts.initial.canEdit);
   render();
@@ -953,10 +956,13 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     retitle() { if (!editing) render(); },
     focus: focusFirst,
     newPage: () => startNew("", "page"),
+    closeMenu: onClose,
     destroy() {
       closeMenu();
       document.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("blur", onClose);
       window.removeEventListener("erga-tree", onTreeEvent);
       root.remove();
     },

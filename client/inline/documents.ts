@@ -182,6 +182,7 @@ export default function docs(c: DocsConfig): void {
     // Opened again: its pages are there already; read again only if they're more than a few seconds old.
     if (sub) {
       sub.hidden = !open;
+      if (!open) trees.get(id)?.closeMenu();
       if (open && Date.now() - (readAt.get(id) ?? 0) > 4000) trees.get(id)?.refresh({ quiet: true });
       return;
     }
@@ -297,6 +298,7 @@ export default function docs(c: DocsConfig): void {
   function removing(row: HTMLElement) {
     const id = row.dataset.live?.slice("doc:".length);
     if (id) {
+      trees.get(id)?.destroy();
       document.getElementById("pages-" + id)?.remove();
       trees.delete(id);
     }

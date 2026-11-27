@@ -123,6 +123,18 @@ journey("a project's tree in the editor", () => {
     await expect.poll(() => js(page, `document.getElementById("pages").hidden && document.activeElement.id == "doc-title"`)).toBe(true);
   });
 
+  test("clicking the document closes both the pages dropdown and an open file menu", async () => {
+    await openCard(page);
+    await act(page, "about.html", "more");
+    await page
+      .frameLocator("#frame")
+      .locator("html")
+      .click({ position: { x: 600, y: 200 } });
+    await expect
+      .poll(() => page.evaluate(() => [document.getElementById("pages")!.hidden, !!document.querySelector(".et-menu")]))
+      .toEqual([true, false]);
+  });
+
   test("the editor shows every file, each page with its file's name; a folder opens by a click and by the keys, and ↓, Home and End move", async () => {
     await openCard(page);
     await clickOn(page, row("assets"));
