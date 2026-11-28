@@ -176,8 +176,12 @@ export class ErgaBridgeClient {
           this.pinger = null;
         }
         this.opts.onStatus?.(false);
+        if (!settled) {
+          if (this.closed) finish(resolve);
+          else finish(() => reject(new Error(`Could not connect to ${wsUrl}`)));
+          return;
+        }
         if (!this.closed) this.scheduleReconnect();
-        finish(resolve);
       });
 
       ws.addEventListener("error", () => {

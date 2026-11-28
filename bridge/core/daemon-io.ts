@@ -27,8 +27,10 @@ export function parseDocumentRef(ref: string, fallbackOrigin = defaultOrigin()):
 export async function resolveDocument(
   origin: string,
   clientName: string,
-  ref: string
+  ref: string,
+  opts: { interactive?: boolean } = {}
 ): Promise<{ id: string; owner: string; slug: string; title: string }> {
+  const interactive = opts.interactive ?? true;
   const clean = ref.replace(/^\/+|\/+$/g, "");
   const parts = clean.split("/");
   const docPath =
@@ -37,7 +39,7 @@ export async function resolveDocument(
       : parts.length >= 2
         ? `/${parts[0]}/${parts[1]}/api/doc`
         : `/d/${parts[0]}/api/doc`;
-  const res = await ergaFetch(origin, clientName, docPath, {}, { interactive: true });
+  const res = await ergaFetch(origin, clientName, docPath, {}, { interactive });
   if (res.ok) {
     const info = (await res.json()) as {
       docName?: { id?: string; owner?: string; slug?: string; title?: string; address?: string };
@@ -61,7 +63,7 @@ export async function resolveDocument(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ limit: 100 }),
     },
-    { interactive: true }
+    { interactive }
   );
   if (listRes.ok) {
     const payload = (await listRes.json()) as {

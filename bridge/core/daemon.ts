@@ -239,6 +239,7 @@ export class ErgaDaemon {
   private activeTurns = 0;
   private server: ReturnType<typeof Bun.serve> | null = null;
   private healthyTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(private readonly opts: DaemonOptions = {}) {
     this.version = opts.version ?? BRIDGE_VERSION;
@@ -345,7 +346,7 @@ export class ErgaDaemon {
   }
 
   private async ensureMount(origin: string, docRef: string, opts: { interactive?: boolean } = {}): Promise<MountedDoc> {
-    const meta = await resolveDocument(origin, CLIENT_NAME, docRef);
+    const meta = await resolveDocument(origin, CLIENT_NAME, docRef, { interactive: opts.interactive ?? false });
     const key = mountKey(origin, meta.id);
     const existing = this.mounts.get(key);
     if (existing) return existing;
@@ -683,6 +684,7 @@ export class ErgaDaemon {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.healthyTimer) clearTimeout(this.healthyTimer);
     for (const c of [...this.connections.values()]) {
       this.setConnBusy(c, false);
@@ -744,11 +746,13 @@ export class ErgaDaemon {
       return;
     }
     for (const m of saved?.mounts ?? []) {
+      if (this.stopped) return;
       await this.ensureMount(m.origin, `/d/${m.docId}`, { interactive: false }).catch((e) =>
         this.log(`restore mount ${m.docId} skipped: ${e instanceof Error ? e.message : e}`)
       );
     }
     for (const c of saved?.connections ?? []) {
+      if (this.stopped) return;
       await this.connectAgent({
         id: c.id,
         origin: c.origin,

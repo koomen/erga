@@ -77,6 +77,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
     if (alive?.ok) return;
     const child = Bun.spawn([opts.selfCmd.command, ...opts.selfCmd.prefix, "daemon", "--server", origin], {
       cwd: safeCwd(),
+      env: { ...process.env, ERGA_BUN_BIN: process.execPath },
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
