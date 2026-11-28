@@ -219,6 +219,25 @@ export const pageUrl = (docAddress: string, file: string) => {
 };
 
 /**
+ * The file paths an address under the document could resolve to (the keys
+ * `resolvePage` checks to find `file`): used to read only those keys from
+ * storage without listing the whole document or opening its room.
+ */
+export function pageCandidates(address: string, index = "index.html"): string[] {
+  let rest: string;
+  try {
+    rest = decodeURIComponent(address);
+  } catch {
+    return [];
+  }
+  const parts = rest.split("/").filter(Boolean);
+  if (parts.some((p) => p == ".." || p == "." || ignoredName(p))) return [];
+  rest = parts.join("/");
+  if (!rest) return index == "index.html" ? ["index.html"] : [index, "index.html"];
+  return isPage(rest) ? [`${rest}.html`, `${rest}/index.html`, rest] : [`${rest}.html`, `${rest}/index.html`];
+}
+
+/**
  * Which page an address under the document is (its path after
  * /<owner>/<slug>, slashes at either end ignored): <path>.html, then
  * <path>/index.html; the root page for none. An address naming a page file itself ("blog.html",

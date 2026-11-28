@@ -13,7 +13,17 @@ import { FileStore, StateStore } from "../document/store/storage";
 import { joinLocal, participant } from "./helpers/join-local";
 import { relativeUrl } from "../document/api/http";
 import { runTreeOp } from "../document/api/operations";
-import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, titleOf, TreeError, treeEntries } from "../document/model/pages";
+import {
+  checkNewName,
+  cleanTreePath,
+  pageAddress,
+  pageCandidates,
+  pageUrl,
+  resolvePage,
+  titleOf,
+  TreeError,
+  treeEntries,
+} from "../document/model/pages";
 import { files, folders } from "../document/model/content";
 import { person, server, tool as overHttp } from "./helpers/app";
 import { until } from "./helpers/until";
@@ -47,6 +57,20 @@ test("an address is <path>.html, then <path>/index.html; never with a slash adde
   expect(resolvePage(has, "blog/post")).toEqual({ file: "blog/post.html", canonical: "blog/post" });
   expect(resolvePage(has, "caf%C3%A9")).toBeNull();
   expect(resolvePage((p) => p == "café.html", "caf%C3%A9")).toEqual({ file: "café.html", canonical: "café" });
+});
+
+test("pageCandidates lists the storage keys resolvePage checks for an address", () => {
+  expect(pageCandidates("")).toEqual(["index.html"]);
+  expect(pageCandidates("///")).toEqual(["index.html"]);
+  expect(pageCandidates("", "home.html")).toEqual(["home.html", "index.html"]);
+  expect(pageCandidates("about")).toEqual(["about.html", "about/index.html"]);
+  expect(pageCandidates("projects/plan/")).toEqual(["projects/plan.html", "projects/plan/index.html"]);
+  expect(pageCandidates("blog/index")).toEqual(["blog/index.html", "blog/index/index.html"]);
+  expect(pageCandidates("about.html")).toEqual(["about.html.html", "about.html/index.html", "about.html"]);
+  expect(pageCandidates("caf%C3%A9")).toEqual(["café.html", "café/index.html"]);
+  for (const bad of ["../etc/passwd", "./about", ".git/config", "node_modules/a", "%E0%A4%A"]) {
+    expect(pageCandidates(bad)).toEqual([]);
+  }
 });
 
 test("a page's title: its h1, its <title>, then its first heading; a <title> of Untitled is no name", () => {

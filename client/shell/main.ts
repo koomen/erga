@@ -14,7 +14,7 @@ import { isMac, type Keys } from "../common/app-keys";
 import { describeProblem } from "./problems";
 import { colorFor, type Author } from "../../shared/author";
 import type { Attachment } from "../../shared/attach";
-import { isPage, pageUrl } from "../../document/model/pages";
+import { isPage, pageUrl, resolvePage } from "../../document/model/pages";
 import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { fastClick } from "../common/fast-click";
@@ -180,8 +180,16 @@ const TITLE_NOT_SAVED = {
    * the document: the page's own script can ask (the frame's "open"), and "../.." would take this tab elsewhere on this site.
    */
   const openPage = (path: string) => {
-    if (!path.replace(/\/$/, "").split("/").every((s) => s && s != "." && s != "..")) return;
-    if (!swapPage(path)) goTo(addressOf(path));
+    if (
+      !path
+        .replace(/\/$/, "")
+        .split("/")
+        .every((s) => s && s != "." && s != "..")
+    )
+      return;
+    const resolved =
+      resolvePage((p) => shell.treeEntries.some((e) => e.path == p && e.type == "page"), path, shell.info.path)?.file ?? path;
+    if (!swapPage(resolved)) goTo(addressOf(path));
   };
 
   // The host attributes your edits and your agent to who you are, so the tab takes that.

@@ -472,7 +472,8 @@ export function makeHttp(opts: HostOptions) {
     HttpRouter.route("GET", "/doc/*", Effect.gen(function* () {
       // The path as asked for, a slash at the end included (the router's parameter drops it).
       const req = yield* HttpServerRequest.HttpServerRequest;
-      const asked = new URL(req.url, "http://doc").pathname;
+      const reqUrl = new URL(req.url, "http://doc");
+      const asked = reqUrl.pathname;
       const raw = asked.startsWith("/doc/") ? asked.slice("/doc/".length) : (yield* HttpRouter.params)["*"] ?? "";
       // A page by its address (blog for blog.html or blog/index.html): sent to its file, relatively, so the
       // frame's address is the file's and the page's own relative links resolve. doc/ itself is the document's
@@ -481,8 +482,15 @@ export function makeHttp(opts: HostOptions) {
         const found = resolvePage((p) => room.exists(p) == "file", raw, doc.path);
         if (!found || found.file == cleanRel(raw)) return null;
         let from = raw;
-        try { from = decodeURIComponent(raw); } catch { /* resolvePage refused it already */ }
-        return HttpServerResponse.empty({ status: 302, headers: { Location: relativeUrl(from, found.file), "Cache-Control": "no-store" } });
+        try {
+          from = decodeURIComponent(raw);
+        } catch {
+          /* resolvePage refused it already */
+        }
+        return HttpServerResponse.empty({
+          status: 302,
+          headers: { Location: relativeUrl(from, found.file) + reqUrl.search, "Cache-Control": "no-store" },
+        });
       };
       const rel = raw ? cleanRel(raw) : doc.path;
       if (!rel) return page() ?? HttpServerResponse.text("Not found", { status: 404 });

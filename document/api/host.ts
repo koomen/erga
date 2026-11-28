@@ -25,13 +25,13 @@ import { Document, type DocumentDeps, type DocumentInfo, type FileData, type Ope
 import { personOf, viaOf, type Asker, type Person, type Role } from "../model/access.ts";
 import { assets, files as texts } from "../model/content.ts";
 import { namingFor, type DocName, type Naming } from "../model/names.ts";
-import { cleanRel, titleOf } from "../model/pages.ts";
+import { cleanRel, pageCandidates, resolvePage, titleOf } from "../model/pages.ts";
 import { openRoom, type Opened } from "../room/open.ts";
 import { Participants, type Sockets, type TabSocket } from "../room/participants.ts";
 import { blobPointer, isBlobRef, type BlobRef } from "../store/blobs.ts";
 import { io, KEYS, NoSuchDocument, StoreError } from "../store/storage.ts";
 import type { Hello } from "./api.ts";
-import { makeHttp, type EditorCalls } from "./http.ts";
+import { makeHttp, relativeUrl, type EditorCalls } from "./http.ts";
 import { Permissions } from "./permissions.ts";
 import { isArrival, isUpload, unwait, Uploads, uploadsNow, type Written } from "./uploads.ts";
 import { docFile, DocumentView, typeOf, type ViewAnswer } from "./view.ts";
@@ -400,17 +400,42 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
       return null;
     const info = await this.readInfo();
     if (!info || info.disk) return null;
+    const raw = url.pathname.slice("/doc/".length);
     // doc/ itself is its page (the viewer's frame asks for it so, at the token's own address: server/documents/pages-origin.ts).
-    const rel = url.pathname == "/doc/" ? info.index : cleanRel(url.pathname.slice("/doc/".length));
-    if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    const rel = raw ? cleanRel(raw) : info.index;
+    const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    // A clean page address (blog → blog.html or blog/index.html): redirected to its file, relatively, as makeHttp does.
+    const redirectPage = async (unwritten?: string[]): Promise<Response | null> => {
+      const candidates = pageCandidates(raw, info.index);
+      if (!candidates.length) return notFound();
+      const keys = candidates.map((c) => FILE + c);
+      if (unwritten === undefined) keys.push(KEYS.unwritten);
+      const got = await this.storage.get<unknown>(keys);
+      const pending = unwritten ?? (got.get(KEYS.unwritten) as string[] | undefined);
+      if (candidates.some((c) => pending?.includes(c))) return null;
+      const found = resolvePage((p) => got.has(FILE + p), raw, info.index);
+      if (!found || found.file == rel) return notFound();
+      let from = raw;
+      try {
+        from = decodeURIComponent(raw);
+      } catch {
+        /* resolvePage refused it already */
+      }
+      return new Response(null, {
+        status: 302,
+        headers: { Location: relativeUrl(from, found.file) + url.search, "Cache-Control": "no-store" },
+      });
+    };
+    if (!rel) return redirectPage();
     // The file (its bytes, or its ref if it's a blob), and the files whose latest text storage doesn't have yet (the room
     // stopped before writing them): one read.
     const got = await this.storage.get<unknown>([FILE + rel, REF + rel, KEYS.unwritten]);
-    if ((got.get(KEYS.unwritten) as string[] | undefined)?.includes(rel)) return null;
+    const unwritten = got.get(KEYS.unwritten) as string[] | undefined;
+    if (unwritten?.includes(rel)) return null;
     const ref = got.get(REF + rel);
     if (isBlobRef(ref)) return this.deps.blobs ? blobPointer(ref, typeOf(rel), { "Cache-Control": "no-cache" }) : null;
     const bytes = got.get(FILE + rel) as Uint8Array | undefined;
-    if (!bytes) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    if (!bytes) return raw ? redirectPage(unwritten ?? []) : notFound();
     const r = docFile(rel, bytes, request.headers.get("if-none-match"), request.headers.get("range"), "stored");
     return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), {
       status: r.status,

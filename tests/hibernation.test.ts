@@ -20,7 +20,7 @@ import {
 } from "../shared/yjs-protocol";
 import { type DocumentDeps } from "../document/life/document";
 import { DocumentHost } from "../document/api/host";
-import { MemoryStorage } from "../document/store/storage";
+import { KEYS, MemoryStorage } from "../document/store/storage";
 import type { Participants, Tab, TabSocket } from "../document/room/participants";
 import { authorOf, authors, files, introduce } from "../document/model/content";
 import { colorFor, type Author } from "../shared/author";
@@ -598,4 +598,59 @@ test("a shell tab (?shell=1) gets zero binary Yjs frames, receives hello, JSON p
   expect(shell.closed).toBe(4408);
   expect(viewer.closed).toBe(4403);
   boAw.destroy();
+});
+
+test("a closed document redirects clean subpage links without waking its room, preserves query strings, and wakes for unwritten pages", async () => {
+  const dir = new Directory(memory(), { admins: ["ada"] });
+  await dir.add({ id: "sub123", owner: "ada", title: "Subpages", created: Date.now(), expires: null });
+  const w = new World(dir);
+  await Effect.runPromise(
+    w.document.create(
+      "ada",
+      "sub123",
+      {
+        "index.html": "<h1>Home</h1>",
+        "projects/plan/index.html": "<h1>Plan</h1>",
+        "blog.html": "<h1>Blog file</h1>",
+        "blog/index.html": "<h1>Blog folder</h1>",
+      },
+      "index.html",
+      { expires: null }
+    )
+  );
+  // Fresh object with room closed: every stored-file redirect runs without opening the room.
+  w.boot();
+  expect(w.document.isOpen()).toBe(false);
+  const ask = (path: string) =>
+    Effect.runPromise(w.document.handle(new Request(`http://doc${path}`, { headers: { "x-erga-checked": "1" } })));
+
+  // Clean subpage address -> relative redirect to <name>/index.html; room stays closed.
+  const clean = await ask("/doc/projects/plan");
+  expect([clean.status, clean.headers.get("location"), clean.headers.get("cache-control")]).toEqual([302, "plan/index.html", "no-store"]);
+  expect(w.document.isOpen()).toBe(false);
+
+  // Trailing slash -> relative redirect to index.html.
+  const slash = await ask("/doc/projects/plan/");
+  expect([slash.status, slash.headers.get("location")]).toEqual([302, "index.html"]);
+
+  // Sibling .html wins over folder/index.html (matching resolvePage), and query strings are kept.
+  const blog = await ask("/doc/blog?foo=1&bar=2");
+  expect([blog.status, blog.headers.get("location")]).toEqual([302, "blog.html?foo=1&bar=2"]);
+
+  // Explicit folder/index resolves to folder/index.html even when sibling .html exists.
+  const blogIndex = await ask("/doc/blog/index");
+  expect([blogIndex.status, blogIndex.headers.get("location")]).toEqual([302, "index.html"]);
+
+  // Slash-only path after /doc/ redirects to the root page.
+  const slashes = await ask("/doc///");
+  expect([slashes.status, slashes.headers.get("location")]).toEqual([302, "index.html"]);
+
+  // Genuine missing path -> 404 without waking the room.
+  const missing = await ask("/doc/projects/missing");
+  expect([missing.status, w.document.isOpen()]).toEqual([404, false]);
+
+  // If a candidate page is marked unwritten, storedFile defers to the room so the latest text is served.
+  await w.storage.put(KEYS.unwritten, ["projects/plan/index.html"]);
+  const unwritten = await ask("/doc/projects/plan?tab=2");
+  expect([unwritten.status, unwritten.headers.get("location"), w.document.isOpen()]).toEqual([302, "plan/index.html?tab=2", true]);
 });
