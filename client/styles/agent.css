@@ -1,0 +1,348 @@
+/* Resizing and docking an agent panel: the editor's and the admin pages'. The grip on the
+   edge that faces the page shows its line on hover and while dragged; a panel dragged by its head is lifted,
+   and the ghost shows the slot it will land in. Where each panel sits is the page's own. */
+.agent-resize { position: absolute; top: 18px; bottom: 18px; right: -9px; width: 12px; cursor: col-resize; touch-action: none; z-index: 1; }
+.agent-resize[data-side="right"] { right: auto; left: -9px; }
+.agent-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; border-radius: 1px; background: var(--caret); opacity: 0; transform: scaleY(0.6); transition: opacity 160ms ease, transform 260ms cubic-bezier(0.45, 0, 0.15, 1); }
+.agent-resize:hover::after, body.layout-resizing .agent-resize::after { opacity: 0.7; transform: none; transition-delay: 80ms; }
+body.layout-resizing, body.layout-resizing * { cursor: col-resize !important; user-select: none; }
+body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user-select: none; }
+.layout-dragged { z-index: 40 !important; transition: none !important; }
+.dock-ghost {
+  position: fixed; z-index: 19;
+  border: 2px dashed color-mix(in srgb, var(--caret) 55%, transparent); border-radius: 18px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--caret) 9%, transparent); pointer-events: none;
+  transition: left 320ms cubic-bezier(0.45, 0, 0.15, 1), width 320ms cubic-bezier(0.45, 0, 0.15, 1), opacity 160ms ease;
+  animation: dock-ghost-in 200ms cubic-bezier(0.45, 0, 0.15, 1);
+}
+.dock-ghost[hidden] { display: none; }
+@keyframes dock-ghost-in { from { opacity: 0; transform: scale(0.97); } }
+
+/* ---------- The agent panel's insides ----------
+   Its head, the conversation and the box: the editor's panel (client/styles/editor.css places it) and
+   the admin's on the admin pages both use them. */
+
+/* The panel is a control: a drag over its head or an empty part of it selects nothing. The messages and the box stay selectable. */
+.agent-glass { -webkit-user-select: none; user-select: none; }
+.agent-log > *, .agent-glass textarea { -webkit-user-select: text; user-select: text; }
+.agent-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px 18px; touch-action: none; }
+.agent-head .title { font-weight: 600; color: var(--fg-strong); }
+.agent-head .model { color: var(--chrome); font-size: 12px; margin-left: 6px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-head .model select {
+  appearance: none; -webkit-appearance: none; field-sizing: content; border: 0; margin: 0; cursor: pointer; max-width: 100%;
+  font: inherit; color: inherit; border-radius: 6px; padding: 3px 18px 3px 6px; background: transparent;
+}
+/* A menu is a control, so it has the text's colour: the resting grey of .model reads as "off". The menu's own
+   padding lines its text up with a plain model name, inside .model's clip. Its arrow is drawn over its right end,
+   in the same colour. */
+.agent-head .model:has(select) { margin-left: 0; color: var(--fg); }
+.agent-head .model:has(select)::after {
+  content: ""; display: inline-block; width: 9px; height: 6px; margin-left: -14px; vertical-align: middle; pointer-events: none; background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.agent-head .model:has(select:hover) { color: var(--fg-strong); }
+.agent-head .model select:hover { background-color: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* Inset, so .model's clip can't cut it. */
+.agent-head .model select:focus-visible:not(.by-pointer) { outline: 2px solid var(--caret); outline-offset: -2px; }
+.agent-head .model select.by-pointer { outline: none; }
+.agent-head.is-local .model { display: flex; align-items: center; }
+.agent-head.is-local .model::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: #12a594; margin-left: 4px; }
+.agent-head.is-disconnected .model::before { background: #d97706; }
+.agent-log { flex: 1; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.agent-log:empty[data-thread-note]::before {
+  content: attr(data-thread-note); margin: auto 8px; text-align: center; font-size: 12.5px; line-height: 1.45; color: var(--soft);
+  padding: 10px 14px; border-radius: 10px; background: color-mix(in srgb, #12a594 8%, transparent); border: 1px dashed color-mix(in srgb, #12a594 35%, transparent);
+}
+.msg-user.pending { opacity: 0.55; }
+.msg-user.failed { box-shadow: inset 0 0 0 1px #d0453a; }
+.send-failed { display: block; margin-top: 4px; color: #d0453a; font-size: 12.5px; }
+.send-failed button { border: 0; background: none; padding: 0; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.msg-user { align-self: flex-end; max-width: 88%; background: var(--code-bg); border-radius: 12px; padding: 7px 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-assistant { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-assistant code, .msg-tool code { font: 0.88em var(--font-mono); background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.3em; }
+.msg-thinking { color: var(--chrome); font-size: 12.5px; white-space: pre-wrap; max-height: 4.8em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.6em); mask-image: linear-gradient(to bottom, transparent, #000 1.6em); display: flex; flex-direction: column; justify-content: flex-end; }
+.msg-tool { color: var(--soft); font-size: 12.5px; display: flex; gap: 7px; align-items: baseline; }
+.msg-tool::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--chrome); transform: translateY(-1px); }
+.msg-tool.running::before { background: var(--caret); animation: agent-pulse 1s ease-in-out infinite alternate; }
+.msg-tool.error { color: #d0453a; }
+.msg-tool.error::before { background: #d0453a; }
+.msg-tool > span { min-width: 0; flex: 1; }
+.msg-tool img.shot { display: block; max-width: 100%; max-height: 220px; object-fit: contain; object-position: left top; margin-top: 6px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; }
+.msg-tool[hidden] { display: none; }
+/* The agent works, and the log has nothing else to show for it (client/agent/agent-chat.ts). */
+.msg-working { color: var(--soft); font-size: 12.5px; display: flex; gap: 7px; align-items: baseline; }
+.msg-working::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--caret); transform: translateY(-1px); animation: agent-pulse 1s ease-in-out infinite alternate; }
+.msg-tool.asking { color: var(--fg); flex-wrap: wrap; padding: 9px 10px; border-radius: 10px; background: var(--code-bg); }
+.msg-tool.asking::before { background: var(--caret); }
+.msg-tool.asking .detail { color: var(--fg-strong); font-weight: 600; font-size: 12.5px; opacity: 1; overflow-wrap: anywhere; }
+.msg-tool .call { margin: 6px 0 9px; padding: 6px 8px; border-radius: 7px; background: var(--bg); font: 11.5px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-tool .call .head { color: var(--fg-strong); font-weight: 600; }
+.msg-tool .call .key { color: var(--soft); }
+.msg-tool .call details { display: inline; }
+.msg-tool .call summary { display: inline; cursor: pointer; }
+.msg-tool .call summary::-webkit-details-marker { display: none; }
+.msg-tool .call :is(.all, .less) { white-space: nowrap; color: var(--soft); font-family: var(--font-text); text-decoration: underline; text-underline-offset: 2px; }
+.msg-tool .call details[open] :is(.cut, .all), .msg-tool .call details:not([open]) .less { display: none; }
+.msg-tool .ask-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex-basis: 100%; }
+.msg-tool .ask-acts button { height: 28px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 9px; background: transparent; color: var(--fg); font: 600 12.5px var(--font-text); cursor: pointer; }
+.msg-tool .ask-acts button.run { border-color: transparent; background: var(--fg-strong); color: var(--bg); }
+.msg-tool .ask-acts button:disabled { opacity: 0.5; cursor: default; }
+.msg-tool .detail { display: block; white-space: pre-wrap; font-size: 12px; opacity: 0.85; }
+/* The admin agent's panel, off for want of an Anthropic API key: the key, pasted in place. */
+.agent-no-key a { color: var(--link); }
+.agent-connect { margin-top: 8px; font-size: 12.5px; }
+.agent-connect p { margin: 0 0 4px; color: var(--soft); }
+.agent-connect pre { margin: 0 0 6px; padding: 6px 8px; border-radius: 7px; background: var(--code-bg); font: 12px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-connect button { height: 28px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 7px; background: var(--bg); color: var(--fg); font: 550 12.5px var(--font-text); cursor: pointer; }
+.msg-error { color: #d0453a; white-space: pre-wrap; font-size: 13px; }
+@keyframes agent-pulse { from { opacity: 0.35; } to { opacity: 1; } }
+.agent-compose { padding: 10px; border-top: 1px solid var(--rule); display: flex; gap: 6px; align-items: flex-end; }
+/* The box grows with what you type (field-sizing: content) and its
+   wrapper eases to the new height, synced by a ResizeObserver in main.ts,
+   so the height glides rather than snapping a line at a time. */
+.agent-field { flex: 1; min-width: 0; align-self: flex-end; overflow: hidden; border-radius: 12px; transition: height 160ms cubic-bezier(0.2, 0, 0, 1); }
+.agent-compose textarea {
+  display: block; box-sizing: border-box; width: 100%; field-sizing: content;
+  resize: none; border: 1px solid var(--rule); border-radius: 12px; padding: 8px 10px;
+  font: inherit; line-height: 20px; color: var(--fg); background: var(--bg); max-height: 40vh; min-height: 38px; outline: none;
+}
+.agent-compose textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .agent-field { transition: none; } }
+.agent-compose textarea:focus { border-color: color-mix(in srgb, var(--caret) 60%, var(--rule)); }
+.agent-send { flex: none; height: 38px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--fg-strong); color: var(--bg); font: 600 13px var(--font-text); cursor: pointer; }
+.agent-send.stop { background: var(--code-bg); color: var(--fg); }
+.agent-send[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+/* Attachments: the paperclip, the chips above the box, the panel lit up while files are dragged over it, and the chips in a sent message. */
+.agent-attach { flex: none; height: 38px; width: 34px; color: var(--soft); }
+.agent-attach svg { width: 19px; height: 19px; }
+/* Voice Mode (client/agent/voice.ts): five-bar waveform toggle in Erga's dark gray / active blue button theme, and its queue strip. */
+.agent-voice { flex: none; height: 38px; width: 34px; border-radius: 10px; border: 1px solid transparent; color: var(--chrome-hover); }
+.agent-voice svg { width: 19px; height: 19px; stroke-width: 1.75; }
+.agent-voice[data-voice="listening"],
+.agent-voice[data-voice="transcribing"],
+.agent-voice[data-voice="starting"],
+.agent-voice[data-voice="restarting"],
+.agent-voice[data-voice="paused"] {
+  background: color-mix(in srgb, var(--caret) 13%, transparent);
+  color: var(--caret);
+  border-color: color-mix(in srgb, var(--caret) 40%, transparent);
+}
+.agent-voice[data-armed-busy="true"] { border-color: color-mix(in srgb, var(--caret) 28%, transparent); }
+.agent-voice[data-voice="error"] { background: color-mix(in srgb, #d0453a 12%, transparent); color: #d0453a; border-color: color-mix(in srgb, #d0453a 40%, transparent); }
+.agent-voice[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+.agent-voice .voice-wave .bar,
+.agent-fab-voice .voice-wave .bar { transform-box: fill-box; transform-origin: center; }
+.agent-voice[data-speaking="true"] .voice-wave .bar,
+.agent-fab-voice[data-speaking="true"] .voice-wave .bar { animation: agent-voice-wave 0.65s ease-in-out infinite; }
+.voice-wave .b1 { animation-delay: 0ms; }
+.voice-wave .b2 { animation-delay: 120ms; }
+.voice-wave .b3 { animation-delay: 240ms; }
+.voice-wave .b4 { animation-delay: 80ms; }
+.voice-wave .b5 { animation-delay: 190ms; }
+@keyframes agent-voice-wave { 0%, 100% { transform: scaleY(0.45); } 50% { transform: scaleY(1.1); } }
+.agent-field.voice-live textarea { border-color: color-mix(in srgb, var(--caret) 65%, var(--rule)); }
+.agent-field.voice-busy textarea { border-color: color-mix(in srgb, var(--caret) 45%, var(--rule)); }
+.agent-voice-queue {
+  margin: 0 10px 8px; padding: 6px 9px; border-radius: 10px; background: color-mix(in srgb, var(--caret) 12%, transparent);
+  color: var(--fg); font-size: 12.5px; line-height: 1.4; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.agent-voice-queue[hidden] { display: none; }
+.agent-voice-queue .queue-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-voice-queue .queue-acts { display: flex; gap: 5px; flex: none; }
+.agent-voice-queue button {
+  height: 24px; padding: 0 8px; border: 1px solid var(--panel-border); border-radius: 7px;
+  background: var(--bg); color: var(--fg); font: 600 11.5px var(--font-text); cursor: pointer;
+}
+.agent-hint.error { background: color-mix(in srgb, #d0453a 12%, transparent); color: #d0453a; }
+/* Collapsed agent FAB sub-icon (lower-left): crisp blue circle with the animated voice waveform while Voice Mode stays on. */
+.agent-fab-voice {
+  position: absolute; left: -4px; bottom: -4px; z-index: 2; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center; pointer-events: none;
+  background: var(--caret); color: #fff; box-shadow: 0 0 0 2px var(--bg), 0 1px 4px rgba(0, 0, 0, 0.18);
+  opacity: 0; transform: scale(0.6); transition: opacity 150ms ease, transform 150ms ease;
+}
+.agent-fab-voice svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+body.agent-right .agent-fab-voice { left: auto; right: calc(var(--agent-fab) - 18px); }
+body:not(.agent-open) .agent-fab-voice[data-voice-on="true"] { opacity: 1; transform: none; transition-delay: 260ms; }
+@media (prefers-reduced-motion: reduce) {
+  .agent-voice .voice-wave .bar, .agent-fab-voice .voice-wave .bar { animation: none !important; }
+  .agent-fab-voice { transition: none !important; }
+}
+.agent-attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; border-top: 1px solid var(--rule); }
+.agent-attachments[hidden] { display: none; }
+.agent-attachments + .agent-compose { border-top: 0; }
+.file-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); font-size: 12.5px; color: var(--fg); white-space: nowrap; }
+.file-chip .name { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 180px; }
+.file-chip .size { color: var(--chrome); font-size: 11.5px; }
+.file-chip.image { height: 56px; padding: 0; overflow: hidden; background: #fff; }
+.file-chip.image img { display: block; height: 100%; width: auto; max-width: 160px; object-fit: cover; }
+.file-chip.reading { color: var(--chrome); border-style: dashed; }
+.file-chip button { flex: none; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: var(--code-bg); color: var(--fg); font: 600 13px/1 var(--font-text); cursor: pointer; }
+.file-chip.image button { position: absolute; top: 3px; right: 3px; background: color-mix(in srgb, var(--fg-strong) 75%, transparent); color: var(--bg); }
+.file-chip button:hover { background: var(--fg-strong); color: var(--bg); }
+.msg-files { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.msg-user > .msg-files:not(:first-child) { margin-top: 6px; }
+.msg-files .file-chip.image { height: 96px; }
+.msg-files .file-chip.image img { max-width: 220px; }
+/* Files dragged over the panel (attach-ui.ts): the whole open panel lights up, with what a drop does in its middle. */
+.agent-drop .agent-card::after {
+  content: "Drop files to attach them"; position: absolute; inset: 6px; z-index: 5; display: grid; place-items: center; border-radius: 13px;
+  background: color-mix(in srgb, var(--caret) 9%, transparent); outline: 2px dashed color-mix(in srgb, var(--caret) 70%, transparent); outline-offset: -2px;
+  color: var(--fg-strong); font: 600 13px var(--font-text); pointer-events: none;
+}
+.agent-hint { margin: 0 10px 8px; padding: 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--soft); font-size: 12.5px; line-height: 1.45; }
+.agent-hint.sticky { color: var(--fg); }
+.agent-hint[hidden] { display: none; }
+/* Connected local agent disconnect / reconnect notice, directly above #agent-form (person-agent.ts). */
+.agent-banner {
+  margin: 0 10px 8px; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; line-height: 1.4;
+  display: flex; align-items: flex-start; gap: 8px; color: var(--fg);
+}
+.agent-banner[hidden] { display: none; }
+.agent-banner.disconnected {
+  background: color-mix(in srgb, #d97706 13%, var(--bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #d97706 32%, transparent);
+}
+.agent-banner.reconnected {
+  background: color-mix(in srgb, #16a34a 12%, var(--bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #16a34a 30%, transparent);
+}
+.agent-banner .b-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; }
+.agent-banner.disconnected .b-dot { background: #d97706; }
+.agent-banner.reconnected .b-dot { background: #16a34a; }
+.agent-banner .b-body { flex: 1; min-width: 0; }
+.agent-banner .b-title { display: block; font-weight: 600; color: var(--fg-strong); }
+.agent-banner .b-detail { display: block; color: var(--soft); font-size: 12px; margin-top: 1px; }
+.agent-banner .b-detail a { color: var(--link); }
+.agent-banner .b-close {
+  flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--soft); font: 600 15px/1 var(--font-text); cursor: pointer;
+  display: grid; place-items: center; margin: -2px -4px -2px 0;
+}
+.agent-banner .b-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg-strong); }
+/* A comment with @erga written in the page: the person's click here runs it (person-agent.ts). */
+/* The end of the agent's turn (client/agent/turn-summary.ts): what it changed, See changes, Undo the turn. */
+.agent-turn { margin: 0 10px 8px; padding: 7px 8px 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--fg); font-size: 12.5px; line-height: 1.45;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.agent-turn[hidden], .agent-turn [hidden] { display: none; }
+.agent-turn span { flex: 1 1 auto; overflow-wrap: anywhere; }
+.agent-turn button { border: 1px solid var(--panel-border); border-radius: 8px; padding: 3px 9px; background: transparent; color: var(--fg); font: 600 12px var(--font-text); cursor: pointer; }
+.agent-turn button.undo { background: var(--fg-strong); border-color: var(--fg-strong); color: var(--bg); }
+.agent-turn button:disabled { opacity: 0.5; cursor: default; }
+dialog.agent-changes { width: min(760px, calc(100vw - 32px)); max-height: min(80vh, 720px); padding: 0; border: 1px solid var(--panel-border); border-radius: 14px;
+  background: var(--bg); color: var(--fg); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.25); font-family: var(--font-text); }
+dialog.agent-changes[open] { display: flex; flex-direction: column; }
+dialog.agent-changes::backdrop { background: rgba(0, 0, 0, 0.25); }
+dialog.agent-changes header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--panel-border); }
+dialog.agent-changes h2 { margin: 0; font-size: 14px; font-weight: 600; }
+dialog.agent-changes button.close { border: 1px solid var(--panel-border); border-radius: 8px; padding: 4px 10px; background: transparent; color: var(--fg); font: 600 12px var(--font-text); cursor: pointer; }
+dialog.agent-changes pre { margin: 0; padding: 12px 14px; overflow: auto; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+dialog.agent-changes pre .add { background: color-mix(in srgb, #1a7f37 16%, transparent); }
+dialog.agent-changes pre .del { background: color-mix(in srgb, #cf222e 14%, transparent); }
+dialog.agent-changes pre .at { color: var(--soft); }
+#agent-undo[aria-disabled="true"], #agent-redo[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+/* Shown while you've scrolled back and the agent has written more below. */
+.agent-jump {
+  align-self: center; margin: -40px 0 8px; position: relative; z-index: 1; border: 1px solid var(--panel-border); border-radius: 999px;
+  padding: 5px 12px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font: 600 12px var(--font-text); cursor: pointer;
+}
+.agent-jump[hidden] { display: none; }
+.agent-log { overflow-anchor: none; }
+.agent-log:focus { outline: none; } /* focusable only so it can scroll by keyboard; the ring on a click is noise */
+
+/* ---------- Each person's agent ----------
+   On every page for someone signed in (server/pages/agent.ts): it floats beside the page as a panel of glass (the glass:
+   client/inline/bars.css). Collapsed, it is the round "e" button in the lower corner on its side; the same element grows
+   into the panel and shrinks back into it, and the page slides over to make room, on the same curve. In the editor,
+   which side and how wide is the user's (layout.ts sets --agent-x, --agent-w, --fab-x, the frame's --frame-l and
+   --frame-r, and the bottom row's --cb-l and --cb-r); these defaults are its usual place. */
+:root {
+  --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+  --agent-w: min(380px, calc(100vw - 32px));
+  --agent-inset: 16px;
+  --agent-left: max(var(--agent-inset), var(--safe-l));
+  --agent-fab: 44px;
+  --agent-ease: cubic-bezier(0.45, 0, 0.15, 1);
+  --agent-ms: 560ms;
+  --agent-x: var(--agent-left); --fab-x: var(--agent-left);
+  --frame-l: var(--safe-l); --frame-r: var(--safe-r);
+  --cb-l: calc(var(--agent-left) + var(--agent-fab) + 14px); --cb-r: 22px;
+  --agent-top: calc(max(8px, env(safe-area-inset-top)) + var(--vv-top, 0px));
+  --agent-bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
+}
+/* With an on-screen keyboard open on a phone, tighten vertical insets so the agent fills the room above the keyboard. */
+html.kb-open body.layout-narrow {
+  --agent-top: calc(max(4px, env(safe-area-inset-top)) + var(--vv-top, 0px));
+  --agent-bottom: calc(var(--kb, 0px) + 6px);
+}
+html.kb-open body.layout-narrow .agent-head { padding: 6px 8px 4px 14px; }
+body.layout-narrow.agent-open #frame { pointer-events: none; }
+/* On phones the agent floats over the page: a frosted backdrop hides peeking text around its 16px inset. */
+body.layout-narrow::before {
+  content: ""; position: fixed; inset: 0; z-index: 19; pointer-events: none; opacity: 0;
+  background: color-mix(in srgb, var(--band, var(--bg)) 86%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  transition: opacity 280ms var(--agent-ease);
+}
+body.layout-narrow.agent-open::before { opacity: 1; }
+/* Touch fields stay >= 16px in View mode, Edit mode, and app pages so iOS Safari never auto-zooms on focus. */
+@media (pointer: coarse) {
+  .agent-compose textarea, .agent-head .model select, .sharing select.role { font-size: 16px; }
+  .agent-compose textarea { line-height: 22px; padding: 7px 10px; }
+}
+/* The agent's box (#agent) is where the open panel goes, top to bottom, and takes clicks only while it's open. Its glass
+   (.agent-glass) is the one element that moves: 44px round, at the corner on the agent's side, closed; the whole box, open.
+   It eases its width, height and corners (560ms), and keeps its shadow all the way. The panel's insides (.agent-card) keep
+   the open panel's size, anchored at the same corner, and the glass crops them. Opening, the "e" fades out at once (120ms),
+   then the insides fade in (200ms, from 120ms); closing, the insides fade out (240 to 440ms), then the "e" fades in, whole
+   when the glass is the circle again. */
+.agent {
+  position: fixed; z-index: 20; left: var(--agent-x); top: var(--agent-top); bottom: var(--agent-bottom); width: var(--agent-w);
+  container-type: size; pointer-events: none;
+  transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease);
+}
+body.agent-open .agent { pointer-events: auto; }
+body:not(.agent-open) .agent-resize { display: none; }
+.agent-glass {
+  position: absolute; left: 0; bottom: 0; width: var(--agent-fab); height: var(--agent-fab); border-radius: calc(var(--agent-fab) / 2);
+  overflow: hidden; pointer-events: auto; -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 90px), var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 76%, transparent);
+  /* (Its 0.5px edge is a ring inside it, not a border: the "e" and the insides start at its very edge.) */
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07), var(--glass-edge), var(--glass-shadow);
+  transition: width var(--agent-ms) var(--agent-ease), height var(--agent-ms) var(--agent-ease), border-radius var(--agent-ms) var(--agent-ease);
+}
+html.page-dark body .agent .agent-glass {
+  background: linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 90px), color-mix(in srgb, var(--glass-pg) 70%, transparent);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+body.agent-open .agent-glass { width: 100%; height: 100%; border-radius: 18px; }
+/* Right of the page, it grows out of the lower-right corner. */
+body.agent-right :is(.agent-glass, .agent-card, .agent-fab) { left: auto; right: 0; }
+.agent-card {
+  position: absolute; left: 0; bottom: 0; width: 100cqw; height: 100cqh;
+  display: flex; flex-direction: column;
+  font: 14px/1.55 var(--font-text); color: var(--fg);
+  opacity: 0; visibility: hidden;
+  transition: opacity 200ms ease 240ms, visibility 0s linear 440ms;
+}
+body.agent-open .agent-card { opacity: 1; visibility: visible; transition: opacity 200ms ease 120ms, visibility 0s; }
+.agent-fab {
+  position: absolute; left: 0; bottom: 0; width: var(--agent-fab); height: var(--agent-fab);
+  display: grid; place-items: center; padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--chrome-hover); transition: opacity 120ms ease 440ms;
+}
+.agent-fab svg { width: 22px; height: 22px; }
+.agent-fab:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 50%; }
+.agent-fab.by-pointer { outline: none; }
+.agent-fab.busy::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
+.agent-fab.disconnected::before { content: ""; position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: #d97706; box-shadow: 0 0 0 2px var(--bg); }
+@keyframes agent-spin { to { transform: rotate(360deg); } }
+body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+@media (prefers-reduced-motion: reduce) { :is(.agent-card, .agent-fab), body.layout-narrow::before { transition: none !important; } }
+/* Its insides on the glass: the box and your messages as faint fills of it, not white cards. */
+.agent .agent-compose { border-top: 0; }
+.agent .agent-compose textarea { background: rgba(255, 255, 255, 0.6); border-color: rgba(0, 0, 0, 0.08); }
+.agent .msg-user { background: rgba(0, 0, 0, 0.045); }
+html.page-dark body .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); }
+html.page-dark body .agent .msg-user { background: rgba(255, 255, 255, 0.08); }
+body.no-motion, body.no-motion *, body.no-motion::before { transition: none !important; }

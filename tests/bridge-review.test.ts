@@ -270,7 +270,7 @@ test("PersonAgents removes dead bridges on send failure and enforces edit access
     const res = await agents.agentPrompt("pete", "http://localhost:4400", "Hi", null, [], "doc-edit", "Pete", "m1");
     expect(res.ok).toBe(false);
     expect(closed).toBe(true);
-    await until(() => tabMsgs.some((m) => m.type == "model" && m.enabled == false));
+    await until(() => tabMsgs.some((m) => m.type == "model" && m.disconnected === true));
   } finally {
     leave();
   }

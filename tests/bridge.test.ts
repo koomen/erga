@@ -13,7 +13,17 @@ import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
-import { activeBridge, bridgeStep, EMPTY_BRIDGES, localScopeOf, panelOptions, threadKeyFor } from "../agents/person/bridge.ts";
+import {
+  activeBridge,
+  bridgeStep,
+  disconnectedBridge,
+  EMPTY_BRIDGES,
+  isLocalSelected,
+  localScopeOf,
+  panelOptions,
+  selectedThreadKey,
+  threadKeyFor,
+} from "../agents/person/bridge.ts";
 import { PersonAgents } from "../agents/person/sessions.ts";
 import type { ChatSql } from "../agents/chat-store.ts";
 import { cachedToken, saveToken } from "../bridge/core/auth.ts";
@@ -159,8 +169,52 @@ test("bridgeStep isolates per-session and per-doc threads, handles embedded fall
   expect(threadKeyFor(activeBridge(st, "doc1"), "doc1")).toBe("local:agy-local:reset-1");
   expect(threadKeyFor(activeBridge(st, "doc2"), "doc2")).toBe("local:agy-local:conv-2");
 
-  st = bridgeStep(st, { on: "disconnect", id: "agy-local" }).state;
+  // Disconnect keeps doc1 and doc2 pinned on the disconnected local agent (never auto-switching).
+  st = bridgeStep(st, { on: "disconnect", id: "agy-local", now: 500 }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
+  expect(disconnectedBridge(st, "doc1")).toEqual({
+    id: "agy-local",
+    agent: "antigravity",
+    label: "Antigravity",
+    threadId: "reset-1",
+    disconnectedAt: 500,
+  });
+  expect(isLocalSelected(st, "doc1")).toBe(true);
+  expect(selectedThreadKey(st, "doc1")).toBe("local:agy-local:reset-1");
+  expect(panelOptions(st, "doc1", embedded)).toEqual([
+    { id: "local:agy-local", label: "Antigravity", group: "local", agent: "antigravity", disconnected: true },
+    { id: "sonnet", label: "Claude Sonnet", key: "server", group: "embedded" },
+  ]);
+
+  // Reconnecting with reconnect: true restores the exact same threadId and clears disconnected state.
+  st = bridgeStep(st, {
+    on: "connect",
+    fallbackThreadId: "fb-re",
+    reconnect: true,
+    bridge: {
+      id: "agy-local",
+      agent: "antigravity",
+      label: "Antigravity",
+      version: "abc123",
+      grantId: "g1",
+      onlyDoc: null,
+      doc: "doc1",
+      sessionId: null,
+      cwd: null,
+      connectedAt: 600,
+    },
+  }).state;
+  expect(disconnectedBridge(st, "doc1")).toBeNull();
+  expect(threadKeyFor(activeBridge(st, "doc1"), "doc1")).toBe("local:agy-local:reset-1");
+
+  // Unbind keeps doc1 pinned as disconnected until user manually switches to an embedded model.
+  st = bridgeStep(st, { on: "unbind", id: "agy-local", doc: "doc1", now: 700 }).state;
+  expect(activeBridge(st, "doc1")).toBeNull();
+  expect(disconnectedBridge(st, "doc1")?.threadId).toBe("reset-1");
+  st = bridgeStep(st, { on: "select", doc: "doc1", choice: "sonnet" }).state;
+  expect(disconnectedBridge(st, "doc1")).toBeNull();
+  expect(isLocalSelected(st, "doc1")).toBe(false);
+  expect(selectedThreadKey(st, "doc1")).toBe("embedded");
 });
 
 test("bridge enforces document-scoped grant onlyDoc", () => {
@@ -255,10 +309,29 @@ test("PersonAgents streams native chat events, isolates local threads, relays pe
     await until(() => tabMsgs.some((m) => m.type == "model" && m.thread == "local:agy-1:conv-2"));
     expect((await agents.conversation("ada", "doc1")).items).toEqual([]);
 
-    leave();
+    // Start a turn so busy=true, then disconnect: must stay selected (never auto-switch), clear stale busy, and reject prompts.
+    expect(await agents.agentPrompt("ada", "http://localhost:4400", "Working...", null, [], "doc1", "Ada", "m2")).toEqual({ ok: true });
+    expect((await agents.conversation("ada", "doc1")).busy).toBe(true);
     bridge.close();
+    await until(() => tabMsgs.some((m) => m.type == "model" && m.disconnected === true));
     const after = await agents.agentState("ada", "doc1", "http://localhost:4400", "Ada");
-    expect(after.enabled).toBe(false);
+    expect(after.enabled).toBe(true);
+    if (after.enabled) {
+      expect(after.choice).toBe(localChoice("agy-1"));
+      expect(after.thread).toBe("local:agy-1:conv-2");
+      expect("disconnected" in after && after.disconnected).toBe(true);
+      expect(after.log.busy).toBe(false);
+      expect(after.log.items.some((i) => i.kind == "user" && i.text == "Working...")).toBe(true);
+    }
+    expect(await agents.agentPrompt("ada", "http://localhost:4400", "Still there?", null, [], "doc1", "Ada", "m3")).toEqual({
+      ok: false,
+      reason: "Antigravity (repo) is disconnected",
+    });
+    expect(await agents.agentControl("ada", "doc1", "approve", "call-2")).toEqual({
+      ok: false,
+      reason: "Antigravity (repo) is disconnected",
+    });
+    leave();
   } finally {
     useAssets(null);
   }

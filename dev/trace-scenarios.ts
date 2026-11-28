@@ -319,7 +319,7 @@ const NOOP_EMIT: Emit = () => {};
 async function waitBridgeReady(person: PersonAgents, origin: string): Promise<void> {
   for (let i = 0; i < 80; i++) {
     const st = await person.agentState("ada", "doc1", origin, "Ada");
-    if (st.enabled && st.choice?.startsWith("local:")) return;
+    if (st.enabled && st.choice?.startsWith("local:") && !("disconnected" in st && st.disconnected)) return;
     await new Promise((r) => setTimeout(r, 10));
   }
   throw new Error("Timed out waiting for bridge to register with PersonAgents");

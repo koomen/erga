@@ -6,7 +6,9 @@ import { sendStep, type SendEvent, type SendState } from "../client/agent/sends"
 import { canSend, type SendFacts } from "../client/agent/send-gate";
 import {
   blockedStep,
+  connectionStep,
   IDLE_BLOCKED,
+  IDLE_CONNECTION,
   isLocalChoiceId,
   panelOpen,
   panelStep,
@@ -149,4 +151,45 @@ test("shouldAutoFocusAgent skips auto-focus on touch FAB taps while keeping desk
   expect(shouldAutoFocusAgent("fab", false)).toBe(true);
   expect(shouldAutoFocusAgent("key", true)).toBe(true);
   expect(shouldAutoFocusAgent("blocked", true)).toBe(true);
+});
+
+test("connectionStep tracks connect -> disconnect -> dismiss/remind -> reconnect -> timeout and manual switch", () => {
+  // Connect to local agent.
+  let r = connectionStep(IDLE_CONNECTION, { t: "sync", choice: "local:agy-1", label: "Antigravity", disconnected: false });
+  expect(r).toEqual({ state: { at: "connected", choice: "local:agy-1", label: "Antigravity" }, effect: null });
+
+  // Disconnect keeps notice visible; dismiss hides it; remind brings it back.
+  r = connectionStep(r.state, { t: "sync", choice: "local:agy-1", label: "Antigravity", disconnected: true });
+  expect(r).toEqual({
+    state: { at: "disconnected", choice: "local:agy-1", label: "Antigravity", dismissed: false },
+    effect: null,
+  });
+  r = connectionStep(r.state, { t: "dismiss" });
+  expect(r.state).toEqual({ at: "disconnected", choice: "local:agy-1", label: "Antigravity", dismissed: true });
+  // Repeated disconnect sync preserves dismissed flag for the same bridge.
+  r = connectionStep(r.state, { t: "sync", choice: "local:agy-1", label: "Antigravity", disconnected: true });
+  expect(r.state).toEqual({ at: "disconnected", choice: "local:agy-1", label: "Antigravity", dismissed: true });
+  r = connectionStep(r.state, { t: "remind" });
+  expect(r.state).toEqual({ at: "disconnected", choice: "local:agy-1", label: "Antigravity", dismissed: false });
+
+  // Reconnect flashes reconnected banner and schedules auto-clear; duplicate sync keeps it.
+  r = connectionStep(r.state, { t: "sync", choice: "local:agy-1", label: "Antigravity", disconnected: false });
+  expect(r).toEqual({
+    state: { at: "reconnected", choice: "local:agy-1", label: "Antigravity" },
+    effect: { t: "schedule-clear" },
+  });
+  r = connectionStep(r.state, { t: "sync", choice: "local:agy-1", label: "Antigravity", disconnected: false });
+  expect(r).toEqual({ state: { at: "reconnected", choice: "local:agy-1", label: "Antigravity" }, effect: null });
+  r = connectionStep(r.state, { t: "reconnected-timeout" });
+  expect(r).toEqual({ state: { at: "connected", choice: "local:agy-1", label: "Antigravity" }, effect: null });
+
+  // Manual switch to embedded model clears disconnected or reconnected state and cancels timer.
+  r = connectionStep(r.state, { t: "sync", choice: "local:agy-1", label: "Antigravity", disconnected: true });
+  r = connectionStep(r.state, { t: "sync", choice: "local:agy-1", label: "Antigravity", disconnected: false });
+  r = connectionStep(r.state, { t: "sync", choice: "sonnet", label: "Claude Sonnet", disconnected: false });
+  expect(r).toEqual({ state: IDLE_CONNECTION, effect: { t: "cancel-clear" } });
+
+  // canSend blocks both box and editor paths when disconnected.
+  expect(canSend("box", facts({ disconnected: "Antigravity is disconnected" }))).toBe("Antigravity is disconnected");
+  expect(canSend("editor", facts({ disconnected: "Antigravity is disconnected" }))).toBe("Antigravity is disconnected");
 });

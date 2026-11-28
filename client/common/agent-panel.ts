@@ -166,3 +166,61 @@ export function threadEventStep(
   }
   return { thread: ev.thread ?? current, effect: { action: "apply" } };
 }
+
+/** Connection notice state for a local ACP agent in the panel (client/agent/person-agent.ts). */
+export type ConnectionState =
+  | { readonly at: "none" }
+  | { readonly at: "connected"; readonly choice: string; readonly label: string }
+  | { readonly at: "disconnected"; readonly choice: string; readonly label: string; readonly dismissed: boolean }
+  | { readonly at: "reconnected"; readonly choice: string; readonly label: string };
+
+export type ConnectionEvent =
+  | { readonly t: "sync"; readonly choice: string | null; readonly label: string | null; readonly disconnected: boolean }
+  | { readonly t: "dismiss" }
+  | { readonly t: "remind" }
+  | { readonly t: "reconnected-timeout" };
+
+export type ConnectionEffect = { readonly t: "schedule-clear" } | { readonly t: "cancel-clear" };
+
+export const IDLE_CONNECTION: ConnectionState = { at: "none" };
+
+/** Pure state machine driving the local agent disconnect/reconnect notice above the composer. */
+export function connectionStep(
+  s: ConnectionState,
+  ev: ConnectionEvent
+): { readonly state: ConnectionState; readonly effect: ConnectionEffect | null } {
+  if (ev.t == "dismiss") {
+    if (s.at == "disconnected") return { state: { ...s, dismissed: true }, effect: null };
+    if (s.at == "reconnected") return { state: { at: "connected", choice: s.choice, label: s.label }, effect: { t: "cancel-clear" } };
+    return { state: s, effect: null };
+  }
+  if (ev.t == "remind") {
+    if (s.at == "disconnected" && s.dismissed) return { state: { ...s, dismissed: false }, effect: null };
+    return { state: s, effect: null };
+  }
+  if (ev.t == "reconnected-timeout") {
+    if (s.at == "reconnected") return { state: { at: "connected", choice: s.choice, label: s.label }, effect: null };
+    return { state: s, effect: null };
+  }
+  if (!isLocalChoiceId(ev.choice) || !ev.choice) {
+    return { state: IDLE_CONNECTION, effect: s.at == "reconnected" ? { t: "cancel-clear" } : null };
+  }
+  const label = ev.label || "Local agent";
+  if (ev.disconnected) {
+    const dismissed = s.at == "disconnected" && s.choice == ev.choice ? s.dismissed : false;
+    return {
+      state: { at: "disconnected", choice: ev.choice, label, dismissed },
+      effect: s.at == "reconnected" ? { t: "cancel-clear" } : null,
+    };
+  }
+  if (s.at == "disconnected" && s.choice == ev.choice) {
+    return { state: { at: "reconnected", choice: ev.choice, label }, effect: { t: "schedule-clear" } };
+  }
+  if (s.at == "reconnected" && s.choice == ev.choice) {
+    return { state: { at: "reconnected", choice: ev.choice, label }, effect: null };
+  }
+  return {
+    state: { at: "connected", choice: ev.choice, label },
+    effect: s.at == "reconnected" ? { t: "cancel-clear" } : null,
+  };
+}

@@ -30,6 +30,7 @@ const PANEL = `<div class="agent-glass">
 <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
 <p class="agent-turn" id="agent-turn" role="status" hidden></p>
 <p class="agent-hint" id="agent-hint" role="status" hidden></p>
+<div class="agent-banner" id="agent-banner" role="status" hidden></div>
 <form class="agent-compose" id="agent-form">
 <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore></textarea></div>
 <button type="submit" class="agent-send" id="agent-send">Send</button>

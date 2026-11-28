@@ -230,7 +230,7 @@ async function build(): Promise<void> {
   const enc = (s: string) => new TextEncoder().encode(s);
   files["inter.css"] = put(`inter-${hashOf(enc(fontCss))}.css`, enc(fontCss));
 
-  const style = new Uint8Array(readFileSync(join(ROOT, "client/style.css")));
+  const style = enc(["client/style.css", "client/styles/agent.css"].map((f) => readFileSync(join(ROOT, f), "utf8")).join("\n"));
   files["style.css"] = put(`style-${hashOf(style)}.css`, style);
   // The admin pages' one stylesheet (client/styles/admin.css): the same file on every admin page. With it, the look of
   // the Deploy page's view (assets/ops/ops-view.css, which the ops page of a machine loads too): each of its rules is

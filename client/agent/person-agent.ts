@@ -31,13 +31,17 @@ import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
 import {
   blockedStep,
+  connectionStep,
   IDLE_BLOCKED,
+  IDLE_CONNECTION,
   isLocalChoiceId,
   pageDoc,
   panelStep,
   savePanel,
   threadEventStep,
   type BlockedState,
+  type ConnectionEvent,
+  type ConnectionState,
   type PanelPhase,
 } from "../common/agent-panel";
 import { watchViewport } from "../common/viewport";
@@ -50,7 +54,8 @@ interface AgentState {
   model?: string | null;
   choice?: string | null;
   thread?: string;
-  models?: { id: string; label: string; group?: "local" | "embedded"; key?: "own" | "server"; agent?: string }[];
+  disconnected?: boolean;
+  models?: { id: string; label: string; group?: "local" | "embedded"; key?: "own" | "server"; agent?: string; disconnected?: boolean }[];
   log?: Log;
 }
 
@@ -110,7 +115,8 @@ const VERBS: Record<string, [string, string]> = {
 const BASE = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')?.content ?? null;
 const input = $("agent-input") as HTMLTextAreaElement,
   send = $("agent-send") as HTMLButtonElement,
-  hint = $("agent-hint");
+  hint = $("agent-hint"),
+  banner = $("agent-banner");
 const talk = chat({
   logEl: $("agent-log"),
   jump: $("agent-jump") as HTMLButtonElement,
@@ -222,8 +228,74 @@ function hideHint() {
 let holdAfterStop = false;
 let voice: VoiceControl | null = null;
 let blocked: BlockedState = IDLE_BLOCKED;
+let conn: ConnectionState = IDLE_CONNECTION;
+let connTimer = 0;
+let hasEmbeddedModels = false;
+const RECONNECTED_MS = 3_000;
+const disconnectedReason = (): string | null => (conn.at == "disconnected" ? `${conn.label} is disconnected` : null);
+function renderBanner() {
+  $("agent-fab").classList.toggle("disconnected", conn.at == "disconnected");
+  const isDisc = conn.at == "disconnected" && !conn.dismissed;
+  const isRe = conn.at == "reconnected";
+  if (!isDisc && !isRe) {
+    banner.hidden = true;
+    banner.className = "agent-banner";
+    banner.textContent = "";
+    return;
+  }
+  const label = conn.at == "disconnected" || conn.at == "reconnected" ? conn.label : "";
+  banner.hidden = false;
+  banner.className = `agent-banner ${isDisc ? "disconnected" : "reconnected"}`;
+  banner.textContent = "";
+  const dot = document.createElement("span");
+  dot.className = "b-dot";
+  dot.setAttribute("aria-hidden", "true");
+  const body = document.createElement("span");
+  body.className = "b-body";
+  const title = document.createElement("span");
+  title.className = "b-title";
+  title.textContent = isDisc ? `Disconnected from ${label}` : `Reconnected to ${label}`;
+  body.append(title);
+  if (isDisc) {
+    const detail = document.createElement("span");
+    detail.className = "b-detail";
+    if (hasEmbeddedModels) {
+      detail.textContent = "Waiting to reconnect. Switch models above to use another agent.";
+    } else {
+      detail.append("Waiting to reconnect, or ");
+      const link = document.createElement("a");
+      link.href = "#settings";
+      link.textContent = "add an LLM provider key";
+      detail.append(link, ".");
+    }
+    body.append(detail);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "b-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", "Dismiss");
+  close.addEventListener("click", () => syncConnection({ t: "dismiss" }));
+  banner.append(dot, body, close);
+}
+function syncConnection(ev: ConnectionEvent) {
+  const res = connectionStep(conn, ev);
+  conn = res.state;
+  if (res.effect?.t == "cancel-clear") {
+    clearTimeout(connTimer);
+    connTimer = 0;
+  } else if (res.effect?.t == "schedule-clear") {
+    clearTimeout(connTimer);
+    connTimer = window.setTimeout(() => {
+      connTimer = 0;
+      syncConnection({ t: "reconnected-timeout" });
+    }, RECONNECTED_MS);
+  }
+  renderBanner();
+}
 /** Why a message can't go by this path now (send-gate.ts), or null if it can. */
-const gate = (path: SendPath, text: string) => canSend(path, { off, reading: att.reading, text, files: att.files.length });
+const gate = (path: SendPath, text: string) =>
+  canSend(path, { off, disconnected: disconnectedReason(), reading: att.reading, text, files: att.files.length });
 /** Why Send can't send right now, or null if it can. */
 const blocker = () => gate("box", input.value);
 function renderBusy() {
@@ -235,14 +307,15 @@ function renderBusy() {
   const nextBlocked = blockedStep(blocked, { t: "sync", asking: askingIds, open: !!window.ergaAgent?.open() });
   blocked = nextBlocked.state;
   if (nextBlocked.expand) window.ergaAgent?.show(true, { focus: false, persist: false });
-  const stop = busy && !input.value.trim() && !att.files.length && !att.reading;
-  const why = off ?? (stop ? null : blocker());
+  const disc = disconnectedReason();
+  const stop = !disc && busy && !input.value.trim() && !att.files.length && !att.reading;
+  const why = off ?? disc ?? (stop ? null : blocker());
   send.textContent = stop ? "Stop" : "Send";
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-disabled", String(!!why));
   send.title = why ?? (stop ? "Stop the agent" : busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
   $("agent-fab").classList.toggle("busy", busy);
-  input.placeholder = off ? "The agent is off" : busy ? "Add to this turn…" : "Ask the agent…";
+  input.placeholder = off ? "The agent is off" : disc ? disc : busy ? "Add to this turn…" : "Ask the agent…";
   // (Drawn again only when it changed: the key field below it keeps what's typed.)
   if (off) {
     if (hint.dataset.off != off || hint.hidden) {
@@ -253,7 +326,7 @@ function renderBusy() {
   } else if (hint.dataset.off) hideHint();
   const holdQueue = holdAfterStop && !busy;
   if (holdQueue) holdAfterStop = false;
-  voice?.sync({ busy, asking, off, readingFiles: att.reading, files: att.files.length, holdQueue });
+  voice?.sync({ busy, asking, off: off ?? disc, readingFiles: att.reading, files: att.files.length, holdQueue });
 }
 
 /**
@@ -357,10 +430,12 @@ function sendPrompt(text: string, clearInput = false): boolean {
   const files = att.files;
   const why = gate("box", text);
   if (why || (!text && !files.length)) {
-    // Off: the panel says why again (with its links, when a key is missing).
+    // Off or disconnected: surface the panel's status directly.
     if (off) {
       delete hint.dataset.off;
       renderBusy();
+    } else if (disconnectedReason()) {
+      syncConnection({ t: "remind" });
     } else showHint(why ?? "Type a message to send it.");
     return false;
   }
@@ -445,6 +520,10 @@ $("agent-form").addEventListener("submit", (e) => {
   } else sendNow();
 });
 $("agent-reset").addEventListener("click", () => {
+  if (disconnectedReason()) {
+    syncConnection({ t: "remind" });
+    return;
+  }
   voice?.resetConversation();
   call("/api/agent/conversation", { method: "DELETE" }).then(
     (r) => {
@@ -469,15 +548,23 @@ function swapLog(l: Log) {
   talk.render();
 }
 
-function updateThreadChrome(choice?: string | null, label?: string | null) {
+function updateThreadChrome(choice?: string | null, label?: string | null, disconnected = false) {
   const isLocal = isLocalChoiceId(choice);
-  $("agent").querySelector(".agent-head")?.classList.toggle("is-local", isLocal);
+  const head = $("agent").querySelector(".agent-head");
+  head?.classList.toggle("is-local", isLocal);
+  head?.classList.toggle("is-disconnected", isLocal && disconnected);
   const logEl = $("agent-log");
-  if (isLocal && label) logEl.dataset.threadNote = `Connected to ${label} · New thread`;
+  if (isLocal && label && !disconnected) logEl.dataset.threadNote = `Connected to ${label} · New thread`;
   else delete logEl.dataset.threadNote;
 }
 
-function applyThreadState(nextThread: string | undefined, nextLog: Log | undefined, choice?: string | null, label?: string | null) {
+function applyThreadState(
+  nextThread: string | undefined,
+  nextLog: Log | undefined,
+  choice?: string | null,
+  label?: string | null,
+  disconnected = false
+) {
   const target = nextThread ?? activeThread ?? "embedded";
   const res = threadEventStep(activeThread, { t: "sync", thread: target });
   const switched = res.effect.action == "swap" && res.effect.switched;
@@ -490,7 +577,7 @@ function applyThreadState(nextThread: string | undefined, nextLog: Log | undefin
     turn?.facts(null);
     void readUndo();
   }
-  updateThreadChrome(choice, label);
+  updateThreadChrome(choice, label, disconnected);
   if (nextLog) {
     if (switched) wasBusy = nextLog.busy;
     swapLog(nextLog);
@@ -501,13 +588,19 @@ function applyThreadState(nextThread: string | undefined, nextLog: Log | undefin
 function renderModel(m: AgentState | null) {
   const el = $("agent-model");
   el.textContent = "";
+  hasEmbeddedModels = !!m?.models?.some((o) => o.group != "local");
   if (!m || !m.enabled) { el.textContent = "off"; return; }
   if (!m.models?.length || !m.choice) { el.textContent = m.model ?? ""; return; }
   const sel = document.createElement("select");
   sel.id = "agent-model-select";
   sel.setAttribute("aria-label", "Model");
   const optionFor = (o: NonNullable<AgentState["models"]>[number]) =>
-    new Option(o.key == "own" ? `${o.label} (your key)` : o.label, o.id, false, o.id == m.choice);
+    new Option(
+      o.disconnected ? `${o.label} (disconnected)` : o.key == "own" ? `${o.label} (your key)` : o.label,
+      o.id,
+      false,
+      o.id == m.choice
+    );
   const locals = m.models.filter((o) => o.group == "local");
   const embedded = m.models.filter((o) => o.group != "local");
   if (locals.length) {
@@ -541,9 +634,13 @@ function renderModel(m: AgentState | null) {
       showHint("Couldn't switch models.");
       return;
     }
-    applyThreadState(r.thread, r.log, r.choice ?? sel.value, r.model ?? sel.selectedOptions[0]?.text);
+    const nextChoice = r.choice ?? sel.value;
+    const nextLabel = r.model ?? sel.selectedOptions[0]?.text ?? null;
+    renderModel({ ...r, enabled: true });
+    syncConnection({ t: "sync", choice: nextChoice, label: nextLabel, disconnected: !!r.disconnected });
+    applyThreadState(r.thread, r.log, nextChoice, nextLabel, !!r.disconnected);
     renderBusy();
-    showHint(log.busy ? `${sel.selectedOptions[0]?.text}: from your next message` : `Switched to ${sel.selectedOptions[0]?.text}`);
+    showHint(log.busy ? `${nextLabel}: from your next message` : `Switched to ${nextLabel}`);
   });
   el.append(sel);
 }
@@ -588,7 +685,13 @@ async function load(tries = 0, fresh = false): Promise<void> {
   // The editor's buttons that ask the agent (an alert's fix: client/shell/alerts.ts) follow its state.
   window.dispatchEvent(new Event("erga:agent-state"));
   renderModel(a);
-  applyThreadState(a.thread, l, a.enabled ? a.choice : null, a.enabled ? a.model : null);
+  syncConnection({
+    t: "sync",
+    choice: a.enabled ? (a.choice ?? null) : null,
+    label: a.enabled ? (a.model ?? null) : null,
+    disconnected: !!a.disconnected,
+  });
+  applyThreadState(a.thread, l, a.enabled ? a.choice : null, a.enabled ? a.model : null, !!a.disconnected);
   phase = panelStep(phase, { t: "loaded" }).state;
   renderBusy();
 }
@@ -614,11 +717,18 @@ const events = liveSocket({
         off = null;
         renderModel({ ...m, enabled: true });
       }
+      syncConnection({
+        t: "sync",
+        choice: m.enabled === false ? null : (m.choice ?? null),
+        label: m.enabled === false ? null : (m.model ?? null),
+        disconnected: m.enabled !== false && !!m.disconnected,
+      });
       applyThreadState(
         m.enabled === false ? "embedded" : m.thread,
         m.log,
         m.enabled === false ? null : m.choice,
-        m.enabled === false ? null : m.model
+        m.enabled === false ? null : m.model,
+        m.enabled !== false && !!m.disconnected
       );
       window.dispatchEvent(new Event("erga:agent-state"));
       renderBusy();
@@ -788,11 +898,12 @@ window.ergaAgentPanel = {
   ask: (text, ctx) => {
     window.ergaAgent?.show(true);
     const why = gate("editor", text);
-    if (why) showHint(why, why == off);
+    if (why && why == disconnectedReason()) syncConnection({ t: "remind" });
+    else if (why) showHint(why, why == off);
     else ask(text, ctx ?? context());
   },
   get off() {
-    return off;
+    return off ?? disconnectedReason();
   },
   get busy() {
     return log.busy;

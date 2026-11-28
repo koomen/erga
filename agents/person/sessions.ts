@@ -13,10 +13,12 @@ import {
   bridgeLabelFor,
   bridgeStep,
   bridgeThreadId,
+  disconnectedBridge,
   EMPTY_BRIDGES,
+  isLocalSelected,
   localScopeOf,
   panelOptions,
-  threadKeyFor,
+  selectedThreadKey,
   type BridgeState,
 } from "./bridge.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
@@ -198,7 +200,7 @@ export class PersonAgents {
       stored: this.chats.load(scope),
       meta: { origin, name: state.name },
       modelChanged: () => {
-        if (!activeBridge(this.bridgesOf(login), doc)) {
+        if (!isLocalSelected(this.bridgesOf(login), doc)) {
           const models = panelOptions(this.bridgesOf(login), doc, modelState(agent).models);
           this.event({ type: "model", enabled: true, thread: EMBEDDED_THREAD, ...modelState(agent), models }, login, scope);
         }
@@ -220,7 +222,7 @@ export class PersonAgents {
       state.turn = null;
     });
     agent.subscribe((ev) => {
-      if (!activeBridge(this.bridgesOf(login), doc)) this.event({ type: "agent", thread: EMBEDDED_THREAD, ev }, login, scope);
+      if (!isLocalSelected(this.bridgesOf(login), doc)) this.event({ type: "agent", thread: EMBEDDED_THREAD, ev }, login, scope);
     });
     s = Object.assign(state, { agent });
     this.agents.set(scope, s);
@@ -262,6 +264,13 @@ export class PersonAgents {
     });
   }
 
+  private clearLocalBusy(login: string, doc: string | null, bridgeId: string, threadId: string): void {
+    const log = this.localLogOf(login, doc, bridgeId, threadId);
+    if (!log.busy) return;
+    reduce(log, { t: "busy", busy: false });
+    this.saveLocalLog(login, doc, bridgeId, threadId, log);
+  }
+
   private disconnectBridge(login: string, bridgeId: string, sock?: BridgeSocket): void {
     const key = bridgeKey(login, bridgeId);
     const current = this.bridgeSockets.get(key);
@@ -272,8 +281,17 @@ export class PersonAgents {
     } catch {
       /* already closed */
     }
-    const res = bridgeStep(this.bridgesOf(login), { on: "disconnect", id: bridgeId });
+    const prev = this.bridgesOf(login);
+    const had = prev.bridges.find((b) => b.id == bridgeId);
+    const res = bridgeStep(prev, { on: "disconnect", id: bridgeId, now: Date.now() });
     this.bridgeStates.set(login, res.state);
+    if (had) {
+      for (const d of had.docs) this.clearLocalBusy(login, d, bridgeId, bridgeThreadId(had, d));
+      if (!had.docs.length) this.clearLocalBusy(login, null, bridgeId, had.threadId);
+    }
+    for (const [k, d] of Object.entries(res.state.disconnected)) {
+      if (d.id == bridgeId && k != "*") this.clearLocalBusy(login, k || null, bridgeId, d.threadId);
+    }
     if (res.notify) this.notifyPanels(login, res.notify);
   }
 
@@ -306,6 +324,19 @@ export class PersonAgents {
         model: bridgeLabelFor(active, doc),
         choice: localChoice(active.id),
         thread: localThreadKey(active.id, tid),
+        models,
+        log,
+      };
+    }
+    const disc = disconnectedBridge(bState, doc);
+    if (disc) {
+      const log = this.localLogOf(login, doc, disc.id, disc.threadId);
+      return {
+        enabled: true as const,
+        model: disc.label,
+        choice: localChoice(disc.id),
+        thread: localThreadKey(disc.id, disc.threadId),
+        disconnected: true as const,
         models,
         log,
       };
@@ -397,6 +428,8 @@ export class PersonAgents {
       }
       return { ok: true };
     }
+    const disc = disconnectedBridge(this.bridgesOf(login), targetDoc);
+    if (disc) return { ok: false, reason: `${disc.label} is disconnected` };
     const s = await this.session(login, targetDoc, origin, name);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
     s.page = page ?? null;
@@ -416,8 +449,11 @@ export class PersonAgents {
   }
 
   async conversation(login: string, doc: string | null): Promise<Log> {
-    const active = activeBridge(this.bridgesOf(login), doc);
+    const bState = this.bridgesOf(login);
+    const active = activeBridge(bState, doc);
     if (active) return this.localLogOf(login, doc, active.id, bridgeThreadId(active, doc));
+    const disc = disconnectedBridge(bState, doc);
+    if (disc) return this.localLogOf(login, doc, disc.id, disc.threadId);
     const scope = scopeOf(login, doc);
     const live = this.agents.get(scope)?.agent.log();
     if (live) return live;
@@ -433,19 +469,22 @@ export class PersonAgents {
   }
 
   async clearConversation(login: string, doc: string | null): Promise<Log> {
-    const active = activeBridge(this.bridgesOf(login), doc);
+    const bState = this.bridgesOf(login);
+    const active = activeBridge(bState, doc);
     if (active) {
       const tid = bridgeThreadId(active, doc);
       const lScope = localScopeOf(login, doc, active.id, tid);
       this.localLogs.set(lScope, emptyLog());
       this.chats.clear(lScope);
-      const res = bridgeStep(this.bridgesOf(login), { on: "reset", id: active.id, doc, nextThreadId: crypto.randomUUID() });
+      const res = bridgeStep(bState, { on: "reset", id: active.id, doc, nextThreadId: crypto.randomUUID() });
       this.bridgeStates.set(login, res.state);
       this.sendBridge(login, active.id, { type: "reset", doc });
       this.event({ type: "agent", thread: localThreadKey(active.id, tid), ev: { t: "reset" } }, login, scopeOf(login, doc));
       if (res.notify) this.notifyPanels(login, res.notify);
       return emptyLog();
     }
+    const disc = disconnectedBridge(bState, doc);
+    if (disc) return this.localLogOf(login, doc, disc.id, disc.threadId);
     const scope = scopeOf(login, doc);
     const s = this.agents.get(scope);
     if (s) await s.agent.reset();
@@ -465,13 +504,13 @@ export class PersonAgents {
   ) {
     const scope = scopeOf(login, doc);
     if (op == "model") {
-      const wasThread = threadKeyFor(activeBridge(this.bridgesOf(login), doc), doc);
+      const wasThread = selectedThreadKey(this.bridgesOf(login), doc);
       if (isLocalChoice(model)) {
         const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
         if (!res.ok) return { ok: false, reason: "that connected agent isn't available" };
         this.bridgeStates.set(login, res.state);
         const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-        const nowThread = threadKeyFor(activeBridge(res.state, doc), doc);
+        const nowThread = selectedThreadKey(res.state, doc);
         const payload = wasThread == nowThread ? { ...state, log: undefined } : state;
         this.event({ type: "model", ...payload }, login, scope);
         return { ok: true, ...payload };
@@ -482,12 +521,13 @@ export class PersonAgents {
       const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
       this.bridgeStates.set(login, res.state);
       const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-      const nowThread = threadKeyFor(activeBridge(res.state, doc), doc);
+      const nowThread = selectedThreadKey(res.state, doc);
       const payload = wasThread == nowThread ? { ...state, log: undefined } : state;
       this.event({ type: "model", ...payload }, login, scope);
       return { ok: true, ...payload };
     }
-    const active = activeBridge(this.bridgesOf(login), doc);
+    const bState = this.bridgesOf(login);
+    const active = activeBridge(bState, doc);
     if (active) {
       if (op == "abort") {
         const tid = bridgeThreadId(active, doc);
@@ -517,6 +557,8 @@ export class PersonAgents {
         return sent ? { ok: true } : { ok: false, reason: "the connected agent disconnected" };
       }
     }
+    const disc = disconnectedBridge(bState, doc);
+    if (disc) return { ok: false, reason: `${disc.label} is disconnected` };
     const s = this.agents.get(scope);
     if (!s) {
       if (op == "reset") await this.clearConversation(login, doc);
@@ -622,7 +664,10 @@ export class PersonAgents {
         }
 
         if (msg.type == "unbind") {
-          applyAndNotify(bridgeStep(this.bridgesOf(info.login), { on: "unbind", id: bridgeId, doc: msg.doc }));
+          const prev = this.bridgesOf(info.login);
+          const had = prev.bridges.find((b) => b.id == bridgeId);
+          if (had && had.docs.includes(msg.doc)) this.clearLocalBusy(info.login, msg.doc, bridgeId, bridgeThreadId(had, msg.doc));
+          applyAndNotify(bridgeStep(prev, { on: "unbind", id: bridgeId, doc: msg.doc, now: Date.now() }));
           return;
         }
 

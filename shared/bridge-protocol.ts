@@ -23,6 +23,7 @@ export interface PanelOption {
   group?: "local" | "embedded";
   key?: "own" | "server";
   agent?: string;
+  disconnected?: boolean;
 }
 
 /** A model that a connected local agent advertises. */
