@@ -1,6 +1,7 @@
 // Where a link on a document's page goes (client/common/link-target.ts): each link form, from the page about.html of
 // /ada/site, framed on its pages origin under its token.
 import { expect, test } from "bun:test";
+import { followMod } from "../client/common/app-keys";
 import { linkTarget, type Place } from "../client/common/link-target";
 
 const FRAME = "https://abcd1234-ada.erga-pages.dev",
@@ -69,4 +70,14 @@ test("before the viewer says the document's address, its Erga address is an Erga
 test("a page's public address leaves out the frame's own parameters (?erga-edit, ?erga-y=)", () => {
   const t = linkTarget(new URL("#rich", `${FRAME}${PREFIX}about.html?erga-edit&erga-y=40&x=1`), place());
   expect(t.kind == "page" && t.public).toBe(`${SHELL}/ada/site/about?x=1#rich`);
+});
+
+test("followMod matches Cmd on Mac and Ctrl on non-Mac, ignoring Alt and wrong-platform modifiers", () => {
+  const m = (metaKey: boolean, ctrlKey: boolean, altKey = false) => ({ metaKey, ctrlKey, altKey });
+  expect(followMod(m(true, false), true)).toBe(true);
+  expect(followMod(m(false, true), true)).toBe(false);
+  expect(followMod(m(true, false, true), true)).toBe(false);
+  expect(followMod(m(false, true), false)).toBe(true);
+  expect(followMod(m(true, false), false)).toBe(false);
+  expect(followMod(m(false, true, true), false)).toBe(false);
 });

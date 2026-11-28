@@ -40,6 +40,8 @@ body[contenteditable] { outline: none; }
 [data-erga-text].erga-locked { cursor: default; }
 [data-erga-text] [contenteditable="false"] { cursor: default; }
 [data-erga-text] a[href] { cursor: text; }
+html[data-erga-mod] [data-erga-text] a[href] { cursor: pointer; }
+html[data-erga-mod] [data-erga-text] a[href]:hover { text-decoration: underline; }
 /* An agent's new text that hasn't played yet (marks.ts, playTyping): there, unseen, until its typing gets to it. */
 ::highlight(erga-unshown) { color: transparent; text-decoration-color: transparent; }
 /* Comments (comments.ts): drawn over the text, never written into it; the thread in use, stronger. */
@@ -229,6 +231,7 @@ export function teardown(ed: EditorCore): void {
   ed.own.clear();
   for (const el of doc.querySelectorAll(".erga-locked, .erga-empty")) el.classList.remove("erga-locked", "erga-empty");
   for (const el of doc.querySelectorAll(`[${TEXT_ATTR}]`)) el.removeAttribute(TEXT_ATTR);
+  doc.documentElement.removeAttribute("data-erga-mod");
   doc.documentElement.removeAttribute("data-erga-editing");
   ed.win?.dispatchEvent(new Event("erga-editing"));
   if (ed.win) delete (ed.win as Window & { __ergaApply?: unknown }).__ergaApply;

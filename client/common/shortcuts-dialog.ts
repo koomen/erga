@@ -46,7 +46,7 @@ function make(): HTMLDialogElement {
 <dt>Print</dt><dd><kbd>⌘</kbd><kbd>P</kbd></dd>
 <dt>This list</dt><dd><kbd>⌘</kbd><kbd>/</kbd></dd>
 </dl>
-<p>Type the Markdown at the start of a line, then a space (a heading, a list, a to-do, a quote); <kbd>\`\`\`</kbd> and <kbd>---</kbd> alone on a line, then Enter. In a line: **bold**, *italic*, \`code\`. Select text for the style bar. ⌘-click a link to open it.</p>
+<p>Type the Markdown at the start of a line, then a space (a heading, a list, a to-do, a quote); <kbd>\`\`\`</kbd> and <kbd>---</kbd> alone on a line, then Enter. In a line: **bold**, *italic*, \`code\`. Select text for the style bar. <kbd>⌘</kbd>-click a link to open it.</p>
 <p>Others who edit the page show as carets with their names. ⌘Z only undoes your own edits; the agent panel has its own undo for your agent's.</p></div>`;
   // Another system's names for the keys.
   if (!isMac)

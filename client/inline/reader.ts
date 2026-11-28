@@ -25,7 +25,7 @@ import type { ToolAsk } from "../common/reader-api";
 import { linkTarget, placeOf } from "../common/link-target";
 import { BOTTOM_ROOM, TOP_ROOM, topRoom, type Seat } from "../common/top-room";
 import { readView, showView, viewOf, type View } from "../common/page-view";
-import { isAppShortcut, isMac } from "../common/app-keys";
+import { followMod, isAppShortcut, isMac } from "../common/app-keys";
 import { extractDocPath, parseSrcset, usedChangedPaths } from "../common/live-scope";
 import { catchZoomGestures, zoomKey, type ZoomAim, type Zoomed } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
@@ -668,12 +668,28 @@ export default function reader(C: ReaderConfig): void {
       return;
     }
     const to = linkTarget(url, p);
-    if (to.kind == "none" || to.kind == "file") return;
+    const mod = followMod(e);
     const t = (a.getAttribute("target") || "").toLowerCase(),
-      tab = e.type == "auxclick" || e.metaKey || e.ctrlKey || e.shiftKey || t == "_blank",
       here = !t || t == "_self" || t == "_top" || t == "_parent";
     if (editing()) {
-      if (!tab && (a.isContentEditable || !here || a.getAttribute("href")!.charAt(0) == "#")) return;
+      const aux = e.type == "auxclick";
+      // In editable text, only ⌘-click (Mac), Ctrl-click (other), or middle-click follows a link: plain clicks
+      // (including on target="_blank" links) place the caret, and Shift-clicks extend selection.
+      if (a.isContentEditable) {
+        if (!mod && !aux) return;
+        e.preventDefault();
+        if (to.kind == "file" || (to.kind == "none" && /^mailto:/i.test(url.protocol))) {
+          window.open(url.href, "_blank", "noopener,noreferrer");
+          return;
+        }
+        if (to.kind == "none") return;
+        const out = to.kind == "page" ? to.public : to.url;
+        if (out) tell({ type: "erga-go", url: out, tab: "new" });
+        return;
+      }
+      if (to.kind == "none" || to.kind == "file") return;
+      const tab = aux || mod || e.shiftKey || t == "_blank";
+      if (!tab && (!here || a.getAttribute("href")!.charAt(0) == "#")) return;
       e.preventDefault();
       if (to.kind == "page" && !tab) tell({ type: "erga-open", path: to.path || "index.html" });
       else {
@@ -682,6 +698,8 @@ export default function reader(C: ReaderConfig): void {
       }
       return;
     }
+    if (to.kind == "none" || to.kind == "file") return;
+    const tab = e.type == "auxclick" || e.metaKey || e.ctrlKey || e.shiftKey || t == "_blank";
     if (to.kind == "page" && !tab) {
       if (!here || (url.href == to.frame && t != "_top" && t != "_parent")) return;
       e.preventDefault();

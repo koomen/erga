@@ -69,7 +69,7 @@ import {
 import { clearStyles, styleKey } from "./format";
 import { tableRow } from "./markdown";
 import { copy, cut, paste } from "./clipboard";
-import { isMac } from "../../../client/common/app-keys";
+import { followMod, isMac } from "../../../client/common/app-keys";
 import { TEXT_ATTR } from "../../../shared/page-html";
 import { clickBelow, documentEnd, leaveCode } from "../api/blocks";
 import { blockRange, editableAt, placeholderDrops } from "../api/rules";
@@ -174,6 +174,19 @@ export function bind(ed: EditorCore): void {
   });
   on("mousedown", (e) => mousedown(ed, e));
   on("click", (e) => tick(ed, e));
+  // Holding ⌘ (Mac) or Ctrl (other) shows links in editable text as clickable pointers (terminal convention).
+  const setMod = (on: boolean) => doc.documentElement.toggleAttribute("data-erga-mod", on);
+  on("keydown", (e) => setMod(followMod(e)), { capture: true });
+  on("keyup", (e) => setMod(followMod(e)), { capture: true });
+  on("pointermove", (e) => setMod(followMod(e)), { capture: true, passive: true });
+  const clearMod = () => setMod(false);
+  win.addEventListener("blur", clearMod);
+  doc.addEventListener("visibilitychange", clearMod);
+  ed.cleanup.push(() => {
+    win.removeEventListener("blur", clearMod);
+    doc.removeEventListener("visibilitychange", clearMod);
+    clearMod();
+  });
   // A caret the browser put outside the text goes into it before the next paint (see snapCaret).
   on("mouseup", () => win.requestAnimationFrame(() => snapCaret(ed, true)));
   on("keydown", () => win.requestAnimationFrame(() => snapCaret(ed, false)));
@@ -344,6 +357,12 @@ function snapCaret(ed: EditorCore, click: boolean): void {
 }
 
 function mousedown(ed: EditorCore, e: MouseEvent): void {
+  // Inside manuscript the browser doesn't follow links; a ⌘-click (Mac) or Ctrl-click (other) opens one in a new tab
+  // (client/inline/reader.ts, on the click), leaving the caret and any selection where they were.
+  if (e.button == 0 && followMod(e) && ours(ed, e) && (e.target as Element).closest?.("a[href]")) {
+    e.preventDefault();
+    return;
+  }
   // A click on the text after Escape (leaveText), or after the text lost the focus: the page's text is editable again,
   // before the browser puts the caret.
   if ((ed.leftText || !ed.host?.hasAttribute("contenteditable")) && e.button == 0 && ours(ed, e)) {
@@ -373,10 +392,6 @@ function mousedown(ed: EditorCore, e: MouseEvent): void {
       }
     }
   }
-  // Inside manuscript the browser doesn't follow links; a Cmd-click opens one in a new tab (frame.ts, on the click),
-  // and leaves the caret where it was.
-  if (!ours(ed, e)) return;
-  if ((isMac ? e.metaKey : e.ctrlKey) && (e.target as Element).closest?.("a[href]")) e.preventDefault();
 }
 
 /** Whether `c` is a plain, unstyled flow box (not positioned, bordered or painted as a card or widget). */

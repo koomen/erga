@@ -13,6 +13,10 @@ export interface Keys {
   altKey: boolean;
 }
 
+/** Whether the platform's follow-link modifier is held (⌘ on Mac, Ctrl elsewhere), without Alt. */
+export const followMod = (e: Pick<Keys, "metaKey" | "ctrlKey" | "altKey">, mac = isMac): boolean =>
+  (mac ? e.metaKey : e.ctrlKey) && !e.altKey;
+
 /** Whether a key is one of the viewer's shortcuts (client/shell/main.ts, appShortcut). */
 export function isAppShortcut(e: Keys, isMac: boolean): boolean {
   const mod = isMac ? e.metaKey : e.ctrlKey,

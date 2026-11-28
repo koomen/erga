@@ -93,10 +93,27 @@ journey("a reader opens a document with several pages", () => {
 
   test("in the editor, a click on a link in the text puts the caret there; a ⌘-click opens the page's address in a new tab, and so does a link out of the document", async () => {
     await ed.settle();
+    // Plain click and Shift-click on an editable link (even with target="_blank") stay in the editor.
+    await inDoc(page, `document.querySelector("p a").setAttribute("target", "_blank")`);
     await link("about us").click();
     await expect.poll(() => ed.caretIn("a")).toBe(true);
     expect(page.context().pages()).toHaveLength(1);
+    const cursor = () => inDoc<string>(page, `getComputedStyle(document.querySelector("p a")).cursor`);
+    expect(await cursor()).toBe("text");
+    // Holding the follow-link modifier switches hovered editable links to pointer (terminal convention) and clears on release.
+    const modKey = process.platform == "darwin" ? "Meta" : "Control";
+    await page.keyboard.down(modKey);
+    await expect.poll(cursor).toBe("pointer");
+    await page.keyboard.up(modKey);
+    await expect.poll(cursor).toBe("text");
+    await link("about us").click({ modifiers: ["Shift"] });
+    expect(page.context().pages()).toHaveLength(1);
+    // Modifier-click follows the link in a new tab without clearing an existing selection.
+    await ed.press("ControlOrMeta+a");
+    const selBefore = await ed.frame<string>(`${F}.getSelection().toString()`);
+    expect(selBefore.length).toBeGreaterThan(0);
     expect(await opened(() => link("about us").click({ modifiers: ["ControlOrMeta"] }))).toBe(`${doc.address}/about`);
+    expect(await ed.frame<string>(`${F}.getSelection().toString()`)).toBe(selBefore);
     // Out of the document (/documents, and with the server's name): Erga's page, never in the frame.
     for (const name of ["Docs", "Full docs"]) expect(await opened(() => link(name).click()), name).toBe(`${s.root}/documents`);
     expect(`${await where(page)} ${await ed.textOf("h1")}`).toBe(`${doc.path}/blog?edit The blog`);
