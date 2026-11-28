@@ -38,17 +38,11 @@ export function mountChrome(shell: Shell) {
   // The on-screen keyboard: shared across View mode, Edit mode, and app pages (client/common/viewport.ts).
   watchViewport();
 
-  // On a phone (narrower than 760px) the quick actions open out of your avatar (client/common/quick.ts), as in the viewer;
-  // a tap on the page closes them too, while editing (main.ts, onPointer).
-  const toggleQuick = mountQuick({
-    quick: $("quick"),
-    me: $("me"),
+  // Breadcrumbs' room on a phone (narrower than 760px): quick actions stay open by default (client/common/quick.ts).
+  mountQuick({
     nav: $("nav-documents"),
     bar: document.querySelector<HTMLElement>(".chrome-top")!,
     stack: $("people"),
-    // (After the avatar's own click, which opened or closed its menu: people.ts.)
-    menuOpen: () => (shell.people.accountLinks ? !$("account").hidden : undefined),
-    keep: ".erga-bar-r, .help, .ds-menu, .erga-new-menu, .erga-agent-menu",
   });
 
   /** Closes every card but `keep`. */
@@ -114,7 +108,6 @@ export function mountChrome(shell: Shell) {
     hideChrome,
     showChrome,
     pointerMoved,
-    toggleQuick,
     loadSettings,
     keyPressed() {
       lastKeyAt = performance.now();

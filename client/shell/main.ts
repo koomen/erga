@@ -346,7 +346,6 @@ const TITLE_NOT_SAVED = {
       // (Also a card that's waiting for what it shows, to open.)
       shell.chrome.closeCards();
       shell.people.stackPeople();
-      shell.chrome.toggleQuick(false);
       shell.save.close();
     },
     onPressed: keyPressed,
@@ -436,7 +435,6 @@ const TITLE_NOT_SAVED = {
         /* its menu, or itself, closed */
       } else if (!$("account").hidden) {
         shell.people.toggleAccount(false);
-        shell.chrome.toggleQuick(false);
         shell.people.accountBtn?.focus();
       } else if (!$("naming").hidden) shell.naming.toggleNaming(false);
       else if (!$("pages").hidden) { shell.naming.togglePages(false); $("doc-title").focus(); }
@@ -489,7 +487,6 @@ const TITLE_NOT_SAVED = {
       return;
     }
     shell.chrome.closeCards();
-    shell.chrome.toggleQuick(false);
     shell.chrome.showChrome();
   }
   if (!editing()) setEditing(false);

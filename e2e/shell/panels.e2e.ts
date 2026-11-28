@@ -88,35 +88,32 @@ journey("the panels and the bars over a page", () => {
       const b = document.getElementById("btn-zoom");
       return b?.checkVisibility() ? b.textContent!.trim() : null;
     });
-  /** The two bars as they show on a phone: the quick actions' width, the buttons in sight, the breadcrumbs' bar against the buttons'. */
+  /** The two bars as they show on a phone: the buttons in sight, the account menu, the breadcrumbs' bar against the buttons'. */
   const look = () =>
     ed.eval<{
-      quick: number;
       shown: string[];
-      open: boolean;
       menu: boolean;
       navRight: number;
       topLeft: number;
+      titleWidth: number;
       titleIn: boolean;
-      brandOut: boolean;
+      brandHidden: boolean;
     }>(`(() => {
       const top = document.querySelector(".chrome-top").getBoundingClientRect(), nav = document.getElementById("nav-documents").getBoundingClientRect();
-      const title = document.getElementById("doc-title").getBoundingClientRect(), brand = document.getElementById("nav-brand").getBoundingClientRect();
+      const title = document.getElementById("doc-title").getBoundingClientRect(), brand = document.getElementById("nav-brand");
       const shown = [...document.querySelectorAll(".chrome-top :is(.icon-btn, .avatar)")].filter((b) => {
         const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
         return r.width > 0 && b.contains(document.elementFromPoint(x, y));
       }).map((b) => b.id || (b.classList.contains("me") ? "me" : b.className));
       return {
-        quick: Math.round(document.getElementById("quick").getBoundingClientRect().width), shown,
-        open: document.body.classList.contains("quick-open"), menu: !document.getElementById("account").hidden,
+        shown,
+        menu: !document.getElementById("account").hidden,
         navRight: nav.right, topLeft: top.left,
-        titleIn: title.right <= nav.right + 0.5 && title.right >= nav.right - 12, brandOut: brand.left < nav.left,
+        titleWidth: Math.round(title.width),
+        titleIn: title.right <= nav.right + 0.5 && title.left >= nav.left - 0.5,
+        brandHidden: getComputedStyle(brand).display == "none",
       };
     })()`);
-  const resting = async () => {
-    const l = await look();
-    return { quick: l.quick, shown: l.shown, open: l.open };
-  };
 
   test("Share with an agent opens its menu; Install Erga's MCP copies one line, Erga's MCP server and then this document, and opens no card", async ({
     tab,
@@ -430,35 +427,40 @@ journey("the panels and the bars over a page", () => {
     await soon(() => ed.disk(), DISK_MS).toContain("<h2>What changed today</h2>");
   });
 
-  test("phone: at rest only the avatar; a tap opens the quick actions and the menu, the breadcrumbs make way; a card keeps them open; a tap on the page closes all", async () => {
-    await soon(resting).toEqual({ quick: 0, shown: ["me"], open: false });
-    await pressOn(page, ".me-slot .avatar");
-    await soon(async () => (await look()).shown).toEqual(
-      expect.arrayContaining(["btn-new", "btn-full", "btn-settings", "btn-edit", "btn-agent-share", "btn-documents", "me"])
-    );
-    // (The bars slide: the look, once they rest.)
+  test("phone: quick actions open by default, Erga logo hidden for wider title; avatar toggles only account menu; page tap closes cards only", async () => {
+    const allActions = expect.arrayContaining([
+      "btn-new",
+      "btn-full",
+      "btn-settings",
+      "btn-edit",
+      "btn-agent-share",
+      "btn-documents",
+      "me",
+    ]);
+    await soon(async () => (await look()).shown).toEqual(allActions);
     await soon(async () => {
       const l = await look();
       return {
-        open: l.open,
         menu: l.menu,
         navEndsBeforeTheButtons: l.navRight <= l.topLeft - 7.5,
-        titleEndShows: l.titleIn,
-        brandSlidOut: l.brandOut,
+        titleIn: l.titleIn && l.titleWidth > 30,
+        brandHidden: l.brandHidden,
       };
-    }).toEqual({ open: true, menu: true, navEndsBeforeTheButtons: true, titleEndShows: true, brandSlidOut: true });
-    // Document settings, from the quick actions: its card opens, the menu closes, the quick actions stay.
+    }).toEqual({ menu: false, navEndsBeforeTheButtons: true, titleIn: true, brandHidden: true });
+    // Tapping the avatar opens only the account menu; tapping it again closes only the account menu. Quick actions stay open.
+    await pressOn(page, ".me-slot .avatar");
+    await soon(async () => (await look()).menu).toBe(true);
+    expect((await look()).shown).toEqual(allActions);
+    await pressOn(page, ".me-slot .avatar");
+    await soon(async () => (await look()).menu).toBe(false);
+    expect((await look()).shown).toEqual(allActions);
+    // Document settings opens directly in one tap; a tap on the page closes the sheet while quick actions stay open.
     await pressOn(page, "#btn-settings");
     await soon(() => ed.eval<boolean>(`!!document.querySelector("#doc-settings:not([hidden])")`)).toBe(true);
-    await soon(async () => {
-      const l = await look();
-      return { open: l.open, menu: l.menu };
-    }).toEqual({ open: true, menu: false });
-    // A tap on the page, above the settings' sheet, closes them all.
     const sheet = await atRest(page, "#doc-settings");
     await page.mouse.click(390 / 2, sheet.y / 2 + 40);
-    await soon(resting).toEqual({ quick: 0, shown: ["me"], open: false });
     await soon(() => ed.eval<boolean>(`!!document.querySelector("#doc-settings:not([hidden])")`)).toBe(false);
+    expect((await look()).shown).toEqual(allActions);
     // Phone agent composer: placeholders stay single-line and unclipped, multi-line typing expands, and the backdrop veils #frame.
     await ed.eval(`window.ergaAgent.show(true, { focus: false })`);
     await soon(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(true);

@@ -161,9 +161,9 @@ body:not(.layout-narrow) .agent-head { cursor: grab; touch-action: none; }
   font-weight: 600; font-size: 11.5px; color: #fff; background: var(--c); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16); }
 .people .avatar:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
 .people .avatar:focus-visible::before { opacity: 1; }
-/* On a phone, open quick actions take the band: the stack steps out of their way. (.tight lives in client/inline/bars.css.) */
+/* On a phone, quick actions stay open and take the band: the stack steps out of their way. (.tight lives in client/inline/bars.css.) */
 @media (max-width: 759.98px) {
-  body.quick-open .chrome-top .people { opacity: 0; pointer-events: none; }
+  .chrome-top .people { opacity: 0; pointer-events: none; }
 }
 @media (prefers-reduced-motion: reduce) { .people > * { transition: none; } }
 /* You, at the far right, apart from the others (.me-slot: client/inline/bars.css). */

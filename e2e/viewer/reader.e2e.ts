@@ -399,20 +399,13 @@ journey("a reader opens a document with several pages", () => {
     expect(await ed.textOf("h1")).toBe("The blog");
   });
 
-  test("on a phone, the buttons' bar is the avatar alone; a tap opens the quick actions and the menu; a tap on the page closes them; the editor's bar is the same", async () => {
-    const shown = async (mode: "view" | "edit") => Object.keys((await bars(page, mode)).parts).filter((p) => p != "brand");
+  test("on a phone, quick actions stay open and Erga logo hides; avatar toggles only the account menu; the editor's bar is the same", async () => {
+    const shown = async (mode: "view" | "edit") => Object.keys((await bars(page, mode)).parts);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${doc.address}/blog`);
     await expect.poll(async () => (await styled(page))?.h1).toBe("The blog");
-    // (The breadcrumbs keep their end in sight: how far erga shows depends on the title.)
-    await expect.poll(() => shown("view")).toEqual(["left", "right", "me"]);
-    // At rest from the first look: the bars paint with their sheets, so nothing slides into place (server/pages/viewer.ts).
-    const atRest = (await bars(page, "view")).parts;
-    const me = atRest.me;
-    await page.mouse.click((me.l + me.r) / 2, (me.t + me.b) / 2);
+    // Quick actions are open by default, and the Erga logo is hidden so the document title gets full width.
     await expect.poll(() => shown("view")).toEqual(["left", "right", "new", "full", "edit", "agent", "documents", "me"]);
-    expect(await page.evaluate(() => !document.querySelector<HTMLElement>(".erga-account-menu")!.hidden)).toBe(true);
-    // (The breadcrumbs' bar gets narrower as the buttons' bar opens: it ends before it once both are at rest.)
     await expect
       .poll(
         async () => {
@@ -422,17 +415,22 @@ journey("a reader opens a document with several pages", () => {
         { message: "the breadcrumbs' bar ends before the buttons' bar" }
       )
       .toBe(true);
+    const atRest = (await bars(page, "view")).parts;
+    const me = atRest.me;
+    // Tapping the avatar opens only the account menu; tapping it again closes it. Quick actions stay open.
+    await page.mouse.click((me.l + me.r) / 2, (me.t + me.b) / 2);
+    expect(await page.evaluate(() => !document.querySelector<HTMLElement>(".erga-account-menu")!.hidden)).toBe(true);
     expect((await bars(page, "view")).parts.me, "the avatar stays where it is").toEqual(me);
-    // A tap on the page (in its frame) closes them.
-    await pointerOnPage(page, 195, 500);
-    await page.mouse.click(195, 500);
-    await expect.poll(() => shown("view")).toEqual(["left", "right", "me"]);
-    // ?edit opens the editor as the page loads. Its bars at rest: the same.
+    await page.mouse.click((me.l + me.r) / 2, (me.t + me.b) / 2);
+    expect(await page.evaluate(() => document.querySelector<HTMLElement>(".erga-account-menu")!.hidden)).toBe(true);
+    expect(await shown("view")).toEqual(["left", "right", "new", "full", "edit", "agent", "documents", "me"]);
+    // ?edit opens the editor as the page loads, with quick actions open and logo hidden.
     await page.goto(`${doc.address}/blog?edit`);
     await expect.poll(async () => `${await where(page)} ${await editorUp(page)}`).toBe(`${doc.path}/blog?edit true`);
-    await expect.poll(() => shown("edit")).toEqual(["left", "right", "me"]);
+    await expect.poll(() => shown("edit")).toEqual(["left", "right", "new", "full", "edit", "agent", "documents", "me"]);
     const edit = (await bars(page, "edit")).parts;
-    for (const part of ["right", "me"] as const) expect(edit[part], part).toEqual(atRest[part]);
+    expect(edit.brand).toBeUndefined();
+    expect(edit.me, "me").toEqual(atRest.me);
     expect([edit.left.l, edit.left.t, edit.left.b]).toEqual([atRest.left.l, atRest.left.t, atRest.left.b]);
   });
 

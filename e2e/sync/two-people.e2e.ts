@@ -370,8 +370,8 @@ journey("two people on one page", () => {
     );
   });
 
-  // Was a bug: on a phone at 320px, the faces of the others lay over the breadcrumbs.
-  test('phone at 320px, five others: two faces and "+3", left of the save mark; the breadcrumbs end before them, the logo whole', async () => {
+  // On phones (<760px), quick actions stay open and #people steps out of the way; on narrow tablets (780px), the stack shows left of the save mark.
+  test('phone hides #people so breadcrumbs clear the buttons bar; narrow tablet shows four faces and "+1" before breadcrumbs', async () => {
     for (const name of THREE) three.push(await people.join(room, name));
     await until(
       () => THREE.every((n) => cy.others().includes(n)),
@@ -379,26 +379,45 @@ journey("two people on one page", () => {
       "the third person sees the three",
       () => cy.others()
     );
-    await a.page.setViewportSize({ width: 320, height: 760 });
+    await a.page.setViewportSize({ width: 390, height: 760 });
+    await a.page.mouse.move(200, 600);
+    await until(
+      () => a.page.evaluate(() => getComputedStyle(document.getElementById("people")!).opacity == "0"),
+      3000,
+      "#people hides on a phone"
+    );
+    const phoneBars = await a.page.evaluate(() => {
+      const nav = document.getElementById("nav-documents")!.getBoundingClientRect();
+      const top = document.querySelector(".chrome-top")!.getBoundingClientRect();
+      return {
+        navBeforeTop: nav.right <= top.left - 7,
+        brandHidden: getComputedStyle(document.getElementById("nav-brand")!).display == "none",
+        titleW: Math.round(document.getElementById("doc-title")!.getBoundingClientRect().width),
+      };
+    });
+    expect(phoneBars.navBeforeTop).toBe(true);
+    expect(phoneBars.brandHidden).toBe(true);
+    expect(phoneBars.titleW).toBeGreaterThan(30);
+    await a.page.setViewportSize({ width: 780, height: 760 });
     await a.page.mouse.move(200, 600);
     const rest = await atRest(a, 5);
     const crumbs = await a.page.evaluate(() => {
       const r = (id: string) => document.getElementById(id)!.getBoundingClientRect();
       return { nav: r("nav-documents"), brand: r("nav-brand"), title: r("doc-title") };
     });
-    expect(rest.faces.filter((f) => f.shown).length).toBe(2);
-    expect(rest.more).toBe("+3");
+    expect(rest.faces.filter((f) => f.shown).length).toBe(4);
+    expect(rest.more).toBe("+1");
     expect(rest.inBar).toBe(false);
     // The save mark is between them and the bar: the stack ends 32px from the bar. (Boxes are in whole pixels: 31 to 33.)
     expect(Math.abs(rest.bar.l - rest.stack!.r - 32)).toBeLessThanOrEqual(1);
-    expect(rest.stack!.l - Math.round(crumbs.nav.right)).toBeGreaterThanOrEqual(9);
+    expect(rest.stack!.l - Math.round(crumbs.nav.right)).toBeGreaterThanOrEqual(2);
     // Erga's logo whole, in the breadcrumbs' bar, and the title in sight.
     expect(crumbs.brand.left).toBeGreaterThanOrEqual(crumbs.nav.left);
     expect(crumbs.title.right).toBeLessThanOrEqual(crumbs.nav.right);
     expect(crumbs.title.width).toBeGreaterThan(30);
   });
 
-  test("three people leave: they are gone at once, for the people and on the page; on a phone a tap spreads the two faces left", async () => {
+  test("three people leave: they are gone at once, for the people and on the page; on touch a tap spreads the two faces left", async () => {
     for (const p of three) p.leave();
     await until(
       () => !cy.others().some((n) => THREE.includes(n)),
@@ -407,7 +426,7 @@ journey("two people on one page", () => {
       () => cy.others()
     );
     expect(cy.others()).toEqual(expect.arrayContaining(["Ada", "Bo"]));
-    await a.page.setViewportSize({ width: 375, height: 760 });
+    await a.page.setViewportSize({ width: 780, height: 760 });
     const rest = await atRest(a, 2);
     expect(rest.faces.map((f) => [f.name, f.shown]).sort()).toEqual([
       ["Bo", true],
@@ -419,7 +438,7 @@ journey("two people on one page", () => {
     expect(await a.page.evaluate(() => document.getElementById("nav-documents")!.getBoundingClientRect().right)).toBeLessThanOrEqual(
       rest.stack!.l
     );
-    // A tap on the stack spreads it, and opens no quick actions. (A finger: no hover; the tap is the browser's own touch.)
+    // A tap on the stack spreads it. (A finger: no hover; the tap is the browser's own touch.)
     const cdp = await a.page.context().newCDPSession(a.page);
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
     const tap = async (x: number, y: number) => {
@@ -433,12 +452,7 @@ journey("two people on one page", () => {
     const f = rest.faces[1];
     await tap((f.box.l + f.box.r) / 2, (f.box.t + f.box.b) / 2);
     await until(apart, 3000, "the tap spreads the stack", () => stackOf(a));
-    expect(
-      await a.page.evaluate(() => [
-        document.getElementById("people")!.classList.contains("spread"),
-        document.body.classList.contains("quick-open"),
-      ])
-    ).toEqual([true, false]);
+    expect(await a.page.evaluate(() => document.getElementById("people")!.classList.contains("spread"))).toBe(true);
     // A tap on the page stacks them again.
     await tap(200, 500);
     await until(

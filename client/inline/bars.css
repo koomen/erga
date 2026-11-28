@@ -161,27 +161,18 @@ html.page-dark body .erga-bar .save-card, :host(.page-dark) .erga-bar .save-card
 .save-card .save-retry:focus-visible { outline: 2px solid var(--caret, #3b7cf0); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .erga-bar .save-card { transition: none !important; } }
 
-/* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (.quick: the buttons) open
-   out of it to its left as its menu opens under it, and close back into it (client/common/quick.ts).
-   Moving or closed, they clip sideways only. The breadcrumbs' bar ends before the buttons' bar (--nav-room) and keeps
-   its end in sight: as the quick actions open, its start (erga, Documents) slides out on the left. */
+/* Phones (narrower than 760px). Quick actions stay open by default, and clicking your avatar toggles only its menu.
+   The breadcrumbs' bar ends before the buttons' bar (--nav-room) and hides the Erga wordmark when a page or document
+   crumb is present so the document title gets maximum horizontal room; `.tight` drops Documents › when needed. */
 .quick, .quick-inner { display: contents; }
 @media (max-width: 759.98px) {
-  .quick { display: grid; grid-template-columns: 0fr; transition: grid-template-columns 420ms cubic-bezier(0.45, 0, 0.15, 1); }
-  body.quick-open .quick, :host(.quick-open) .quick { grid-template-columns: 1fr; }
-  .quick-inner { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: clip; }
-  .quick-inner > * { flex-shrink: 0; }
-  .me-slot { transition: margin 420ms cubic-bezier(0.45, 0, 0.15, 1); }
-  body:not(.quick-open) .me-slot, :host(:not(.quick-open)) .me-slot { margin-left: 0; }
-  .erga-bar-l { max-width: var(--nav-room, none); overflow: hidden; justify-content: flex-end; }
+  .erga-bar-l { max-width: var(--nav-room, none); overflow: hidden; justify-content: flex-start; }
   .erga-bar-l > * { flex: none; }
-  /* At rest on a phone, when the breadcrumbs won't fit, drop Documents › first and ellipsize the title so `erga` stays whole. */
-  body:not(.quick-open) .erga-bar-l.tight, :host(:not(.quick-open)) .erga-bar-l.tight { justify-content: flex-start; }
-  body:not(.quick-open) .erga-bar-l.tight :is(.erga-crumb, .nav-back, .erga-crumb + .erga-sep, .nav-back + .erga-sep),
-  :host(:not(.quick-open)) .erga-bar-l.tight :is(.erga-crumb, .nav-back, .erga-crumb + .erga-sep, .nav-back + .erga-sep) { display: none; }
-  body:not(.quick-open) .erga-bar-l.tight :is(.erga-here, .nav-title),
-  :host(:not(.quick-open)) .erga-bar-l.tight :is(.erga-here, .nav-title) { flex: 0 1 auto; min-width: 0; }
+  .erga-bar-l:has(:is(.erga-here, .nav-title):not([hidden])) :is(.erga-brand, .nav-brand, .erga-brand + .erga-sep, .nav-brand + .erga-sep) { display: none; }
+  .erga-bar-l :is(.erga-here, .nav-title) { flex: 0 1 auto; min-width: 0; }
+  .erga-bar-l.tight :is(.erga-crumb, .nav-back, .erga-crumb + .erga-sep, .nav-back + .erga-sep) { display: none; }
+  body.erga-editing.erga-editor-ready .erga-bar-r :is(.erga-view-button, .icon-btn) { width: 30px; }
+  body.erga-editing.erga-editor-ready .erga-bar-r .me-slot { margin-left: 6px; }
 }
-@media (prefers-reduced-motion: reduce) { .quick, .me-slot { transition: none; } }
 /* (The admin pages' own crumb is their <h1>: the crumbs' type, not a heading's.) */
 .erga-crumbs h1.erga-here { margin: 0; font-size: 13.5px; font-weight: 500; line-height: 34px; letter-spacing: normal; color: var(--fg); }

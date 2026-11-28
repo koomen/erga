@@ -23,20 +23,14 @@ export interface ViewerConfig {
 }
 
 function mountViewerBars(): void {
-  const toggle = mountBars(document, document.body);
+  const { agentMenu } = mountBars(document, document.body);
   // The bar's menu is the editor's too (client/shell/sharing.ts).
-  window.ergaAgentMenu = toggle.agentMenu;
-  addEventListener("message", (e) => {
-    if (ergaFrames.from(e) && e.data?.type == "erga-pointer" && e.data.tap === true) toggle(false);
-  });
+  window.ergaAgentMenu = agentMenu;
   // Print (⌘P; Ctrl+P off a Mac): the page in the frame prints itself, whole and without Erga's bars (reader.ts).
   addEventListener("keydown", (e) => {
     if (!(isMac ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() != "p") return;
     e.preventDefault();
     ergaFrames.send({ type: "erga-print" });
-  });
-  addEventListener("blur", () => {
-    if (!document.body.classList.contains("erga-editing")) toggle(false);
   });
 }
 

@@ -1,24 +1,17 @@
 // The glass bars' buttons (server/pages/bars.ts), on a document's page (client/viewer/viewer.ts), on a published site
-// (client/inline/site-controls.ts) and on the app's own pages (client/inline/page-bars.ts): the quick actions on a phone, as the editor's (quick.ts), and Share
-// with an agent (agent-menu.ts). `root`: the page, or a published site's shadow root; `on`: what carries quick-open.
+// (client/inline/site-controls.ts) and on the app's own pages (client/inline/page-bars.ts): breadcrumbs' room on a
+// phone (quick.ts), and Share with an agent (agent-menu.ts). `root`: the page, or a published site's shadow root; `on`:
+// the body or published site's controls' host.
 
 import { mountAgentMenu } from "./agent-menu";
 import { mountQuick } from "./quick";
 
 export function mountBars(root: Document | ShadowRoot, on: HTMLElement) {
-  const bar = root.querySelector<HTMLElement>(".erga-view-buttons")!,
-    me = bar.querySelector<HTMLElement>(".me-slot")!;
-  const toggle = mountQuick({
-    quick: bar.querySelector<HTMLElement>(".quick")!,
-    me,
+  const bar = root.querySelector<HTMLElement>(".erga-view-buttons")!;
+  mountQuick({
     // (No breadcrumbs for an agent's view: a box of its own, never shown.)
     nav: root.querySelector<HTMLElement>(".erga-crumbs") ?? document.createElement("nav"),
     bar,
-    menuOpen: () => {
-      const menu = me.querySelector<HTMLElement>(".erga-account-menu");
-      return menu ? !menu.hidden : undefined;
-    },
-    keep: ".erga-bar-r, .erga-new-menu, .erga-agent-menu",
     on,
   });
   // (Every page has it.)
@@ -33,5 +26,5 @@ export function mountBars(root: Document | ShadowRoot, on: HTMLElement) {
         onOpen: () => share.dispatchEvent(new Event("erga:agent-menu", { bubbles: true })),
       })
     : null;
-  return Object.assign(toggle, { agentMenu });
+  return { agentMenu };
 }

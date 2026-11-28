@@ -147,21 +147,6 @@ export function settings(p: Page) {
      * are in (`versions` false: for someone who gets none).
      */
     async open(versions = true) {
-      // On a phone the gear is among the quick actions, which open out of the avatar.
-      if (await p.evaluate(() => matchMedia("(max-width: 759.98px)").matches && !document.body.classList.contains("quick-open"))) {
-        // (Once the viewer's own controls have gone from over it: client/inline/viewer.css.)
-        await until(
-          () =>
-            p.evaluate(() => {
-              const a = document.querySelector(".me-slot .avatar"),
-                r = a?.getBoundingClientRect();
-              return !!r?.width && !!a?.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
-            }),
-          10_000,
-          "the avatar can be clicked"
-        );
-        await s.clickOn(".me-slot .avatar");
-      }
       await until(
         () =>
           p.evaluate(() => {
