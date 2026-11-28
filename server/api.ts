@@ -359,14 +359,27 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
   }
 });
 
-/** /llms.txt: only where an agent starts. Nothing in Erga sends an agent here; MCP's instructions and tools are the manual. */
+/** /llms.txt: where a cold agent discovers how to connect (local bridge, remote MCP, or HTTP API). */
 const llmsTxt = (origin: string) => `# Erga
 
-Erga is a multiplayer HTML page editor. Agents use it through its MCP server: ${origin}/mcp
+Erga is a multiplayer HTML page editor. Pick how to connect:
 
-Add it to your MCP app (Streamable HTTP). It signs you in through your user's browser, and its instructions and tools tell you the rest.
+## 1. Local bridge (recommended with shell access)
+Syncs files over Yjs and connects to Erga's chat pane over ACP + MCP.
+Install if \`erga-agent\` is missing:
+  curl -fsSL ${origin}/plugin/install.sh | sh
+Connect (Yjs sync + Erga chat pane):
+  erga-agent connect <document-url>
+Files only (Yjs sync, keep your terminal):
+  erga-agent open <document-url>
+Headless login: \`erga-agent login --device\`
 
-Without MCP, call the same tools over HTTP with a token (Authorization: Bearer <token>): GET ${origin}/api/tools lists them, and POST ${origin}/api/tools/<name> runs one, with its arguments as JSON.
+## 2. Remote MCP (no shell)
+Streamable HTTP: ${origin}/mcp
+Signs in via browser OAuth; its instructions and tools tell you the rest.
+
+## 3. HTTP API (Bearer token)
+GET ${origin}/api/tools lists tools; POST ${origin}/api/tools/<name> runs one with JSON.
 `;
 
 // ---------------------------------------------------------------- the routes

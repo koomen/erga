@@ -6,31 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Y from "yjs";
 import { saveToken } from "../bridge/core/auth.ts";
-import type { TerminalBackend } from "../bridge/core/backend.ts";
 import { ErgaDaemon } from "../bridge/core/daemon.ts";
 import { files, roomInfo } from "../document/model/content.ts";
 import { encodeStart } from "../shared/room-socket.ts";
 import { Decoder, Encoder, readSyncMessage, writeSyncStep1 } from "../shared/yjs-protocol.ts";
 
 const CLI = join(import.meta.dir, "..", "bridge", "core", "cli.ts");
-
-function fakeBackend(): TerminalBackend {
-  const t = { id: "t1", label: "agy · t1", app: "antigravity", state: "live" as const, status: null, turn: 0 };
-  return {
-    id: "herdr-core",
-    label: "herdr-core",
-    connect: async () => ({ version: "0.1.22" }),
-    close: async () => {},
-    listTerminals: async () => [t],
-    listSpaces: async () => [],
-    resolveTarget: async () => ({ scope: "single", spaceId: null, spaceName: null, terminals: [t], activeTerminal: "t1" }),
-    subscribe: () => () => {},
-    attach: async () => ({ terminalId: "t1", write: () => {}, resize: () => {}, close: () => {} }),
-    send: async () => {},
-    interrupt: async () => {},
-    spawn: async () => t,
-  };
-}
 
 function makeMcpClient(args: string[], env: Record<string, string>) {
   const proc = Bun.spawn([process.execPath, CLI, ...args], {
@@ -266,7 +247,7 @@ test("erga-agent unmount closes a mounted document over bridge.sock without requ
 
   const origin = `http://127.0.0.1:${server.port}`;
   saveToken({ origin, clientName: "Erga Bridge", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
-  const daemon = new ErgaDaemon(fakeBackend(), { defaultOrigin: origin });
+  const daemon = new ErgaDaemon({ home, defaultOrigin: origin });
 
   try {
     await daemon.start();

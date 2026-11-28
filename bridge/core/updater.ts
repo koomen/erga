@@ -1,8 +1,10 @@
-// Bridge auto-updater: pure state machine (`updateStep`) + thin IO owner.
+// Bridge auto-updater: pure turn-safe state machine (`updateStep`) + thin IO owner.
 // Security invariant: only downloads updates from the single pinned install
 // origin recorded in ~/.erga/update.json (HTTPS required except localhost),
 // verifies SHA-256 before atomically flipping ~/.erga/runtime/current, and
 // pairs with a 5-second crash-rollback POSIX launcher shim (~/.erga/bin/erga-agent).
+// Turn safety: if any ACP turn is active when a verified bundle swaps, enters
+// `pending_restart` and restarts only once `turn_idle` arrives.
 
 import { createHash } from "node:crypto";
 import {
@@ -28,13 +30,13 @@ export interface UpdateManifest {
   readonly version: string;
   readonly sha256: string;
   readonly url: string;
-  readonly minHcVersion?: string;
 }
 
 export type UpdateState =
   | { readonly at: "idle"; readonly version: string }
   | { readonly at: "checking"; readonly version: string }
   | { readonly at: "downloading"; readonly version: string; readonly target: UpdateManifest }
+  | { readonly at: "pending_restart"; readonly version: string; readonly nextVersion: string; readonly bundlePath: string }
   | { readonly at: "ready"; readonly version: string; readonly nextVersion: string; readonly bundlePath: string }
   | { readonly at: "error"; readonly version: string; readonly message: string };
 
@@ -42,7 +44,8 @@ export type UpdateEvent =
   | { readonly on: "check" }
   | { readonly on: "manifest"; readonly manifest: UpdateManifest }
   | { readonly on: "up_to_date" }
-  | { readonly on: "swapped"; readonly nextVersion: string; readonly bundlePath: string }
+  | { readonly on: "swapped"; readonly nextVersion: string; readonly bundlePath: string; readonly busy?: boolean }
+  | { readonly on: "turn_idle" }
   | { readonly on: "fail"; readonly message: string };
 
 export type UpdateEffect =
@@ -50,15 +53,18 @@ export type UpdateEffect =
   | { readonly do: "download_and_swap"; readonly manifest: UpdateManifest }
   | { readonly do: "restart"; readonly nextVersion: string };
 
-/** Pure state transition for bridge auto-updates. */
+/** Pure state transition for turn-safe bridge auto-updates. */
 export function updateStep(state: UpdateState, ev: UpdateEvent): { state: UpdateState; effects: UpdateEffect[] } {
   switch (ev.on) {
     case "check":
-      if (state.at == "checking" || state.at == "downloading") return { state, effects: [] };
+      if (state.at == "checking" || state.at == "downloading" || state.at == "pending_restart") return { state, effects: [] };
       return { state: { at: "checking", version: state.version }, effects: [{ do: "fetch_manifest" }] };
     case "manifest":
       if (ev.manifest.version == state.version || !ev.manifest.version || !ev.manifest.sha256) {
         return { state: { at: "idle", version: state.version }, effects: [] };
+      }
+      if (state.at == "pending_restart" && state.nextVersion == ev.manifest.version) {
+        return { state, effects: [] };
       }
       return {
         state: { at: "downloading", version: state.version, target: ev.manifest },
@@ -67,9 +73,21 @@ export function updateStep(state: UpdateState, ev: UpdateEvent): { state: Update
     case "up_to_date":
       return { state: { at: "idle", version: state.version }, effects: [] };
     case "swapped":
+      if (ev.busy) {
+        return {
+          state: { at: "pending_restart", version: state.version, nextVersion: ev.nextVersion, bundlePath: ev.bundlePath },
+          effects: [],
+        };
+      }
       return {
         state: { at: "ready", version: state.version, nextVersion: ev.nextVersion, bundlePath: ev.bundlePath },
         effects: [{ do: "restart", nextVersion: ev.nextVersion }],
+      };
+    case "turn_idle":
+      if (state.at != "pending_restart") return { state, effects: [] };
+      return {
+        state: { at: "ready", version: state.version, nextVersion: state.nextVersion, bundlePath: state.bundlePath },
+        effects: [{ do: "restart", nextVersion: state.nextVersion }],
       };
     case "fail":
       return { state: { at: "error", version: state.version, message: ev.message }, effects: [] };
@@ -147,12 +165,7 @@ export async function fetchUpdateManifest(pinnedOrigin: string): Promise<UpdateM
   if (!res.ok) throw new Error(`Update manifest failed (${res.status})`);
   const data = (await res.json()) as Partial<UpdateManifest>;
   if (!data.version || !data.sha256 || !data.url) throw new Error("Incomplete bridge update manifest.");
-  return {
-    version: data.version,
-    sha256: data.sha256,
-    url: data.url,
-    ...(data.minHcVersion ? { minHcVersion: data.minHcVersion } : {}),
-  };
+  return { version: data.version, sha256: data.sha256, url: data.url };
 }
 
 /** Downloads `manifest.url` from `pinnedOrigin`, verifies SHA-256, and flips `previous`/`current` symlinks. */
@@ -190,7 +203,6 @@ export async function downloadAndSwap(
       /* best effort */
     }
   }
-  // Remove healthy marker before swapping so the launcher shim rolls back if the new bundle crashes quickly.
   rmSync(join(relDir, ".healthy"), { force: true });
   atomicSymlink(relDir, currentLink);
   return { version: safeVer, bundlePath };

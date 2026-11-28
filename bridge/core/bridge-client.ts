@@ -1,29 +1,36 @@
 // Outbound WebSocket client to Erga's /api/agent/bridge endpoint.
-// Keeps one persistent connection per Erga server, auto-reconnects with
-// backoff, replays document bindings (single terminal or whole space), and
-// dispatches incoming PTY attach/input/resize/send/interrupt/update messages.
+// Keeps one persistent connection per connected standalone agent, reconnects
+// with backoff, replays document bindings with `reconnect: true`, streams
+// chat-native LogEvents, and dispatches incoming prompt/abort/reset/answer/model/update frames.
 
-import type { AttachScope, BackendKind, FromBridge, TerminalSummary, ToBridge } from "../../shared/bridge-protocol.ts";
+import type { Log, LogEvent } from "../../shared/agent-log.ts";
+import type { BridgeModel, FromBridge, ToBridge } from "../../shared/bridge-protocol.ts";
 import { parseToBridge } from "../../shared/bridge-schema.ts";
 import { PING, PONG } from "../../shared/room-socket.ts";
+import { BRIDGE_VERSION } from "./updater.ts";
 
 const PING_MS = 15_000;
 
 export interface BridgeBinding {
   label?: string;
-  scope: AttachScope;
-  spaceId?: string | null;
-  spaceName?: string | null;
-  terminals: readonly TerminalSummary[];
-  activeTerminal?: string | null;
+  sessionId?: string | null;
+  threadId?: string | null;
+  cwd?: string | null;
 }
 
 export interface BridgeClientOptions {
   origin: string;
   id: string;
-  backend: BackendKind;
+  agent: string;
   label: string;
-  version: string;
+  version?: string;
+  doc?: string | null;
+  sessionId?: string | null;
+  threadId?: string | null;
+  cwd?: string | null;
+  model?: string | null;
+  models?: readonly BridgeModel[];
+  initialReconnect?: boolean;
   token: () => Promise<string>;
   onMessage: (msg: ToBridge) => void;
   onStatus?: (connected: boolean) => void;
@@ -51,25 +58,27 @@ export class ErgaBridgeClient {
     await this.connect();
   }
 
-  /** Binds a document to a single terminal or whole space (auto-switches that document's panel). */
-  bind(doc: string, info: BridgeBinding): void {
+  /** Binds a document to this local agent (auto-switches that document's panel to its own thread). */
+  bind(doc: string, info: BridgeBinding = {}): void {
     this.bindings.set(doc, info);
     this.send({ type: "bind", doc, ...info });
-  }
-
-  /** Updates the live terminal roster / OSC 7501 statuses for a bound document. */
-  updateTerminals(doc: string, terminals: readonly TerminalSummary[], spaceName?: string | null): void {
-    const prev = this.bindings.get(doc);
-    if (prev) {
-      prev.terminals = terminals;
-      if (spaceName !== undefined) prev.spaceName = spaceName;
-    }
-    this.send({ type: "terminals", doc, terminals, ...(spaceName !== undefined ? { spaceName } : {}) });
   }
 
   unbind(doc: string): void {
     this.bindings.delete(doc);
     this.send({ type: "unbind", doc });
+  }
+
+  sendEvent(doc: string | null, ev: LogEvent): boolean {
+    return this.send({ type: "event", doc, ev });
+  }
+
+  sendLog(doc: string | null, log: Log): boolean {
+    return this.send({ type: "log", doc, log });
+  }
+
+  turnDone(doc: string | null): boolean {
+    return this.send({ type: "turn_done", doc });
   }
 
   send(msg: FromBridge): boolean {
@@ -114,14 +123,20 @@ export class ErgaBridgeClient {
 
       ws.addEventListener("open", () => {
         this.tries = 0;
-        const reconnect = this.hasConnected;
+        const reconnect = this.hasConnected || Boolean(this.opts.initialReconnect);
         this.hasConnected = true;
         this.send({
           type: "hello",
           id: this.opts.id,
-          backend: this.opts.backend,
+          agent: this.opts.agent,
           label: this.opts.label,
-          version: this.opts.version,
+          version: this.opts.version ?? BRIDGE_VERSION,
+          ...(this.opts.doc !== undefined ? { doc: this.opts.doc } : {}),
+          ...(this.opts.sessionId !== undefined ? { sessionId: this.opts.sessionId } : {}),
+          ...(this.opts.threadId !== undefined ? { threadId: this.opts.threadId } : {}),
+          ...(this.opts.cwd !== undefined ? { cwd: this.opts.cwd } : {}),
+          ...(this.opts.model !== undefined ? { model: this.opts.model } : {}),
+          ...(this.opts.models?.length ? { models: this.opts.models } : {}),
           ...(reconnect ? { reconnect: true } : {}),
         });
         for (const [doc, info] of this.bindings) {

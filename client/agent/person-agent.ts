@@ -19,7 +19,6 @@
 
 import { chat } from "./agent-chat";
 import { classify, fileRefs, type Attachment } from "../../shared/attach";
-import type { LocalBridgeView } from "../../shared/bridge-protocol";
 import { attachments } from "./attach-ui";
 import { canSend, type SendPath } from "./send-gate";
 import { turnEnded, type Log, type LogEvent } from "../../shared/agent-log";
@@ -30,18 +29,27 @@ import { sleep } from "../../shared/time";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
-import { blockedStep, IDLE_BLOCKED, pageDoc, panelStep, savePanel, type BlockedState, type PanelPhase } from "../common/agent-panel";
+import {
+  blockedStep,
+  IDLE_BLOCKED,
+  isLocalChoiceId,
+  pageDoc,
+  panelStep,
+  savePanel,
+  threadEventStep,
+  type BlockedState,
+  type PanelPhase,
+} from "../common/agent-panel";
 import { mountTurn, type TurnFacts } from "./turn-summary";
 import { mountVoice, type VoiceControl } from "./voice";
-import type { TerminalPane } from "./terminal";
 
 interface AgentState {
   enabled: boolean;
   reason?: string;
   model?: string | null;
   choice?: string | null;
+  thread?: string;
   models?: { id: string; label: string; group?: "local" | "embedded"; key?: "own" | "server"; agent?: string }[];
-  local?: LocalBridgeView | null;
   log?: Log;
 }
 
@@ -123,69 +131,6 @@ const talk = chat({
 const log = talk.log;
 let off: string | null = "Connecting to the agent…";
 let hintTimer = 0;
-let activeLocal: LocalBridgeView | null = null;
-let termPane: TerminalPane | null = null;
-let loadingTerm: Promise<TerminalPane> | null = null;
-let pendingPty: Array<{ terminal: string; data: string }> = [];
-
-function ensureTerminalPane(): Promise<TerminalPane> {
-  if (termPane) return Promise.resolve(termPane);
-  if (loadingTerm) return loadingTerm;
-  loadingTerm = import("./terminal").then((m) => {
-    const pane = m.mountTerminalPane({
-      card: document.querySelector<HTMLElement>("#agent .agent-card")!,
-      before: $("agent-log"),
-      onAttach: (terminal, cols, rows) => events.send(JSON.stringify({ type: "pty_attach", terminal, cols, rows })),
-      onDetach: (terminal) => events.send(JSON.stringify({ type: "pty_detach", ...(terminal ? { terminal } : {}) })),
-      onInput: (terminal, data) => events.send(JSON.stringify({ type: "pty_input", terminal, data })),
-      onResize: (terminal, cols, rows) => events.send(JSON.stringify({ type: "pty_resize", terminal, cols, rows })),
-      onSelect: (terminal) => events.send(JSON.stringify({ type: "pty_select", terminal })),
-      onInterrupt: () => void call("/api/agent/abort", { method: "POST" }),
-    });
-    termPane = pane;
-    return pane;
-  });
-  return loadingTerm;
-}
-
-function syncLocalTerminal(local: LocalBridgeView | null | undefined) {
-  activeLocal = local ?? null;
-  $("agent").querySelector(".agent-head")?.classList.toggle("is-local", !!activeLocal);
-  const fab = $("agent-fab");
-  if (!activeLocal) {
-    fab.classList.remove("blocked");
-    pendingPty = [];
-    termPane?.hide();
-    return;
-  }
-  const working = activeLocal.terminals.some((t) => t.state == "live" && t.status?.state == "working");
-  const blockedTerm = activeLocal.terminals.find((t) => t.state == "live" && t.status?.state == "blocked") ?? null;
-  fab.classList.toggle("busy", working);
-  fab.classList.toggle("blocked", !!blockedTerm);
-  if (blockedTerm && !document.body.classList.contains("agent-open")) {
-    window.ergaAlerts?.raise(
-      {
-        key: "agent:blocked",
-        kind: "error",
-        source: "agent",
-        title: `${blockedTerm.label} needs input`,
-        detail: blockedTerm.status?.msg || (blockedTerm.status?.kind ? `Waiting on ${blockedTerm.status.kind}` : "Waiting in terminal"),
-        actions: [{ id: "show", label: "Open terminal" }],
-      },
-      (action) => {
-        if (action == "show") window.ergaAgent?.show(true);
-      }
-    );
-  } else if (!blockedTerm) {
-    window.ergaAlerts?.end("agent:blocked");
-  }
-  const view = activeLocal;
-  void ensureTerminalPane().then((pane) => {
-    if (!activeLocal || activeLocal.bridgeId != view.bridgeId) return;
-    pane.show(activeLocal);
-    for (const p of pendingPty.splice(0)) pane.writeData(p.terminal, p.data);
-  });
-}
 /** The alert for a turn that failed while the panel was closed: it goes when the panel opens. */
 const TURN_FAILED = "agent:turn";
 // Files to go with the next message: dropped on the panel, pasted, or picked.
@@ -283,12 +228,7 @@ function renderBusy() {
   busyChanged();
   // At work: as the server says, or a message of this tab's on its way to it.
   const busy = log.busy || talk.sending();
-  const localBlockedIds = activeLocal
-    ? activeLocal.terminals.flatMap((t) =>
-        t.state == "live" && t.status?.state == "blocked" ? [`local:${t.id}:${t.turn}:${t.status.kind ?? ""}:${t.status.msg ?? ""}`] : []
-      )
-    : [];
-  const askingIds = [...log.items.flatMap((it) => (it.kind == "tool" && it.status == "asking" ? [it.id] : [])), ...localBlockedIds];
+  const askingIds = log.items.flatMap((it) => (it.kind == "tool" && it.status == "asking" ? [it.id] : []));
   const asking = askingIds.length > 0;
   const nextBlocked = blockedStep(blocked, { t: "sync", asking: askingIds, open: !!window.ergaAgent?.open() });
   blocked = nextBlocked.state;
@@ -299,8 +239,7 @@ function renderBusy() {
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-disabled", String(!!why));
   send.title = why ?? (stop ? "Stop the agent" : busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
-  const localWorking = !!activeLocal?.terminals.some((t) => t.state == "live" && t.status?.state == "working");
-  $("agent-fab").classList.toggle("busy", busy || localWorking);
+  $("agent-fab").classList.toggle("busy", busy);
   input.placeholder = off
     ? "The agent is off"
     : busy
@@ -512,23 +451,46 @@ $("agent-reset").addEventListener("click", () => {
   input.focus();
 });
 window.addEventListener("erga:agent-shown", (e) => {
-  const focus = (e as CustomEvent<{ focus?: boolean }>).detail?.focus !== false;
-  if (activeLocal) {
-    termPane?.reattach();
-    if (focus) termPane?.focus();
-    window.ergaAlerts?.end("agent:blocked");
-  } else {
-    talk.follow(true);
-    if (focus) input.focus();
-  }
+  talk.follow(true);
+  if ((e as CustomEvent<{ focus?: boolean }>).detail?.focus !== false) input.focus();
   window.ergaAlerts?.end(TURN_FAILED);
 });
+
+let activeThread: string | null = $("agent").dataset.thread || null;
 
 function swapLog(l: Log) {
   log.items = l.items;
   log.busy = l.busy;
   log.undoable = l.undoable;
   talk.render();
+}
+
+function updateThreadChrome(choice?: string | null, label?: string | null) {
+  const isLocal = isLocalChoiceId(choice);
+  $("agent").querySelector(".agent-head")?.classList.toggle("is-local", isLocal);
+  const logEl = $("agent-log");
+  if (isLocal && label) logEl.dataset.threadNote = `Connected to ${label} · New thread`;
+  else delete logEl.dataset.threadNote;
+}
+
+function applyThreadState(nextThread: string | undefined, nextLog: Log | undefined, choice?: string | null, label?: string | null) {
+  const target = nextThread ?? activeThread ?? "embedded";
+  const res = threadEventStep(activeThread, { t: "sync", thread: target });
+  const switched = res.effect.action == "swap" && res.effect.switched;
+  activeThread = res.thread;
+  if (activeThread) $("agent").dataset.thread = activeThread;
+  if (switched) {
+    blocked = IDLE_BLOCKED;
+    talk.clearPending();
+    if (!hint.dataset.off && !hint.dataset.voice) hideHint();
+    turn?.facts(null);
+    void readUndo();
+  }
+  updateThreadChrome(choice, label);
+  if (nextLog) {
+    if (switched) wasBusy = nextLog.busy;
+    swapLog(nextLog);
+  }
 }
 
 // Which model or connected local agent the panel talks to: connected agents show in a section above built-in models.
@@ -575,8 +537,7 @@ function renderModel(m: AgentState | null) {
       showHint("Couldn't switch models.");
       return;
     }
-    if (r.log) swapLog(r.log);
-    syncLocalTerminal(r.local);
+    applyThreadState(r.thread, r.log, r.choice ?? sel.value, r.model ?? sel.selectedOptions[0]?.text);
     renderBusy();
     showHint(log.busy ? `${sel.selectedOptions[0]?.text}: from your next message` : `Switched to ${sel.selectedOptions[0]?.text}`);
   });
@@ -623,13 +584,7 @@ async function load(tries = 0, fresh = false): Promise<void> {
   // The editor's buttons that ask the agent (an alert's fix: client/shell/alerts.ts) follow its state.
   window.dispatchEvent(new Event("erga:agent-state"));
   renderModel(a);
-  syncLocalTerminal(a.local);
-  if (l) {
-    log.items = l.items;
-    log.busy = l.busy;
-    log.undoable = l.undoable;
-  }
-  talk.render();
+  applyThreadState(a.thread, l, a.enabled ? a.choice : null, a.enabled ? a.model : null);
   phase = panelStep(phase, { t: "loaded" }).state;
   renderBusy();
 }
@@ -641,52 +596,50 @@ async function load(tries = 0, fresh = false): Promise<void> {
 const events = liveSocket({
   name: "agent",
   path: inThread("/api/agent/events"),
-  up: () => {
-    void load().then(() => {
-      if (activeLocal) termPane?.reattach();
-    });
-  },
+  up: () => void load(),
   message(e) {
-    let m: { type?: string; ev?: LogEvent; terminal?: string; data?: string; reason?: string } & Partial<AgentState>;
+    let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
-    if (m.type == "bridge_state") {
-      heard++;
-      syncLocalTerminal(m.local);
-      renderBusy();
-      return;
-    }
-    if (m.type == "pty_data" && m.terminal && typeof m.data == "string") {
-      if (termPane) termPane.writeData(m.terminal, m.data);
-      else pendingPty.push({ terminal: m.terminal, data: m.data });
-      return;
-    }
-    if (m.type == "pty_closed" && m.terminal) {
-      termPane?.closed(m.terminal, m.reason);
-      return;
-    }
     // The model or connected local agent changed (a bridge connected/disconnected, or switched in another tab).
     if (m.type == "model") {
       heard++;
       if (m.enabled === false) {
         off = `The agent is off: ${m.reason ?? "the server did not start it"}.`;
         renderModel(null);
-        syncLocalTerminal(null);
       } else {
         off = null;
         renderModel({ ...m, enabled: true });
-        syncLocalTerminal(m.local);
       }
-      if (m.log) swapLog(m.log);
+      applyThreadState(
+        m.enabled === false ? "embedded" : m.thread,
+        m.log,
+        m.enabled === false ? null : m.choice,
+        m.enabled === false ? null : m.model
+      );
       window.dispatchEvent(new Event("erga:agent-state"));
       renderBusy();
     }
     if (m.type == "log" && m.log) {
       heard++;
+      const step = threadEventStep(activeThread, { t: "log", thread: m.thread });
+      if (step.effect.action == "resync") {
+        void load();
+        return;
+      }
+      activeThread = step.thread;
+      if (activeThread) $("agent").dataset.thread = activeThread;
       swapLog(m.log);
       renderBusy();
     }
     if (m.type == "agent" && m.ev) {
       heard++;
+      const step = threadEventStep(activeThread, { t: "agent", thread: m.thread });
+      if (step.effect.action == "resync") {
+        void load();
+        return;
+      }
+      activeThread = step.thread;
+      if (activeThread) $("agent").dataset.thread = activeThread;
       talk.apply(m.ev);
       renderBusy();
       // The agent stopped on an error, with its panel closed: in the editor, an alert says so (client/shell/alerts.ts).
@@ -746,6 +699,7 @@ window.addEventListener("pagehide", () => {
       log: talk.drawn(),
       model: model.innerHTML,
       choice: model.querySelector("select")?.value,
+      thread: activeThread ?? undefined,
       top: l.scrollTop,
       bottom: l.scrollHeight - l.scrollTop - l.clientHeight <= 8,
     },

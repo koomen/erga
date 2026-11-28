@@ -1,9 +1,9 @@
-// Unit tests for the local terminal-first Erga bridge:
-// - Pure bridge registry state machine (agents/person/bridge.ts): single terminal & whole space
-// - PersonAgents terminal relay, space terminal switching, OSC 7501 updates, update push, and edit access on turn_done
+// Unit tests for the chat-native Erga bridge:
+// - Pure bridge registry state machine (agents/person/bridge.ts): per-session threadId isolation, reset, reconnect
+// - PersonAgents chat-native streaming, permission answers, thread tagging, update push, and edit access on turn_done
 // - Yjs room `via` attribution on agent WebSockets
-// - YjsDiskSync bidirectional CRDT <-> filesystem sync
-// - copyIntoManaged + ErgaDaemon open/space/PTY relay/persistence/device-code auth
+// - YjsDiskSync bidirectional CRDT <-> filesystem sync & copyIntoManaged
+// - ErgaDaemon end-to-end: connectAgent (fake ACP driver), openDocument, bindings.json restore, turn-safe update deferral, device-code auth
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -13,14 +13,15 @@ import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
-import { activeBridge, bridgeStep, EMPTY_BRIDGES, localBridgeView, panelOptions } from "../agents/person/bridge.ts";
+import { activeBridge, bridgeStep, EMPTY_BRIDGES, localScopeOf, panelOptions, threadKeyFor } from "../agents/person/bridge.ts";
 import { PersonAgents } from "../agents/person/sessions.ts";
 import type { ChatSql } from "../agents/chat-store.ts";
 import { cachedToken, saveToken } from "../bridge/core/auth.ts";
-import type { BackendEvent, PtyAttachment, TerminalBackend } from "../bridge/core/backend.ts";
 import { ErgaDaemon } from "../bridge/core/daemon.ts";
 import { copyIntoManaged } from "../bridge/core/daemon-io.ts";
+import { sha256Hex, writePinnedOrigin } from "../bridge/core/updater.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";
+import { DriverEvents, type AgentDriver, type AgentHandle, type OpenSessionOptions } from "../bridge/drivers/stdio.ts";
 import { authors, files, roomInfo } from "../document/model/content.ts";
 import { Participants, type Tab, type TabSocket } from "../document/room/participants.ts";
 import { Room } from "../document/room/room.ts";
@@ -28,7 +29,7 @@ import { FileStore, StateStore } from "../document/store/storage.ts";
 import { useAssets } from "../server/pages/index.ts";
 import type { Platform } from "../server/platform.ts";
 import { agentLabel, VIA } from "../shared/attribution.ts";
-import { localChoice, type TerminalSummary } from "../shared/bridge-protocol.ts";
+import { localChoice } from "../shared/bridge-protocol.ts";
 import { encodeStart } from "../shared/room-socket.ts";
 import { Decoder, Encoder, readSyncMessage, writeSyncStep1, writeUpdate } from "../shared/yjs-protocol.ts";
 
@@ -47,200 +48,173 @@ function sqliteChat(): ChatSql {
   };
 }
 
-function createMockBackend(initial: TerminalSummary[] = []): TerminalBackend & {
-  emit(ev: BackendEvent): void;
-  setTerminals(list: TerminalSummary[]): void;
-  inputs: Array<{ terminal: string; text: string }>;
-  resizes: Array<{ terminal: string; cols: number; rows: number }>;
-  sent: Array<{ terminal: string; text: string }>;
-  interrupted: string[];
-  stateStore: Map<string, unknown>;
-} {
-  let list: TerminalSummary[] = initial.length
-    ? [...initial]
-    : [
-        { id: "t1", label: "agy · t1", app: "antigravity", state: "live", status: { state: "idle", app: "antigravity" }, turn: 0 },
-        { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "done", app: "claude" }, turn: 1, parent: "t1" },
-      ];
-  const listeners = new Set<(ev: BackendEvent) => void>();
-  const inputs: Array<{ terminal: string; text: string }> = [];
-  const resizes: Array<{ terminal: string; cols: number; rows: number }> = [];
-  const sent: Array<{ terminal: string; text: string }> = [];
-  const interrupted: string[] = [];
-  const stateStore = new Map<string, unknown>();
+class FakeAcpHandle extends DriverEvents implements AgentHandle {
+  readonly models = [{ id: "m1", label: "Model 1" }];
+  model: string | null = "m1";
+  closed = false;
+  prompts: string[] = [];
+  answers: Array<{ id: string; approve: boolean; choice?: string }> = [];
+  private closeFns = new Set<() => void>();
+  private pendingFinish: (() => void) | null = null;
 
-  return {
-    id: "herdr-core",
-    label: "herdr-core",
-    inputs,
-    resizes,
-    sent,
-    interrupted,
-    stateStore,
-    emit(ev) {
-      for (const fn of listeners) fn(ev);
-    },
-    setTerminals(next) {
-      list = [...next];
-    },
-    connect: async () => ({ version: "0.1.22" }),
-    close: async () => {},
-    listTerminals: async () => [...list],
-    listSpaces: async () => [{ id: "sp1", name: "Erga Space", folder: "/repo", terminals: [...list] }],
-    resolveTarget: async (opts) => {
-      if (opts.terminal) {
-        const hit = list.find((t) => t.id == opts.terminal) ?? list[0];
-        return { scope: "single", spaceId: null, spaceName: null, terminals: hit ? [hit] : [], activeTerminal: hit?.id ?? null };
-      }
-      if (opts.space) {
-        return { scope: "space", spaceId: "sp1", spaceName: "Erga Space", terminals: [...list], activeTerminal: list[0]?.id ?? null };
-      }
-      return { scope: "single", spaceId: null, spaceName: null, terminals: list[0] ? [list[0]] : [], activeTerminal: list[0]?.id ?? null };
-    },
-    subscribe(fn) {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
-    async attach(terminalId, _size, onData): Promise<PtyAttachment> {
-      onData(new TextEncoder().encode(`ATTACHED:${terminalId}\r\n`));
-      return {
-        terminalId,
-        write: (bytes) => {
-          const text = new TextDecoder().decode(bytes);
-          inputs.push({ terminal: terminalId, text });
-          onData(new TextEncoder().encode(`ECHO:${text}`));
-        },
-        resize: (cols, rows) => resizes.push({ terminal: terminalId, cols, rows }),
-        close: () => {},
-      };
-    },
-    send: async (terminal, text) => void sent.push({ terminal, text }),
-    interrupt: async (terminal) => void interrupted.push(terminal),
-    spawn: async () => list[0],
-    getState: async <T>(key: string) => (stateStore.get(key) as T | undefined) ?? null,
-    setState: async <T>(key: string, val: T) => void stateStore.set(key, val),
-  };
+  constructor(
+    readonly sessionId: string,
+    readonly opts: OpenSessionOptions
+  ) {
+    super();
+  }
+
+  async prompt(input: { text: string }): Promise<void> {
+    this.prompts.push(input.text);
+    this.emit({ t: "busy", busy: true });
+    if (input.text.includes("HOLD")) {
+      await new Promise<void>((r) => {
+        this.pendingFinish = r;
+      });
+    }
+    this.emit({ t: "text", delta: `Reply: ${input.text}` });
+    this.emit({ t: "busy", busy: false });
+    this.emit({ t: "turn_done" });
+  }
+
+  releaseHeldTurn(): void {
+    const fn = this.pendingFinish;
+    this.pendingFinish = null;
+    fn?.();
+  }
+
+  async abort(): Promise<void> {
+    this.releaseHeldTurn();
+  }
+
+  async answer(id: string, approve: boolean, choice?: string): Promise<boolean> {
+    this.answers.push({ id, approve, choice });
+    return true;
+  }
+
+  onClose(fn: () => void): () => void {
+    this.closeFns.add(fn);
+    return () => this.closeFns.delete(fn);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.releaseHeldTurn();
+    for (const fn of [...this.closeFns]) fn();
+  }
 }
 
-// ---------------------------------------------------------------- 1. Bridge state machine
+// ---------------------------------------------------------------- 1. Bridge state machine & per-session thread isolation
 
-test("bridge state machine manages single terminal and whole-space bindings, terminal swaps, and embedded fallback", () => {
+test("bridgeStep isolates per-session and per-doc threads, handles embedded fallback, and preserves threadId on reconnect", () => {
   const embedded = [{ id: "sonnet", label: "Claude Sonnet", key: "server" as const }];
   let st = EMPTY_BRIDGES;
   expect(activeBridge(st, "doc1")).toBeNull();
-  expect(localBridgeView(st, "doc1")).toBeNull();
   expect(panelOptions(st, "doc1", embedded)).toEqual([{ id: "sonnet", label: "Claude Sonnet", key: "server" }]);
 
   const c1 = bridgeStep(st, {
     on: "connect",
+    fallbackThreadId: "conn-1",
     bridge: {
-      id: "hc-mac",
-      backend: "herdr-core",
-      label: "herdr-core",
+      id: "agy-local",
+      agent: "antigravity",
+      label: "Antigravity",
       version: "abc123",
       grantId: "g1",
       onlyDoc: null,
+      sessionId: null,
+      cwd: null,
       connectedAt: 100,
     },
   });
   st = c1.state;
   expect(c1.notify).toEqual(["*"]);
-  expect(activeBridge(st, "doc1")?.id).toBe("hc-mac");
+  expect(activeBridge(st, "doc1")?.id).toBe("agy-local");
   expect(panelOptions(st, "doc1", embedded)).toEqual([
-    { id: "local:hc-mac", label: "herdr-core", group: "local", agent: "herdr-core" },
+    { id: "local:agy-local", label: "Antigravity", group: "local", agent: "antigravity" },
     { id: "sonnet", label: "Claude Sonnet", key: "server", group: "embedded" },
   ]);
 
-  // Explicit switch to embedded pins doc1 to embedded while doc2 stays on the global bridge.
   st = bridgeStep(st, { on: "select", doc: "doc1", choice: "sonnet" }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
-  expect(activeBridge(st, "doc2")?.id).toBe("hc-mac");
+  expect(activeBridge(st, "doc2")?.id).toBe("agy-local");
 
-  const terms: TerminalSummary[] = [
-    { id: "t1", label: "agy · t1", app: "antigravity", state: "live", status: { state: "idle" }, turn: 0 },
-    { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "working" }, turn: 1 },
-  ];
-  const b1 = bridgeStep(st, {
-    on: "bind",
-    id: "hc-mac",
-    doc: "doc1",
-    label: "Erga Space",
-    scope: "space",
-    spaceId: "sp1",
-    spaceName: "Erga Space",
-    terminals: terms,
-    activeTerminal: "t1",
-  });
-  st = b1.state;
-  expect(b1.notify).toEqual(["doc1"]);
-  expect(localBridgeView(st, "doc1")).toEqual({
-    bridgeId: "hc-mac",
-    backend: "herdr-core",
-    label: "Erga Space",
-    scope: "space",
-    spaceId: "sp1",
-    spaceName: "Erga Space",
-    terminals: terms,
-    activeTerminal: "t1",
-  });
+  st = bridgeStep(st, { on: "bind", id: "agy-local", doc: "doc1", sessionId: "conv-1", fallbackThreadId: "fb-1" }).state;
+  st = bridgeStep(st, { on: "bind", id: "agy-local", doc: "doc2", sessionId: "conv-2", fallbackThreadId: "fb-2" }).state;
+  expect(threadKeyFor(activeBridge(st, "doc1"), "doc1")).toBe("local:agy-local:conv-1");
+  expect(threadKeyFor(activeBridge(st, "doc2"), "doc2")).toBe("local:agy-local:conv-2");
 
-  // Switch active terminal inside the bound space.
-  st = bridgeStep(st, { on: "select_terminal", id: "hc-mac", doc: "doc1", terminal: "t2" }).state;
-  expect(localBridgeView(st, "doc1")?.activeTerminal).toBe("t2");
+  // Reconnect with same session keeps doc1's thread.
+  st = bridgeStep(st, { on: "bind", id: "agy-local", doc: "doc1", sessionId: "conv-1", fallbackThreadId: "fb-3", reconnect: true }).state;
+  expect(threadKeyFor(activeBridge(st, "doc1"), "doc1")).toBe("local:agy-local:conv-1");
 
-  // Disconnect cleans up.
-  st = bridgeStep(st, { on: "disconnect", id: "hc-mac" }).state;
+  // New local session binding doc1 gets a fresh thread without affecting doc2.
+  st = bridgeStep(st, { on: "bind", id: "agy-local", doc: "doc1", sessionId: "conv-3", fallbackThreadId: "fb-4" }).state;
+  expect(threadKeyFor(activeBridge(st, "doc1"), "doc1")).toBe("local:agy-local:conv-3");
+  expect(threadKeyFor(activeBridge(st, "doc2"), "doc2")).toBe("local:agy-local:conv-2");
+
+  // Reset rotates only doc1's thread.
+  st = bridgeStep(st, { on: "reset", id: "agy-local", doc: "doc1", nextThreadId: "reset-1" }).state;
+  expect(threadKeyFor(activeBridge(st, "doc1"), "doc1")).toBe("local:agy-local:reset-1");
+  expect(threadKeyFor(activeBridge(st, "doc2"), "doc2")).toBe("local:agy-local:conv-2");
+
+  st = bridgeStep(st, { on: "disconnect", id: "agy-local" }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
 });
 
 test("bridge enforces document-scoped grant onlyDoc", () => {
-  let st = bridgeStep(EMPTY_BRIDGES, {
+  const st = bridgeStep(EMPTY_BRIDGES, {
     on: "connect",
+    fallbackThreadId: "t1",
     bridge: {
       id: "scoped",
-      backend: "herdr-core",
-      label: "herdr-core",
+      agent: "claude-code",
+      label: "Claude Code",
       version: "v1",
       grantId: "g2",
       onlyDoc: "docA",
+      sessionId: "s1",
+      cwd: null,
       connectedAt: 10,
     },
   }).state;
   expect(activeBridge(st, "docA")?.id).toBe("scoped");
   expect(activeBridge(st, "docB")).toBeNull();
-  const badBind = bridgeStep(st, { on: "bind", id: "scoped", doc: "docB", scope: "single", terminals: [] });
+  const badBind = bridgeStep(st, { on: "bind", id: "scoped", doc: "docB", fallbackThreadId: "t2" });
   expect(badBind.ok).toBe(false);
 });
 
-// ---------------------------------------------------------------- 2. PersonAgents terminal relay & auto-update push
+// ---------------------------------------------------------------- 2. PersonAgents chat-native streaming, thread isolation & update push
 
-test("PersonAgents relays PTY attach/input/resize/select, OSC 7501 updates, and pushes update offer on outdated hello", async () => {
+test("PersonAgents streams native chat events, isolates local threads, relays permission answers, and pushes updates", async () => {
   useAssets({
     files: {},
     deps: {},
     frame: [],
     integrity: {},
     fonts: { css: "", preload: "", page: "" },
-    bridge: { file: "/_erga/bridge-new999.js", version: "new999", sha256: "deadbeef", size: 1234, minHcVersion: "0.1.20" },
+    bridge: { file: "/_erga/bridge-new999.js", version: "new999", sha256: "deadbeef", size: 1234 },
   });
 
   const fakePlatform = {
     agentSettings: async () => ({ missing: "no API keys configured" }),
     directory: {
-      route: async (id: string) => ({ id, owner: "pete", test: false }),
+      route: async (id: string) => ({ id, owner: "ada", test: false }),
       users: { isAdmin: async () => false },
     },
   } as unknown as Platform;
 
   const agents = new PersonAgents({ sql: sqliteChat(), platform: fakePlatform });
   const tabMsgs: Record<string, unknown>[] = [];
-  const tab = agents.join(new Request("http://localhost:4400/api/agent/events?doc=doc1", { headers: { "x-erga-login": "pete" } }), (text) =>
-    tabMsgs.push(JSON.parse(text) as Record<string, unknown>)
+  const leave = agents.join(
+    new Request("http://localhost:4400/api/agent/events?doc=doc1", { headers: { "x-erga-login": "ada" } }),
+    (text) => tabMsgs.push(JSON.parse(text) as Record<string, unknown>)
   );
 
   const toBridge: Record<string, unknown>[] = [];
   const bridge = agents.joinBridge(
-    { login: "pete", grantId: "g1", label: "Erga Bridge", onlyDoc: null, origin: "http://localhost:4400" },
+    { login: "ada", grantId: "g1", label: "Erga Bridge", onlyDoc: null, origin: "http://localhost:4400" },
     (text) => toBridge.push(JSON.parse(text) as Record<string, unknown>),
     () => {}
   );
@@ -248,75 +222,42 @@ test("PersonAgents relays PTY attach/input/resize/select, OSC 7501 updates, and 
   try {
     // Outdated bridge hello triggers an immediate update push.
     bridge.message(
-      JSON.stringify({ type: "hello", id: "hc-1", backend: "herdr-core", label: "herdr-core", version: "old111", doc: "doc1" })
+      JSON.stringify({ type: "hello", id: "agy-1", agent: "antigravity", label: "Antigravity", version: "old111", doc: "doc1" })
     );
-    expect(toBridge[0]).toEqual({
-      type: "update",
-      version: "new999",
-      sha256: "deadbeef",
-      url: "/plugin/bridge.js",
-      minHcVersion: "0.1.20",
-    });
+    expect(toBridge[0]).toEqual({ type: "update", version: "new999", sha256: "deadbeef", url: "/plugin/bridge.js" });
 
-    const terms: TerminalSummary[] = [
-      { id: "t1", label: "agy · t1", app: "antigravity", state: "live", status: { state: "idle" }, turn: 0 },
-      { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "working" }, turn: 1 },
-    ];
-    bridge.message(
-      JSON.stringify({
-        type: "bind",
-        doc: "doc1",
-        label: "Erga Space",
-        scope: "space",
-        spaceId: "sp1",
-        spaceName: "Erga Space",
-        terminals: terms,
-        activeTerminal: "t1",
-      })
-    );
+    bridge.message(JSON.stringify({ type: "bind", doc: "doc1", label: "Antigravity (repo)", sessionId: "conv-1" }));
+    await until(() => tabMsgs.some((m) => m.type == "model" && m.thread == "local:agy-1:conv-1"));
 
-    await until(() => tabMsgs.some((m) => m.type == "model" && m.enabled == true));
-    const st = await agents.agentState("pete", "doc1", "http://localhost:4400", "Pete");
+    const st = await agents.agentState("ada", "doc1", "http://localhost:4400", "Ada");
     expect(st.enabled).toBe(true);
     if (st.enabled) {
-      expect(st.choice).toBe(localChoice("hc-1"));
-      expect(st.local?.scope).toBe("space");
-      expect(st.local?.terminals.length).toBe(2);
+      expect(st.choice).toBe(localChoice("agy-1"));
+      expect(st.thread).toBe("local:agy-1:conv-1");
     }
 
-    // Browser attaches, types, resizes, switches terminal -> forwarded straight to bridge.
-    tab.message(JSON.stringify({ type: "pty_attach", terminal: "t1", cols: 80, rows: 24 }));
-    tab.message(JSON.stringify({ type: "pty_input", terminal: "t1", data: Buffer.from("hi\r").toString("base64") }));
-    tab.message(JSON.stringify({ type: "pty_resize", terminal: "t1", cols: 100, rows: 30 }));
-    tab.message(JSON.stringify({ type: "pty_attach", terminal: "t2", cols: 100, rows: 30 }));
+    // Prompt forwarded to bridge, streamed events persisted under isolated thread scope.
+    expect(await agents.agentPrompt("ada", "http://localhost:4400", "Fix intro", "Open: /ada/demo", [], "doc1", "Ada", "m1")).toEqual({
+      ok: true,
+    });
+    expect(toBridge[1]).toMatchObject({ type: "prompt", doc: "doc1", text: "Fix intro", id: "m1" });
 
-    expect(toBridge.slice(1)).toEqual([
-      { type: "pty_attach", doc: "doc1", terminal: "t1", cols: 80, rows: 24 },
-      { type: "pty_input", doc: "doc1", terminal: "t1", data: Buffer.from("hi\r").toString("base64") },
-      { type: "pty_resize", doc: "doc1", terminal: "t1", cols: 100, rows: 30 },
-      { type: "pty_detach", doc: "doc1", terminal: "t1" },
-      { type: "pty_attach", doc: "doc1", terminal: "t2", cols: 100, rows: 30 },
-    ]);
+    bridge.message(JSON.stringify({ type: "event", doc: "doc1", ev: { t: "text", delta: "Done." } }));
+    expect(tabMsgs.some((m) => m.type == "agent" && m.thread == "local:agy-1:conv-1")).toBe(true);
+    expect(localScopeOf("ada", "doc1", "agy-1", "conv-1")).toBe("local:agy-1:conv-1:doc1:ada");
 
-    // Bridge streams PTY bytes and OSC 7501 status updates back to browser tab.
-    bridge.message(JSON.stringify({ type: "pty_data", doc: "doc1", terminal: "t2", data: Buffer.from("OUTPUT").toString("base64") }));
-    expect(tabMsgs.some((m) => m.type == "pty_data" && m.terminal == "t2")).toBe(true);
+    // Permission answer forwarded with choice.
+    expect(await agents.agentControl("ada", "doc1", "approve", "call-1", "__erga_allow_session__")).toEqual({ ok: true });
+    expect(toBridge[2]).toEqual({ type: "answer", doc: "doc1", id: "call-1", approve: true, choice: "__erga_allow_session__" });
 
-    bridge.message(
-      JSON.stringify({
-        type: "terminals",
-        doc: "doc1",
-        terminals: [terms[0], { ...terms[1], status: { state: "blocked", kind: "permission", msg: "Allow?" } }],
-      })
-    );
-    expect(tabMsgs.some((m) => m.type == "bridge_state")).toBe(true);
+    // A new local session on the same bridgeId gets a clean empty thread.
+    bridge.message(JSON.stringify({ type: "bind", doc: "doc1", label: "Antigravity (repo)", sessionId: "conv-2" }));
+    await until(() => tabMsgs.some((m) => m.type == "model" && m.thread == "local:agy-1:conv-2"));
+    expect((await agents.conversation("ada", "doc1")).items).toEqual([]);
 
-    // Closing browser tab sends pty_detach for the watched terminal.
-    tab.close();
-    expect(toBridge.at(-1)).toEqual({ type: "pty_detach", doc: "doc1", terminal: "t2" });
-
+    leave();
     bridge.close();
-    const after = await agents.agentState("pete", "doc1", "http://localhost:4400", "Pete");
+    const after = await agents.agentState("ada", "doc1", "http://localhost:4400", "Ada");
     expect(after.enabled).toBe(false);
   } finally {
     useAssets(null);
@@ -377,10 +318,10 @@ test("Yjs room WebSocket preserves via attribution for local agent edits", async
 
   const agentSocket: TabSocket = { send: () => {}, close: () => {} };
   const via = VIA.token("Erga Bridge");
-  const agentTab: Tab = { id: "t-agent", readOnly: false, epoch: null, person: { id: "pete", name: "Pete" }, via, events: false };
+  const agentTab: Tab = { id: "t-agent", readOnly: false, epoch: null, person: { id: "ada", name: "Ada" }, via, events: false };
   tabs.set(agentSocket, agentTab);
   expect(participants.join(agentSocket, agentTab)).toBe(true);
-  expect(participants.tabsOf("pete")).toEqual([]);
+  expect(participants.tabsOf("ada")).toEqual([]);
 
   const localDoc = new Y.Doc();
   Y.applyUpdate(localDoc, Y.encodeStateAsUpdate(room.doc));
@@ -396,7 +337,7 @@ test("Yjs room WebSocket preserves via attribution for local agent edits", async
   expect(room.text("index.html")).toBe("<p>Bridge Hello</p>");
   const author = authors(room.doc).get(String(localDoc.clientID));
   expect(author?.kind).toBe("agent");
-  expect(agentLabel(author!, null, true).label).toBe("Pete’s Erga Bridge");
+  expect(agentLabel(author!, null, true).label).toBe("Ada’s Erga Bridge");
 
   localDoc.destroy();
   await Effect.runPromise(Scope.close(scope, Effect.runSyncExit(Effect.void)));
@@ -508,9 +449,9 @@ test("copyIntoManaged copies project files into managed dir, skips ignored dirs,
   }
 });
 
-// ---------------------------------------------------------------- 5. ErgaDaemon end-to-end with TerminalBackend
+// ---------------------------------------------------------------- 5. ErgaDaemon end-to-end: ACP connect, turn-safe update, bindings.json restore
 
-test("ErgaDaemon binds whole space, relays PTY + OSC 7501 turn_done, copies fromDir, and restores bindings on restart", async () => {
+test("ErgaDaemon connects ACP agents, defers updates during active turns, and restores sessions from bindings.json", async () => {
   const serverDoc = new Y.Doc();
   serverDoc.transact(() => {
     roomInfo(serverDoc).set("epoch", "ep-1");
@@ -519,6 +460,8 @@ test("ErgaDaemon binds whole space, relays PTY + OSC 7501 turn_done, copies from
     files(serverDoc).set("index.html", t);
   });
 
+  const v2Bytes = new TextEncoder().encode("console.log('bridge-v2');\n");
+  const v2Sha = sha256Hex(v2Bytes);
   const fromBridge: Record<string, unknown>[] = [];
   let bridgeWs: Bun.ServerWebSocket<{ path: string }> | null = null;
   const server = Bun.serve<{ path: string }>({
@@ -526,10 +469,11 @@ test("ErgaDaemon binds whole space, relays PTY + OSC 7501 turn_done, copies from
     port: 0,
     fetch(req, srv) {
       const url = new URL(req.url);
-      if (url.pathname == "/d/doc1/api/doc") return Response.json({ docName: { id: "doc1", owner: "pete", slug: "demo", title: "Demo" } });
+      if (url.pathname == "/d/doc1/api/doc") return Response.json({ docName: { id: "doc1", owner: "ada", slug: "demo", title: "Demo" } });
       if (url.pathname == "/d/doc1/api/start") {
         return new Response(new Uint8Array(encodeStart({ type: "hello", epoch: "ep-1" }, Y.encodeStateAsUpdate(serverDoc))));
       }
+      if (url.pathname == "/plugin/bridge.js") return new Response(new Uint8Array(v2Bytes));
       if (url.pathname == "/d/doc1/api/room" || url.pathname == "/api/agent/bridge") {
         if (srv.upgrade(req, { data: { path: url.pathname } })) return undefined;
       }
@@ -560,10 +504,6 @@ test("ErgaDaemon binds whole space, relays PTY + OSC 7501 turn_done, copies from
 
   const root = mkdtempSync("/tmp/erga-daemon-e2e-");
   const home = join(root, "home");
-  const src = join(root, "src");
-  mkdirSync(src, { recursive: true });
-  writeFileSync(join(src, "notes.html"), "<p>Copied later</p>");
-
   const prevHome = process.env.ERGA_HOME;
   const prevToken = process.env.ERGA_TOKEN;
   process.env.ERGA_HOME = home;
@@ -571,43 +511,59 @@ test("ErgaDaemon binds whole space, relays PTY + OSC 7501 turn_done, copies from
 
   const origin = `http://127.0.0.1:${server.port}`;
   saveToken({ origin, clientName: "Erga Bridge", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
-  const backend = createMockBackend();
-  const daemon = new ErgaDaemon(backend, { defaultOrigin: origin });
+  writePinnedOrigin(origin, home);
+
+  const openedHandles: FakeAcpHandle[] = [];
+  const driverFactory = (): AgentDriver => ({
+    id: "antigravity",
+    label: "Antigravity",
+    async open(opts) {
+      const h = new FakeAcpHandle(opts.resumeId ?? `sess-${openedHandles.length + 1}`, opts);
+      openedHandles.push(h);
+      return h;
+    },
+  });
+
+  const restarts: string[] = [];
+  const daemon = new ErgaDaemon({
+    version: "v1",
+    home,
+    defaultOrigin: origin,
+    selfCmd: { command: "bun", prefix: ["bridge.js"] },
+    driverFactory,
+    onRestart: (v) => restarts.push(v),
+  });
 
   try {
     await daemon.start();
-    const opened = await daemon.openDocument({ origin, document: "/d/doc1", space: true, fromDir: src });
-    expect(opened.ok).toBe(true);
-    if (opened.ok) {
-      expect(opened.scope).toBe("space");
-      expect(opened.terminals.map((t) => t.id)).toEqual(["t1", "t2"]);
-      expect(opened.copiedFrom).toBe(src);
-    }
-    await until(() => files(serverDoc).get("notes.html")?.toString() == "<p>Copied later</p>");
-    await until(() => bridgeWs != null && fromBridge.some((m) => m.type == "bind"));
+    const connected = await daemon.connectAgent({ origin, document: "/d/doc1", agent: "antigravity" });
+    expect(connected.ok).toBe(true);
+    expect(openedHandles[0].opts.mcpServers?.[0]?.name).toBe("erga");
+    await until(() => bridgeWs != null && fromBridge.some((m) => m.type == "bind" && m.doc == "doc1"));
 
-    // PTY attach + input + resize round-trip.
-    bridgeWs!.send(JSON.stringify({ type: "pty_attach", doc: "doc1", terminal: "t2", cols: 80, rows: 24 }));
-    await until(() => fromBridge.some((m) => m.type == "pty_data" && m.terminal == "t2"));
-    bridgeWs!.send(JSON.stringify({ type: "pty_input", doc: "doc1", terminal: "t2", data: Buffer.from("y\r").toString("base64") }));
-    bridgeWs!.send(JSON.stringify({ type: "pty_resize", doc: "doc1", terminal: "t2", cols: 110, rows: 32 }));
-    await until(() => backend.inputs.some((i) => i.terminal == "t2" && i.text == "y\r") && backend.resizes.some((r) => r.cols == 110));
+    // Start a held turn, then send a server update offer mid-turn: must defer until turn_done!
+    bridgeWs!.send(JSON.stringify({ type: "prompt", doc: "doc1", text: "HOLD please", context: null }));
+    await until(() => daemon.status().activeTurns == 1);
 
-    // OSC 7501 status update & turn_done propagate from backend -> Erga.
-    backend.emit({
-      type: "terminal_changed",
-      terminal: { id: "t2", label: "claude · t2", app: "claude", state: "live", status: { state: "blocked", kind: "permission" }, turn: 1 },
-    });
-    backend.emit({ type: "turn_done", terminalId: "t2", turn: 2 });
-    await until(() => fromBridge.some((m) => m.type == "terminals") && fromBridge.some((m) => m.type == "turn_done" && m.doc == "doc1"));
+    bridgeWs!.send(JSON.stringify({ type: "update", version: "v2", sha256: v2Sha, url: "/plugin/bridge.js" }));
+    await until(() => daemon.status().updateState.at == "pending_restart");
+    expect(restarts).toEqual([]);
 
-    // Restarting daemon restores persisted bindings automatically from backend state!
+    // Finish the turn -> turn_done fires and triggers deferred restart!
+    openedHandles[0].releaseHeldTurn();
+    await until(() => restarts.length == 1 && fromBridge.some((m) => m.type == "turn_done" && m.doc == "doc1"));
+    expect(restarts).toEqual(["v2"]);
+
+    // Restarting daemon restores mounts and resumes ACP session via resumeId with reconnect: true!
     await daemon.stop();
     fromBridge.length = 0;
-    const daemon2 = new ErgaDaemon(backend, { defaultOrigin: origin });
+    const daemon2 = new ErgaDaemon({ version: "v2", home, defaultOrigin: origin, driverFactory });
     try {
       await daemon2.start();
-      expect(daemon2.status().mounts.map((m) => [m.docId, m.scope])).toEqual([["doc1", "space"]]);
+      expect(daemon2.status().mounts.map((m) => m.docId)).toEqual(["doc1"]);
+      expect(daemon2.status().connections.length).toBe(1);
+      expect(openedHandles[1].opts.resumeId).toBe("sess-1");
+      await until(() => fromBridge.some((m) => m.type == "hello" && m.reconnect == true));
     } finally {
       await daemon2.stop();
     }
@@ -672,7 +628,7 @@ test("ErgaDaemon.openDocument with nonBlockingAuth returns device-code URL and s
   delete process.env.ERGA_TOKEN;
 
   const origin = `http://127.0.0.1:${server.port}`;
-  const daemon = new ErgaDaemon(createMockBackend());
+  const daemon = new ErgaDaemon({ home: root });
 
   try {
     const first = await daemon.openDocument({ origin, document: "/d/doc1", nonBlockingAuth: true });

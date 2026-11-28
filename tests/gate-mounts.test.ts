@@ -463,6 +463,8 @@ describe("behind Cloudflare Access", () => {
       "/oauth/register",
       "/oauth/device_authorization",
       "/mcp",
+      "/llms.txt",
+      "/plugin",
     ]);
     const form = {
       method: "POST",
@@ -478,12 +480,15 @@ describe("behind Cloudflare Access", () => {
       await open("/oauth/device_authorization"),
       await open("/mcp", { method: "POST" }),
       await open("/mcp", { method: "POST", headers: { authorization: "Bearer a.forged.token" } }),
-    ]).toEqual([401, 200, 200, 400, 400, 401, 401, 401]);
+      await open("/llms.txt", { headers: { authorization: "Bearer a.forged.token" } }),
+    ]).toEqual([401, 200, 200, 400, 400, 401, 401, 401, 401]);
     expect(upstream.seen.length).toBe(before);
-    // POST /oauth/device_authorization passes through as nobody so remote agents can start device sign-in.
+    // POST /oauth/device_authorization and GET /llms.txt + /plugin/* pass through as nobody so cold agents can discover and install the bridge.
     expect((await whoOf(await handle(new Request(`https://${SHELL}/oauth/device_authorization`, { method: "POST" }), mount))).who).toEqual({
       kind: "none",
     });
+    expect((await whoOf(await handle(new Request(`https://${SHELL}/llms.txt`), mount))).who).toEqual({ kind: "none" });
+    expect((await whoOf(await handle(new Request(`https://${SHELL}/plugin/install.sh`), mount))).who).toEqual({ kind: "none" });
   });
 });
 

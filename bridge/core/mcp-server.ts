@@ -35,10 +35,10 @@ const FALLBACK_API_TOOL: McpToolDef = {
   },
 };
 
-const LOCAL_INSTRUCTIONS = `Erga local bridge is active (herdr-core / rex PTY + OSC 7501).
-- Run \`erga-agent open <url>\` (or \`erga-agent open --space <url>\` to attach your whole space, or \`erga-agent open --create --title "<title>"\`) in the shell to mount the live Yjs room and attach to Erga's browser terminal pane.
-- If \`erga-agent open\` returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser, then retry once they confirm.
-- Edit the mounted document's files directly on disk using your native file tools: every edit syncs live via Yjs CRDT.
+const LOCAL_INSTRUCTIONS = `Erga local bridge is active (ACP + MCP + Yjs).
+- Run \`erga-agent connect <url>\` to mount a live Yjs room clone and connect a standalone agent into Erga's native chat pane, or \`erga-agent open <url>\` (or \`erga-agent open --create --title "<title>"\`) for live Yjs file sync while staying in your own terminal.
+- If a command returns needsAuth: true, show the user the verificationUriComplete link and userCode so they can approve in any browser, then retry once they confirm.
+- Edit the mounted document's files directly on disk using your native file tools: every edit syncs live via Yjs CRDT with 3-way rebase.
 - Use Erga's MCP tools (page, documents, read, edit, settings, people) for live page screenshots/console (view_page, page_log, page_input, open_page), page API calls (call_edit), comments, version history, publishing, and sharing.`;
 
 function safeCwd(): string {

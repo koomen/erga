@@ -4,12 +4,21 @@
 // run apart: a turn goes on in its thread when the person opens another page, and its answer lands there. The panel
 // is client/agent/person-agent.ts, on every page.
 //
-// When a local bridge (herdr-core or rex) connects over /api/agent/bridge, it takes over the bound document's panel
-// in terminal-first mode (PTY bytes + OSC 7501 status), with zero local chat storage in SQLite. Switching the panel
-// dropdown back to a built-in server model returns seamlessly to the embedded chat agent.
+// When a local ACP bridge connects over /api/agent/bridge, it renders natively inside Erga's embedded chat pane with
+// its own isolated per-session SQLite thread scope (local:<bridgeId>:<threadId>:...) and auto-update notifications.
 
 import { startAgent, type AgentSession } from "./agent.ts";
-import { activeBridge, bridgeLabelFor, bridgeStep, EMPTY_BRIDGES, localBridgeView, panelOptions, type BridgeState } from "./bridge.ts";
+import {
+  activeBridge,
+  bridgeLabelFor,
+  bridgeStep,
+  bridgeThreadId,
+  EMPTY_BRIDGES,
+  localScopeOf,
+  panelOptions,
+  threadKeyFor,
+  type BridgeState,
+} from "./bridge.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
 import { agentTools, opsOf, toolsFor } from "../tools.ts";
@@ -17,11 +26,18 @@ import { callDocument, type Caller } from "../../server/operations/index.ts";
 import { roleMay, type Directory, type Route as DocRoute } from "../../server/directory/index.ts";
 import { assetManifest } from "../../server/pages/index.ts";
 import { isModelChoice, type AgentSettings } from "../models.ts";
-import { emptyLog, type Log } from "../../shared/agent-log.ts";
-import { checkAttachments } from "../../shared/attach.ts";
+import { emptyLog, reduce, type Log, type LogEvent } from "../../shared/agent-log.ts";
+import { checkAttachments, fileRefs } from "../../shared/attach.ts";
 import { VIA } from "../../shared/attribution.ts";
-import { isLocalChoice, localChoice, type LocalBridgeView, type PanelOption, type ToBridge } from "../../shared/bridge-protocol.ts";
-import { parseBrowserToAgent, parseFromBridge } from "../../shared/bridge-schema.ts";
+import {
+  EMBEDDED_THREAD,
+  isLocalChoice,
+  localChoice,
+  localThreadKey,
+  type PanelOption,
+  type ToBridge,
+} from "../../shared/bridge-protocol.ts";
+import { parseFromBridge } from "../../shared/bridge-schema.ts";
 import { PING, PONG } from "../../shared/room-socket.ts";
 import { authOps } from "../../server/identity/index.ts";
 import type { Platform } from "../../server/platform.ts";
@@ -72,13 +88,12 @@ interface Listener {
   login: string;
   doc: string | null;
   scope: string;
-  watching: { bridgeId: string; terminal: string } | null;
 }
 
 const listener = (request: Request): Listener => {
   const login = request.headers.get("x-erga-login") ?? "";
   const doc = docOf(new URL(request.url));
-  return { login, doc, scope: scopeOf(login, doc), watching: null };
+  return { login, doc, scope: scopeOf(login, doc) };
 };
 
 export interface BridgeInfo {
@@ -110,6 +125,8 @@ export class PersonAgents {
   private agents = new Map<string, Thread>();
   private bridgeStates = new Map<string, BridgeState>();
   private bridgeSockets = new Map<string, BridgeSocket>();
+  private localLogs = new Map<string, Log>();
+  private panelSeqs = new Map<string, number>();
   private origins = new Map<string, string>();
   private beat: Fiber.Fiber<void> | null = null;
   private chats: ChatTables;
@@ -183,7 +200,7 @@ export class PersonAgents {
       modelChanged: () => {
         if (!activeBridge(this.bridgesOf(login), doc)) {
           const models = panelOptions(this.bridgesOf(login), doc, modelState(agent).models);
-          this.event({ type: "model", enabled: true, ...modelState(agent), models, local: null }, login, scope);
+          this.event({ type: "model", enabled: true, thread: EMBEDDED_THREAD, ...modelState(agent), models }, login, scope);
         }
       },
       limit: () => dailyLimit(this.platform.directory, login),
@@ -203,7 +220,7 @@ export class PersonAgents {
       state.turn = null;
     });
     agent.subscribe((ev) => {
-      if (!activeBridge(this.bridgesOf(login), doc)) this.event({ type: "agent", ev }, login, scope);
+      if (!activeBridge(this.bridgesOf(login), doc)) this.event({ type: "agent", thread: EMBEDDED_THREAD, ev }, login, scope);
     });
     s = Object.assign(state, { agent });
     this.agents.set(scope, s);
@@ -215,6 +232,36 @@ export class PersonAgents {
     return this.bridgeStates.get(login) ?? EMPTY_BRIDGES;
   }
 
+  private localLogOf(login: string, doc: string | null, bridgeId: string, threadId: string): Log {
+    const scope = localScopeOf(login, doc, bridgeId, threadId);
+    let log = this.localLogs.get(scope);
+    if (!log) {
+      const stored = this.chats.load(scope);
+      log = stored ? restoredLog(stored) : emptyLog();
+      this.localLogs.set(scope, log);
+    }
+    return log;
+  }
+
+  private saveLocalLog(login: string, doc: string | null, bridgeId: string, threadId: string, log: Log): void {
+    const scope = localScopeOf(login, doc, bridgeId, threadId);
+    this.localLogs.set(scope, log);
+    this.chats.save(scope, {
+      messages: { from: 0, items: [] },
+      log: { from: 0, items: log.items },
+      state: {
+        running: false,
+        queued: [],
+        calls: {},
+        model: localChoice(bridgeId),
+        bound: null,
+        stable: log.items.length,
+        meta: { login, bridge: bridgeId, thread: threadId, ...(doc ? { doc } : {}) },
+        at: Date.now(),
+      },
+    });
+  }
+
   private disconnectBridge(login: string, bridgeId: string, sock?: BridgeSocket): void {
     const key = bridgeKey(login, bridgeId);
     const current = this.bridgeSockets.get(key);
@@ -224,9 +271,6 @@ export class PersonAgents {
       current?.close();
     } catch {
       /* already closed */
-    }
-    for (const who of this.sockets.values()) {
-      if (who.login == login && who.watching?.bridgeId == bridgeId) who.watching = null;
     }
     const res = bridgeStep(this.bridgesOf(login), { on: "disconnect", id: bridgeId });
     this.bridgeStates.set(login, res.state);
@@ -245,22 +289,7 @@ export class PersonAgents {
     }
   }
 
-  private maybeDetach(login: string, doc: string | null, watch: { bridgeId: string; terminal: string } | null): void {
-    if (!watch) return;
-    for (const other of this.sockets.values()) {
-      if (
-        other.login == login &&
-        other.doc == doc &&
-        other.watching?.bridgeId == watch.bridgeId &&
-        other.watching?.terminal == watch.terminal
-      ) {
-        return;
-      }
-    }
-    this.sendBridge(login, watch.bridgeId, { type: "pty_detach", doc, terminal: watch.terminal });
-  }
-
-  /** Combined panel state for `doc`, merging connected local bridges (above) with embedded models (below). */
+  /** Combined panel state for `doc`, merging connected local agents (above) with embedded models (below). */
   private async panelState(login: string, doc: string | null, origin: string, name?: string, fresh = false) {
     this.origins.set(login, origin);
     const s = await this.session(login, doc, origin, name, !fresh);
@@ -268,23 +297,26 @@ export class PersonAgents {
     const embeddedModels = embedded ? modelState(embedded.agent).models : [];
     const bState = this.bridgesOf(login);
     const models: PanelOption[] = panelOptions(bState, doc, embeddedModels);
-    const local: LocalBridgeView | null = localBridgeView(bState, doc);
-    if (local) {
+    const active = activeBridge(bState, doc);
+    if (active) {
+      const tid = bridgeThreadId(active, doc);
+      const log = this.localLogOf(login, doc, active.id, tid);
       return {
         enabled: true as const,
-        model: local.label,
-        choice: localChoice(local.bridgeId),
+        model: bridgeLabelFor(active, doc),
+        choice: localChoice(active.id),
+        thread: localThreadKey(active.id, tid),
         models,
-        local,
-        log: emptyLog(),
+        log,
       };
     }
     if (embedded) {
-      return { enabled: true as const, ...modelState(embedded.agent), models, log: embedded.agent.log() };
+      return { enabled: true as const, ...modelState(embedded.agent), thread: EMBEDDED_THREAD, models, log: embedded.agent.log() };
     }
     return { enabled: false as const, reason: typeof s == "string" ? s : "the agent is off" };
   }
 
+  /** Pushes updated model/agent options and active thread log to open browser tabs for `targets` ("*" = all). */
   private notifyPanels(login: string, targets: readonly (string | "*")[]): void {
     const all = targets.includes("*");
     const wanted = new Set<string | null>();
@@ -296,25 +328,13 @@ export class PersonAgents {
     for (const who of this.sockets.values()) collect(who);
     const origin = this.origins.get(login) ?? "http://localhost";
     for (const doc of wanted) {
+      const seqKey = `${login}\n${doc ?? ""}`;
+      const seq = (this.panelSeqs.get(seqKey) ?? 0) + 1;
+      this.panelSeqs.set(seqKey, seq);
       void this.panelState(login, doc, origin).then((state) => {
+        if (this.panelSeqs.get(seqKey) !== seq) return;
         this.event({ type: "model", ...state }, login, scopeOf(login, doc));
       });
-    }
-  }
-
-  private pushBridgeState(login: string, targets: readonly (string | "*")[]): void {
-    const all = targets.includes("*");
-    const bState = this.bridgesOf(login);
-    const docs = new Set<string | null>();
-    const collect = (who: Listener) => {
-      if (who.login != login) return;
-      if (all || targets.includes(who.doc ?? "")) docs.add(who.doc);
-    };
-    for (const who of this.clients.values()) collect(who);
-    for (const who of this.sockets.values()) collect(who);
-    for (const doc of docs) {
-      const local = localBridgeView(bState, doc);
-      this.event({ type: "bridge_state", local }, login, scopeOf(login, doc));
     }
   }
 
@@ -335,17 +355,47 @@ export class PersonAgents {
   ): Promise<{ ok: boolean; reason?: string }> {
     const targetDoc = doc ?? null;
     this.origins.set(login, origin);
-    const local = localBridgeView(this.bridgesOf(login), targetDoc);
-    if (local) {
-      const trimmed = text.trim().slice(0, 20000);
-      if (!trimmed) return { ok: false, reason: "say something" };
-      const sent = this.sendBridge(login, local.bridgeId, {
-        type: "send",
+    const active = activeBridge(this.bridgesOf(login), targetDoc);
+    if (active) {
+      const tid = bridgeThreadId(active, targetDoc);
+      const thread = localThreadKey(active.id, tid);
+      const log = this.localLogOf(login, targetDoc, active.id, tid);
+      if (id && log.items.some((i) => i.kind == "user" && i.id == id)) return { ok: true };
+      const files = checkAttachments(attached);
+      if (typeof files == "string") return { ok: false, reason: files };
+      if (!text.trim() && !files.length) return { ok: false, reason: "say something" };
+      const trimmed = text.slice(0, 20000);
+      const ctx = context ? context.slice(0, 4000) : null;
+      const refs = fileRefs(files);
+      const userEv: LogEvent = { t: "user", text: trimmed, ...(refs?.length ? { files: refs } : {}), ...(id ? { id } : {}) };
+      const busyEv: LogEvent = { t: "busy", busy: true };
+      reduce(log, userEv);
+      reduce(log, busyEv);
+      this.saveLocalLog(login, targetDoc, active.id, tid, log);
+      const scope = scopeOf(login, targetDoc);
+      this.event({ type: "agent", thread, ev: userEv }, login, scope);
+      this.event({ type: "agent", thread, ev: busyEv }, login, scope);
+      const route = targetDoc ? await this.platform.directory.route(targetDoc).catch(() => null) : null;
+      const sent = this.sendBridge(login, active.id, {
+        type: "prompt",
         doc: targetDoc,
-        terminal: local.activeTerminal,
+        docAddress: route ? `/d/${route.id}` : null,
         text: trimmed,
+        context: ctx,
+        ...(files.length ? { files } : {}),
+        ...(id ? { id } : {}),
       });
-      return sent ? { ok: true } : { ok: false, reason: `${local.label} disconnected` };
+      if (!sent) {
+        const errEv: LogEvent = { t: "error", text: `${bridgeLabelFor(active, targetDoc)} disconnected.` };
+        const idleEv: LogEvent = { t: "busy", busy: false };
+        reduce(log, errEv);
+        reduce(log, idleEv);
+        this.saveLocalLog(login, targetDoc, active.id, tid, log);
+        this.event({ type: "agent", thread, ev: errEv }, login, scope);
+        this.event({ type: "agent", thread, ev: idleEv }, login, scope);
+        return { ok: false, reason: `${bridgeLabelFor(active, targetDoc)} disconnected` };
+      }
+      return { ok: true };
     }
     const s = await this.session(login, targetDoc, origin, name);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
@@ -366,7 +416,8 @@ export class PersonAgents {
   }
 
   async conversation(login: string, doc: string | null): Promise<Log> {
-    if (activeBridge(this.bridgesOf(login), doc)) return emptyLog();
+    const active = activeBridge(this.bridgesOf(login), doc);
+    if (active) return this.localLogOf(login, doc, active.id, bridgeThreadId(active, doc));
     const scope = scopeOf(login, doc);
     const live = this.agents.get(scope)?.agent.log();
     if (live) return live;
@@ -382,13 +433,25 @@ export class PersonAgents {
   }
 
   async clearConversation(login: string, doc: string | null): Promise<Log> {
-    if (activeBridge(this.bridgesOf(login), doc)) return emptyLog();
+    const active = activeBridge(this.bridgesOf(login), doc);
+    if (active) {
+      const tid = bridgeThreadId(active, doc);
+      const lScope = localScopeOf(login, doc, active.id, tid);
+      this.localLogs.set(lScope, emptyLog());
+      this.chats.clear(lScope);
+      const res = bridgeStep(this.bridgesOf(login), { on: "reset", id: active.id, doc, nextThreadId: crypto.randomUUID() });
+      this.bridgeStates.set(login, res.state);
+      this.sendBridge(login, active.id, { type: "reset", doc });
+      this.event({ type: "agent", thread: localThreadKey(active.id, tid), ev: { t: "reset" } }, login, scopeOf(login, doc));
+      if (res.notify) this.notifyPanels(login, res.notify);
+      return emptyLog();
+    }
     const scope = scopeOf(login, doc);
     const s = this.agents.get(scope);
     if (s) await s.agent.reset();
     else {
       this.chats.clear(scope);
-      this.event({ type: "agent", ev: { t: "reset" } }, login, scope);
+      this.event({ type: "agent", thread: EMBEDDED_THREAD, ev: { t: "reset" } }, login, scope);
     }
     return emptyLog();
   }
@@ -398,18 +461,20 @@ export class PersonAgents {
     doc: string | null,
     op: "abort" | "reset" | "model" | "approve" | "deny",
     model?: string,
-    _choice?: string
+    choice?: string
   ) {
     const scope = scopeOf(login, doc);
     if (op == "model") {
-      const wasBridge = activeBridge(this.bridgesOf(login), doc);
+      const wasThread = threadKeyFor(activeBridge(this.bridgesOf(login), doc), doc);
       if (isLocalChoice(model)) {
         const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
-        if (!res.ok) return { ok: false, reason: "that connected bridge isn't available" };
+        if (!res.ok) return { ok: false, reason: "that connected agent isn't available" };
         this.bridgeStates.set(login, res.state);
         const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-        this.event({ type: "model", ...state }, login, scope);
-        return { ok: true, ...state };
+        const nowThread = threadKeyFor(activeBridge(res.state, doc), doc);
+        const payload = wasThread == nowThread ? { ...state, log: undefined } : state;
+        this.event({ type: "model", ...payload }, login, scope);
+        return { ok: true, ...payload };
       }
       const s = this.agents.get(scope);
       if (!s) return { ok: false, reason: "the embedded agent isn't configured" };
@@ -417,26 +482,47 @@ export class PersonAgents {
       const res = bridgeStep(this.bridgesOf(login), { on: "select", doc, choice: model });
       this.bridgeStates.set(login, res.state);
       const state = await this.panelState(login, doc, this.origins.get(login) ?? "http://localhost");
-      const payload = wasBridge ? state : { ...state, log: undefined };
+      const nowThread = threadKeyFor(activeBridge(res.state, doc), doc);
+      const payload = wasThread == nowThread ? { ...state, log: undefined } : state;
       this.event({ type: "model", ...payload }, login, scope);
       return { ok: true, ...payload };
     }
-
-    const local = localBridgeView(this.bridgesOf(login), doc);
-    if (local) {
+    const active = activeBridge(this.bridgesOf(login), doc);
+    if (active) {
       if (op == "abort") {
-        const sent = this.sendBridge(login, local.bridgeId, { type: "interrupt", doc, terminal: local.activeTerminal });
-        return sent ? { ok: true } : { ok: false, reason: `${local.label} disconnected` };
+        const tid = bridgeThreadId(active, doc);
+        this.sendBridge(login, active.id, { type: "abort", doc });
+        const log = this.localLogOf(login, doc, active.id, tid);
+        if (log.busy) {
+          const ev: LogEvent = { t: "busy", busy: false };
+          reduce(log, ev);
+          this.saveLocalLog(login, doc, active.id, tid, log);
+          this.event({ type: "agent", thread: localThreadKey(active.id, tid), ev }, login, scope);
+        }
+        return { ok: true };
       }
-      return { ok: op == "reset" };
+      if (op == "reset") {
+        await this.clearConversation(login, doc);
+        return { ok: true };
+      }
+      if (op == "approve" || op == "deny") {
+        if (!model) return { ok: false, reason: "missing call id" };
+        const sent = this.sendBridge(login, active.id, {
+          type: "answer",
+          doc,
+          id: model,
+          approve: op == "approve",
+          ...(choice ? { choice } : {}),
+        });
+        return sent ? { ok: true } : { ok: false, reason: "the connected agent disconnected" };
+      }
     }
-
     const s = this.agents.get(scope);
     if (!s) {
       if (op == "reset") await this.clearConversation(login, doc);
       if (op == "abort" && this.chats.running().some((r) => r.scope == scope)) {
         this.chats.stop(scope);
-        this.event({ type: "agent", ev: { t: "busy", busy: false } }, login, scope);
+        this.event({ type: "agent", thread: EMBEDDED_THREAD, ev: { t: "busy", busy: false } }, login, scope);
       }
       return { ok: op == "abort" || op == "reset", reason: "the agent hasn't started" };
     }
@@ -447,7 +533,7 @@ export class PersonAgents {
     return { ok: true, ...modelState(s.agent) };
   }
 
-  // -- local bridge sockets (/api/agent/bridge)
+  // -- local agent bridge sockets (/api/agent/bridge)
 
   joinBridge(info: BridgeInfo, send: (text: string) => void, close: () => void): { message(text: string): void; close(): void } {
     let bridgeId: string | null = null;
@@ -486,20 +572,23 @@ export class PersonAgents {
           applyAndNotify(
             bridgeStep(this.bridgesOf(info.login), {
               on: "connect",
+              fallbackThreadId: crypto.randomUUID(),
               ...(msg.reconnect ? { reconnect: true } : {}),
               bridge: {
                 id: msg.id,
-                backend: msg.backend,
+                agent: msg.agent,
                 label: msg.label,
-                version: msg.version,
+                version: msg.version ?? "dev",
                 grantId: info.grantId,
                 onlyDoc: info.onlyDoc,
                 doc: doc ?? info.onlyDoc,
+                sessionId: msg.sessionId ?? null,
+                threadId: msg.threadId ?? null,
+                cwd: msg.cwd ?? null,
                 connectedAt: Date.now(),
               },
             })
           );
-          // Notify bridge immediately when a newer bundled release is deployed on this server.
           const latest = assetManifest()?.bridge;
           if (latest && msg.version && msg.version != "dev" && msg.version != latest.version) {
             this.sendBridge(info.login, bridgeId, {
@@ -507,7 +596,6 @@ export class PersonAgents {
               version: latest.version,
               sha256: latest.sha256,
               url: "/plugin/bridge.js",
-              minHcVersion: latest.minHcVersion,
             });
           }
           return;
@@ -523,11 +611,10 @@ export class PersonAgents {
               id: bridgeId,
               doc: msg.doc,
               label: msg.label,
-              scope: msg.scope,
-              spaceId: msg.spaceId,
-              spaceName: msg.spaceName,
-              terminals: msg.terminals,
-              activeTerminal: msg.activeTerminal,
+              sessionId: msg.sessionId,
+              threadId: msg.threadId,
+              fallbackThreadId: crypto.randomUUID(),
+              cwd: msg.cwd,
               ...(msg.reconnect ? { reconnect: true } : {}),
             })
           );
@@ -539,33 +626,30 @@ export class PersonAgents {
           return;
         }
 
-        if (msg.type == "terminals") {
+        if (msg.type == "event") {
           if (info.onlyDoc && msg.doc != info.onlyDoc) return;
-          const res = bridgeStep(this.bridgesOf(info.login), {
-            on: "terminals",
-            id: bridgeId,
-            doc: msg.doc,
-            terminals: msg.terminals,
-            spaceName: msg.spaceName,
-          });
-          this.bridgeStates.set(info.login, res.state);
-          if (res.notify) this.pushBridgeState(info.login, res.notify);
+          const bState = this.bridgesOf(info.login);
+          const b = bState.bridges.find((x) => x.id == bridgeId);
+          if (!b) return;
+          const tid = bridgeThreadId(b, msg.doc);
+          const log = this.localLogOf(info.login, msg.doc, bridgeId, tid);
+          reduce(log, msg.ev);
+          this.saveLocalLog(info.login, msg.doc, bridgeId, tid, log);
+          if (activeBridge(bState, msg.doc)?.id == bridgeId) {
+            this.event({ type: "agent", thread: localThreadKey(bridgeId, tid), ev: msg.ev }, info.login, scopeOf(info.login, msg.doc));
+          }
           return;
         }
 
-        if (msg.type == "pty_data" || msg.type == "pty_closed") {
+        if (msg.type == "log") {
           if (info.onlyDoc && msg.doc != info.onlyDoc) return;
           const bState = this.bridgesOf(info.login);
-          const payload = JSON.stringify(
-            msg.type == "pty_data"
-              ? { type: "pty_data", terminal: msg.terminal, data: msg.data }
-              : { type: "pty_closed", terminal: msg.terminal, ...(msg.reason ? { reason: msg.reason } : {}) }
-          );
-          for (const [to, who] of this.sockets) {
-            if (who.login != info.login) continue;
-            if (msg.doc != null && who.doc != msg.doc) continue;
-            if (activeBridge(bState, who.doc)?.id != bridgeId) continue;
-            this.sendTo(to, payload);
+          const b = bState.bridges.find((x) => x.id == bridgeId);
+          if (!b) return;
+          const tid = bridgeThreadId(b, msg.doc);
+          this.saveLocalLog(info.login, msg.doc, bridgeId, tid, msg.log);
+          if (activeBridge(bState, msg.doc)?.id == bridgeId) {
+            this.event({ type: "log", thread: localThreadKey(bridgeId, tid), log: msg.log }, info.login, scopeOf(info.login, msg.doc));
           }
           return;
         }
@@ -647,100 +731,13 @@ export class PersonAgents {
     for (const [to, who] of this.sockets) if (hears(who)) this.sendTo(to, text);
   }
 
-  /**
-   * Registers a browser tab's /api/agent/events WebSocket.
-   * Accepts bidirectional PTY control/input messages (`pty_attach`, `pty_detach`,
-   * `pty_input`, `pty_resize`, `pty_select`) and cleans up PTY attachments on close.
-   */
-  join(request: Request, send: (text: string) => void): { message(raw: string): void; close(): void } {
+  /** A WebSocket's side of the panel event stream for one person's thread (?doc=). Returns its leave callback. */
+  join(request: Request, send: (text: string) => void): () => void {
     const who = listener(request);
     this.sockets.set(send, who);
     this.keepBeating();
-
-    return {
-      message: (raw: string) => {
-        if (raw == PING) {
-          this.sendTo(send, PONG);
-          return;
-        }
-        if (raw == PONG) return;
-        const msg = parseBrowserToAgent(raw);
-        if (!msg) return;
-        const active = activeBridge(this.bridgesOf(who.login), who.doc);
-        if (!active) return;
-
-        if (msg.type == "pty_select") {
-          const res = bridgeStep(this.bridgesOf(who.login), {
-            on: "select_terminal",
-            id: active.id,
-            doc: who.doc,
-            terminal: msg.terminal,
-          });
-          if (!res.ok) return;
-          this.bridgeStates.set(who.login, res.state);
-          this.pushBridgeState(who.login, [who.doc ?? ""]);
-          return;
-        }
-
-        if (msg.type == "pty_attach") {
-          const prev = who.watching;
-          who.watching = { bridgeId: active.id, terminal: msg.terminal };
-          if (prev && (prev.bridgeId != active.id || prev.terminal != msg.terminal)) {
-            this.maybeDetach(who.login, who.doc, prev);
-          }
-          const sel = bridgeStep(this.bridgesOf(who.login), {
-            on: "select_terminal",
-            id: active.id,
-            doc: who.doc,
-            terminal: msg.terminal,
-          });
-          if (sel.ok) {
-            this.bridgeStates.set(who.login, sel.state);
-            this.pushBridgeState(who.login, [who.doc ?? ""]);
-          }
-          this.sendBridge(who.login, active.id, {
-            type: "pty_attach",
-            doc: who.doc,
-            terminal: msg.terminal,
-            cols: msg.cols,
-            rows: msg.rows,
-          });
-          return;
-        }
-
-        if (msg.type == "pty_detach") {
-          const prev = who.watching;
-          who.watching = null;
-          this.maybeDetach(who.login, who.doc, prev);
-          return;
-        }
-
-        if (msg.type == "pty_input") {
-          this.sendBridge(who.login, active.id, {
-            type: "pty_input",
-            doc: who.doc,
-            terminal: msg.terminal,
-            data: msg.data,
-          });
-          return;
-        }
-
-        if (msg.type == "pty_resize") {
-          this.sendBridge(who.login, active.id, {
-            type: "pty_resize",
-            doc: who.doc,
-            terminal: msg.terminal,
-            cols: msg.cols,
-            rows: msg.rows,
-          });
-        }
-      },
-      close: () => {
-        const prev = who.watching;
-        who.watching = null;
-        this.sockets.delete(send);
-        this.maybeDetach(who.login, who.doc, prev);
-      },
+    return () => {
+      this.sockets.delete(send);
     };
   }
 
@@ -767,6 +764,7 @@ export type PersonAgentObject = Pick<
 
 declare module "../../server/platform.ts" {
   interface Platform {
+    /** A person's agent: their own object, named by their login. */
     personAgent(login: string): PersonAgentObject;
   }
 }

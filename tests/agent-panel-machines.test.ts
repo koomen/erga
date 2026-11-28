@@ -4,7 +4,17 @@
 import { expect, test } from "bun:test";
 import { sendStep, type SendEvent, type SendState } from "../client/agent/sends";
 import { canSend, type SendFacts } from "../client/agent/send-gate";
-import { blockedStep, IDLE_BLOCKED, panelOpen, panelStep, panelVisit, savePanel, type Drawn } from "../client/common/agent-panel";
+import {
+  blockedStep,
+  IDLE_BLOCKED,
+  isLocalChoiceId,
+  panelOpen,
+  panelStep,
+  panelVisit,
+  savePanel,
+  threadEventStep,
+  type Drawn,
+} from "../client/common/agent-panel";
 
 const run = (events: SendEvent[], from: SendState = "pending") =>
   events.reduce<{ state: SendState; effects: string[] }>(
@@ -108,4 +118,27 @@ test("blockedStep auto-expands a collapsed panel once per blocked call, never fi
   expect(r).toEqual({ state: { at: "blocked", seen: ["c3"] }, expand: false });
   r = blockedStep(r.state, { t: "sync", asking: ["c3"], open: false });
   expect(r).toEqual({ state: { at: "blocked", seen: ["c3"] }, expand: false });
+});
+
+test("threadEventStep guards against cross-thread event leaks and detects thread swaps", () => {
+  expect(isLocalChoiceId("local:agy-1")).toBe(true);
+  expect(isLocalChoiceId("local:")).toBe(false);
+  expect(isLocalChoiceId("embedded")).toBe(false);
+
+  expect(threadEventStep(null, { t: "sync", thread: "embedded" })).toEqual({
+    thread: "embedded",
+    effect: { action: "swap", switched: false },
+  });
+  expect(threadEventStep("embedded", { t: "sync", thread: "local:agy:s1" })).toEqual({
+    thread: "local:agy:s1",
+    effect: { action: "swap", switched: true },
+  });
+  expect(threadEventStep("embedded", { t: "agent", thread: "local:agy:s1" })).toEqual({
+    thread: "embedded",
+    effect: { action: "resync" },
+  });
+  expect(threadEventStep("local:agy:s1", { t: "agent", thread: "local:agy:s1" })).toEqual({
+    thread: "local:agy:s1",
+    effect: { action: "apply" },
+  });
 });

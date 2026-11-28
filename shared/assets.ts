@@ -37,7 +37,6 @@ export interface AssetManifest {
     version: string;
     sha256: string;
     size: number;
-    minHcVersion: string;
   };
 }
 

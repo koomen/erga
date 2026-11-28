@@ -1,33 +1,13 @@
-// Effect Schema decoders for the bridge WebSocket protocol (shared/bridge-protocol.ts).
-// Kept apart from shared/bridge-protocol.ts so browser bundles never import Effect.
+// Effect Schema decoders for the chat-native bridge WebSocket protocol
+// (shared/bridge-protocol.ts). Kept apart from shared/bridge-protocol.ts so
+// browser bundles never import Effect.
 
 import * as Schema from "effect/Schema";
-import type { BrowserToAgent, FromBridge, ToBridge } from "./bridge-protocol.ts";
+import type { FromBridge, ToBridge } from "./bridge-protocol.ts";
 
-const BackendSchema = Schema.Literals(["herdr-core", "rex"]);
-const ScopeSchema = Schema.Literals(["single", "space"]);
-const StateSchema = Schema.Literals(["idle", "working", "done", "blocked", "error"]);
-const KindSchema = Schema.Literals(["permission", "question", "auth"]);
-
-const TerminalStatusSchema = Schema.Struct({
-  state: StateSchema,
-  kind: Schema.optionalKey(Schema.NullOr(KindSchema)),
-  progress: Schema.optionalKey(Schema.NullOr(Schema.Number)),
-  app: Schema.optionalKey(Schema.String),
-  title: Schema.optionalKey(Schema.String),
-  msg: Schema.optionalKey(Schema.String),
-});
-
-const TerminalSummarySchema = Schema.Struct({
+const BridgeModelSchema = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
-  app: Schema.String,
-  cwd: Schema.optionalKey(Schema.String),
-  state: Schema.Literals(["live", "finished"]),
-  status: Schema.NullOr(TerminalStatusSchema),
-  turn: Schema.Number,
-  parent: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  host: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 const FromBridgeSchema = Schema.fromJsonString(
@@ -35,21 +15,24 @@ const FromBridgeSchema = Schema.fromJsonString(
     Schema.Struct({
       type: Schema.Literal("hello"),
       id: Schema.String,
-      backend: BackendSchema,
+      agent: Schema.String,
       label: Schema.String,
-      version: Schema.String,
+      version: Schema.optionalKey(Schema.String),
       doc: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      sessionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      threadId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      model: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      models: Schema.optionalKey(Schema.Array(BridgeModelSchema)),
       reconnect: Schema.optionalKey(Schema.Boolean),
     }),
     Schema.Struct({
       type: Schema.Literal("bind"),
       doc: Schema.String,
       label: Schema.optionalKey(Schema.String),
-      scope: ScopeSchema,
-      spaceId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-      spaceName: Schema.optionalKey(Schema.NullOr(Schema.String)),
-      terminals: Schema.Array(TerminalSummarySchema),
-      activeTerminal: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      sessionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      threadId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      cwd: Schema.optionalKey(Schema.NullOr(Schema.String)),
       reconnect: Schema.optionalKey(Schema.Boolean),
     }),
     Schema.Struct({
@@ -57,27 +40,22 @@ const FromBridgeSchema = Schema.fromJsonString(
       doc: Schema.String,
     }),
     Schema.Struct({
-      type: Schema.Literal("terminals"),
+      type: Schema.Literal("event"),
       doc: Schema.NullOr(Schema.String),
-      terminals: Schema.Array(TerminalSummarySchema),
-      spaceName: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      ev: Schema.Record(Schema.String, Schema.Unknown),
     }),
     Schema.Struct({
-      type: Schema.Literal("pty_data"),
+      type: Schema.Literal("log"),
       doc: Schema.NullOr(Schema.String),
-      terminal: Schema.String,
-      data: Schema.String,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("pty_closed"),
-      doc: Schema.NullOr(Schema.String),
-      terminal: Schema.String,
-      reason: Schema.optionalKey(Schema.String),
+      log: Schema.Struct({
+        items: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+        busy: Schema.Boolean,
+        undoable: Schema.Number,
+      }),
     }),
     Schema.Struct({
       type: Schema.Literal("turn_done"),
       doc: Schema.NullOr(Schema.String),
-      terminal: Schema.optionalKey(Schema.String),
     }),
   ])
 );
@@ -85,64 +63,45 @@ const FromBridgeSchema = Schema.fromJsonString(
 const ToBridgeSchema = Schema.fromJsonString(
   Schema.Union([
     Schema.Struct({
-      type: Schema.Literal("pty_attach"),
+      type: Schema.Literal("prompt"),
       doc: Schema.NullOr(Schema.String),
-      terminal: Schema.String,
-      cols: Schema.Number,
-      rows: Schema.Number,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("pty_detach"),
-      doc: Schema.NullOr(Schema.String),
-      terminal: Schema.String,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("pty_input"),
-      doc: Schema.NullOr(Schema.String),
-      terminal: Schema.String,
-      data: Schema.String,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("pty_resize"),
-      doc: Schema.NullOr(Schema.String),
-      terminal: Schema.String,
-      cols: Schema.Number,
-      rows: Schema.Number,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("send"),
-      doc: Schema.NullOr(Schema.String),
-      terminal: Schema.NullOr(Schema.String),
+      docAddress: Schema.optionalKey(Schema.NullOr(Schema.String)),
       text: Schema.String,
+      context: Schema.NullOr(Schema.String),
+      files: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
+      id: Schema.optionalKey(Schema.String),
     }),
     Schema.Struct({
-      type: Schema.Literal("interrupt"),
+      type: Schema.Literal("abort"),
       doc: Schema.NullOr(Schema.String),
-      terminal: Schema.NullOr(Schema.String),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("reset"),
+      doc: Schema.NullOr(Schema.String),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("answer"),
+      doc: Schema.NullOr(Schema.String),
+      id: Schema.String,
+      approve: Schema.Boolean,
+      choice: Schema.optionalKey(Schema.String),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("model"),
+      doc: Schema.NullOr(Schema.String),
+      model: Schema.String,
     }),
     Schema.Struct({
       type: Schema.Literal("update"),
       version: Schema.String,
       sha256: Schema.String,
       url: Schema.String,
-      minHcVersion: Schema.optionalKey(Schema.String),
     }),
-  ])
-);
-
-const BrowserToAgentSchema = Schema.fromJsonString(
-  Schema.Union([
-    Schema.Struct({ type: Schema.Literal("pty_attach"), terminal: Schema.String, cols: Schema.Number, rows: Schema.Number }),
-    Schema.Struct({ type: Schema.Literal("pty_detach"), terminal: Schema.optionalKey(Schema.String) }),
-    Schema.Struct({ type: Schema.Literal("pty_input"), terminal: Schema.String, data: Schema.String }),
-    Schema.Struct({ type: Schema.Literal("pty_resize"), terminal: Schema.String, cols: Schema.Number, rows: Schema.Number }),
-    Schema.Struct({ type: Schema.Literal("pty_select"), terminal: Schema.String }),
   ])
 );
 
 const decodeFromBridge = Schema.decodeUnknownOption(FromBridgeSchema);
 const decodeToBridge = Schema.decodeUnknownOption(ToBridgeSchema);
-const decodeBrowser = Schema.decodeUnknownOption(BrowserToAgentSchema);
 
 /** Parses one JSON text frame from the local bridge; null if malformed or unknown. */
 export function parseFromBridge(raw: string): FromBridge | null {
@@ -154,10 +113,4 @@ export function parseFromBridge(raw: string): FromBridge | null {
 export function parseToBridge(raw: string): ToBridge | null {
   const res = decodeToBridge(raw);
   return res._tag == "Some" ? (res.value as unknown as ToBridge) : null;
-}
-
-/** Parses one JSON text frame sent by the browser over /api/agent/events; null if unknown. */
-export function parseBrowserToAgent(raw: string): BrowserToAgent | null {
-  const res = decodeBrowser(raw);
-  return res._tag == "Some" ? (res.value as unknown as BrowserToAgent) : null;
 }

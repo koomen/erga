@@ -40,10 +40,18 @@ test("updateStep transitions cleanly across check, manifest, swapped, and fail",
   expect(dl.state.at).toBe("downloading");
   expect(dl.effects).toEqual([{ do: "download_and_swap", manifest: { version: "v2", sha256: "def", url: "/plugin/bridge.js" } }]);
 
-  // Swapped requests restart.
-  const done = updateStep(dl.state, { on: "swapped", nextVersion: "v2", bundlePath: "/tmp/bridge.js" });
+  // Swapped while idle requests restart immediately.
+  const done = updateStep(dl.state, { on: "swapped", nextVersion: "v2", bundlePath: "/tmp/bridge.js", busy: false });
   expect(done.state.at).toBe("ready");
   expect(done.effects).toEqual([{ do: "restart", nextVersion: "v2" }]);
+
+  // Swapped during an active turn enters pending_restart and waits for turn_idle.
+  const deferred = updateStep(dl.state, { on: "swapped", nextVersion: "v2", bundlePath: "/tmp/bridge.js", busy: true });
+  expect(deferred.state.at).toBe("pending_restart");
+  expect(deferred.effects).toEqual([]);
+  const resumed = updateStep(deferred.state, { on: "turn_idle" });
+  expect(resumed.state.at).toBe("ready");
+  expect(resumed.effects).toEqual([{ do: "restart", nextVersion: "v2" }]);
 
   const err = updateStep(dl.state, { on: "fail", message: "sha256 mismatch" });
   expect(err.state).toEqual({ at: "error", version: "v1", message: "sha256 mismatch" });
@@ -141,7 +149,6 @@ test("server /plugin/bridge.json, /plugin/bridge.js, and /plugin/install.sh serv
       version: "abc1234567",
       sha256: bundleSha,
       size: bundleText.length,
-      minHcVersion: "0.1.20",
     },
   });
 
@@ -153,7 +160,6 @@ test("server /plugin/bridge.json, /plugin/bridge.js, and /plugin/install.sh serv
       version: "abc1234567",
       sha256: bundleSha,
       size: bundleText.length,
-      minHcVersion: "0.1.20",
       url: "/plugin/bridge.js",
       asset: "/_erga/bridge-abc1234567.js",
     });

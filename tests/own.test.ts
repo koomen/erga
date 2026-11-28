@@ -294,7 +294,7 @@ test("a new server's settings and first rows: invited users only; single sign-on
   });
   // The plan names the paths that the Access application must let through: the gate's own list.
   expect(planText(sso, seen(CF2)).join("\n")).toContain(
-    "(Bypass, everyone): /_edge/vouch, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /oauth/token, /oauth/register, /oauth/device_authorization, /mcp."
+    "(Bypass, everyone): /_edge/vouch, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /oauth/token, /oauth/register, /oauth/device_authorization, /mcp, /llms.txt, /plugin."
   );
   // Or with no Access: an issuer of the organization's own. Its client's secret is the page's alone (the app step),
   // and the server's setting names the endpoints that the issuer publishes.
@@ -327,7 +327,7 @@ test("a new server's settings and first rows: invited users only; single sign-on
     missing({ ...options("--host", "cloudflare", "--sign-in", "sso", "--pages", "example-pages.com", ...more).answers, deploys: "local" });
   // The Audience tag is there only when the Access application is: the command says the person's steps, in their order.
   const steps =
-    "For --team and --aud: in Cloudflare Zero Trust, in this order: 1. Add a self-hosted Access application for erga.example.com, with the policy that lets your people in. It may go in front of a server that runs: people pass Access first, then sign in as before. 2. Add a second Access application for these paths of erga.example.com, with one policy (Bypass, Everyone): /_edge/vouch, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /oauth/token, /oauth/register, /oauth/device_authorization, /mcp. They carry no Access sign-in (agents use them), and Erga checks its own tokens there. 3. Copy the Audience tag (AUD) of the first application: it is --aud. The team's name, the part before .cloudflareaccess.com, is --team.";
+    "For --team and --aud: in Cloudflare Zero Trust, in this order: 1. Add a self-hosted Access application for erga.example.com, with the policy that lets your people in. It may go in front of a server that runs: people pass Access first, then sign in as before. 2. Add a second Access application for these paths of erga.example.com, with one policy (Bypass, Everyone): /_edge/vouch, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /oauth/token, /oauth/register, /oauth/device_authorization, /mcp, /llms.txt, /plugin. They carry no Access sign-in (agents use them), and Erga checks its own tokens there. 3. Copy the Audience tag (AUD) of the first application: it is --aud. The team's name, the part before .cloudflareaccess.com, is --team.";
   expect(need()).toEqual([expect.stringContaining("--team <name> and --aud <tag>"), steps]);
   expect(need("--team", "acme")).toEqual(["--aud <tag>: the Access application's Audience tag.", steps]);
   expect(need("--issuer", "https://idp.example.com")).toEqual(["--client <ID>: Erga's client ID at the organization's sign-in."]);

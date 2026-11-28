@@ -46,7 +46,6 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, wri
 import { join, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { ASSET_PREFIX, namedBy, type AssetManifest } from "../shared/assets";
-import { MIN_HC_VERSION } from "../shared/bridge-protocol";
 
 const ROOT = resolve(import.meta.dir, "..");
 const OUT = join(ROOT, ".build");
@@ -262,7 +261,7 @@ async function build(): Promise<void> {
   // Local bridge bundle (~200 KB JS, served at /plugin/bridge.js + /plugin/bridge.json for <200 ms self-updates).
   const bridgeSrcHash = (() => {
     const h = new Bun.CryptoHasher("sha256");
-    for (const dir of ["bridge/core", "bridge/backends"]) {
+    for (const dir of ["bridge/core", "bridge/drivers"]) {
       for (const f of readdirSync(join(ROOT, dir))
         .filter((n) => n.endsWith(".ts"))
         .sort()) {
@@ -302,7 +301,7 @@ async function build(): Promise<void> {
     integrity: Object.fromEntries([...made].filter(([u]) => u.endsWith(".js")).sort(([a], [b]) => a.localeCompare(b)).map(([u, b]) => [u, integrityOf(b)])),
     fonts: { css: fontCss, preload: latin, page: pageFontCss },
     shell: editorShell(editor),
-    bridge: { file: bridgeFile, version: bridgeSrcHash, sha256: bridgeSha256, size: bridgeBytes.length, minHcVersion: MIN_HC_VERSION },
+    bridge: { file: bridgeFile, version: bridgeSrcHash, sha256: bridgeSha256, size: bridgeBytes.length },
   };
 
   // Into place: the files, then the manifest that names them, then what neither this build nor the last one names.

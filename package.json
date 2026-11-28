@@ -24,8 +24,6 @@
     "@codemirror/state": "6.7.6",
     "@earendil-works/pi-ai": "1.5.0",
     "@effect/ai-anthropic": "4.1.0",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "effect": "4.1.0",
     "yjs": "13.6.33"
   },

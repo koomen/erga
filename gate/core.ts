@@ -228,7 +228,7 @@ export const PATTERNS = { edge: [`${EDGE}*`], forms: [TOKEN_PATH, REGISTER], fix
  * endpoints: an agent's app has no proof before its token. MCP: an agent's app has the gate's token, never an Access
  * sign-in. The gate checks its own values on each.
  */
-export const ACCESS_OPEN = [VOUCH, RESOURCE, SERVER, TOKEN_PATH, REGISTER, DEVICE_AUTH, "/mcp"];
+export const ACCESS_OPEN = [VOUCH, RESOURCE, SERVER, TOKEN_PATH, REGISTER, DEVICE_AUTH, "/mcp", "/llms.txt", "/plugin"];
 
 /** The header a gate in front proves itself to Erga with: the key that the deploy gave both. Never from outside. */
 export const FRONT = "x-erga-front";
@@ -431,6 +431,12 @@ export async function pass(q: Req, c: Config, p: Port): Promise<Answer> {
     return asked(q, c) ? forward(who) : respond(400, "This authorization request isn't valid.");
   }
   if (c.oauth && q.method == "POST" && (q.path == DEVICE_AUTH || q.path == DEVICE_POLL)) return forward(NOBODY);
+  if (
+    c.oauth &&
+    q.method == "GET" &&
+    (q.path == "/llms.txt" || q.path == "/plugin/install.sh" || q.path == "/plugin/bridge.json" || q.path == "/plugin/bridge.js")
+  )
+    return forward(who);
   if (who.kind == "none" && !c.open) return isPage(q) ? toSignIn(q, c) : unauthorized(c);
   return forward(who, await memberFor(q, c, p, who, now));
 }

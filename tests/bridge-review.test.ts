@@ -12,7 +12,6 @@ import type { ChatSql } from "../agents/chat-store.ts";
 import { activeBridge, bridgeStep, EMPTY_BRIDGES, panelOptions } from "../agents/person/bridge.ts";
 import { PersonAgents } from "../agents/person/sessions.ts";
 import { defaultOrigin, login, saveToken } from "../bridge/core/auth.ts";
-import type { TerminalBackend } from "../bridge/core/backend.ts";
 import { ErgaBridgeClient } from "../bridge/core/bridge-client.ts";
 import { ErgaDaemon } from "../bridge/core/daemon.ts";
 import { daemonSocketPath } from "../bridge/core/daemon-io.ts";
@@ -34,24 +33,6 @@ function sqliteChat(): ChatSql {
   return {
     exec: <T>(query: string, ...params: (string | number | null)[]) => db.query(query).all(...params) as T[],
     transaction: <R>(f: () => R) => db.transaction(f)(),
-  };
-}
-
-function minimalBackend(): TerminalBackend {
-  const t = { id: "t1", label: "agy · t1", app: "antigravity", state: "live" as const, status: null, turn: 0 };
-  return {
-    id: "herdr-core",
-    label: "herdr-core",
-    connect: async () => ({ version: "0.1.22" }),
-    close: async () => {},
-    listTerminals: async () => [t],
-    listSpaces: async () => [],
-    resolveTarget: async () => ({ scope: "single", spaceId: null, spaceName: null, terminals: [t], activeTerminal: "t1" }),
-    subscribe: () => () => {},
-    attach: async () => ({ terminalId: "t1", write: () => {}, resize: () => {}, close: () => {} }),
-    send: async () => {},
-    interrupt: async () => {},
-    spawn: async () => t,
   };
 }
 
@@ -257,7 +238,7 @@ test("PersonAgents removes dead bridges on send failure and enforces edit access
 
   const agents = new PersonAgents({ sql: sqliteChat(), platform: fakePlatform });
   const tabMsgs: Record<string, unknown>[] = [];
-  const tab = agents.join(
+  const leave = agents.join(
     new Request("http://localhost:4400/api/agent/events?doc=doc-edit", { headers: { "x-erga-login": "pete" } }),
     (text) => tabMsgs.push(JSON.parse(text) as Record<string, unknown>)
   );
@@ -275,7 +256,7 @@ test("PersonAgents removes dead bridges on send failure and enforces edit access
   );
 
   try {
-    bridge.message(JSON.stringify({ type: "hello", id: "hc-1", backend: "herdr-core", label: "herdr-core", version: "dev" }));
+    bridge.message(JSON.stringify({ type: "hello", id: "agy-1", agent: "antigravity", label: "Antigravity", version: "dev" }));
     await until(() => tabMsgs.some((m) => m.type == "model" && m.enabled == true));
 
     bridge.message(JSON.stringify({ type: "turn_done", doc: "doc-view" }));
@@ -291,28 +272,50 @@ test("PersonAgents removes dead bridges on send failure and enforces edit access
     expect(closed).toBe(true);
     await until(() => tabMsgs.some((m) => m.type == "model" && m.enabled == false));
   } finally {
-    tab.close();
+    leave();
   }
 });
 
 test("bridge reconnect preserves explicit switch to an embedded model and sets reconnect flag on retry", async () => {
   let st = bridgeStep(EMPTY_BRIDGES, {
     on: "connect",
-    bridge: { id: "hc-1", backend: "herdr-core", label: "herdr-core", version: "dev", grantId: "g1", onlyDoc: null, connectedAt: 1 },
+    fallbackThreadId: "t1",
+    bridge: {
+      id: "agy-1",
+      agent: "antigravity",
+      label: "Antigravity",
+      version: "dev",
+      grantId: "g1",
+      onlyDoc: null,
+      sessionId: "s1",
+      cwd: null,
+      connectedAt: 1,
+    },
   }).state;
-  st = bridgeStep(st, { on: "bind", id: "hc-1", doc: "doc1", scope: "single", terminals: [] }).state;
+  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1", sessionId: "s1", fallbackThreadId: "t1" }).state;
   st = bridgeStep(st, { on: "select", doc: "doc1", choice: "sonnet" }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
 
-  st = bridgeStep(st, { on: "disconnect", id: "hc-1" }).state;
+  st = bridgeStep(st, { on: "disconnect", id: "agy-1" }).state;
   st = bridgeStep(st, {
     on: "connect",
+    fallbackThreadId: "t2",
     reconnect: true,
-    bridge: { id: "hc-1", backend: "herdr-core", label: "herdr-core", version: "dev", grantId: "g1", onlyDoc: null, connectedAt: 2 },
+    bridge: {
+      id: "agy-1",
+      agent: "antigravity",
+      label: "Antigravity",
+      version: "dev",
+      grantId: "g1",
+      onlyDoc: null,
+      sessionId: "s1",
+      cwd: null,
+      connectedAt: 2,
+    },
   }).state;
-  st = bridgeStep(st, { on: "bind", id: "hc-1", doc: "doc1", scope: "single", terminals: [], reconnect: true }).state;
+  st = bridgeStep(st, { on: "bind", id: "agy-1", doc: "doc1", sessionId: "s1", fallbackThreadId: "t2", reconnect: true }).state;
   expect(activeBridge(st, "doc1")).toBeNull();
-  expect(panelOptions(st, "doc1", [{ id: "sonnet", label: "Sonnet" }]).map((o) => o.id)).toEqual(["local:hc-1", "sonnet"]);
+  expect(panelOptions(st, "doc1", [{ id: "sonnet", label: "Sonnet" }]).map((o) => o.id)).toEqual(["local:agy-1", "sonnet"]);
 
   const received: Record<string, unknown>[] = [];
   let opens = 0;
@@ -338,16 +341,16 @@ test("bridge reconnect preserves explicit switch to an embedded model and sets r
   });
   const client = new ErgaBridgeClient({
     origin: `http://127.0.0.1:${server.port}`,
-    id: "hc-1",
-    backend: "herdr-core",
-    label: "herdr-core",
+    id: "agy-1",
+    agent: "antigravity",
+    label: "Antigravity",
     version: "dev",
     token: async () => "tok",
     onMessage: () => {},
   });
   try {
     await client.start();
-    client.bind("doc1", { label: "herdr-core", scope: "single", terminals: [] });
+    client.bind("doc1", { label: "Antigravity", sessionId: "s1" });
     await until(() => received.filter((m) => m.type == "bind").length >= 2);
     const hellos = received.filter((m) => m.type == "hello");
     const binds = received.filter((m) => m.type == "bind");
@@ -411,7 +414,7 @@ test("ErgaDaemon deduplicates concurrent mounts and restricts bridge.sock permis
   delete process.env.ERGA_TOKEN;
   const origin = `http://127.0.0.1:${server.port}`;
   saveToken({ origin, clientName: "Erga Bridge", clientId: "c1", accessToken: "tok", expiresAt: Date.now() + 60_000 });
-  const daemon = new ErgaDaemon(minimalBackend(), { defaultOrigin: origin });
+  const daemon = new ErgaDaemon({ home, defaultOrigin: origin });
 
   try {
     await daemon.start();

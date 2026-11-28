@@ -1,23 +1,24 @@
 #!/usr/bin/env bun
 // Local Erga bridge CLI (`erga-agent`).
-// Talks to a single background daemon (~/.erga/bridge.sock) backed by either
-// `herdr-core` (Phase 1) or `rex` (Phase 2).
+// Talks to a single background daemon (~/.erga/bridge.sock) that mirrors Erga
+// documents via YjsDiskSync and connects standalone ACP agents (Antigravity,
+// Claude Code, Codex, Pi, Gemini CLI, OpenCode, or custom `--acp "<cmd>"`) into
+// Erga's native embedded chat pane.
 //
 // Subcommands:
-//   erga-agent open    [doc-url] [--space [name]] [--terminal <id>] [--create] [--title <t>] [--from <dir>] [--server <url>]
+//   erga-agent connect [doc-url] [--agent <preset>] [--acp "<cmd>"] [--cwd <dir>] [--resume <id>] [--model <id>] [--auto-approve] [--device] [--server <url>]
+//   erga-agent open    [doc-url] [--connect] [--agent <preset>] [--create] [--title <t>] [--from <dir>] [--server <url>]
 //   erga-agent unmount <doc-id> [--server <url>]
-//   erga-agent spaces  [--backend herdr-core|rex]
+//   erga-agent agents
 //   erga-agent status
 //   erga-agent update  [--check]
 //   erga-agent login   [server-url] [--device|--local] [--no-open]
 //   erga-agent mcp     [--server <url>]
-//   erga-agent daemon  [--backend herdr-core|rex] [--server <url>]
+//   erga-agent daemon  [--server <url>]
 //   erga-agent stop
 
-import { HerdrCoreBackend } from "../backends/herdr-core.ts";
-import { RexBackend } from "../backends/rex.ts";
+import { detectAgents } from "../drivers/presets.ts";
 import { defaultOrigin, login, normalizeOrigin } from "./auth.ts";
-import { detectBackendKind, type TerminalBackend } from "./backend.ts";
 import { ErgaDaemon } from "./daemon.ts";
 import { daemonRpc, parseDocumentRef } from "./daemon-io.ts";
 import { runMcpServer } from "./mcp-server.ts";
@@ -32,7 +33,7 @@ export function selfCommand(): { command: string; prefix: string[] } {
   return compiled ? { command: process.execPath, prefix: [] } : { command: process.execPath, prefix: [script] };
 }
 
-const BOOL_FLAGS = new Set(["create", "help", "device", "local", "no-open", "check", "version", "foreground"]);
+const BOOL_FLAGS = new Set(["create", "connect", "help", "device", "local", "no-open", "check", "version", "foreground", "auto-approve"]);
 
 function parseFlags(argv: string[]): { cmd: string; pos: string[]; flags: Record<string, string | boolean> } {
   const flags: Record<string, string | boolean> = {};
@@ -42,15 +43,7 @@ function parseFlags(argv: string[]): { cmd: string; pos: string[]; flags: Record
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (key == "space") {
-        // `--space` may be bare (infer current space) or take a space name/id if next is not a URL or flag.
-        if (next != null && !next.startsWith("--") && !/^https?:\/\//i.test(next) && !next.startsWith("/")) {
-          flags[key] = next;
-          i++;
-        } else {
-          flags[key] = true;
-        }
-      } else if (next != null && !next.startsWith("--") && !BOOL_FLAGS.has(key)) {
+      if (next != null && !next.startsWith("--") && !BOOL_FLAGS.has(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -64,18 +57,11 @@ function parseFlags(argv: string[]): { cmd: string; pos: string[]; flags: Record
   return { cmd, pos: rest, flags };
 }
 
-function makeBackend(preferred?: string, log?: (line: string) => void): TerminalBackend {
-  const kind = detectBackendKind(preferred);
-  return kind == "rex" ? new RexBackend({ log }) : new HerdrCoreBackend({ log });
-}
-
-async function ensureDaemonRunning(server: string, backend?: string): Promise<void> {
+async function ensureDaemonRunning(server: string): Promise<void> {
   const alive = await daemonRpc("/status", undefined, 2_000);
   if (alive?.ok) return;
   const self = selfCommand();
-  const args = [...self.prefix, "daemon", "--server", server];
-  if (backend) args.push("--backend", backend);
-  const child = Bun.spawn([self.command, ...args], {
+  const child = Bun.spawn([self.command, ...self.prefix, "daemon", "--server", server], {
     cwd: process.cwd(),
     stdin: "ignore",
     stdout: "ignore",
@@ -94,7 +80,6 @@ async function ensureDaemonRunning(server: string, backend?: string): Promise<vo
 
 async function main(): Promise<void> {
   const { cmd, pos, flags } = parseFlags(process.argv.slice(2));
-  const backendFlag = typeof flags.backend == "string" ? flags.backend : undefined;
   const server = typeof flags.server == "string" ? normalizeOrigin(flags.server) : defaultOrigin();
   const log = (line: string) => console.error(line);
 
@@ -104,17 +89,18 @@ async function main(): Promise<void> {
   }
 
   if (cmd == "help" || flags.help) {
-    console.log(`erga-agent (${BRIDGE_VERSION}) — terminal-first Erga bridge for herdr-core & rex
+    console.log(`erga-agent (${BRIDGE_VERSION}) — chat-native Erga bridge (ACP + MCP + Yjs)
 
 Usage:
-  erga-agent open    [doc-url] [--space [name]] [--terminal <id>] [--create] [--title <t>] [--from <dir>]
+  erga-agent connect [doc-url] [--agent <name>] [--acp "<cmd>"] [--cwd <dir>] [--resume <id>] [--model <id>] [--auto-approve] [--device]
+  erga-agent open    [doc-url] [--connect] [--agent <name>] [--create] [--title <t>] [--from <dir>]
   erga-agent unmount <doc-id>
-  erga-agent spaces  [--backend herdr-core|rex]
+  erga-agent agents
   erga-agent status
   erga-agent update  [--check]
   erga-agent login   [server-url] [--device|--local] [--no-open]
   erga-agent mcp     [--server <url>]
-  erga-agent daemon  [--backend herdr-core|rex] [--server <url>]
+  erga-agent daemon  [--server <url>]
   erga-agent stop`);
     return;
   }
@@ -130,6 +116,11 @@ Usage:
     return;
   }
 
+  if (cmd == "agents") {
+    console.log(JSON.stringify({ ok: true, agents: detectAgents() }, null, 2));
+    return;
+  }
+
   if (cmd == "mcp") {
     await runMcpServer({
       clientName: CLIENT_NAME,
@@ -141,16 +132,13 @@ Usage:
   }
 
   if (cmd == "daemon") {
-    const backend = makeBackend(backendFlag, log);
-    const daemon = new ErgaDaemon(backend, {
+    const daemon = new ErgaDaemon({
       defaultOrigin: server,
+      selfCmd: self,
       log,
       onRestart: () => {
-        // Re-exec cleanly via the launcher shim (or self) so the newly swapped bundle runs immediately.
         void daemon.stop().finally(() => {
-          const child = Bun.spawn(
-            [self.command, ...self.prefix, "daemon", "--server", server, ...(backendFlag ? ["--backend", backendFlag] : [])],
-            {
+          const child = Bun.spawn([self.command, ...self.prefix, "daemon", "--server", server], {
             cwd: process.cwd(),
             stdin: "ignore",
             stdout: "ignore",
@@ -170,26 +158,29 @@ Usage:
     await new Promise(() => {});
   }
 
-  if (cmd == "open") {
+  if (cmd == "connect") {
     const docArg = pos[0];
     const targetOrigin = docArg ? parseDocumentRef(docArg, server).origin : server;
+    if (flags.device) {
+      await login(targetOrigin, CLIENT_NAME, { log, mode: "device", ...(flags["no-open"] ? { open: false } : {}) });
+      if (!readPinnedOrigin()) writePinnedOrigin(targetOrigin);
+    }
+    const req = {
+      origin: targetOrigin,
+      ...(docArg ? { document: parseDocumentRef(docArg, targetOrigin).ref } : {}),
+      ...(typeof flags.agent == "string" ? { agent: flags.agent } : {}),
+      ...(typeof flags.acp == "string" ? { acp: flags.acp } : {}),
+      ...(typeof flags.label == "string" ? { label: flags.label } : {}),
+      ...(typeof flags.cwd == "string" ? { cwd: flags.cwd } : {}),
+      ...(typeof flags.resume == "string" ? { resumeId: flags.resume } : {}),
+      ...(typeof flags.model == "string" ? { model: flags.model } : {}),
+      ...(flags["auto-approve"] ? { autoApprove: true } : {}),
+    };
     if (flags.foreground) {
-      const backend = makeBackend(backendFlag, log);
-      const daemon = new ErgaDaemon(backend, { defaultOrigin: targetOrigin, log });
+      const daemon = new ErgaDaemon({ defaultOrigin: targetOrigin, selfCmd: self, log });
       await daemon.start();
       daemon.startSocket();
-      const res = await daemon.openDocument({
-        origin: targetOrigin,
-        ...(docArg ? { document: parseDocumentRef(docArg, targetOrigin).ref } : {}),
-        ...(flags.create ? { create: true } : {}),
-        ...(typeof flags.title == "string" ? { title: flags.title } : {}),
-        ...(typeof flags.slug == "string" ? { slug: flags.slug } : {}),
-        ...(typeof flags.template == "string" ? { template: flags.template } : {}),
-        ...(typeof flags.from == "string" ? { fromDir: flags.from } : {}),
-        ...(flags.space ? { space: flags.space } : {}),
-        ...(typeof flags.terminal == "string" ? { terminal: flags.terminal } : {}),
-        cwd: process.cwd(),
-      });
+      const res = await daemon.connectAgent(req);
       console.log(JSON.stringify(res, null, 2));
       if (!res.ok) process.exit(1);
       const shutdown = () => void daemon.stop().then(() => process.exit(0));
@@ -197,9 +188,18 @@ Usage:
       process.on("SIGTERM", shutdown);
       await new Promise(() => {});
     }
+    await ensureDaemonRunning(targetOrigin);
+    const res = await daemonRpc<Record<string, unknown>>("/connect", { ...req, nonBlockingAuth: true });
+    if (!res) throw new Error("Could not reach local Erga bridge daemon.");
+    console.log(JSON.stringify(res, null, 2));
+    if (!res.ok && !res.needsAuth) process.exit(1);
+    return;
+  }
 
-    await ensureDaemonRunning(targetOrigin, backendFlag);
-    const res = await daemonRpc<Record<string, unknown>>("/open", {
+  if (cmd == "open") {
+    const docArg = pos[0];
+    const targetOrigin = docArg ? parseDocumentRef(docArg, server).origin : server;
+    const req = {
       origin: targetOrigin,
       ...(docArg ? { document: parseDocumentRef(docArg, targetOrigin).ref } : {}),
       ...(flags.create ? { create: true } : {}),
@@ -207,16 +207,27 @@ Usage:
       ...(typeof flags.slug == "string" ? { slug: flags.slug } : {}),
       ...(typeof flags.template == "string" ? { template: flags.template } : {}),
       ...(typeof flags.from == "string" ? { fromDir: flags.from } : {}),
-      ...(flags.space ? { space: flags.space } : {}),
-      ...(typeof flags.terminal == "string" ? { terminal: flags.terminal } : {}),
-      cwd: process.cwd(),
-      env: {
-        ...(process.env.HC_TERMINAL_ID ? { HC_TERMINAL_ID: process.env.HC_TERMINAL_ID } : {}),
-        ...(process.env.REX_BLOCK_ID ? { REX_BLOCK_ID: process.env.REX_BLOCK_ID } : {}),
-        ...(process.env.REX_SESSION ? { REX_SESSION: process.env.REX_SESSION } : {}),
-      },
-      nonBlockingAuth: true,
-    });
+      ...(flags.connect ? { connect: true } : {}),
+      ...(typeof flags.agent == "string" ? { agent: flags.agent } : {}),
+      ...(typeof flags.acp == "string" ? { acp: flags.acp } : {}),
+      ...(typeof flags.cwd == "string" ? { cwd: flags.cwd } : {}),
+      ...(typeof flags.model == "string" ? { model: flags.model } : {}),
+      ...(flags["auto-approve"] ? { autoApprove: true } : {}),
+    };
+    if (flags.foreground) {
+      const daemon = new ErgaDaemon({ defaultOrigin: targetOrigin, selfCmd: self, log });
+      await daemon.start();
+      daemon.startSocket();
+      const res = await daemon.openDocument(req);
+      console.log(JSON.stringify(res, null, 2));
+      if (!res.ok) process.exit(1);
+      const shutdown = () => void daemon.stop().then(() => process.exit(0));
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      await new Promise(() => {});
+    }
+    await ensureDaemonRunning(targetOrigin);
+    const res = await daemonRpc<Record<string, unknown>>("/open", { ...req, nonBlockingAuth: true });
     if (!res) throw new Error("Could not reach local Erga bridge daemon.");
     console.log(JSON.stringify(res, null, 2));
     if (!res.ok && !res.needsAuth) process.exit(1);
@@ -230,23 +241,6 @@ Usage:
     const res = await daemonRpc<{ ok?: boolean }>("/unmount", body, 5_000);
     console.log(JSON.stringify(res ?? { ok: false }, null, 2));
     if (!res?.ok) process.exit(1);
-    return;
-  }
-
-  if (cmd == "spaces") {
-    const alive = await daemonRpc("/spaces", undefined, 3_000);
-    if (alive?.ok) {
-      console.log(JSON.stringify(alive, null, 2));
-      return;
-    }
-    const backend = makeBackend(backendFlag, log);
-    const info = await backend.connect();
-    try {
-      const [spaces, terminals] = await Promise.all([backend.listSpaces(), backend.listTerminals()]);
-      console.log(JSON.stringify({ ok: true, backend: backend.id, version: info.version, spaces, terminals }, null, 2));
-    } finally {
-      await backend.close();
-    }
     return;
   }
 

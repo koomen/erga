@@ -9,7 +9,7 @@ import { HttpServerResponse } from "effect/http";
 import { call, ctx, fromWeb, json, text, type Route } from "../http.ts";
 import { assetManifest } from "./assets.ts";
 
-/** GET /plugin/bridge.json: latest bridge bundle version, SHA-256, and minimum herdr-core version. */
+/** GET /plugin/bridge.json: latest bridge bundle version and SHA-256. */
 export const serveBridgeManifest: Route = Effect.sync(() => {
   const b = assetManifest()?.bridge;
   if (!b) return json({ error: "Bridge bundle is not built on this server." }, 404);
@@ -18,7 +18,6 @@ export const serveBridgeManifest: Route = Effect.sync(() => {
       version: b.version,
       sha256: b.sha256,
       size: b.size,
-      minHcVersion: b.minHcVersion,
       url: "/plugin/bridge.js",
       asset: b.file,
     }),

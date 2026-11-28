@@ -820,47 +820,37 @@ test("no key: panel off; local bridge opens terminal, switches space, auto-expan
   const syncDir = mkdtempSync(join(tmpdir(), "erga-bridge-e2e-"));
   const sync = new YjsDiskSync({ origin: off.root, docId, dir: syncDir, token: async () => token });
   const received: ToBridge[] = [];
-  const spaceTerms = [
-    {
-      id: "t13h",
-      label: "agy · t13h",
-      app: "antigravity",
-      state: "live" as const,
-      status: { state: "idle" as const, app: "antigravity" },
-      turn: 0,
-    },
-    {
-      id: "t15v",
-      label: "claude · t15v",
-      app: "claude",
-      state: "live" as const,
-      status: { state: "working" as const, app: "claude" },
-      turn: 1,
-    },
-  ];
+  const ask = { t: "tool" as const, id: "bridge-call-1", name: "edit_file", path: "index.html" };
   const bridge = new ErgaBridgeClient({
     origin: off.root,
-    id: "e2e-herdr",
-    backend: "herdr-core",
-    label: "herdr-core",
+    id: "e2e-antigravity",
+    agent: "antigravity",
+    label: "Antigravity (repo)",
     version: "dev",
     token: async () => token,
     onMessage(msg) {
       received.push(msg);
-      if (msg.type == "pty_attach") {
-        bridge.send({
-          type: "pty_data",
-          doc: msg.doc,
-          terminal: msg.terminal,
-          data: Buffer.from(`READY:${msg.terminal}\r\n`).toString("base64"),
+      if (msg.type == "prompt") {
+        bridge.sendEvent(msg.doc, {
+          ...ask,
+          status: "asking",
+          detail: "Edit index.html",
+          choices: [
+            { id: "deny", label: "Deny", kind: "deny" },
+            { id: "allow_once", label: "Allow once", kind: "allow" },
+            { id: "__erga_allow_session__", label: "Allow all (session)", kind: "always" },
+          ],
         });
-      } else if (msg.type == "pty_input") {
-        const text = Buffer.from(msg.data, "base64").toString("utf8");
-        bridge.send({ type: "pty_data", doc: msg.doc, terminal: msg.terminal, data: Buffer.from(`ECHO:${text}`).toString("base64") });
-        if (text.includes("y")) {
+      } else if (msg.type == "answer" && msg.id == ask.id) {
+        bridge.sendEvent(msg.doc, { ...ask, status: msg.approve ? "done" : "error" });
+        if (msg.approve) {
           const f = join(syncDir, "index.html");
           writeFileSync(f, readFileSync(f, "utf8").replace("<h1>Launch notes</h1>", "<h1>Edited by local bridge</h1>"));
-          void sync.flush().then(() => bridge.send({ type: "turn_done", doc: msg.doc, terminal: msg.terminal }));
+          void sync.flush().then(() => {
+            bridge.sendEvent(msg.doc, { t: "text", delta: "Updated from local Antigravity." });
+            bridge.sendEvent(msg.doc, { t: "busy", busy: false });
+            bridge.turnDone(msg.doc);
+          });
         }
       }
     },
@@ -868,62 +858,59 @@ test("no key: panel off; local bridge opens terminal, switches space, auto-expan
   try {
     await sync.start();
     await bridge.start();
-    bridge.bind(docId, {
-      label: "Erga Space",
-      scope: "space",
-      spaceId: "sp1",
-      spaceName: "Erga Space",
-      terminals: spaceTerms,
-      activeTerminal: "t13h",
-    });
+    bridge.bind(docId, { label: "Antigravity (repo)", sessionId: "e2e-s1" });
 
     await until(
       () =>
         ed.eval<boolean>(
-          `document.querySelector('#agent-model-select optgroup[label="Connected agents"] option')?.textContent == "Erga Space" && document.querySelector(".agent-head")?.classList.contains("is-local") && !document.getElementById("agent-term-wrap")?.hidden && !!document.querySelector(".agent-term-host .xterm")`
+          `document.querySelector('#agent-model-select optgroup[label="Connected agents"] option')?.textContent == "Antigravity (repo)" && document.getElementById("agent-hint").hidden && document.querySelector(".agent-head")?.classList.contains("is-local")`
         ),
       5_000,
-      "local bridge mounts lazy xterm terminal pane"
+      "chat-native bridge enables panel"
     );
-    expect(await tab.page.locator(".agent-space-pill").allTextContents()).toEqual(["agy · t13h", "claude · t15v"]);
-    await until(() => received.some((m) => m.type == "pty_attach" && m.terminal == "t13h"), 5_000, "initial pty_attach for t13h");
+    await tab.page.fill("#agent-input", "");
+    await say(tab.page, "Update the heading");
+    const card = tab.page.locator("#agent-log .msg-tool.asking");
+    const allow = card.getByRole("button", { name: "Allow all (session)" });
+    await until(() => allow.isVisible(), 5_000, "permission choices");
+    expect(await card.locator(".ask-acts button").allTextContents()).toEqual(["Deny", "Allow once", "Allow all (session)"]);
+    await allow.click();
+    await answered(tab.page, "Updated from local Antigravity.", 5_000);
+    await expect.poll(() => ed.textOf("h1")).toBe("Edited by local bridge");
+    expect(received.map((m) => m.type)).toEqual(["prompt", "answer"]);
+    expect(received[1]).toMatchObject({ type: "answer", id: "bridge-call-1", approve: true, choice: "__erga_allow_session__" });
 
-    await tab.page.locator('.agent-space-pill[data-terminal="t15v"]').click();
-    await until(() => received.some((m) => m.type == "pty_attach" && m.terminal == "t15v"), 5_000, "pty_attach switches to t15v");
     await tab.page.click("#agent-close");
     await expect.poll(() => paneOpen(tab.page)).toBe(false);
-
-    const blockedTerms = [
-      spaceTerms[0],
-      { ...spaceTerms[1], status: { state: "blocked" as const, kind: "permission" as const, app: "claude", msg: "Allow edit?" } },
-    ];
-    bridge.updateTerminals(docId, blockedTerms);
+    const ask2 = { t: "tool" as const, id: "bridge-call-2", name: "run_command", path: "check" };
+    bridge.sendEvent(docId, { ...ask2, status: "asking", detail: "Run checks" });
     await expect.poll(() => paneOpen(tab.page)).toBe(true);
     expect(await ed.eval<string | null>(`localStorage.getItem("erga:agent:v1:" + ${JSON.stringify(docId)})`)).toBe("closed");
-    await expect.poll(() => tab.page.locator(".agent-term-osc").textContent()).toBe("7501: blocked (permission)");
 
     await tab.page.click("#agent-close");
     await expect.poll(() => paneOpen(tab.page)).toBe(false);
-    bridge.updateTerminals(docId, blockedTerms);
+    bridge.sendEvent(docId, { t: "busy", busy: false });
     await settle(tab.page);
     expect(await paneOpen(tab.page)).toBe(false);
+    bridge.sendEvent(docId, { ...ask2, status: "done" });
 
     await tab.page.click("#agent-fab");
-    await expect.poll(() => paneOpen(tab.page)).toBe(true);
-    await tab.page.locator(".agent-term-host .xterm").click();
-    await tab.page.keyboard.type("y");
-    await expect.poll(() => ed.textOf("h1")).toBe("Edited by local bridge");
-    expect(received.some((m) => m.type == "pty_input" && m.terminal == "t15v")).toBe(true);
+    bridge.bind(docId, { label: "Antigravity (repo)", sessionId: "e2e-s2" });
+    await until(
+      () =>
+        ed.eval<boolean>(
+          `document.getElementById("agent").dataset.thread == "local:e2e-antigravity:e2e-s2" && !document.getElementById("agent-log").children.length`
+        ),
+      5_000,
+      "2nd local thread"
+    );
+    bridge.sendEvent(docId, { t: "text", delta: "Fresh thread." });
+    await answered(tab.page, "Fresh thread.", 5_000);
+    expect(await answers(tab.page)).toEqual(["Fresh thread."]);
   } finally {
     bridge.stop();
     await sync.stop();
     rmSync(syncDir, { recursive: true, force: true });
   }
-  await expect
-    .poll(async () => {
-      const s = await state();
-      return !s.hidden && s.hint == offHint;
-    })
-    .toBe(true);
-  expect(await ed.eval<boolean>(`document.getElementById("agent-term-wrap")?.hidden ?? true`)).toBe(true);
+  await expect.poll(async () => (await state()).hint).toBe(offHint);
 });

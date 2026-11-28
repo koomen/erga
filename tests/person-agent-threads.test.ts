@@ -49,7 +49,7 @@ test("a message, its answer and its events stay in the thread of their document;
   expect(await shown(a, "doc-a")).toEqual([]);
   expect((await shown(a, null)).length).toBe(2);
   expect(heard.app).toBe(app);
-  for (const l of leave) l.close();
+  for (const l of leave) l();
 });
 
 test("a run that a restart cut off goes on in its own thread", async () => {
