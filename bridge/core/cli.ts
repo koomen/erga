@@ -22,7 +22,7 @@ import { join, resolve, sep } from "node:path";
 import { detectAgents } from "../drivers/presets.ts";
 import { defaultOrigin, ergaHome, login, normalizeOrigin } from "./auth.ts";
 import { ErgaDaemon } from "./daemon.ts";
-import { daemonRpc, parseDocumentRef } from "./daemon-io.ts";
+import { daemonRpc, daemonSocketPath, isPidAlive, parseDocumentRef, readDaemonLock } from "./daemon-io.ts";
 import { runMcpServer } from "./mcp-server.ts";
 import { BRIDGE_VERSION, downloadAndSwap, fetchUpdateManifest, readPinnedOrigin, runtimeDir, writePinnedOrigin } from "./updater.ts";
 
@@ -112,8 +112,10 @@ async function stopRunningDaemon(prevPid?: number, timeoutMs = 5_000): Promise<b
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const st = await daemonRpc<DaemonStatus>("/status", undefined, 500);
-    if (!st?.ok) return true;
-    if (prevPid != null && st.pid != null && st.pid != prevPid) return true;
+    const lock = readDaemonLock();
+    const prevHoldsLock = prevPid != null && lock?.pid == prevPid && isPidAlive(prevPid);
+    if (!st?.ok && !prevHoldsLock) return true;
+    if (prevPid != null && st?.ok && st.pid != null && st.pid != prevPid) return true;
     await Bun.sleep(50);
   }
   return false;
@@ -133,10 +135,29 @@ async function spawnDaemon(cmd: { command: string; prefix: string[] }, server: s
   while (Date.now() < deadline) {
     const ok = await daemonRpc<DaemonStatus>("/status", undefined, 1_000);
     if (ok?.ok) return ok;
-    if (child.exitCode != null) throw new Error(`Local Erga bridge daemon exited early (code ${child.exitCode}).`);
+    // Exit code 0 means another daemon already won the single-instance lock; keep waiting for its socket.
+    if (child.exitCode != null && child.exitCode != 0) {
+      throw new Error(`Local Erga bridge daemon exited early (code ${child.exitCode}).`);
+    }
     await Bun.sleep(60);
   }
   throw new Error("Timed out waiting for local Erga bridge daemon to start.");
+}
+
+async function claimDaemonSlot(daemon: ErgaDaemon): Promise<boolean> {
+  if (!daemon.acquireLock()) return false;
+  if (existsSync(daemonSocketPath())) {
+    const live = await daemonRpc<DaemonStatus>("/status", undefined, 500);
+    if (live?.ok && live.pid != process.pid) {
+      await daemon.stop();
+      return false;
+    }
+  }
+  if (!daemon.startSocket()) {
+    await daemon.stop();
+    return false;
+  }
+  return true;
 }
 
 async function ensureDaemonRunning(server: string): Promise<void> {
@@ -247,7 +268,8 @@ Usage:
         }, 50);
       },
     });
-    daemon.startSocket();
+    if (!(await claimDaemonSlot(daemon))) return;
+    process.on("exit", () => daemon.cleanupOwnedFiles());
     void daemon.start().catch((e) => log(`daemon startup error: ${e instanceof Error ? e.message : e}`));
     const shutdown = () => void daemon.stop().then(() => process.exit(0));
     process.on("SIGINT", shutdown);
@@ -275,11 +297,17 @@ Usage:
     };
     if (flags.foreground) {
       const daemon = new ErgaDaemon({ defaultOrigin: targetOrigin, selfCmd: self, log });
+      if (!(await claimDaemonSlot(daemon))) {
+        throw new Error("Another Erga bridge daemon is already running for this ERGA_HOME.");
+      }
+      process.on("exit", () => daemon.cleanupOwnedFiles());
       await daemon.start();
-      daemon.startSocket();
       const res = await daemon.connectAgent(req);
       console.log(JSON.stringify(res, null, 2));
-      if (!res.ok) process.exit(1);
+      if (!res.ok) {
+        await daemon.stop();
+        process.exit(1);
+      }
       const shutdown = () => void daemon.stop().then(() => process.exit(0));
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
@@ -327,11 +355,17 @@ Usage:
     };
     if (flags.foreground) {
       const daemon = new ErgaDaemon({ defaultOrigin: targetOrigin, selfCmd: self, log });
+      if (!(await claimDaemonSlot(daemon))) {
+        throw new Error("Another Erga bridge daemon is already running for this ERGA_HOME.");
+      }
+      process.on("exit", () => daemon.cleanupOwnedFiles());
       await daemon.start();
-      daemon.startSocket();
       const res = await daemon.openDocument(req);
       console.log(JSON.stringify(res, null, 2));
-      if (!res.ok) process.exit(1);
+      if (!res.ok) {
+        await daemon.stop();
+        process.exit(1);
+      }
       const shutdown = () => void daemon.stop().then(() => process.exit(0));
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);

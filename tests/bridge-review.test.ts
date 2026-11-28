@@ -4,7 +4,7 @@
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Y from "yjs";
@@ -14,7 +14,7 @@ import { PersonAgents } from "../agents/person/sessions.ts";
 import { defaultOrigin, login, saveToken } from "../bridge/core/auth.ts";
 import { ErgaBridgeClient } from "../bridge/core/bridge-client.ts";
 import { ErgaDaemon } from "../bridge/core/daemon.ts";
-import { daemonSocketPath } from "../bridge/core/daemon-io.ts";
+import { daemonRpc, daemonSocketPath } from "../bridge/core/daemon-io.ts";
 import { YjsDiskSync } from "../bridge/core/yjs-sync.ts";
 import { assets, files, roomInfo } from "../document/model/content.ts";
 import { digest } from "../document/room/room.ts";
@@ -22,10 +22,10 @@ import type { Platform } from "../server/platform.ts";
 import { encodeStart } from "../shared/room-socket.ts";
 import { Decoder, Encoder, readSyncMessage, writeSyncStep1, writeUpdate } from "../shared/yjs-protocol.ts";
 
-async function until(fn: () => boolean, timeoutMs = 4_000): Promise<void> {
+async function until(fn: () => boolean | Promise<boolean>, timeoutMs = 4_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  for (; Date.now() < deadline && !fn(); ) await new Promise((r) => setTimeout(r, 15));
-  if (!fn()) throw new Error("Timed out waiting for condition");
+  for (; Date.now() < deadline && !(await fn()); ) await new Promise((r) => setTimeout(r, 15));
+  if (!(await fn())) throw new Error("Timed out waiting for condition");
 }
 
 function sqliteChat(): ChatSql {
@@ -493,6 +493,180 @@ test("loopback OAuth login ignores stray bad-state callbacks and defaultOrigin r
     if (prevServer === undefined) delete process.env.ERGA_SERVER;
     else process.env.ERGA_SERVER = prevServer;
     server.stop(true);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+const BRIDGE_CLI = join(import.meta.dir, "..", "bridge", "core", "cli.ts");
+
+test("concurrent daemon startups enforce a single instance and reclaim stale dead-PID locks", async () => {
+  const home = mkdtempSync("/tmp/erga-daemon-lock-");
+  const env = { ...process.env, ERGA_HOME: home, ERGA_TOKEN: "" };
+  const procs: Array<ReturnType<typeof Bun.spawn>> = [];
+  const spawnDaemonProc = () => {
+    const p = Bun.spawn([process.execPath, BRIDGE_CLI, "daemon"], { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+    procs.push(p);
+    return p;
+  };
+
+  try {
+    // 1. Launch 3 daemon processes concurrently against the same ERGA_HOME.
+    const batch = [spawnDaemonProc(), spawnDaemonProc(), spawnDaemonProc()];
+    await until(async () => {
+      const st = await daemonRpc<{ ok?: boolean; pid?: number }>("/status", undefined, 300, home);
+      return st?.ok === true && typeof st.pid == "number";
+    });
+    // Exactly 2 losers must exit cleanly (code 0), leaving 1 live owner.
+    await until(() => batch.filter((p) => p.exitCode != null).length >= 2, 3_000);
+    const alive = batch.filter((p) => p.exitCode == null);
+    const exited = batch.filter((p) => p.exitCode != null);
+    expect(alive.length).toBe(1);
+    expect(exited.map((p) => p.exitCode)).toEqual([0, 0]);
+
+    const winner = alive[0];
+    const st1 = await daemonRpc<{ ok?: boolean; pid?: number }>("/status", undefined, 500, home);
+    expect(st1?.ok).toBe(true);
+    expect(st1?.pid).toBe(winner.pid);
+    const sock = daemonSocketPath(home);
+    const sockIno1 = lstatSync(sock).ino;
+
+    // 2. Starting another daemon while the winner is live exits cleanly without touching socket or mounts.
+    const extra = spawnDaemonProc();
+    expect(await extra.exited).toBe(0);
+    expect(lstatSync(sock).ino).toBe(sockIno1);
+    const st2 = await daemonRpc<{ ok?: boolean; pid?: number }>("/status", undefined, 500, home);
+    expect(st2?.pid).toBe(winner.pid);
+
+    // An in-process ErgaDaemon targeting the same ERGA_HOME must also refuse to bind or start.
+    const rival = new ErgaDaemon({ home });
+    expect(rival.startSocket()).toBe(false);
+    expect(await rival.start()).toBe(false);
+    await rival.stop();
+    expect(lstatSync(sock).ino).toBe(sockIno1);
+
+    // 3. Stop the winner cleanly and verify lock & socket are removed.
+    winner.kill("SIGTERM");
+    expect(await winner.exited).toBe(0);
+    expect(existsSync(sock)).toBe(false);
+    const lockPath = join(home, "daemon.lock");
+    expect(existsSync(lockPath)).toBe(false);
+
+    // 4. Write a stale lock referencing a guaranteed-dead PID, then race 2 daemons to reclaim it.
+    const dead = Bun.spawn([process.execPath, "-e", ""], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    await dead.exited;
+    writeFileSync(lockPath, JSON.stringify({ pid: dead.pid, token: "stale-token", startedAt: Date.now() - 10_000 }) + "\n");
+
+    const reclaimBatch = [spawnDaemonProc(), spawnDaemonProc()];
+    await until(() => reclaimBatch.filter((p) => p.exitCode != null).length >= 1, 3_000);
+    const reclaimed = reclaimBatch.find((p) => p.exitCode == null)!;
+    const reclaimLoser = reclaimBatch.find((p) => p.exitCode != null)!;
+    expect(reclaimLoser.exitCode).toBe(0);
+    await until(async () => {
+      const st = await daemonRpc<{ ok?: boolean; pid?: number }>("/status", undefined, 300, home);
+      return st?.ok === true && st.pid == reclaimed.pid;
+    });
+    expect(reclaimed.exitCode).toBeNull();
+    const lockData = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: number; token?: string };
+    expect(lockData.pid).toBe(reclaimed.pid);
+    expect(lockData.token).not.toBe("stale-token");
+
+    reclaimed.kill("SIGTERM");
+    expect(await reclaimed.exited).toBe(0);
+    expect(existsSync(sock)).toBe(false);
+    expect(existsSync(lockPath)).toBe(false);
+  } finally {
+    for (const p of procs) {
+      if (p.exitCode == null) {
+        try {
+          p.kill("SIGKILL");
+        } catch {
+          /* already dead */
+        }
+      }
+    }
+    await Promise.allSettled(procs.map((p) => p.exited));
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("exiting older daemon does not unlink a newer daemon's live bridge.sock or daemon.lock", async () => {
+  const home = mkdtempSync("/tmp/erga-daemon-safe-stop-");
+  const sock = daemonSocketPath(home);
+  const lockPath = join(home, "daemon.lock");
+  const env = { ...process.env, ERGA_HOME: home, ERGA_TOKEN: "" };
+
+  const older = Bun.spawn([process.execPath, BRIDGE_CLI, "daemon"], { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+  let newerServer: ReturnType<typeof Bun.serve> | null = null;
+  const d1 = new ErgaDaemon({ home });
+
+  try {
+    await until(async () => {
+      const st = await daemonRpc<{ ok?: boolean; pid?: number }>("/status", undefined, 300, home);
+      return st?.ok === true && st.pid == older.pid;
+    });
+
+    // Replace bridge.sock and daemon.lock with a newer live server's socket and lockfile.
+    const tmpNewSock = join(home, ".newer.sock");
+    newerServer = Bun.serve({
+      unix: tmpNewSock,
+      fetch(req) {
+        if (new URL(req.url).pathname == "/status") return Response.json({ ok: true, pid: 777777, version: "newer" });
+        return Response.json({ ok: false }, { status: 404 });
+      },
+    });
+    renameSync(tmpNewSock, sock);
+    const newerSockIno = lstatSync(sock).ino;
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: "newer-lock-token", startedAt: Date.now() }) + "\n");
+
+    // Shut down the older daemon via SIGTERM: it must NOT unlink the newer socket or lockfile!
+    older.kill("SIGTERM");
+    expect(await older.exited).toBe(0);
+
+    expect(existsSync(sock)).toBe(true);
+    expect(lstatSync(sock).ino).toBe(newerSockIno);
+    const st = await daemonRpc<{ ok?: boolean; pid?: number; version?: string }>("/status", undefined, 500, home);
+    expect(st).toEqual({ ok: true, pid: 777777, version: "newer" });
+    expect(existsSync(lockPath)).toBe(true);
+    expect(JSON.parse(readFileSync(lockPath, "utf8")).token).toBe("newer-lock-token");
+
+    // Clean up newer mock and verify the same invariant for in-process ErgaDaemon.stop().
+    newerServer.stop(true);
+    newerServer = null;
+    rmSync(sock, { force: true });
+    rmSync(lockPath, { force: true });
+
+    expect(d1.startSocket()).toBe(true);
+    const tmpSecond = join(home, ".second.sock");
+    newerServer = Bun.serve({
+      unix: tmpSecond,
+      fetch() {
+        return Response.json({ ok: true, pid: 888888, version: "second" });
+      },
+    });
+    renameSync(tmpSecond, sock);
+    const secondSockIno = lstatSync(sock).ino;
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: "second-lock-token", startedAt: Date.now() }) + "\n");
+
+    await d1.stop();
+    expect(existsSync(sock)).toBe(true);
+    expect(lstatSync(sock).ino).toBe(secondSockIno);
+    expect(await daemonRpc<{ ok?: boolean; pid?: number; version?: string }>("/status", undefined, 500, home)).toEqual({
+      ok: true,
+      pid: 888888,
+      version: "second",
+    });
+    expect(JSON.parse(readFileSync(lockPath, "utf8")).token).toBe("second-lock-token");
+  } finally {
+    await d1.stop().catch(() => {});
+    newerServer?.stop(true);
+    if (older.exitCode == null) {
+      try {
+        older.kill("SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    }
+    await older.exited.catch(() => {});
     rmSync(home, { recursive: true, force: true });
   }
 });

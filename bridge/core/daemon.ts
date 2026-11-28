@@ -11,7 +11,7 @@
 //    so turn-safe <200 ms self-updates restart at idle and resume sessions via
 //    `session/load` / `session/resume` with `reconnect: true`.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Attachment } from "../../shared/attach.ts";
@@ -30,7 +30,15 @@ import {
   type PendingDeviceAuth,
 } from "./auth.ts";
 import { ErgaBridgeClient } from "./bridge-client.ts";
-import { copyIntoManaged, daemonSocketPath, resolveDocument } from "./daemon-io.ts";
+import {
+  acquireDaemonLock,
+  copyIntoManaged,
+  daemonSocketPath,
+  resolveDocument,
+  unlinkSocketIfOwned,
+  type DaemonLockHandle,
+  type FileIdentity,
+} from "./daemon-io.ts";
 import {
   BRIDGE_VERSION,
   downloadAndSwap,
@@ -238,8 +246,11 @@ export class ErgaDaemon {
   private updateState: UpdateState;
   private activeTurns = 0;
   private server: ReturnType<typeof Bun.serve> | null = null;
+  private lock: DaemonLockHandle | null = null;
+  private socketIdentity: ({ path: string } & FileIdentity) | null = null;
   private healthyTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(private readonly opts: DaemonOptions = {}) {
     this.version = opts.version ?? BRIDGE_VERSION;
@@ -252,14 +263,28 @@ export class ErgaDaemon {
     return join(this.home, "bindings.json");
   }
 
-  /** Marks startup healthy after 5 s and restores saved mounts & ACP connections. */
-  async start(): Promise<void> {
-    this.healthyTimer = setTimeout(() => markCurrentHealthy(this.home), 5_000);
-    await this.restoreBindings();
+  /** Acquires the exclusive single-instance daemon lock for `ERGA_HOME` (idempotent per instance). */
+  acquireLock(): boolean {
+    if (this.lock) {
+      if (this.lock.isOwned()) return true;
+      this.lock = null;
+    }
+    this.lock = acquireDaemonLock(this.home);
+    return this.lock != null;
   }
 
-  /** Starts the local Unix socket RPC server (~/.erga/bridge.sock, mode 0600). */
-  startSocket(): void {
+  /** Marks startup healthy after 5 s and restores saved mounts & ACP connections; false if another daemon holds the lock. */
+  async start(): Promise<boolean> {
+    if (!this.acquireLock()) return false;
+    this.healthyTimer = setTimeout(() => markCurrentHealthy(this.home), 5_000);
+    await this.restoreBindings();
+    return true;
+  }
+
+  /** Starts the local Unix socket RPC server (~/.erga/bridge.sock, mode 0600); false if another daemon holds the lock. */
+  startSocket(): boolean {
+    if (!this.acquireLock()) return false;
+    if (this.server) return true;
     const sock = daemonSocketPath(this.home);
     mkdirSync(dirname(sock), { recursive: true, mode: 0o700 });
     try {
@@ -267,52 +292,65 @@ export class ErgaDaemon {
     } catch {
       /* best effort */
     }
-    if (existsSync(sock)) rmSync(sock, { force: true });
-
-    this.server = Bun.serve({
-      unix: sock,
-      fetch: async (req) => {
-        const url = new URL(req.url);
-        try {
-          if (url.pathname == "/status") return Response.json(this.status());
-          if (url.pathname == "/agents") return Response.json({ ok: true, agents: detectAgents() });
-          if (url.pathname == "/open" && req.method == "POST") {
-            return Response.json(await this.openDocument((await req.json()) as OpenDocumentRequest));
-          }
-          if (url.pathname == "/connect" && req.method == "POST") {
-            return Response.json(await this.connectAgent((await req.json()) as ConnectAgentRequest));
-          }
-          if (url.pathname == "/disconnect" && req.method == "POST") {
-            const body = (await req.json()) as { id: string };
-            return Response.json({ ok: await this.disconnectAgent(body.id) });
-          }
-          if (url.pathname == "/unmount" && req.method == "POST") {
-            const body = (await req.json()) as { origin?: string; docId: string };
-            return Response.json({ ok: await this.unmountDocument(body.docId, body.origin) });
-          }
-          if (url.pathname == "/auth/start" && req.method == "POST") {
-            const body = (await req.json()) as { origin?: string };
-            const origin = normalizeOrigin(body.origin || this.opts.defaultOrigin || defaultOrigin());
-            return Response.json(await this.beginNonBlockingAuth(origin));
-          }
-          if (url.pathname == "/update" && req.method == "POST") {
-            const body = (await req.json().catch(() => ({}))) as { checkOnly?: boolean };
-            return Response.json(await this.checkForUpdate(Boolean(body.checkOnly)));
-          }
-          if (url.pathname == "/stop" && req.method == "POST") {
-            setTimeout(() => void this.stop().then(() => process.exit(0)), 50);
-            return Response.json({ ok: true });
-          }
-          return Response.json({ ok: false, error: "Not found" }, { status: 404 });
-        } catch (e) {
-          return Response.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
-        }
-      },
-    });
+    // Bind a private temp socket path, chmod 0600, then atomically rename into place so
+    // Bun's internal server.stop() unlink can never unlink another daemon's live bridge.sock.
+    const tmpSock = join(dirname(sock), `.s${crypto.randomUUID().slice(0, 8)}`);
+    let server: ReturnType<typeof Bun.serve> | null = null;
     try {
-      chmodSync(sock, 0o600);
-    } catch {
-      /* best effort */
+      server = Bun.serve({
+        unix: tmpSock,
+        fetch: async (req) => {
+          const url = new URL(req.url);
+          try {
+            if (url.pathname == "/status") return Response.json(this.status());
+            if (url.pathname == "/agents") return Response.json({ ok: true, agents: detectAgents() });
+            if (url.pathname == "/open" && req.method == "POST") {
+              return Response.json(await this.openDocument((await req.json()) as OpenDocumentRequest));
+            }
+            if (url.pathname == "/connect" && req.method == "POST") {
+              return Response.json(await this.connectAgent((await req.json()) as ConnectAgentRequest));
+            }
+            if (url.pathname == "/disconnect" && req.method == "POST") {
+              const body = (await req.json()) as { id: string };
+              return Response.json({ ok: await this.disconnectAgent(body.id) });
+            }
+            if (url.pathname == "/unmount" && req.method == "POST") {
+              const body = (await req.json()) as { origin?: string; docId: string };
+              return Response.json({ ok: await this.unmountDocument(body.docId, body.origin) });
+            }
+            if (url.pathname == "/auth/start" && req.method == "POST") {
+              const body = (await req.json()) as { origin?: string };
+              const origin = normalizeOrigin(body.origin || this.opts.defaultOrigin || defaultOrigin());
+              return Response.json(await this.beginNonBlockingAuth(origin));
+            }
+            if (url.pathname == "/update" && req.method == "POST") {
+              const body = (await req.json().catch(() => ({}))) as { checkOnly?: boolean };
+              return Response.json(await this.checkForUpdate(Boolean(body.checkOnly)));
+            }
+            if (url.pathname == "/stop" && req.method == "POST") {
+              setTimeout(() => void this.stop().then(() => process.exit(0)), 50);
+              return Response.json({ ok: true });
+            }
+            return Response.json({ ok: false, error: "Not found" }, { status: 404 });
+          } catch (e) {
+            return Response.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+          }
+        },
+      });
+      try {
+        chmodSync(tmpSock, 0o600);
+      } catch {
+        /* best effort */
+      }
+      const st = lstatSync(tmpSock);
+      renameSync(tmpSock, sock);
+      this.server = server;
+      this.socketIdentity = { path: sock, dev: st.dev, ino: st.ino };
+      return true;
+    } catch (e) {
+      server?.stop(true);
+      rmSync(tmpSock, { force: true });
+      throw e;
     }
   }
 
@@ -683,26 +721,42 @@ export class ErgaDaemon {
     return true;
   }
 
+  /** Synchronously unlinks bridge.sock and daemon.lock only if this daemon instance still owns them. */
+  cleanupOwnedFiles(): void {
+    const sockId = this.socketIdentity;
+    this.socketIdentity = null;
+    if (sockId) unlinkSocketIfOwned(sockId.path, sockId);
+    const lock = this.lock;
+    this.lock = null;
+    lock?.release();
+  }
+
   async stop(): Promise<void> {
-    this.stopped = true;
-    if (this.healthyTimer) clearTimeout(this.healthyTimer);
-    for (const c of [...this.connections.values()]) {
-      this.setConnBusy(c, false);
-      c.unsubEvent();
-      c.unsubClose();
-      c.client.stop();
-      await c.handle.close().catch(() => {});
-    }
-    this.connections.clear();
-    for (const m of this.mounts.values()) {
-      await m.sync.flush().catch(() => {});
-      await m.sync.stop().catch(() => {});
-    }
-    this.mounts.clear();
-    this.server?.stop(true);
-    this.server = null;
-    const sock = daemonSocketPath(this.home);
-    if (existsSync(sock)) rmSync(sock, { force: true });
+    if (this.stopPromise) return this.stopPromise;
+    this.stopPromise = (async () => {
+      this.stopped = true;
+      if (this.healthyTimer) {
+        clearTimeout(this.healthyTimer);
+        this.healthyTimer = null;
+      }
+      for (const c of [...this.connections.values()]) {
+        this.setConnBusy(c, false);
+        c.unsubEvent();
+        c.unsubClose();
+        c.client.stop();
+        await c.handle.close().catch(() => {});
+      }
+      this.connections.clear();
+      for (const m of this.mounts.values()) {
+        await m.sync.flush().catch(() => {});
+        await m.sync.stop().catch(() => {});
+      }
+      this.mounts.clear();
+      this.server?.stop(true);
+      this.server = null;
+      this.cleanupOwnedFiles();
+    })();
+    return this.stopPromise;
   }
 
   // ---------------------------------------------------------------- persistence & turn-safe auto-update
