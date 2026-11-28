@@ -703,6 +703,7 @@ async function load(tries = 0, fresh = false): Promise<void> {
 const events = liveSocket({
   name: "agent",
   path: inThread("/api/agent/events"),
+  ping: true,
   up: () => void load(),
   message(e) {
     let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
