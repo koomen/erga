@@ -23,6 +23,7 @@
     "shared/text-imports.d.ts",
     "bench",
     "bridge",
+    "demos",
     "gate",
     "deploy",
     "dev",

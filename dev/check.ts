@@ -22,6 +22,7 @@ const VITE_CONFIG = ["node", "--no-experimental-webstorage", "-e", "import('vite
 const RULES = [
   "agent-actions",
   "browser-imports",
+  "demos",
   "e2e-servers",
   "file-size",
   "imports",
