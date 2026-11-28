@@ -90,6 +90,7 @@ html.page-dark .erga-tree-card { --fg: #cacad2; --fg-strong: #ececf1; --soft: #8
    viewer-layout-early.ts, then the editor's layout). On a phone it covers the page, the bars too. */
 .erga-crumbs.erga-bar { left: max(6px, env(safe-area-inset-left), calc(var(--frame-l, 0px) - 2px)); transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1); }
 .erga-view-buttons.erga-bar { right: max(8px, env(safe-area-inset-right), calc(var(--frame-r, 0px) - 2px)); transition: right 560ms cubic-bezier(0.45, 0, 0.15, 1); }
+body.layout-narrow::before { z-index: 1000; }
 .agent { z-index: 1001; }
 /* The window around the page is controls: a drag that starts on them, or between them, selects nothing. What a person
    reads in a card stays selectable (the agent's messages: client/style.css), but for its buttons: a press on one is no

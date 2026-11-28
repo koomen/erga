@@ -459,6 +459,40 @@ journey("the panels and the bars over a page", () => {
     await page.mouse.click(390 / 2, sheet.y / 2 + 40);
     await soon(resting).toEqual({ quick: 0, shown: ["me"], open: false });
     await soon(() => ed.eval<boolean>(`!!document.querySelector("#doc-settings:not([hidden])")`)).toBe(false);
+    // Phone agent composer: placeholders stay single-line and unclipped, multi-line typing expands, and the backdrop veils #frame.
+    await ed.eval(`window.ergaAgent.show(true, { focus: false })`);
+    await soon(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(true);
+    const composer = await ed.eval<{
+      idleH: number;
+      idleClip: boolean;
+      longH: number;
+      longClip: boolean;
+      multiH: number;
+      multiClip: boolean;
+    }>(`(() => {
+      const i = document.getElementById("agent-input");
+      const saved = i.placeholder;
+      const measure = () => ({ h: Math.round(i.getBoundingClientRect().height), clip: i.scrollHeight > i.clientHeight + 1 });
+      const idle = measure();
+      i.placeholder = "Add to what the agent is doing…";
+      const long = measure();
+      i.value = "First line\\nSecond line";
+      i.dispatchEvent(new Event("input"));
+      const multi = measure();
+      i.value = "";
+      i.placeholder = saved;
+      i.dispatchEvent(new Event("input"));
+      return { idleH: idle.h, idleClip: idle.clip, longH: long.h, longClip: long.clip, multiH: multi.h, multiClip: multi.clip };
+    })()`);
+    expect(composer.idleH).toBeLessThanOrEqual(40);
+    expect(composer.idleClip).toBe(false);
+    expect(composer.longH).toBeLessThanOrEqual(40);
+    expect(composer.longClip).toBe(false);
+    expect(composer.multiH).toBeGreaterThan(50);
+    expect(composer.multiClip).toBe(false);
+    await soon(() => ed.eval<number>(`Number(getComputedStyle(document.body, "::before").opacity)`)).toBe(1);
+    await ed.eval(`window.ergaAgent.show(false)`);
+    await soon(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(false);
   });
 
   // Was Pete's complaint: around a canvas, the band behind the bars and the room beside the agent's pane were the

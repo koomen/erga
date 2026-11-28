@@ -505,8 +505,9 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-compose textarea {
   display: block; box-sizing: border-box; width: 100%; field-sizing: content;
   resize: none; border: 1px solid var(--rule); border-radius: 12px; padding: 8px 10px;
-  font: inherit; color: var(--fg); background: var(--bg); max-height: 40vh; min-height: 38px; outline: none;
+  font: inherit; line-height: 20px; color: var(--fg); background: var(--bg); max-height: 40vh; min-height: 38px; outline: none;
 }
+.agent-compose textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (prefers-reduced-motion: reduce) { .agent-field { transition: none; } }
 .agent-compose textarea:focus { border-color: color-mix(in srgb, var(--caret) 60%, var(--rule)); }
 .agent-send { flex: none; height: 38px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--fg-strong); color: var(--bg); font: 600 13px var(--font-text); cursor: pointer; }
@@ -649,9 +650,18 @@ html.kb-open body.layout-narrow {
 }
 html.kb-open body.layout-narrow .agent-head { padding: 6px 8px 4px 14px; }
 body.layout-narrow.agent-open #frame { pointer-events: none; }
+/* On phones the agent floats over the page: a frosted backdrop hides peeking text around its 16px inset. */
+body.layout-narrow::before {
+  content: ""; position: fixed; inset: 0; z-index: 19; pointer-events: none; opacity: 0;
+  background: color-mix(in srgb, var(--band, var(--bg)) 86%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  transition: opacity 280ms var(--agent-ease);
+}
+body.layout-narrow.agent-open::before { opacity: 1; }
 /* Touch fields stay >= 16px in View mode, Edit mode, and app pages so iOS Safari never auto-zooms on focus. */
 @media (pointer: coarse) {
   .agent-compose textarea, .agent-head .model select, .sharing select.role { font-size: 16px; }
+  .agent-compose textarea { line-height: 22px; padding: 7px 10px; }
 }
 /* The agent's box (#agent) is where the open panel goes, top to bottom, and takes clicks only while it's open. Its glass
    (.agent-glass) is the one element that moves: 44px round, at the corner on the agent's side, closed; the whole box, open.
@@ -700,11 +710,11 @@ body.agent-open .agent-card { opacity: 1; visibility: visible; transition: opaci
 .agent-fab.busy::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
 @keyframes agent-spin { to { transform: rotate(360deg); } }
 body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
-@media (prefers-reduced-motion: reduce) { :is(.agent-card, .agent-fab) { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { :is(.agent-card, .agent-fab), body.layout-narrow::before { transition: none !important; } }
 /* Its insides on the glass: the box and your messages as faint fills of it, not white cards. */
 .agent .agent-compose { border-top: 0; }
 .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.6); border-color: rgba(0, 0, 0, 0.08); }
 .agent .msg-user { background: rgba(0, 0, 0, 0.045); }
 html.page-dark body .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); }
 html.page-dark body .agent .msg-user { background: rgba(255, 255, 255, 0.08); }
-body.no-motion, body.no-motion * { transition: none !important; }
+body.no-motion, body.no-motion *, body.no-motion::before { transition: none !important; }

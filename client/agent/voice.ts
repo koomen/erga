@@ -239,12 +239,12 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
     field.classList.toggle("voice-busy", armed && busy);
     if (armed && !state.agentOff) {
       input.placeholder = state.agentAsking
-        ? "Voice on · waiting for approval…"
+        ? "Waiting for approval…"
         : state.agentBusy
-          ? "Voice on · agent is working…"
+          ? "Voice on · working…"
           : state.phase == "restarting"
-            ? "Reconnecting voice mode…"
-            : "Listening… say “send prompt” to send";
+            ? "Reconnecting voice…"
+            : "Listening…";
     }
 
     fab.classList.toggle("voice-on", armed);

@@ -242,11 +242,7 @@ function renderBusy() {
   send.setAttribute("aria-disabled", String(!!why));
   send.title = why ?? (stop ? "Stop the agent" : busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
   $("agent-fab").classList.toggle("busy", busy);
-  input.placeholder = off
-    ? "The agent is off"
-    : busy
-      ? "Add to what the agent is doing…"
-      : "Ask the agent…";
+  input.placeholder = off ? "The agent is off" : busy ? "Add to this turn…" : "Ask the agent…";
   // (Drawn again only when it changed: the key field below it keeps what's typed.)
   if (off) {
     if (hint.dataset.off != off || hint.hidden) {
@@ -387,7 +383,13 @@ function sendNow() {
 const field = $("agent-field");
 const fieldSizing = CSS.supports("field-sizing", "content");
 function sizeInput() {
-  if (!fieldSizing) { input.style.height = "auto"; input.style.height = input.scrollHeight + 2 + "px"; }
+  if (!fieldSizing) {
+    if (!input.value) input.style.height = "";
+    else {
+      input.style.height = "auto";
+      input.style.height = input.scrollHeight + 2 + "px";
+    }
+  }
   renderBusy();
 }
 // Persistent Voice Mode (client/agent/voice.ts): waveform button, Web Speech dictation, "send prompt" trigger, and queue.
@@ -418,7 +420,7 @@ voice = mountVoice({
 // completed with undelivered notifications", in every browser.)
 new ResizeObserver(() =>
   requestAnimationFrame(() => {
-    const h = input.offsetHeight;
+    const h = Math.ceil(input.getBoundingClientRect().height);
     if (h) field.style.height = h + "px";
   })
 ).observe(input);
