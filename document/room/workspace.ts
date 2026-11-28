@@ -282,8 +282,6 @@ export class Workspace {
   private mayEdit(): Effect.Effect<void, WorkspaceError> {
     const no = this.room.refusal(this.p);
     if (!no) return Effect.void;
-    return no.why == "view"
-      ? fail("readOnly", "Your user can only view this document, so you can't change it.")
-      : fail("locked", no.message);
+    return fail("readOnly", "Your user can only view this document, so you can't change it.");
   }
 }

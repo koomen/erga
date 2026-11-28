@@ -11,8 +11,8 @@
 import type { ChangeSet } from "@codemirror/state";
 import * as M from "../../../shared/manuscript";
 
-/** Elements a change in which makes the page load again: the browser runs them, an edit in place would not. */
-const RUN = new Set(["script", "style"]);
+/** Elements a change in which makes the page load again: the browser runs scripts / resolves base URLs only on load. */
+const RUN = new Set(["script", "base"]);
 /** Elements whose children the browser builds its own way (a <tbody> it adds, SVG's namespace): made from HTML, never in parts. */
 const WHOLE = new Set(["table", "thead", "tbody", "tfoot", "tr", "colgroup", "svg", "math", "select", "template", "noscript"]);
 /** Elements whose content the binding does not go into. */
@@ -44,17 +44,18 @@ export class Mirror {
   private constructor(
     readonly doc: Document,
     readonly root: M.ElementNode,
-    readonly body: M.ElementNode
+    readonly body: M.ElementNode,
+    readonly head: M.ElementNode | null
   ) {}
 
   /** Binds a parse of `src` to the page in `doc`; null if the page has no body. */
   static bind(doc: Document, root: M.ElementNode, src: string): Mirror | null {
     const body = findBody(root);
     if (!doc.body) return null;
-    const m = new Mirror(doc, root, body);
     // The <html> and the <head> too, where the source has them: their attributes, its styles and title change in place.
     const html = root.children.find((c): c is M.ElementNode => c.kind == "element" && c.tag == "html");
-    const head = (html ?? root).children.find((c): c is M.ElementNode => c.kind == "element" && c.tag == "head");
+    const head = (html ?? root).children.find((c): c is M.ElementNode => c.kind == "element" && c.tag == "head") ?? null;
+    const m = new Mirror(doc, root, body, head);
     if (html) m.set(html, doc.documentElement);
     if (head && doc.head) {
       m.set(head, doc.head);
@@ -116,10 +117,18 @@ export class Mirror {
         continue;
       }
       if (c.tag == "#comment" || c.tag.startsWith("!")) continue;
-      // Past the nodes of others (an extension's element) to the element of this name.
+      // Past the nodes of others (an extension's element, or Erga's own injected head/control nodes) to the element of this name.
       // A row of a table whose HTML has no <tbody> is in the one the browser adds.
       let at = cur;
-      while (at && !(at.nodeType == 1 && (at as Element).localName == c.tag))
+      while (
+        at &&
+        !(
+          at.nodeType == 1 &&
+          (at as Element).localName == c.tag &&
+          !(at as Element).hasAttribute("data-erga") &&
+          !(at as Element).localName.startsWith("erga-")
+        )
+      )
         at = c.tag == "tr" && at.nodeName == "TBODY" && s.tag == "table" ? at.firstChild : at.nextSibling;
       // Not in the page here (an element the browser put in the head: a page with no <body> tag): left unbound.
       if (!at) continue;
@@ -205,17 +214,22 @@ export class Mirror {
     if (t && live?.isConnected && (t.tag == "style" || t.tag == "title") && t.openTo <= lo && hi <= t.closeFrom) {
       return { kind: "text", target: t, live };
     }
-    // The region: the deepest bound element whose content holds every change.
-    let e = this.body;
-    if (!(e.openTo <= lo && hi <= e.closeFrom)) return null;
-    for (;;) {
-      const c = e.children.find(
-        (c): c is M.ElementNode => c.kind == "element" && !c.selfClosing && c.openTo <= lo && hi <= c.closeFrom && c.closeFrom > c.openTo
-      );
-      if (!c || !this.dom.has(c) || WHOLE.has(c.tag) || RUN.has(c.tag) || M.ATOMIC.has(c.tag) || c.tag == "textarea" || c.tag == "title")
-        break;
-      if (!this.dom.get(c)!.isConnected) return null;
-      e = c;
+    // The region: the deepest bound element in <body> or <head> whose content holds every change.
+    const inBody = this.body.openTo <= lo && hi <= this.body.closeFrom;
+    const inHead = !inBody && !!this.head && this.dom.has(this.head) && this.head.openTo <= lo && hi <= this.head.closeFrom;
+    if (!inBody && !inHead) return null;
+    const container = inHead ? this.head! : this.body;
+    let e = container;
+    if (inBody) {
+      for (;;) {
+        const c = e.children.find(
+          (c): c is M.ElementNode => c.kind == "element" && !c.selfClosing && c.openTo <= lo && hi <= c.closeFrom && c.closeFrom > c.openTo
+        );
+        if (!c || !this.dom.has(c) || WHOLE.has(c.tag) || RUN.has(c.tag) || M.ATOMIC.has(c.tag) || c.tag == "textarea" || c.tag == "title")
+          break;
+        if (!this.dom.get(c)!.isConnected) return null;
+        e = c;
+      }
     }
     /** A change strictly inside [from, to): it overlaps it, or inserts inside it. */
     const touches = (from: number, to: number) =>
@@ -225,7 +239,7 @@ export class Mirror {
     // element there, its parent is the region.
     let fresh: M.ElementNode;
     for (;;) {
-      if (e == this.body) {
+      if (e == container) {
         const openTo = changes.mapPos(e.openTo, -1);
         fresh = M.parseHtml(newSrc.slice(openTo, changes.mapPos(e.closeFrom, 1)));
         shift(fresh, openTo);
@@ -241,7 +255,7 @@ export class Mirror {
         break;
       }
       let up = e.parent;
-      while (up && up != this.body && !this.dom.has(up)) up = up.parent;
+      while (up && up != container && !this.dom.has(up)) up = up.parent;
       if (!up) return null;
       e = up;
     }

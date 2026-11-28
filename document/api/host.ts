@@ -34,7 +34,7 @@ import type { Hello } from "./api.ts";
 import { makeHttp, relativeUrl, type EditorCalls } from "./http.ts";
 import { Permissions } from "./permissions.ts";
 import { isArrival, isUpload, unwait, Uploads, uploadsNow, type Written } from "./uploads.ts";
-import { docFile, DocumentView, typeOf, type ViewAnswer } from "./view.ts";
+import { docFile, DocumentView, typeOf, type ViewAnswer, type ViewGreet } from "./view.ts";
 
 const { file: FILE, ref: REF } = KEYS;
 
@@ -128,7 +128,9 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
       changedAfterQuiet: () => void this.readInfo().then((info) => info && deps.viewChanged?.(info.id)),
       info: () => this.readInfo(),
       // (`by`: who changed it last, for the pill that tells a reader who writes: client/viewer/live.ts.)
-      tell: (ver, paths) => this.opened && this.participants.tellAll({ type: "view", ver, paths, by: this.lastAuthor ?? undefined }),
+      tell: (ver, paths, digests) =>
+        this.opened &&
+        this.participants.tellAll({ type: "view", ver, paths, ...(digests ? { digests } : {}), by: this.lastAuthor ?? undefined }),
     });
   }
 
@@ -482,9 +484,9 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
     });
   }
 
-  /** The version viewers see now, from what is kept with the files where the document is closed (it stays closed); null: no document. */
-  viewed(): Effect.Effect<string | null, StoreError> {
-    return this.hold(io(() => this.views.current()));
+  /** The version and file digests viewers see now, from what is kept with the files where the document is closed (it stays closed); null: no document. */
+  viewed(): Effect.Effect<ViewGreet | null, StoreError> {
+    return this.hold(io(() => this.views.currentGreet()));
   }
 
   /** An operation's call (host.ts) on the document, opened; null if there's none. */

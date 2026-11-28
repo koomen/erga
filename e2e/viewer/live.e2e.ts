@@ -87,7 +87,7 @@ journey("a reader's open page shows an agent's change", () => {
   });
 
   // The reader saw the first page again after a change to the page that a link had opened.
-  test("a reader who followed a link and scrolled down sees an agent's change to that page, where they were, before any version is cut; a pill says who writes", async () => {
+  test("a reader who followed a link and scrolled down sees an agent's text edit patched in place quietly, without reloading or flashing a pill", async () => {
     await page.evaluate(() => {
       (window as any).sameViewer = true;
       addEventListener("message", (e) => {
@@ -101,6 +101,7 @@ journey("a reader's open page shows an agent's change", () => {
     // The viewer has heard where the reader is (the page tells it as it scrolls).
     await expect.poll(() => page.evaluate(() => (window as any).heardY)).toBe(1200);
     const before = await frameAt();
+    await inDoc(page, "window.__secondStay = true");
     // (No pill while nobody writes: not for the version that the page hears as it opens.)
     expect(await pill()).toBeNull();
 
@@ -141,10 +142,11 @@ journey("a reader's open page shows an agent's change", () => {
     expect(await shown()).toContain("Long read");
     expect(new URL(page.url()).pathname).toBe(`${path}/second`);
     expect(await page.evaluate(() => (window as any).sameViewer)).toBe(true);
-    // The change is a new version: the page comes from another address.
+    // Patched in place: same iframe window, updated versioned address, and no writer pill.
+    expect(await inDoc<boolean>(page, "window.__secondStay === true"), "second.html patched in place without reload").toBe(true);
     expect(await frameAt()).toMatch(/^\/t\/[^/]+\/@[^/]+\/second\.html$/);
     expect(await frameAt()).not.toBe(before);
-    await expect.poll(pill).toBe("Live viewer agent is writing…");
+    expect(await pill()).toBeNull();
     // The tab on index.html heard the new version, updated its meta prefix, and neither reloaded nor flashed the writer pill.
     await expect.poll(() => indexHeard.at(-1)).not.toBe(indexVerBefore);
     expect(await inDoc<boolean>(indexTab, "window.__stay === true"), "index.html tab did not reload").toBe(true);
@@ -227,16 +229,17 @@ journey("a reader's open page shows an agent's change", () => {
 
   // Was a bug (Pete's): each time the page loaded again, the reader saw its start, then a jump to where they were;
   // loaded again by the person, a page in the viewer opened at its top.
-  test("someone who can edit, scrolled down a long page: an agent's change to the page, and the tab loaded again, show the page where it was on every frame the tab paints", async () => {
+  test("someone who can edit, scrolled down a long page: text & style edits patch in place quietly, script edits reload cleanly with scroll preserved, and polled fetch() data never triggers reload", async () => {
     const own = await openOwn("Live scroll", {
-      "index.html": `${LONG.replace("<h1>", `<link rel="stylesheet" href="style.css"><h1>`)}<p>The last line.</p>`,
+      "index.html": `${LONG.replace("<h1>", `<link rel="stylesheet" href="style.css"><h1>`)}<p>The last line.</p><script>window.__scriptVer = 1; window.__dataEvents = []; addEventListener("erga-files-changed", (e) => window.__dataEvents.push(...e.detail.paths));</script>`,
       "style.css": "h1 { color: rgb(200, 0, 0) }",
+      "data.json": '{"n":1}',
+      "sibling.js": "console.log('unused')",
     });
     await wheel(300, 300, 0, 900);
     await expect.poll(() => inDoc<number>(page, "scrollY")).toBe(900);
     await inDoc(page, "window.__first = true");
-    // The change is to a line out of sight: the picture must stay the same. The page loads again in a second frame,
-    // and the first one shows until the new page is where the old one was.
+    // Text edit patches in place: same iframe window, same scroll position, zero writer pill, zero moved frames.
     const edited = await views(page, async () => {
       const changed = await agent("edit", {
         document: own.id,
@@ -245,13 +248,13 @@ journey("a reader's open page shows an agent's change", () => {
       });
       expect(changed.ok, changed.text).toBe(true);
       await expect
-        .poll(async () => !(await inDoc(page, "window.__first")) && (await shown()).includes(WRITTEN) && (await shows()))
+        .poll(async () => (await inDoc<boolean>(page, "window.__first === true")) && (await shown()).includes(WRITTEN) && (await shows()))
         .toBe(true);
       expect(await inDoc<number>(page, "scrollY")).toBe(900);
+      expect(await pill()).toBeNull();
     });
-    expect(edited, "the agent's change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
-    // Was a bug (in a browser with a process for each site): the old page, as its frame went, wrote a
-    // view at the page's top over the kept one, so the next change in a row opened the page at its top.
+    expect(edited, "the agent's text change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+    // Second consecutive text edit also patches in place cleanly.
     const second = await agent("edit", {
       document: own.id,
       path: "index.html",
@@ -259,7 +262,43 @@ journey("a reader's open page shows an agent's change", () => {
     });
     expect(second.ok, second.text).toBe(true);
     await expect.poll(async () => (await shown()).includes("Twice.") && (await shows())).toBe(true);
+    expect(await inDoc<boolean>(page, "window.__first === true")).toBe(true);
     expect(await inDoc<number>(page, "scrollY"), "the second change in a row").toBe(900);
+    // Polling fetch("data.json") past the resource timing buffer cap drains & clears the buffer instead of disabling
+    // scoping: editing data.json emits `erga-files-changed` without reloading, and sibling.js is skipped too.
+    await inDoc(
+      page,
+      `(() => { performance.setResourceTimingBufferSize(5); return Promise.all(Array.from({ length: 8 }, (_, i) => fetch("data.json?i=" + i).then((r) => r.text()))); })()`
+    );
+    const [dataEdit, sibEdit] = await Promise.all([
+      agent("edit", {
+        document: own.id,
+        path: "data.json",
+        edits: [{ oldText: '{"n":1}', newText: '{"n":2}' }],
+      }),
+      agent("edit", {
+        document: own.id,
+        path: "sibling.js",
+        edits: [{ oldText: "unused", newText: "still-unused" }],
+      }),
+    ]);
+    expect(dataEdit.ok, dataEdit.text).toBe(true);
+    expect(sibEdit.ok, sibEdit.text).toBe(true);
+    await expect.poll(() => inDoc<string[]>(page, "window.__dataEvents")).toContain("data.json");
+    expect(await inDoc<boolean>(page, "window.__first === true"), "polled data.json & sibling.js edits did not reload").toBe(true);
+    expect(await pill()).toBeNull();
+    // Editing an inline <script> DOES reload cleanly so the new script runs, keeping scrollY and showing the writer pill.
+    const scriptEdit = await agent("edit", {
+      document: own.id,
+      path: "index.html",
+      edits: [{ oldText: "window.__scriptVer = 1;", newText: "window.__scriptVer = 2;" }],
+    });
+    expect(scriptEdit.ok, scriptEdit.text).toBe(true);
+    await expect
+      .poll(async () => !(await inDoc(page, "window.__first")) && (await inDoc<number>(page, "window.__scriptVer")) == 2 && (await shows()))
+      .toBe(true);
+    expect(await inDoc<number>(page, "scrollY"), "scroll preserved across script reload").toBe(900);
+    await expect.poll(pill).toBe("Live viewer agent is writing…");
     // The person loads the tab again (⌘R): the page is out of sight until it is where it was.
     const again = await views(page, async () => {
       await page.reload();

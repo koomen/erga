@@ -222,10 +222,10 @@ export interface ParticipantsHost {
   reopen(): Effect.Effect<boolean, StoreError>;
   /** Something happened: the document stays open a while longer. */
   activity(): void;
-  /** The version viewers see now, where the document is closed (it stays closed); null: no document. */
-  viewed(): Effect.Effect<string | null, StoreError>;
-  /** The version viewers see, for a watcher that joins the open document. */
-  greet(tell: (ver: string) => void): void;
+  /** The version (and file digests) viewers see now, where the document is closed (it stays closed); null: no document. */
+  viewed(): Effect.Effect<{ ver: string; digests?: Record<string, string> } | null, StoreError>;
+  /** The version (and file digests) viewers see, for a watcher that joins the open document. */
+  greet(tell: (msg: { ver: string; digests?: Record<string, string> }) => void): void;
   /** A person's picture, as their tabs know it. */
   avatarOf(person: Person): string | undefined;
   /** What a tab hears first: the document's details as its user sees them, and its tree. */
@@ -303,7 +303,7 @@ export class Participants<S extends TabSocket = TabSocket> {
     const json = (msg: unknown) => send(JSON.stringify(msg));
     // A watcher (a viewer's page): first the version to show; it never joins the room.
     if (tab.watch) {
-      this.host.greet((ver) => json({ type: "view", ver }));
+      this.host.greet((msg) => json({ type: "view", ...msg }));
       return true;
     }
     // The editor's shell (?shell=1): hears hello, its user's events, and JSON presence — never joins Yjs sync.
@@ -347,12 +347,12 @@ export class Participants<S extends TabSocket = TabSocket> {
     const self = this;
     return Effect.gen(function* () {
       if (!self.host.isOpen()) {
-        const ver = yield* self.host.viewed();
-        if (ver == null) return null;
+        const got = yield* self.host.viewed();
+        if (got == null) return null;
         // (Still closed: with no version kept, working it out opened the document.)
         if (!self.host.isOpen()) {
           const socket = accept();
-          quietly(() => socket.send(JSON.stringify({ type: "view", ver })));
+          quietly(() => socket.send(JSON.stringify({ type: "view", ...got })));
           return socket;
         }
       }
@@ -547,19 +547,15 @@ export class Participants<S extends TabSocket = TabSocket> {
   }
 
   /**
-   * Runs one call of a participant's work. `turn`: its turn's id (null: none). `changes`: it changes the document, so
-   * it is refused while another participant holds the lock for source edits; with `lock`, it takes that lock, for
-   * this run of calls. Throws why not (the lock's holder), before anything runs.
+   * Runs one call of a participant's work. `turn`: its turn's id (null: none). `changes`: it changes the document.
+   * Throws if the participant may only view, before anything runs.
    */
-  async during<A>(
-    p: Participant,
-    call: { turn: string | null; activity: string; changes: boolean; lock: boolean },
-    run: () => Promise<A>
-  ): Promise<A> {
+  async during<A>(p: Participant, call: { turn: string | null; activity: string; changes: boolean }, run: () => Promise<A>): Promise<A> {
     const e = p as Entry;
     const { room } = this;
     if (call.changes) {
-      if (call.lock ? room.lock(e, e.author.name) : room.lockedBy(e)) throw new Error(room.refusal(e)!.message);
+      const no = room.refusal(e);
+      if (no) throw new Error(no.message);
       // Its undo history starts before its first change.
       if (e.act.via) this.history(e);
     }
@@ -703,8 +699,7 @@ export class Participants<S extends TabSocket = TabSocket> {
           this.go(e, { on: "idle" });
         });
       else if (f == "ended") {
-        // The run of calls ended: the lock for source edits goes, if it had it, and the document cuts a version of it.
-        this.room.unlock(e);
+        // The run of calls ended: the document cuts a version of it.
         const before = e.lastTurn;
         e.lastTurn = this.host.cutVersion().catch(() => before);
       }

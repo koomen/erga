@@ -625,11 +625,6 @@ export class ErgaDaemon {
     if (conn.busy == next) return;
     conn.busy = next;
     this.activeTurns = Math.max(0, this.activeTurns + (next ? 1 : -1));
-    const mount = conn.docId ? this.mounts.get(mountKey(conn.origin, conn.docId)) : undefined;
-    if (mount) {
-      const anyBusy = [...this.connections.values()].some((c) => c.origin == conn.origin && c.docId == conn.docId && c.busy);
-      mount.sync.setPresence({ busy: anyBusy, activity: anyBusy ? "working" : null });
-    }
   }
 
   private async handleBridgeMessage(connId: string, msg: ToBridge): Promise<void> {

@@ -97,16 +97,12 @@ test("undo takes back exactly the agent's last change, then the one before", asy
   await until(() => str().includes("CI"));
   expect(seen.at(-1)).toBe(`Ada, via ${CI}`);
   expect(await asAda<object>("/api/undo")).toMatchObject({ count: 2, redo: 1 });
-  // (Its edit of the page took the lock for source edits, for its run of calls: Undo of its own change passes it.)
   expect((await undo()).ok).toBe(true);
   await until(() => !str().includes("CI"));
   expect(str()).toBe("<h1>BO Launch notes ONE</h1>\n<p>Where the leads go.</p>\n");
   expect(seen.at(-1)).toBe(`Ada, via ${CI}`);
-  // The next one is her own agent's, and the other agent still holds the lock: nothing changes, and the answer says why.
-  const held = await asAda<{ ok: boolean; why?: string }>("/api/undo", { method: "POST" });
-  expect([held.ok, held.why]).toEqual([
-    false,
-    expect.stringMatching(/^Ada, via a shared agent \(CI\) is editing this document's source just now/),
-  ]);
-  expect(str()).toContain("ONE");
+  // Without source locks, undoing the earlier agent's change succeeds immediately too.
+  expect((await undo()).ok).toBe(true);
+  await until(() => !str().includes("ONE"));
+  expect(str()).toBe("<h1>BO Launch notes</h1>\n<p>Where the leads go.</p>\n");
 });

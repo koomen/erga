@@ -157,9 +157,9 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       }
       return was;
     });
-  const toTab = async <T extends Record<string, number>>(r: T, xs: (keyof T)[], ys: (keyof T)[]): Promise<T> => {
+  const toTab = async <T extends Record<string, number>>(read: () => Promise<T>, xs: (keyof T)[], ys: (keyof T)[]): Promise<T> => {
     const f = await frameAt();
-    const out = { ...r } as Record<string, number>;
+    const out = { ...(await read()) } as Record<string, number>;
     for (const k of xs) out[k as string] += f.x;
     for (const k of ys) out[k as string] += f.y;
     return out as T;
@@ -252,14 +252,15 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** Clicks the middle of an element in the shadow root of the editor's controls or comments on the page, once it shows, with the mouse. */
     async clickIn(host: "erga-controls" | "erga-comments", selector: string) {
       const r = await toTab(
-        await until(
-          () =>
-            ed.frame<{ x: number; y: number } | null>(
-              `(() => { const el = ${F}.querySelector("${host}")?.shadowRoot?.querySelector(${JSON.stringify(selector)}); const r = el?.getBoundingClientRect(); return r?.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; })()`
-            ),
-          3000,
-          `${host}'s ${selector}`
-        ).then((at) => at!),
+        () =>
+          until(
+            () =>
+              ed.frame<{ x: number; y: number } | null>(
+                `(() => { const el = ${F}.querySelector("${host}")?.shadowRoot?.querySelector(${JSON.stringify(selector)}); const r = el?.getBoundingClientRect(); return r?.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; })()`
+              ),
+            3000,
+            `${host}'s ${selector}`
+          ).then((at) => at!),
         ["x"],
         ["y"]
       );
@@ -273,11 +274,29 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     frameAt,
     /** Scrolls an element into view and returns a point in the tab inside it, `at` along its width. */
     async rectOf(selector: string, at = 0.5) {
-      return toTab(await settled(() => ed.frame<{ x: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); const f = ${PAGE_AT}; return { x: f.left + r.left + r.width * ${at}, y: f.top + r.top + r.height / 2 }; })()`)), ["x"], ["y"]);
+      return toTab(
+        () =>
+          settled(() =>
+            ed.frame<{ x: number; y: number }>(
+              `(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); const f = ${PAGE_AT}; return { x: f.left + r.left + r.width * ${at}, y: f.top + r.top + r.height / 2 }; })()`
+            )
+          ),
+        ["x"],
+        ["y"]
+      );
     },
     /** A point in the tab at character `i` of an element's first text node. */
     async charAt(selector: string, i: number) {
-      return toTab(await settled(() => ed.frame<{ x: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); const t = ${F}.createTreeWalker(el, 4).nextNode(); const rg = ${F}.createRange(); rg.setStart(t, ${i}); rg.setEnd(t, ${i} + 1); const r = rg.getBoundingClientRect(); const f = ${PAGE_AT}; return { x: f.left + r.left + 1, y: f.top + r.top + r.height / 2 }; })()`)), ["x"], ["y"]);
+      return toTab(
+        () =>
+          settled(() =>
+            ed.frame<{ x: number; y: number }>(
+              `(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); const t = ${F}.createTreeWalker(el, 4).nextNode(); const rg = ${F}.createRange(); rg.setStart(t, ${i}); rg.setEnd(t, ${i} + 1); const r = rg.getBoundingClientRect(); const f = ${PAGE_AT}; return { x: f.left + r.left + 1, y: f.top + r.top + r.height / 2 }; })()`
+            )
+          ),
+        ["x"],
+        ["y"]
+      );
     },
     /** Clicks at a point in the tab, then lets the page catch up. */
     async click(x: number, y: number, opts: { clickCount?: number; modifiers?: ("Shift" | "Alt" | "ControlOrMeta")[] } = {}) {
@@ -301,12 +320,30 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     },
     /** Drags across the first `n` characters of an element's first text node. */
     async selectChars(selector: string, n: number) {
-      const r = await toTab(await settled(() => ed.frame<{ a: number; b: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const t = el.firstChild; const rg = ${F}.createRange(); rg.setStart(t, 0); rg.setEnd(t, ${n}); const r = rg.getBoundingClientRect(); const f = ${PAGE_AT}; return { a: f.left + r.left + 1, b: f.left + r.right, y: f.top + r.top + r.height / 2 }; })()`)), ["a", "b"], ["y"]);
+      const r = await toTab(
+        () =>
+          settled(() =>
+            ed.frame<{ a: number; b: number; y: number }>(
+              `(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const t = el.firstChild; const rg = ${F}.createRange(); rg.setStart(t, 0); rg.setEnd(t, ${n}); const r = rg.getBoundingClientRect(); const f = ${PAGE_AT}; return { a: f.left + r.left + 1, b: f.left + r.right, y: f.top + r.top + r.height / 2 }; })()`
+            )
+          ),
+        ["a", "b"],
+        ["y"]
+      );
       await ed.drag(r.a, r.y, r.b, r.y);
     },
     /** Drags across all of an element's text. */
     async selectAllOf(selector: string) {
-      const r = await toTab(await settled(() => ed.frame<{ a: number; ay: number; b: number; by: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const rg = ${F}.createRange(); rg.selectNodeContents(el); const rs = [...rg.getClientRects()].filter((r) => r.width), first = rs[0], last = rs[rs.length - 1]; const f = ${PAGE_AT}; return { a: f.left + first.left + 1, ay: f.top + first.top + first.height / 2, b: f.left + last.right, by: f.top + last.top + last.height / 2 }; })()`)), ["a", "b"], ["ay", "by"]);
+      const r = await toTab(
+        () =>
+          settled(() =>
+            ed.frame<{ a: number; ay: number; b: number; by: number }>(
+              `(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const rg = ${F}.createRange(); rg.selectNodeContents(el); const rs = [...rg.getClientRects()].filter((r) => r.width), first = rs[0], last = rs[rs.length - 1]; const f = ${PAGE_AT}; return { a: f.left + first.left + 1, ay: f.top + first.top + first.height / 2, b: f.left + last.right, by: f.top + last.top + last.height / 2 }; })()`
+            )
+          ),
+        ["a", "b"],
+        ["ay", "by"]
+      );
       await ed.drag(r.a, r.ay, r.b, r.by);
     },
     /**

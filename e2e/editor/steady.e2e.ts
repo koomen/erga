@@ -358,9 +358,10 @@ journey("a deck that changes on disk and by an agent while the person types", ()
     expect(await ed.frame<number>(`performance.timeOrigin`), "the page is the one that was there").toBe(loaded);
   });
 
-  test("while an agent edits the source the page is read-only and says who; after its run, it edits again", async () => {
+  test("while an agent edits the source the page stays editable and concurrent typing merges without reload", async () => {
+    const loaded = await ed.frame<number>(`performance.timeOrigin`);
     await ed.openAgent();
-    // The agent's run: one edit, then a long thought. The person stops it below.
+    // The agent's run: one edit, then a long thought. The person types while it runs and stops it below.
     await agentPlays(ed, [
       {
         tool: "edit",
@@ -368,25 +369,18 @@ journey("a deck that changes on disk and by an agent while the person types", ()
       },
       { text: "Done.", delay: 12_000 },
     ]);
-    await expect.poll(() => lockNote(ed)).toMatch(/is editing this page's source/);
-    // (The editor stays on the page, read-only: the agent's edits show as they land.)
-    expect(await ed.frame<boolean>(`${F}.body.isContentEditable`)).toBe(false);
     await expect.poll(() => ed.count(".slide h2")).toBe(1);
-    // Keys change nothing meanwhile.
-    await pageStill(ed);
-    const title = await ed.rectOf(TITLE);
-    await pointerOnPage(ed.page, title.x, title.y);
-    await ed.page.mouse.click(title.x, title.y);
-    await ed.page.keyboard.type("X");
-    expect(await ed.textOf(TITLE)).toBe("Third slide one two three now!");
-    // The agent's run ends (the person stops it): the lock goes, and the page edits again, with no reload.
-    await ed.page.click("#agent-send.stop");
-    await until(async () => (await lockNote(ed)) == "", 10_000, "the lock goes");
-    await ed.loaded();
+    // No read-only lock: the page stays editable while the agent works and concurrent edits merge cleanly.
+    expect(await working(ed)).toBe(true);
+    expect(await lockNote(ed)).toBe("");
+    expect(await ed.frame<boolean>(`${F}.body.isContentEditable`)).toBe(true);
     await ed.clickEnd(TITLE);
     await ed.type("?");
     await expect.poll(() => ed.disk(), { timeout: DISK_MS }).toContain("<h1>Third slide one two three now!?</h1>");
     expect(ed.disk()).toContain("<h2>From the agent.</h2>");
+    expect(await ed.frame<number>(`performance.timeOrigin`), "no reload during agent source edit").toBe(loaded);
+    await ed.page.click("#agent-send.stop");
+    await until(async () => !(await working(ed)), 10_000, "the agent stops");
   });
 
   test("a page's own edit (call_edit) by the agent doesn't lock: the page stays editable while the agent works", async () => {

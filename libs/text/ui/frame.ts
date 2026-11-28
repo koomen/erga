@@ -36,7 +36,7 @@ import type { EditMode } from "./mode";
 import { step, type Editing, type FrameEvent, type State } from "./frame-state";
 import { changesBetween } from "../../../document/model/merge";
 import { baseName, encodePath } from "../../../document/model/pages";
-import { assets, authors, files, roomInfo, stamp } from "../../../document/model/content";
+import { assets, authors, files, stamp } from "../../../document/model/content";
 import { colorFor, type Author } from "../../../shared/author";
 import type { UploadsMessage } from "../../../shared/room-socket";
 import { sourceNear } from "../../../shared/feedback-context";
@@ -73,8 +73,6 @@ const tell = (m: unknown) => window.parent?.postMessage(m, SHELL);
 const BASE = reader.prefix;
 /** This page's own folder there: where its relative links and assets resolve. */
 const HERE = location.pathname.slice(0, location.pathname.lastIndexOf("/") + 1);
-/** The digest of the text the page shows now: the one the pages origin made it from, then (out of the editor) the last the editor showed. */
-let shown = reader.src;
 
 /** The editor's one state (frame-state.ts): the viewer's last word, edit or standby with its key and where the document is, in it. */
 let state: State = { phase: "idle", run: 0 };
@@ -405,23 +403,8 @@ function enter() {
   // In the room for the others from now on, with this tab's mark (the viewer knows its own page's caret by it).
   c.present({ tab: editing()!.tab });
   edit(c, editing()!, back);
-  // The lock for source edits (document/room/room.ts): while someone holds it, the page is read-only, and says so; their
-  // edits show as they land, and the page edits again once it's let go (no reload).
-  const follow = () => {
-    if (collab != c) return;
-    const by = (roomInfo(c.doc).get("lock") as string | undefined) ?? null;
-    // (A commenter's page is read-only always: mode.ts, `comment`.)
-    const commenting = !!editing()?.comment;
-    page?.setReadOnly(!!by || commenting);
-    lockNote?.();
-    lockNote =
-      by && !commenting
-        ? noteOnPage(window, `${by} is editing this page's source: you can read it, and edit it again once they're done.`)
-        : null;
-  };
-  roomInfo(c.doc).observe(follow);
-  unwatch.push(() => roomInfo(c.doc).unobserve(follow));
-  follow();
+  // (A commenter's page is read-only always: mode.ts, `comment`.)
+  page?.setReadOnly(!!editing()?.comment);
 }
 
 /** This page in the browser's copy, made from the replica's text after each change (offline-page.ts), on an origin of its own. */
@@ -431,9 +414,6 @@ const whenPaused = afterPause(() => {
   void pageCopy?.changed();
   queueDark();
 });
-
-/** What says the page is read-only while someone edits its source (the lock), and takes it off. */
-let lockNote: (() => void) | null = null;
 
 /** The editor on the page, from the room's text (`c`'s replica) and what it kept of itself, if it did. */
 function edit(c: Collab, m: Editing, back: Carry | null) {
@@ -473,7 +453,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
   letGo();
   page = new PageEditor({
     win: window,
-    source: shown,
+    source: reader.src,
     state: begin,
     base: HERE,
     held: [...(back?.held ?? []), ...early.splice(0)],
@@ -776,9 +756,10 @@ function refreshSoon() {
       return;
     }
     const c = collab;
+    const currentPath = editing()?.path ?? "";
     const busy = c
       .others()
-      .filter((p) => p.user.kind == "agent" && p.busy)
+      .filter((p) => p.user.kind == "agent" && p.busy && (!p.cursor?.path || p.cursor.path == currentPath))
       .map((p) => agentLabel(p.user, null, false).label);
     if (busy.length) {
       controls?.waiting([...new Set(busy)], now);
@@ -858,8 +839,6 @@ function rest() {
   stopEditor();
   letGo();
   early.length = 0;
-  lockNote?.();
-  lockNote = null;
   collab?.absent();
 }
 
@@ -881,7 +860,7 @@ function stopEditor() {
   if (page) {
     kept = page.state;
     // What the page shows now: this text, if the editor has shown all of it.
-    shown = page.upToDate ? sourceDigest(page.state.doc.toString()) : "";
+    reader.src = page.upToDate ? sourceDigest(page.state.doc.toString()) : "";
     page.stop();
   }
   for (const f of unwatch.splice(0)) f();

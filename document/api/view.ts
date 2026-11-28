@@ -18,14 +18,25 @@ import type { Storage } from "../store/storage.ts";
 import { byteRange } from "../store/blobs.ts";
 import type { Role } from "../model/access.ts";
 
-/** What viewers see: its version (a digest), its page and its files' paths. */
+/** What viewers see: its version (a digest), its page, its files' paths, and each file's digest. */
 export interface ViewState {
   ver: string;
   index: string;
   paths: string[];
   /** Each page's head's details (shared/page-head.ts), for the pages that have any. */
   heads: Record<string, PageHead>;
+  /** Content digest of each file in the document (for per-page reconnect checks). */
+  digests: Record<string, string>;
 }
+
+/** What a viewer watcher hears as it connects: the document's version and (when small enough) each file's digest. */
+export interface ViewGreet {
+  ver: string;
+  digests?: Record<string, string>;
+}
+
+/** Max files included in a greet's digest map; larger documents fall back to conservative reloads on reconnect. */
+const DIGESTS_MAX = 200;
 
 /** Document.view's answer: what the person may do, the document's name as last told, and (if they may view) the version and file, with its text. */
 export interface ViewAnswer {
@@ -69,8 +80,8 @@ export interface ViewOptions {
   changedAfterQuiet?: () => void;
   /** The document's page and where it is, now (null: no document): the version viewers see is worked out from it. */
   info: () => Promise<{ index: string; disk?: unknown } | null>;
-  /** Tells the open viewers' pages the version they should show, and the files that changed since the last time (client/viewer/live.ts). */
-  tell: (ver: string, paths?: string[]) => void;
+  /** Tells the open viewers' pages the version they should show, the files that changed since the last time, and their new digests (null when deleted). */
+  tell: (ver: string, paths?: string[], digests?: Record<string, string | null>) => void;
   log: (line: string) => void;
 }
 
@@ -131,8 +142,8 @@ export class DocumentView {
       if (!self.o.isOpen() && !info.disk) {
         yield* Effect.promise(() => self.o.closing());
         const kept = yield* io(() => self.o.storage.get<ViewState>(VIEW));
-        // (A view kept before the heads were part of it is worked out again.)
-        if (kept && kept.index == info.index && kept.heads) {
+        // (A view kept before the heads or digests were part of it is worked out again.)
+        if (kept && kept.index == info.index && kept.heads && kept.digests) {
           self.kept = true;
           return (self.latest = kept);
         }
@@ -157,6 +168,7 @@ export class DocumentView {
         index: info.index,
         paths: entries.map(([p]) => p),
         heads,
+        digests: Object.fromEntries(entries),
       };
       self.latest = state;
       self.kept = true;
@@ -167,8 +179,19 @@ export class DocumentView {
 
   /** The version viewers see now; null if there's no document. */
   async current(): Promise<string | null> {
+    return (await this.currentState())?.ver ?? null;
+  }
+
+  /** The version and file digests viewers see now (for watcher greets); null if there's no document. */
+  async currentGreet(): Promise<ViewGreet | null> {
+    const state = await this.currentState();
+    if (!state) return null;
+    return state.paths.length <= DIGESTS_MAX ? { ver: state.ver, digests: state.digests } : { ver: state.ver };
+  }
+
+  private async currentState(): Promise<ViewState | null> {
     const info = await this.o.info();
-    return info ? Effect.runPromise(Effect.map(this.now(info), (s) => s.ver).pipe(Effect.orElseSucceed(() => null))) : null;
+    return info ? Effect.runPromise(this.now(info).pipe(Effect.orElseSucceed(() => null))) : null;
   }
 
   /**
@@ -185,10 +208,10 @@ export class DocumentView {
     return new Response(answer.body, { status: answer.status, headers });
   }
 
-  /** A viewer's page that just opened (or came back) hears the version it should show, so it catches up. */
-  greet(send: (ver: string) => void): void {
-    void this.current().then(
-      (ver) => ver && send(ver),
+  /** A viewer's page that just opened (or came back) hears the version and file digests it should show, so it catches up. */
+  greet(send: (msg: ViewGreet) => void): void {
+    void this.currentGreet().then(
+      (msg) => msg && send(msg),
       () => {}
     );
   }
@@ -196,15 +219,21 @@ export class DocumentView {
   /** The open viewers' pages hear the version now, at most every TELL_EVERY_MS however fast the files change; the last always lands. */
   private news = throttle(async () => {
     const before = this.changeSeq;
-    const ver = await this.current();
-    if (!ver) return;
+    const state = await this.currentState();
+    if (!state) return;
+    const ver = state.ver;
     // (A change to very many files, a folder uploaded again, say: no list, and each page loads again.)
-    // Only clear `touched` when no new edit landed during `await this.current()`; otherwise keep it for the trailing tick.
+    // Only clear `touched` when no new edit landed during `await this.currentState()`; otherwise keep it for the trailing tick.
     const paths = this.touched ? [...this.touched] : undefined;
     if (this.changeSeq == before) this.touched = new Set();
     if (ver == this.lastToldVer && paths && paths.length == 0) return;
     this.lastToldVer = ver;
-    this.o.tell(ver, paths);
+    const digests = paths
+      ? Object.fromEntries(paths.map((p) => [p, p in state.digests ? state.digests[p] : null]))
+      : state.paths.length <= DIGESTS_MAX
+        ? state.digests
+        : undefined;
+    this.o.tell(ver, paths, digests);
   }, TELL_EVERY_MS);
 
   /** The answer for someone who may view (`role`, or anyone): which file the address `page` is, in what viewers see now, and that version. */

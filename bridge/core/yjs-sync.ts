@@ -109,7 +109,6 @@ export class YjsDiskSync {
   private stamps = new Map<string, string>();
   /** Serializes disk <-> Yjs sync passes so writes and reads never interleave. */
   private queue: Promise<void> = Promise.resolve();
-  private presenceState: Record<string, unknown> = {};
 
   constructor(private readonly opts: YjsSyncOptions) {
     this.awareness.setLocalState(null);
@@ -145,12 +144,6 @@ export class YjsDiskSync {
   /** Lists all files currently in the synced Yjs document. */
   paths(): string[] {
     return [...new Set([...files(this.doc).keys(), ...assets(this.doc).keys()])].sort();
-  }
-
-  /** Updates the local agent's presence in the Erga editor (e.g. `{ busy: true, activity: "editing" }`). */
-  setPresence(patch: { busy?: boolean; activity?: string | null }): void {
-    this.presenceState = { ...this.presenceState, ...patch, active: Date.now() };
-    this.awareness.setLocalState(this.presenceState);
   }
 
   /** Forces any pending local disk edits to flush into Yjs right now (useful in tests & before close). */
@@ -350,7 +343,7 @@ export class YjsDiskSync {
       this.doc.destroy();
       this.doc = new Y.Doc();
       this.awareness = new Awareness(this.doc);
-      this.awareness.setLocalState(Object.keys(this.presenceState).length ? this.presenceState : null);
+      this.awareness.setLocalState(null);
 
       await this.fetchStart();
       this.doc.transact(() => {

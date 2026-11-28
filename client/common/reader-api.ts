@@ -19,7 +19,9 @@ declare global {
       /** The editor put the page back where it was. */
       placed?(): void;
       /** Non-HTML files of the document changed (their paths in it): "skip" if unused, "restyled" if hot-swapped, else "reload". */
-      applyFiles?(paths: string[]): Promise<"skip" | "restyled" | "reload">;
+      applyFiles?(paths: string[], files?: string): Promise<"skip" | "restyled" | "reload">;
+      /** The active HTML page changed: patches in place if safe ("patched"), else asks the viewer to reload ("reload"). */
+      patchPage?(page: string, files?: string): Promise<"patched" | "reload">;
       /** The viewer's last word on editing (erga-mode), which the editor reads as it loads, and hears after. */
       mode?: unknown;
       /** The viewer's last word on the zoom (erga-zoomed), which the editor reads as it loads, and hears after. */

@@ -601,6 +601,40 @@ describe("Mirror.wasOurs and canReconcile", () => {
     expect(mirror.reconcile(changes, oldSrc, newSrc, M.basicDecoder)).toBeNull();
     expect(secondP.textContent).toBe("Two");
   });
+
+  test("reconciles <head> style/meta/link additions & removals and body <style> additions in place, while rejecting <script> and <base>", () => {
+    const src0 = "<html><head><title>Doc</title></head><body><p>Hello</p></body></html>";
+    const doc = new FakeDocument(src0);
+    const mirror = Mirror.bind(doc as unknown as Document, M.parseHtml(src0), src0)!;
+
+    // Add a <style> and <meta> inside <head> (structural head edit): reconciled in place without reload!
+    const atHead = src0.indexOf("</head>");
+    const addHead = '<style>p{color:red}</style><meta name="theme-color" content="#fff">';
+    const src1 = src0.slice(0, atHead) + addHead + src0.slice(atHead);
+    const c1 = ChangeSet.of({ from: atHead, to: atHead, insert: addHead }, src0.length);
+    expect(mirror.canReconcile(c1, src0, src1)).toBe(true);
+    expect(mirror.reconcile(c1, src0, src1, M.basicDecoder)).not.toBeNull();
+    expect(doc.head.children.map((e) => e.localName)).toEqual(["title", "style", "meta"]);
+    expect(doc.head.children[1].textContent).toBe("p{color:red}");
+
+    // Add a <style> inside <body>: reconciled in place without reload!
+    const atBody = src1.indexOf("</body>");
+    const addStyle = "<style>body{margin:0}</style>";
+    const src2 = src1.slice(0, atBody) + addStyle + src1.slice(atBody);
+    const c2 = ChangeSet.of({ from: atBody, to: atBody, insert: addStyle }, src1.length);
+    expect(mirror.canReconcile(c2, src1, src2)).toBe(true);
+    expect(mirror.reconcile(c2, src1, src2, M.basicDecoder)).not.toBeNull();
+    expect(doc.body.children.map((e) => e.localName)).toEqual(["p", "style"]);
+
+    // Adding a <script> or <base> in <head> is still rejected (requires reload).
+    const atHead2 = src2.indexOf("</head>");
+    const addScript = "<script>window.x=1</script>";
+    const srcScript = src2.slice(0, atHead2) + addScript + src2.slice(atHead2);
+    expect(mirror.canReconcile(ChangeSet.of({ from: atHead2, to: atHead2, insert: addScript }, src2.length), src2, srcScript)).toBe(false);
+    const addBase = '<base href="/sub/">';
+    const srcBase = src2.slice(0, atHead2) + addBase + src2.slice(atHead2);
+    expect(mirror.canReconcile(ChangeSet.of({ from: atHead2, to: atHead2, insert: addBase }, src2.length), src2, srcBase)).toBe(false);
+  });
 });
 
 describe("PageEditor reconcileEach & make()", () => {

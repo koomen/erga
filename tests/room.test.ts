@@ -273,29 +273,15 @@ test("an agent's edit lands at once, in one undo step, keeps others' edits, and 
   });
 });
 
-test("the lock for source edits: only its holder's edits land; everyone sees whose it is; let go, the others' edits come", async () => {
+test("concurrent agent and person edits merge without locking; viewers still cannot edit", async () => {
   await withRoom(memoryStore({ "index.html": "<p>One</p>\n" }), async (room) => {
     const ada = await peer(room, person("Ada"));
     const agent = agentOf("bo", "Bo’s agent");
-    expect(room.lock(agent, "Bo’s agent")).toBeNull();
-    await tick();
-    // Everyone sees it, and another can't take it.
-    expect(roomInfo(ada.doc).get("lock")).toBe("Bo’s agent");
-    expect(room.lock(ada.participant, "Ada")).toBe("Bo’s agent");
-    expect(room.lockedBy(ada.participant)).toBe("Bo’s agent");
-    // The holder's edit lands; Ada's, meanwhile, doesn't reach the room: not from her tab, and not through the door.
+    // Both the agent and Ada can edit concurrently without locking each other out.
     room.as(agent, () => files(room.doc).get("index.html")!.insert(0, "<h1>Notes</h1>\n"));
     ada.text().insert(ada.text().length, "<p>Ada's</p>\n");
-    expect(() => room.as(ada.participant, () => files(room.doc).get("index.html")!.insert(0, "no"))).toThrow(/Bo’s agent is editing/);
-
     await tick();
     await tick();
-    expect(files(room.doc).get("index.html")!.toString()).toBe("<h1>Notes</h1>\n<p>One</p>\n");
-    // Let go: everyone may edit again, and what Ada typed meanwhile comes in, merged.
-    room.unlock(agent);
-    await tick();
-    for (let i = 0; i < 5; i++) await tick();
-    expect(roomInfo(ada.doc).get("lock")).toBeUndefined();
     expect(files(room.doc).get("index.html")!.toString()).toBe("<h1>Notes</h1>\n<p>One</p>\n<p>Ada's</p>\n");
     // Someone who may only view can't change it: not through the door, and not with a file that arrives whole.
     const dee = agentOf("dee", "Dee’s agent", false);

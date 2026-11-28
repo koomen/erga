@@ -301,13 +301,14 @@ test("a tab holding another history (the document's was lost) is closed as the d
 test("a viewer's page on a closed document opens nothing: it hears the version kept, and each change once someone edits", async () => {
   const w = await made();
   // What viewers see is kept with the document's files, as after any view of it.
-  const ver = await Effect.runPromise(w.document.viewed());
-  expect(ver).toBeTruthy();
+  const got = await Effect.runPromise(w.document.viewed());
+  expect(got?.ver).toBeTruthy();
+  const ver = got!.ver;
   // A new object, with nothing in memory: the reader's page connects.
   w.boot();
   const reader = await w.watch();
   expect(w.document.isOpen()).toBe(false);
-  expect(reader.events).toEqual([{ type: "view", ver }]);
+  expect(reader.events).toEqual([{ type: "view", ver, ...(got!.digests ? { digests: got!.digests } : {}) }]);
   // Someone starts to edit: the room opens, the reader's page joins it and hears the new version.
   const a = await w.connect();
   a.type(3, "new ");

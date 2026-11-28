@@ -111,11 +111,8 @@ export interface Participant {
   canEdit(): boolean;
 }
 
-/** Why a participant can't change the document now: they may only view it, or another one holds the lock. */
-export type Refusal = { why: "view"; message: string } | { why: "locked"; message: string };
-
-/** How long the lock for source edits holds with no edit from its holder: a stuck agent can't keep the document. */
-export const LOCK_IDLE_MS = 30_000;
+/** Why a participant can't change the document now: they may only view it. */
+export type Refusal = { why: "view"; message: string };
 
 /** Why a file pushed to the room wasn't taken. */
 export type PushResult = { ok: true; etag: string } | { ok: false; etag: string | null; reason: "stale" | "binary" };
@@ -148,13 +145,6 @@ export class Room {
    * which wait here. The tab's own update and its name tags put right (`tags`) then reach the tabs as one.
    */
   private taking: { conn: Connection; author: Author; updates: Uint8Array[] } | null = null;
-  /**
-   * The lock for source edits: the participant that holds it, and its name for the others. A participant's run of
-   * edits to the source takes it (participants.ts); meanwhile the room drops everyone else's edits, and asks the tabs
-   * for them again when it lets go. It's in the shared doc too (roomInfo's "lock": its name), so every tab sees it
-   * and shows the page read-only (libs/text/ui/frame.ts).
-   */
-  private locked: { holder: Participant; by: string; timer: ReturnType<typeof setTimeout> } | null = null;
   /** The name tag that the shared doc has now for the room's Yjs client: every change made here shares that client. */
   private tagged: Author | null = null;
   private readonly me: Author = { user: "disk", name: "On disk", color: "#6b7280", kind: "disk" };
@@ -225,13 +215,11 @@ export class Room {
           })
         )
       );
-      // Closing: everything not yet written goes to storage, and the lock's timer stops.
+      // Closing: everything not yet written goes to storage.
       yield* Effect.addFinalizer(() =>
         room.flush.pipe(
           Effect.andThen(
             Effect.sync(() => {
-              if (room.locked) clearTimeout(room.locked.timer);
-              room.locked = null;
               room.awareness.destroy();
             })
           )
@@ -263,7 +251,6 @@ export class Room {
   as<A>(p: Participant, change: () => A, origin: object = p): A {
     const no = this.refusal(p);
     if (no) throw new Error(no.message);
-    if (this.locked?.holder === p) this.holdLock();
     return this.by(p, () => this.transact(p.author, origin, change));
   }
 
@@ -281,11 +268,6 @@ export class Room {
   /** Why `p` can't change the document now; null when they can. */
   refusal(p: Participant): Refusal | null {
     if (!p.canEdit()) return { why: "view", message: viewOnly(p) };
-    if (this.locked && this.locked.holder !== p)
-      return {
-        why: "locked",
-        message: `${this.locked.by} is editing this document's source just now, so nothing was changed. The lock ends when their turn ends, or ${LOCK_IDLE_MS / 1000} seconds after their last edit: wait, then try again.`,
-      };
     return null;
   }
 
@@ -420,10 +402,8 @@ export class Room {
           const type = decoder.readUint();
           if (type == MSG_SYNC) {
             const update = decoder.peekUint() != SYNC_STEP1;
-            // Read-only: only its request for what it's missing (step 1); its updates are dropped. So are everyone's
-            // but the lock's holder's while it's held: asked for again when it's let go (unlock).
-            if (update && (opts.readOnly || (this.locked && this.locked.holder !== participant))) return true;
-            if (update && this.locked) this.holdLock();
+            // Read-only: only its request for what it's missing (step 1); its updates are dropped.
+            if (update && opts.readOnly) return true;
             const reply = new Encoder();
             reply.writeUint(MSG_SYNC);
             const taking = (this.taking = { conn, author: participant.author, updates: [] });
@@ -501,22 +481,6 @@ export class Room {
     });
   }
 
-  /** Takes the lock for source edits for `p`, as `by` (its name, for the others): null when it has it, else whose it is. */
-  lock(p: Participant, by: string): string | null {
-    if (this.locked && this.locked.holder !== p) return this.locked.by;
-    if (!this.locked) {
-      this.locked = { holder: p, by, timer: setTimeout(() => this.unlock(p), LOCK_IDLE_MS) };
-      this.note(() => roomInfo(this.doc).set("lock", by));
-    }
-    this.holdLock();
-    return null;
-  }
-
-  /** Whose the lock is, if another participant than `p` has it. */
-  lockedBy(p: Participant): string | null {
-    return this.locked && this.locked.holder !== p ? this.locked.by : null;
-  }
-
   /**
    * Who a change is by, from where it came in, never from what the change says of itself: the participant whose
    * connection sent it, or who made it through the door (`as`), or who sent the file that the room took in
@@ -525,27 +489,6 @@ export class Room {
    */
   madeBy(origin: unknown): Act | null | undefined {
     return this.actor ? this.actor.act : origin === this ? null : undefined;
-  }
-
-  /** The lock's holder edited: it holds for LOCK_IDLE_MS more. */
-  private holdLock(): void {
-    const l = this.locked;
-    if (!l) return;
-    clearTimeout(l.timer);
-    l.timer = setTimeout(() => this.unlock(l.holder), LOCK_IDLE_MS);
-  }
-
-  /** Lets go of the lock (if `p` holds it): everyone may edit again, and the edits it dropped meanwhile come again. */
-  unlock(p: Participant): void {
-    if (this.locked?.holder !== p) return;
-    clearTimeout(this.locked.timer);
-    this.locked = null;
-    this.note(() => roomInfo(this.doc).delete("lock"));
-    // Each participant's step 2 answers with what the room lacks: what it typed while it was locked out.
-    const ask = new Encoder();
-    ask.writeUint(MSG_SYNC);
-    writeSyncStep1(ask, this.doc);
-    this.tell(ask.toBytes(), null);
   }
 
   /** The files hold the history up to `vector` (a state vector) now: every participant hears what is new in it. */

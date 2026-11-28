@@ -377,7 +377,7 @@ test("Yjs room WebSocket preserves via attribution for local agent edits", async
       isOpen: () => true,
       reopen: () => Effect.succeed(true),
       activity: () => {},
-      viewed: () => Effect.succeed("v1"),
+      viewed: () => Effect.succeed({ ver: "v1" }),
       greet: () => {},
       avatarOf: () => undefined,
       hello: async () => ({}),

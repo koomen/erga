@@ -20,13 +20,14 @@
 // a size, a load, a transition's start), never on each frame. A new thing the viewer must hear of needs its event
 // there. A change made only through the CSSOM (`insertRule`) reaches the viewer at the next such event.
 
-import type { ReaderConfig } from "../../shared/page-html";
+import { sourceDigest, type ReaderConfig } from "../../shared/page-html";
 import type { ToolAsk } from "../common/reader-api";
 import { linkTarget, placeOf } from "../common/link-target";
 import { BOTTOM_ROOM, TOP_ROOM, topRoom, type Seat } from "../common/top-room";
 import { readView, showView, viewOf, type View } from "../common/page-view";
 import { followMod, isAppShortcut, isMac } from "../common/app-keys";
-import { extractDocPath, parseSrcset, usedChangedPaths } from "../common/live-scope";
+import { mountPageFiles } from "../common/page-files";
+import { patchDocumentHtml } from "../common/viewer-patch";
 import { catchZoomGestures, zoomKey, type ZoomAim, type Zoomed } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
 
@@ -253,7 +254,8 @@ export default function reader(C: ReaderConfig): void {
   window.__ergaReader = {
     config: C,
     keys: { held: keys, letGo: () => removeEventListener("keydown", holdKey, true) },
-    applyFiles,
+    applyFiles: (paths: string[], files?: string) => pageFiles.applyFiles(paths, files),
+    patchPage,
     // (The editor puts the page back where it was: with its room for the bars.)
     placed: () => {
       keepRoom();
@@ -501,82 +503,38 @@ export default function reader(C: ReaderConfig): void {
     },
     { capture: true, passive: true }
   );
-  // Non-HTML files of the document changed (`paths`, in the document): skip those this page never loaded or referenced;
-  // for used stylesheets, replace their rules in place so the page keeps its view and its scripts' state; for used
-  // scripts, images, data, or stylesheets with @import, ask the viewer/editor to reload the page.
-  let resourceOverflow = false;
-  try {
-    performance.addEventListener("resourcetimingbufferfull", () => {
-      resourceOverflow = true;
-    });
-  } catch {}
-  const docPath = (href: string) => extractDocPath(href, location.origin, C.prefix, location.href);
-  function usedDocFiles(): Set<string> {
-    const used = new Set<string>();
-    const add = (href: string | null | undefined) => {
-      if (!href) return;
-      const p = docPath(href);
-      if (p) used.add(p);
-    };
-    for (const el of document.querySelectorAll(
-      "link[href], script[src], img[src], source[src], video[src], audio[src], iframe[src], embed[src], object[data]"
-    )) {
-      if (el.hasAttribute("data-erga")) continue;
-      add(el.getAttribute("href") || el.getAttribute("src") || el.getAttribute("data"));
-    }
-    for (const el of document.querySelectorAll("img[srcset], source[srcset]")) {
-      for (const u of parseSrcset(el.getAttribute("srcset") || "")) add(u);
-    }
+  // Non-HTML files of the document changed (client/common/page-files.ts): skip unused and runtime-fetched data files
+  // (emitting `erga-files-changed`), hot-swap used stylesheets, or ask to reload used static scripts/media.
+  const pageFiles = mountPageFiles({ prefix: () => C.prefix, dirty });
+  let patching: Promise<"patched" | "reload"> = Promise.resolve("patched");
+  function patchPage(targetPage: string, files = location.origin + C.prefix): Promise<"patched" | "reload"> {
+    patching = patching.then(() => applyPatch(targetPage, files));
+    return patching;
+  }
+  async function applyPatch(targetPage: string, files: string): Promise<"patched" | "reload"> {
+    if (editing()) return "reload";
+    const encoded = targetPage.split("/").map(encodeURIComponent).join("/");
+    const html = await fetch(files + encoded, { cache: "no-store" })
+      .then((r) => (r.ok ? r.text() : null))
+      .catch(() => null);
+    if (html == null) return "reload";
+    const sx = scrollX,
+      sy = scrollY;
+    if (!patchDocumentHtml(document, html, pageFiles.docPath)) return "reload";
+    C.src = sourceDigest(html);
     try {
-      for (const entry of performance.getEntriesByType("resource")) add(entry.name);
-    } catch {}
-    return used;
-  }
-  async function applyFiles(paths: string[], files = location.origin + C.prefix): Promise<"skip" | "restyled" | "reload"> {
-    const decision = usedChangedPaths(paths, usedDocFiles(), resourceOverflow);
-    if (decision.action == "skip") return "skip";
-    if (decision.action == "reload") return "reload";
-    return (await restyle(decision.paths, files)) ? "restyled" : "reload";
-  }
-  let styling: Promise<boolean> = Promise.resolve(true);
-  function restyle(paths: string[], files = location.origin + C.prefix): Promise<boolean> {
-    // (One change after another: the newest rules go in last.)
-    styling = styling.then(() => styled(paths, files));
-    return styling;
-  }
-  async function styled(paths: string[], files: string): Promise<boolean> {
-    const links = [...document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet" i][href]')];
-    const jobs: Promise<[CSSStyleSheet, string[]] | null>[] = [];
-    for (const path of paths) {
-      const hit = links.filter((l) => docPath(l.href) == path);
-      if (!/\.css$/i.test(path) || !hit.length) return false;
-      const text = fetch(files + path.split("/").map(encodeURIComponent).join("/"), { cache: "no-store" }).then((r) =>
-        r.ok ? r.text() : null
-      );
-      for (const l of hit)
-        jobs.push(
-          text.then((t) => {
-            if (t == null || !l.sheet || /@import/i.test(t)) return null;
-            // (Parsed apart, as a sheet at the same address: a rule's own addresses mean the same.)
-            const fresh = new CSSStyleSheet({ baseURL: l.href });
-            fresh.replaceSync(t);
-            return [l.sheet, [...fresh.cssRules].map((r) => r.cssText)];
-          })
-        );
-    }
-    try {
-      const done = await Promise.all(jobs);
-      if (done.some((d) => !d)) return false;
-      for (const [sheet, rules] of done as [CSSStyleSheet, string[]][]) {
-        while (sheet.cssRules.length) sheet.deleteRule(0);
-        rules.forEach((r, i) => sheet.insertRule(r, i));
+      const nextUrl = new URL(files + encoded);
+      if (nextUrl.origin == location.origin) {
+        const nextPrefix = new URL(files).pathname;
+        if (nextPrefix != C.prefix) C.prefix = nextPrefix;
+        if (nextUrl.pathname != location.pathname)
+          History.prototype.replaceState.call(history, history.state, "", nextUrl.pathname + location.search + location.hash);
       }
-    } catch {
-      return false;
-    }
-    // (Through the CSSOM: no event says it. The room, the colour and the canvas may have changed.)
+    } catch {}
+    if (scrollX != sx || scrollY != sy) scrollTo({ left: sx, top: sy, behavior: "instant" });
+    sayHead();
     dirty();
-    return true;
+    return "patched";
   }
   // The editor's half, into this page: at once when the viewer opened the page in the editor (?erga-edit), else when it
   // asks. (Its chunks' integrity is the import map's, before this script: readerPage puts it there.)
@@ -989,8 +947,15 @@ export default function reader(C: ReaderConfig): void {
     // The viewer says that non-HTML files changed (client/viewer/live.ts): skip if unused, hot-swap CSS, or ask to reload.
     else if (type == "erga-files" && Array.isArray(e.data.paths) && typeof e.data.files == "string") {
       const ok = e.data.files.indexOf(location.origin + "/") == 0 && e.data.paths.every((p: unknown) => typeof p == "string");
-      void (ok ? applyFiles(e.data.paths, e.data.files) : Promise.resolve("reload" as const)).then((result) =>
+      void (ok ? pageFiles.applyFiles(e.data.paths, e.data.files) : Promise.resolve("reload" as const)).then((result) =>
         tell({ type: "erga-files-done", id: e.data.id, result })
+      );
+    }
+    // The viewer says the active HTML page changed (client/viewer/live.ts): patch DOM/head in place, or ask to reload.
+    else if (type == "erga-patch" && typeof e.data.page == "string" && typeof e.data.files == "string") {
+      const ok = e.data.files.indexOf(location.origin + "/") == 0;
+      void (ok ? patchPage(e.data.page, e.data.files) : Promise.resolve("reload" as const)).then((result) =>
+        tell({ type: "erga-patch-done", id: e.data.id, result })
       );
     } else if (type == "erga-live") {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);
