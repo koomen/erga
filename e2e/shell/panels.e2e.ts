@@ -493,6 +493,38 @@ journey("the panels and the bars over a page", () => {
     expect(composer.multiH).toBeGreaterThan(50);
     expect(composer.multiClip).toBe(false);
     await soon(() => ed.eval<number>(`Number(getComputedStyle(document.body, "::before").opacity)`)).toBe(1);
+    // Voice Mode recovery on mobile: transient audio-capture keeps Voice Mode armed and recovers via backoff.
+    await ed.eval(`(() => {
+      const origS = window.SpeechRecognition, origW = window.webkitSpeechRecognition;
+      const log = { starts: 0, aborts: 0, instances: [] };
+      class StubRec {
+        start() { log.starts++; log.instances.push(this); queueMicrotask(() => this.onstart?.()); }
+        stop() { queueMicrotask(() => this.onend?.()); }
+        abort() { log.aborts++; }
+      }
+      window.__voiceStub = { log, restore() { window.SpeechRecognition = origS; window.webkitSpeechRecognition = origW; delete window.__voiceStub; } };
+      window.SpeechRecognition = window.webkitSpeechRecognition = StubRec;
+    })()`);
+    await pressOn(page, "#agent-voice");
+    await soon(() => ed.eval<string>(`document.getElementById("agent-voice").dataset.voice`)).toBe("listening");
+    await ed.eval(`(() => {
+      const r = window.__voiceStub.log.instances[0];
+      r.onerror?.({ error: "audio-capture" });
+      r.onend?.();
+    })()`);
+    expect(
+      await ed.eval<{ phase: string; pressed: string; hintHidden: boolean; aborts: number }>(
+        `({ phase: document.getElementById("agent-voice").dataset.voice, pressed: document.getElementById("agent-voice").getAttribute("aria-pressed"), hintHidden: document.getElementById("agent-hint").hidden, aborts: window.__voiceStub.log.aborts })`
+      )
+    ).toEqual({ phase: "restarting", pressed: "true", hintHidden: true, aborts: 1 });
+    await soon(() =>
+      ed.eval<{ phase: string; starts: number; hintHidden: boolean }>(
+        `({ phase: document.getElementById("agent-voice").dataset.voice, starts: window.__voiceStub.log.starts, hintHidden: document.getElementById("agent-hint").hidden })`
+      )
+    ).toEqual({ phase: "listening", starts: 2, hintHidden: true });
+    await pressOn(page, "#agent-voice");
+    await soon(() => ed.eval<string>(`document.getElementById("agent-voice").dataset.voice`)).toBe("off");
+    await ed.eval(`window.__voiceStub.restore()`);
     await ed.eval(`window.ergaAgent.show(false)`);
     await soon(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(false);
   });

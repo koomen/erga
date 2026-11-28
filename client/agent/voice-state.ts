@@ -10,7 +10,7 @@
 //   transcribing  armed; live speech (committed and/or interim) is in the compose box
 //   restarting    armed; browser ended the session (silence cutoff or transient error), restart timer scheduled
 //   paused        armed; tab is hidden (document.hidden), resumes automatically when visible again
-//   error         terminal mic failure (not-allowed, audio-capture, or repeated network errors); click retries
+//   error         terminal mic failure (not-allowed, unavailable speech service, mic missing on init, or repeated network errors); tap retries
 
 export type VoicePhase = "unsupported" | "off" | "starting" | "listening" | "transcribing" | "restarting" | "paused" | "error";
 
@@ -43,6 +43,10 @@ export interface VoiceState {
   readonly retries: number;
   /** Timestamp (ms) when the current recognition session started, to tell healthy uptime from rapid cutoffs. */
   readonly lastStartedAt: number | null;
+  /** True once a recognition session has opened in this armed cycle, proving a working mic exists. */
+  readonly hasStarted: boolean;
+  /** Most recent transient error code while restarting, for concise UI status copy. */
+  readonly lastError: string | null;
   /** Highest SpeechRecognitionResult index already consumed in this recognition session. */
   readonly consumedThrough: number;
   /** True while the recognizer is actively picking up the user's voice (soundstart/speechstart or incoming words). */
@@ -60,6 +64,7 @@ export type VoiceEvent =
   | { readonly t: "rec-end" }
   | { readonly t: "rec-error"; readonly code: string }
   | { readonly t: "restart-due" }
+  | { readonly t: "start-timeout" }
   | { readonly t: "interim-trigger-due" }
   | { readonly t: "input-edited"; readonly value: string }
   | { readonly t: "manual-send" }
@@ -84,6 +89,8 @@ export type VoiceEffect =
   | { readonly t: "flush-rec" }
   | { readonly t: "schedule-restart"; readonly ms: number }
   | { readonly t: "cancel-restart" }
+  | { readonly t: "schedule-start-timeout"; readonly ms: number }
+  | { readonly t: "cancel-start-timeout" }
   | { readonly t: "schedule-interim-trigger"; readonly ms: number }
   | { readonly t: "cancel-interim-trigger" }
   | { readonly t: "schedule-speech-idle"; readonly ms: number }
@@ -99,8 +106,12 @@ const TRIGGER_RE = /(?:^|[\s,.;:!?—–-])send[\s,-]+prompt(?:[.!?,;:\s]+|$)/i;
 
 /** A recognition session that lasted at least this long resets the restart backoff. */
 export const HEALTHY_MS = 2000;
-/** Delay before a clean restart after a healthy session or silence cutoff. */
-export const CLEAN_RESTART_MS = 150;
+/** Delay before a clean restart or tab foreground resume so iOS AVAudioSession finishes tearing down. */
+export const CLEAN_RESTART_MS = 350;
+/** Watchdog timeout for silent WebKit zombie starts once permission has already succeeded (hasStarted). */
+export const START_TIMEOUT_MS = 4000;
+/** Number of initial audio-capture retries before concluding no microphone is available on first start. */
+export const AUDIO_CAPTURE_INIT_RETRIES = 3;
 /** Stability window before firing a trigger phrase that sits only in trailing interim speech. */
 export const INTERIM_TRIGGER_MS = 700;
 /** Decay window after incoming speech results before settling the speaking animation back to calm. */
@@ -135,8 +146,8 @@ export function parseVoiceTrigger(text: string): TriggerMatch | null {
   return { prompt, remainder };
 }
 
-/** Exponential backoff for rapid restarts or transient errors: 250 ms, 500 ms, 1 s, 2 s, 4 s, capped at 5 s. */
-export const nextBackoff = (retries: number): number => Math.min(5000, 250 * 2 ** Math.max(0, retries - 1));
+/** Exponential backoff for rapid restarts or transient errors: 400 ms, 800 ms, 1.6 s, 3.2 s, capped at 5 s. */
+export const nextBackoff = (retries: number): number => Math.min(5000, 400 * 2 ** Math.max(0, retries - 1));
 
 export const initialVoiceState = (supported: boolean): VoiceState => ({
   phase: supported ? "off" : "unsupported",
@@ -150,6 +161,8 @@ export const initialVoiceState = (supported: boolean): VoiceState => ({
   files: 0,
   retries: 0,
   lastStartedAt: null,
+  hasStarted: false,
+  lastError: null,
   consumedThrough: 0,
   speaking: false,
   error: null,
@@ -202,20 +215,40 @@ export function voiceStep(
       }
       if (isArmed(s.phase)) {
         const merged = joinSpeech(s.committed, s.interim);
-        const next: VoiceState = { ...s, phase: "off", committed: merged, interim: "", retries: 0, lastStartedAt: null, speaking: false };
-        effects.push({ t: "cancel-restart" }, { t: "cancel-interim-trigger" }, { t: "cancel-speech-idle" }, { t: "stop-rec" });
+        const next: VoiceState = {
+          ...s,
+          phase: "off",
+          committed: merged,
+          interim: "",
+          retries: 0,
+          lastStartedAt: null,
+          hasStarted: false,
+          lastError: null,
+          speaking: false,
+        };
+        effects.push(
+          { t: "cancel-restart" },
+          { t: "cancel-interim-trigger" },
+          { t: "cancel-speech-idle" },
+          { t: "cancel-start-timeout" },
+          { t: "stop-rec" }
+        );
         syncInput(next);
         return { state: next, effects };
       }
-      const next: VoiceState = { ...s, phase: "starting", error: null, retries: 0, speaking: false };
+      const next: VoiceState = { ...s, phase: "starting", error: null, retries: 0, hasStarted: false, lastError: null, speaking: false };
       effects.push({ t: "start-rec" });
       return { state: next, effects };
     }
 
     case "rec-start": {
       if (!isArmed(s.phase)) return { state: s, effects };
+      effects.push({ t: "cancel-start-timeout" });
       const phase: VoicePhase = s.committed || s.interim ? "transcribing" : "listening";
-      return { state: { ...s, phase, lastStartedAt: now, consumedThrough: 0, speaking: false, error: null }, effects };
+      return {
+        state: { ...s, phase, lastStartedAt: now, hasStarted: true, lastError: null, consumedThrough: 0, speaking: false, error: null },
+        effects,
+      };
     }
 
     case "sound-start": {
@@ -299,63 +332,159 @@ export function voiceStep(
     case "rec-error": {
       if (!isArmed(s.phase)) return { state: s, effects };
       const code = ev.code || "unknown";
-      if (code == "not-allowed" || code == "service-not-allowed" || code == "audio-capture") {
-        const message =
-          code == "audio-capture"
-            ? "No microphone was found. Connect a microphone, then click the voice mode button again."
-            : "Microphone access is blocked. Allow mic access in your browser's site settings, then click the voice mode button again.";
+      // Normal silence cutoff: let rec-end handle the clean restart without bumping retry backoff.
+      if (code == "no-speech") return { state: s, effects };
+
+      const fail = (errCode: VoiceErrorCode, message: string) => {
         const merged = joinSpeech(s.committed, s.interim);
-        const next: VoiceState = { ...s, phase: "error", committed: merged, interim: "", speaking: false, error: { code, message } };
+        const next: VoiceState = {
+          ...s,
+          phase: "error",
+          committed: merged,
+          interim: "",
+          retries: 0,
+          lastStartedAt: null,
+          hasStarted: false,
+          lastError: null,
+          speaking: false,
+          error: { code: errCode, message },
+        };
         effects.push(
           { t: "cancel-restart" },
           { t: "cancel-interim-trigger" },
           { t: "cancel-speech-idle" },
+          { t: "cancel-start-timeout" },
           { t: "stop-rec" },
           { t: "hint", text: message, sticky: true, error: true }
         );
         syncInput(next);
         return { state: next, effects };
+      };
+
+      if (code == "not-allowed") {
+        return fail("not-allowed", "Microphone access is blocked. Allow mic access in your browser's site settings, then try again.");
       }
-      if (code == "network" && s.retries >= 4) {
-        const message =
-          "Voice recognition could not reach the browser's speech service. Check your connection, then click the voice mode button to retry.";
-        const next: VoiceState = { ...s, phase: "error", speaking: false, error: { code: "network-fatal", message } };
-        effects.push(
-          { t: "cancel-restart" },
-          { t: "cancel-interim-trigger" },
-          { t: "cancel-speech-idle" },
-          { t: "stop-rec" },
-          { t: "hint", text: message, sticky: true, error: true }
+      if (code == "service-not-allowed" && !s.hasStarted) {
+        return fail(
+          "service-not-allowed",
+          "Speech recognition isn't available here. Check that Dictation is enabled in your device settings, then try again."
         );
-        return { state: next, effects };
       }
-      return { state: { ...s, retries: s.retries + 1 }, effects };
+
+      const healthy = s.lastStartedAt != null && now - s.lastStartedAt >= HEALTHY_MS;
+      const retries = healthy ? 1 : s.retries + 1;
+
+      if (code == "audio-capture" && !s.hasStarted && retries > AUDIO_CAPTURE_INIT_RETRIES) {
+        return fail("audio-capture", "Couldn't access a microphone. Check your mic connection, then try again.");
+      }
+      if (code == "service-not-allowed" && retries >= 5) {
+        return fail(
+          "service-not-allowed",
+          "Speech recognition isn't available here. Check that Dictation is enabled in your device settings, then try again."
+        );
+      }
+      if (code == "network" && retries >= 5) {
+        return fail(
+          "network-fatal",
+          "Voice recognition could not reach the browser's speech service. Check your connection, then try again."
+        );
+      }
+
+      // Transient contention (including post-start iOS audio-capture, aborted, start-failed, and bounded network/service hiccups):
+      // stay armed, abort the errored recognizer so trailing onend cannot double-count or wipe backoff, and schedule retry.
+      const merged = joinSpeech(s.committed, s.interim);
+      const next: VoiceState = {
+        ...s,
+        phase: "restarting",
+        committed: merged,
+        interim: "",
+        retries,
+        lastStartedAt: null,
+        lastError: code,
+        speaking: false,
+      };
+      effects.push(
+        { t: "cancel-interim-trigger" },
+        { t: "cancel-speech-idle" },
+        { t: "cancel-start-timeout" },
+        { t: "stop-rec" },
+        { t: "schedule-restart", ms: nextBackoff(retries) }
+      );
+      if (s.interim) syncInput(next);
+      return { state: next, effects };
+    }
+
+    case "start-timeout": {
+      if (s.phase != "starting" || !s.hasStarted) return { state: s, effects };
+      const retries = s.retries + 1;
+      const next: VoiceState = {
+        ...s,
+        phase: "restarting",
+        retries,
+        lastStartedAt: null,
+        lastError: "start-timeout",
+        speaking: false,
+      };
+      effects.push(
+        { t: "cancel-interim-trigger" },
+        { t: "cancel-speech-idle" },
+        { t: "stop-rec" },
+        { t: "schedule-restart", ms: nextBackoff(retries) }
+      );
+      return { state: next, effects };
     }
 
     case "rec-end": {
-      if (!isArmed(s.phase) || s.phase == "paused") return { state: s, effects };
+      if (!isArmed(s.phase) || s.phase == "paused" || s.phase == "restarting") return { state: s, effects };
       const healthy = s.lastStartedAt != null && now - s.lastStartedAt >= HEALTHY_MS;
       const retries = healthy ? 0 : s.retries + 1;
       const ms = healthy ? CLEAN_RESTART_MS : nextBackoff(retries);
-      effects.push({ t: "cancel-interim-trigger" }, { t: "cancel-speech-idle" }, { t: "schedule-restart", ms });
-      return { state: { ...s, phase: "restarting", retries, lastStartedAt: null, speaking: false, interim: "" }, effects };
+      const merged = joinSpeech(s.committed, s.interim);
+      const next: VoiceState = {
+        ...s,
+        phase: "restarting",
+        committed: merged,
+        interim: "",
+        retries,
+        lastStartedAt: null,
+        speaking: false,
+      };
+      effects.push(
+        { t: "cancel-interim-trigger" },
+        { t: "cancel-speech-idle" },
+        { t: "cancel-start-timeout" },
+        { t: "schedule-restart", ms }
+      );
+      if (s.interim) syncInput(next);
+      return { state: next, effects };
     }
 
     case "restart-due": {
       if (s.phase != "restarting") return { state: s, effects };
       effects.push({ t: "start-rec" });
+      if (s.hasStarted) effects.push({ t: "schedule-start-timeout", ms: START_TIMEOUT_MS });
       return { state: { ...s, phase: "starting" }, effects };
     }
 
     case "visibility": {
       if (!isArmed(s.phase)) return { state: s, effects };
       if (ev.hidden) {
-        effects.push({ t: "cancel-restart" }, { t: "cancel-interim-trigger" }, { t: "cancel-speech-idle" }, { t: "stop-rec" });
-        return { state: { ...s, phase: "paused", lastStartedAt: null, speaking: false }, effects };
+        const merged = joinSpeech(s.committed, s.interim);
+        const next: VoiceState = { ...s, phase: "paused", committed: merged, interim: "", lastStartedAt: null, speaking: false };
+        effects.push(
+          { t: "cancel-restart" },
+          { t: "cancel-interim-trigger" },
+          { t: "cancel-speech-idle" },
+          { t: "cancel-start-timeout" },
+          { t: "stop-rec" }
+        );
+        if (s.interim) syncInput(next);
+        return { state: next, effects };
       }
       if (s.phase == "paused") {
-        effects.push({ t: "start-rec" });
-        return { state: { ...s, phase: "starting" }, effects };
+        // Give iOS Safari a short settle window to reclaim AVAudioSession when foregrounding the tab.
+        effects.push({ t: "schedule-restart", ms: CLEAN_RESTART_MS });
+        return { state: { ...s, phase: "restarting", lastError: null }, effects };
       }
       return { state: s, effects };
     }

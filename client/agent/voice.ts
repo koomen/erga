@@ -21,6 +21,7 @@ interface SpeechRecognitionLike {
   onend: (() => void) | null;
   start(): void;
   stop(): void;
+  abort?(): void;
 }
 
 interface SpeechRecognitionResultEventLike {
@@ -108,6 +109,7 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
   let state: VoiceState = initialVoiceState(!!speechCtor());
   let rec: SpeechRecognitionLike | null = null;
   let restartTimer = 0;
+  let startTimeoutTimer = 0;
   let interimTimer = 0;
   let speechIdleTimer = 0;
   let writing = false;
@@ -119,7 +121,9 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
     rec = null;
     old.onstart = old.onsoundstart = old.onsoundend = old.onspeechstart = old.onspeechend = old.onresult = old.onerror = old.onend = null;
     try {
-      old.stop();
+      // abort() releases iOS AVAudioSession immediately instead of waiting for server finalization.
+      if (old.abort) old.abort();
+      else old.stop();
     } catch {
       /* already stopped */
     }
@@ -156,7 +160,27 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
       rec = r;
       r.start();
     } catch (err) {
-      const code = err instanceof Error && err.name == "NotAllowedError" ? "not-allowed" : "service-not-allowed";
+      if (rec) {
+        rec.onstart =
+          rec.onsoundstart =
+          rec.onsoundend =
+          rec.onspeechstart =
+          rec.onspeechend =
+          rec.onresult =
+          rec.onerror =
+          rec.onend =
+            null;
+        rec = null;
+      }
+      const name = err instanceof Error ? err.name : "";
+      const code =
+        name == "NotAllowedError"
+          ? "not-allowed"
+          : name == "SecurityError"
+            ? "service-not-allowed"
+            : name == "NotFoundError"
+              ? "audio-capture"
+              : "start-failed";
       dispatch({ t: "rec-error", code });
     }
   }
@@ -185,6 +209,13 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
           break;
         case "cancel-restart":
           clearTimeout(restartTimer);
+          break;
+        case "schedule-start-timeout":
+          clearTimeout(startTimeoutTimer);
+          startTimeoutTimer = window.setTimeout(() => dispatch({ t: "start-timeout" }), fx.ms);
+          break;
+        case "cancel-start-timeout":
+          clearTimeout(startTimeoutTimer);
           break;
         case "schedule-interim-trigger":
           clearTimeout(interimTimer);
@@ -243,7 +274,9 @@ export function mountVoice(o: VoiceOptions): VoiceControl {
         : state.agentBusy
           ? "Voice on · working…"
           : state.phase == "restarting"
-            ? "Reconnecting voice…"
+            ? state.lastError == "audio-capture" && state.retries >= 2
+              ? "Waiting for mic…"
+              : "Reconnecting voice…"
             : "Listening…";
     }
 

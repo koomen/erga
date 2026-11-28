@@ -2,10 +2,12 @@
 
 import { expect, test } from "bun:test";
 import {
+  AUDIO_CAPTURE_INIT_RETRIES,
   CLEAN_RESTART_MS,
   HEALTHY_MS,
   INTERIM_TRIGGER_MS,
   SPEECH_IDLE_MS,
+  START_TIMEOUT_MS,
   initialVoiceState,
   isArmed,
   joinSpeech,
@@ -225,38 +227,40 @@ test("onend auto-restarts quickly after healthy uptime and backs off exponential
     [{ t: "rec-start" }, 1100],
   ]);
 
-  // Healthy session (>= 2s) restarts in 150ms with retries reset.
+  // Healthy session (>= 2s) restarts after CLEAN_RESTART_MS with retries reset.
   const cleanEnd = voiceStep(armed, { t: "rec-end" }, 1100 + HEALTHY_MS);
   expect(cleanEnd.state.phase).toBe("restarting");
   expect(cleanEnd.state.retries).toBe(0);
   expect(cleanEnd.effects).toContainEqual({ t: "schedule-restart", ms: CLEAN_RESTART_MS });
 
-  const restarting = voiceStep(cleanEnd.state, { t: "restart-due" }, 3300);
+  const restarting = voiceStep(cleanEnd.state, { t: "restart-due" }, 3500);
   expect(restarting.state.phase).toBe("starting");
-  expect(restarting.effects).toEqual([{ t: "start-rec" }]);
+  expect(restarting.effects).toEqual([{ t: "start-rec" }, { t: "schedule-start-timeout", ms: START_TIMEOUT_MS }]);
 
-  // Rapid failures back off: 250, 500, 1000, 2000, 4000, 5000.
-  expect([1, 2, 3, 4, 5, 6].map(nextBackoff)).toEqual([250, 500, 1000, 2000, 4000, 5000]);
+  // Rapid failures back off: 400, 800, 1600, 3200, 5000, 5000.
+  expect([1, 2, 3, 4, 5, 6].map(nextBackoff)).toEqual([400, 800, 1600, 3200, 5000, 5000]);
   let s = restarting.state;
   const delays: number[] = [];
   for (let i = 0; i < 3; i++) {
-    const ended = voiceStep(s, { t: "rec-end" }, 3400 + i * 100);
+    const ended = voiceStep(s, { t: "rec-end" }, 3600 + i * 100);
     const fx = ended.effects.find((e) => e.t == "schedule-restart");
     delays.push(fx && fx.t == "schedule-restart" ? fx.ms : -1);
-    s = voiceStep(ended.state, { t: "restart-due" }, 3450 + i * 100).state;
+    s = voiceStep(ended.state, { t: "restart-due" }, 3650 + i * 100).state;
   }
-  expect(delays).toEqual([250, 500, 1000]);
+  expect(delays).toEqual([400, 800, 1600]);
 });
 
-test("hidden tab pauses recognition while armed and resumes automatically when visible", () => {
+test("hidden tab pauses recognition while armed and resumes with a settle delay when visible", () => {
   const { state: armed } = run(initialVoiceState(true), [[{ t: "toggle" }], [{ t: "rec-start" }]]);
   const hidden = voiceStep(armed, { t: "visibility", hidden: true }, 12_000);
   expect(hidden.state.phase).toBe("paused");
   expect(isArmed(hidden.state.phase)).toBe(true);
+  expect(hidden.state.hasStarted).toBe(true);
   expect(hidden.effects).toEqual([
     { t: "cancel-restart" },
     { t: "cancel-interim-trigger" },
     { t: "cancel-speech-idle" },
+    { t: "cancel-start-timeout" },
     { t: "stop-rec" },
   ]);
 
@@ -265,9 +269,14 @@ test("hidden tab pauses recognition while armed and resumes automatically when v
   expect(endWhilePaused.state.phase).toBe("paused");
   expect(endWhilePaused.effects).toEqual([]);
 
+  // Returning to the tab settles CLEAN_RESTART_MS so iOS Safari can hand back AVAudioSession.
   const visible = voiceStep(endWhilePaused.state, { t: "visibility", hidden: false }, 15_000);
-  expect(visible.state.phase).toBe("starting");
-  expect(visible.effects).toEqual([{ t: "start-rec" }]);
+  expect(visible.state.phase).toBe("restarting");
+  expect(visible.effects).toEqual([{ t: "schedule-restart", ms: CLEAN_RESTART_MS }]);
+
+  const resumed = voiceStep(visible.state, { t: "restart-due" }, 15_000 + CLEAN_RESTART_MS);
+  expect(resumed.state.phase).toBe("starting");
+  expect(resumed.effects).toEqual([{ t: "start-rec" }, { t: "schedule-start-timeout", ms: START_TIMEOUT_MS }]);
 });
 
 test("manual shutoff mid-sentence preserves spoken text, and terminal mic errors never loop", () => {
@@ -341,4 +350,117 @@ test("speaking tracks sound-start, sound-end, rec-result decay, and clears on pa
   const off = voiceStep(heard.state, { t: "toggle" }, 11_000);
   expect(off.state.speaking).toBe(false);
   expect(off.effects).toContainEqual({ t: "cancel-speech-idle" });
+});
+
+test("post-start audio-capture stays armed across iOS teardown races and prolonged interruptions", () => {
+  const { state: mid } = run(initialVoiceState(true), [
+    [{ t: "toggle" }, 10_000],
+    [{ t: "rec-start" }, 10_100],
+    [{ t: "rec-result", resultIndex: 0, slices: [{ transcript: "Also check dark mode", isFinal: false }] }, 15_000],
+  ]);
+  expect(mid.hasStarted).toBe(true);
+
+  // First audio-capture after healthy uptime (>2s): stays armed, saves interim words, aborts old rec, backs off 400ms.
+  const hit1 = voiceStep(mid, { t: "rec-error", code: "audio-capture" }, 15_100);
+  expect(hit1.state.phase).toBe("restarting");
+  expect(isArmed(hit1.state.phase)).toBe(true);
+  expect(hit1.state.committed).toBe("Also check dark mode");
+  expect(hit1.state.interim).toBe("");
+  expect(hit1.state.retries).toBe(1);
+  expect(hit1.state.lastError).toBe("audio-capture");
+  expect(hit1.effects).toContainEqual({ t: "stop-rec" });
+  expect(hit1.effects).toContainEqual({ t: "schedule-restart", ms: 400 });
+  expect(hit1.effects).toContainEqual({ t: "set-input", value: "Also check dark mode", draft: "Also check dark mode" });
+
+  // Trailing rec-end while already restarting must not double-count retries or reset backoff.
+  const trailingEnd = voiceStep(hit1.state, { t: "rec-end" }, 15_110);
+  expect(trailingEnd.state).toEqual(hit1.state);
+  expect(trailingEnd.effects).toEqual([]);
+
+  // Prolonged audio lock (e.g. AirPods switch or phone call): stays armed past 6+ retries at 5s cap.
+  let s = hit1.state;
+  const delays: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    s = voiceStep(s, { t: "restart-due" }, 16_000 + i * 1000).state;
+    const res = voiceStep(s, { t: "rec-error", code: "audio-capture" }, 16_100 + i * 1000);
+    expect(isArmed(res.state.phase)).toBe(true);
+    expect(res.state.phase).toBe("restarting");
+    const fx = res.effects.find((e) => e.t == "schedule-restart");
+    delays.push(fx && fx.t == "schedule-restart" ? fx.ms : -1);
+    s = res.state;
+  }
+  expect(delays).toEqual([800, 1600, 3200, 5000, 5000, 5000]);
+
+  // Recovers cleanly once iOS frees AVAudioSession, preserving saved draft in transcribing phase.
+  const due = voiceStep(s, { t: "restart-due" }, 25_000);
+  const back = voiceStep(due.state, { t: "rec-start" }, 25_050);
+  expect(back.state.phase).toBe("transcribing");
+  expect(back.state.lastError).toBeNull();
+  expect(back.state.committed).toBe("Also check dark mode");
+  expect(back.effects).toContainEqual({ t: "cancel-start-timeout" });
+});
+
+test("pre-start audio-capture retries briefly then stops cleanly when no microphone exists", () => {
+  let { state } = voiceStep(initialVoiceState(true), { t: "toggle" }, 1000);
+  expect(state.hasStarted).toBe(false);
+
+  for (let i = 1; i <= AUDIO_CAPTURE_INIT_RETRIES; i++) {
+    const res = voiceStep(state, { t: "rec-error", code: "audio-capture" }, 1000 + i * 500);
+    expect(res.state.phase).toBe("restarting");
+    expect(isArmed(res.state.phase)).toBe(true);
+    expect(res.effects).toContainEqual({ t: "schedule-restart", ms: nextBackoff(i) });
+    const due = voiceStep(res.state, { t: "restart-due" }, 1200 + i * 500);
+    // Must not arm start-timeout before hasStarted is true (permission dialog may still be open).
+    expect(due.effects).toEqual([{ t: "start-rec" }]);
+    state = due.state;
+  }
+
+  const finalFail = voiceStep(state, { t: "rec-error", code: "audio-capture" }, 5000);
+  expect(finalFail.state.phase).toBe("error");
+  expect(finalFail.state.error?.code).toBe("audio-capture");
+  expect(isArmed(finalFail.state.phase)).toBe(false);
+});
+
+test("sync start-failed, zombie start-timeout, no-speech, and service-not-allowed behave cleanly", () => {
+  // service-not-allowed before first start is immediately terminal with Dictation guidance.
+  const initStart = voiceStep(initialVoiceState(true), { t: "toggle" }, 1000).state;
+  const initSvc = voiceStep(initStart, { t: "rec-error", code: "service-not-allowed" }, 1100);
+  expect(initSvc.state.phase).toBe("error");
+  expect(initSvc.state.error?.code).toBe("service-not-allowed");
+  expect(initSvc.state.error?.message).toContain("Dictation");
+
+  // Once started, no-speech does not bump retries, and start-failed schedules backoff immediately (no onend needed).
+  const { state: armed } = run(initialVoiceState(true), [
+    [{ t: "toggle" }, 2000],
+    [{ t: "rec-start" }, 2100],
+  ]);
+  const quiet = voiceStep(armed, { t: "rec-error", code: "no-speech" }, 2500);
+  expect(quiet.state.retries).toBe(0);
+  expect(quiet.state.phase).toBe("listening");
+
+  const syncThrow = voiceStep(armed, { t: "rec-error", code: "start-failed" }, 2600);
+  expect(syncThrow.state.phase).toBe("restarting");
+  expect(syncThrow.effects).toContainEqual({ t: "schedule-restart", ms: 400 });
+
+  // Zombie start after hasStarted fires start-timeout and recovers via abort + backoff.
+  const stuck = voiceStep(syncThrow.state, { t: "restart-due" }, 3000);
+  expect(stuck.effects).toContainEqual({ t: "schedule-start-timeout", ms: START_TIMEOUT_MS });
+  const recovered = voiceStep(stuck.state, { t: "start-timeout" }, 3000 + START_TIMEOUT_MS);
+  expect(recovered.state.phase).toBe("restarting");
+  expect(recovered.effects).toContainEqual({ t: "stop-rec" });
+  expect(recovered.effects).toContainEqual({ t: "schedule-restart", ms: 800 });
+
+  // Mid-session service-not-allowed retries transiently up to 4 times before escalating on 5th.
+  let s = run(initialVoiceState(true), [
+    [{ t: "toggle" }, 10_000],
+    [{ t: "rec-start" }, 10_100],
+  ]).state;
+  for (let i = 0; i < 4; i++) {
+    const r = voiceStep(s, { t: "rec-error", code: "service-not-allowed" }, 10_500 + i * 100);
+    expect(isArmed(r.state.phase)).toBe(true);
+    s = r.state;
+  }
+  const fifth = voiceStep(s, { t: "rec-error", code: "service-not-allowed" }, 11_000);
+  expect(fifth.state.phase).toBe("error");
+  expect(fifth.state.error?.code).toBe("service-not-allowed");
 });

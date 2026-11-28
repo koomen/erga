@@ -522,7 +522,8 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-voice[data-voice="listening"],
 .agent-voice[data-voice="transcribing"],
 .agent-voice[data-voice="starting"],
-.agent-voice[data-voice="restarting"] {
+.agent-voice[data-voice="restarting"],
+.agent-voice[data-voice="paused"] {
   background: color-mix(in srgb, var(--caret) 13%, transparent);
   color: var(--caret);
   border-color: color-mix(in srgb, var(--caret) 40%, transparent);
