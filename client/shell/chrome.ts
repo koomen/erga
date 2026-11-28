@@ -4,6 +4,7 @@
 import type { Settings } from "../pages/settings";
 import { live } from "../live/client";
 import { mountQuick } from "../common/quick";
+import { watchViewport } from "../common/viewport";
 import { $, type Shell } from "./shell";
 import { isMac } from "../common/app-keys";
 
@@ -34,19 +35,8 @@ export function mountChrome(shell: Shell) {
   window.addEventListener("keydown", () => { lastKeyAt = performance.now(); }, true);
   window.addEventListener("mousemove", pointerMoved, { passive: true });
 
-  // The on-screen keyboard. Where the browser lays it over the page instead
-  // of resizing the window (Safari), --kb is its height, and the page, the
-  // cards and the agent stop above it. Zoomed
-  // in, the visual viewport is small for another reason: none of it is keyboard.
-  const vv = window.visualViewport;
-  if (vv) {
-    const keyboard = () => {
-      const kb = vv.scale > 1.01 ? 0 : Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
-      document.documentElement.style.setProperty("--kb", `${kb}px`);
-    };
-    vv.addEventListener("resize", keyboard);
-    vv.addEventListener("scroll", keyboard);
-  }
+  // The on-screen keyboard: shared across View mode, Edit mode, and app pages (client/common/viewport.ts).
+  watchViewport();
 
   // On a phone (narrower than 760px) the quick actions open out of your avatar (client/common/quick.ts), as in the viewer;
   // a tap on the page closes them too, while editing (main.ts, onPointer).

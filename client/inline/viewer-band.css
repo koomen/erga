@@ -7,8 +7,11 @@
 
 :root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); --frame-t: 0px; }
 :root.erga-fills { --frame-t: var(--band-h); }
-html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+html, body { margin: 0; height: 100%; min-height: 0; overflow: hidden; overscroll-behavior: none; }
 html { background: var(--band, #fff); }
+/* Lock the outer viewer shell to the viewport so iOS Safari never rubber-bands or drags it around #frame. */
+body { position: fixed; inset: 0; touch-action: none; }
+html.erga-vv-pinched body { touch-action: auto; }
 #frame { position: fixed; left: 0; top: var(--frame-t); width: 100%; height: calc(100% - var(--frame-t)); border: 0; display: block; background: transparent; }
 html.erga-band-wait #frame { opacity: 0; }
 .erga-canvas { position: fixed; left: 0; top: var(--frame-t); width: 100%; height: calc(100% - var(--frame-t)); pointer-events: none; }

@@ -161,13 +161,9 @@ body:not(.layout-narrow) .agent-head { cursor: grab; touch-action: none; }
   font-weight: 600; font-size: 11.5px; color: #fff; background: var(--c); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16); }
 .people .avatar:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
 .people .avatar:focus-visible::before { opacity: 1; }
-/* On a phone, open quick actions take the band: the stack steps out of their way. At rest, where the stack leaves the
-   breadcrumbs too little room, Documents goes (.tight: main.ts, tighten) and the title ends in an ellipsis. */
+/* On a phone, open quick actions take the band: the stack steps out of their way. (.tight lives in client/inline/bars.css.) */
 @media (max-width: 759.98px) {
   body.quick-open .chrome-top .people { opacity: 0; pointer-events: none; }
-  body:not(.quick-open) .chrome-nav.tight { justify-content: flex-start; }
-  body:not(.quick-open) .chrome-nav.tight :is(.nav-back, .nav-back + .erga-sep) { display: none; }
-  body:not(.quick-open) .chrome-nav.tight .nav-title { flex: 0 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) { .people > * { transition: none; } }
 /* You, at the far right, apart from the others (.me-slot: client/inline/bars.css). */
@@ -208,8 +204,8 @@ body:not(.layout-narrow) .agent-head { cursor: grab; touch-action: none; }
 /* The cards under the top row start below it (it moves down for a notch),
    and scroll inside themselves when the window is too short for them. */
 .help {
-  top: calc(var(--top-clear) - 2px); right: max(16px, var(--safe-r), calc(var(--frame-r) + 8px));
-  max-height: calc(100% - var(--top-clear) - var(--kb, 0px) - max(16px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain;
+  top: calc(var(--top-clear) - 2px + var(--vv-top, 0px)); right: max(16px, var(--safe-r), calc(var(--frame-r) + 8px));
+  max-height: calc(100% - var(--top-clear) - var(--vv-top, 0px) - var(--kb, 0px) - max(16px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain;
 }
 
 /* The document's title, after Documents as a breadcrumb (the arrow is Documents', inside its
@@ -260,5 +256,4 @@ body:not(.layout-narrow) .agent-head { cursor: grab; touch-action: none; }
   :is(.icon-btn, .nav-back, .nav-brand)::before, .nav-title::after { content: ""; position: absolute; inset: -5px -1px; }
   .naming-input, .naming-addr { font-size: 16px; }
   .avatar::after { content: ""; position: absolute; inset: -8px -3px; }
-  .agent-compose textarea { font-size: 16px; }
 }

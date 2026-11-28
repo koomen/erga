@@ -157,7 +157,13 @@ export function chat(opts: ChatOptions): Chat {
     lastScrollTop = logEl.scrollTop;
   }, { passive: true });
   new MutationObserver(() => pin()).observe(logEl, { childList: true, subtree: true, characterData: true });
-  new ResizeObserver(() => pin()).observe(logEl);
+  let prevH = logEl.clientHeight;
+  new ResizeObserver(() => {
+    const h = logEl.clientHeight;
+    if (following) pin();
+    else if (prevH > 0 && h < prevH) logEl.scrollTop += prevH - h;
+    prevH = h;
+  }).observe(logEl);
   logEl.addEventListener("load", () => pin(), true); // screenshots arrive after their event
   jump.addEventListener("click", () => follow(true));
   // Approve or Deny on a call that waits (one listener on the log: a log drawn before this script ran has the buttons too).

@@ -12,6 +12,7 @@ import {
   panelStep,
   panelVisit,
   savePanel,
+  shouldAutoFocusAgent,
   threadEventStep,
   type Drawn,
 } from "../client/common/agent-panel";
@@ -141,4 +142,11 @@ test("threadEventStep guards against cross-thread event leaks and detects thread
     thread: "local:agy:s1",
     effect: { action: "apply" },
   });
+});
+
+test("shouldAutoFocusAgent skips auto-focus on touch FAB taps while keeping desktop and keyboard shortcut focus", () => {
+  expect(shouldAutoFocusAgent("fab", true)).toBe(false);
+  expect(shouldAutoFocusAgent("fab", false)).toBe(true);
+  expect(shouldAutoFocusAgent("key", true)).toBe(true);
+  expect(shouldAutoFocusAgent("blocked", true)).toBe(true);
 });

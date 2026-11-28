@@ -135,9 +135,10 @@ body.shell-selecting #frame { pointer-events: none; }
 @media (pointer: coarse) { .zoom-menu .zm-keys, .zoom-menu .zm-list + hr { display: none; } .zoom-menu .zm-list button { padding: 10px 12px; } }
 .zm-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); margin: 0; }
 /* A phone: no room in the bar. Zoomed, the level shows in the corner across from the agent's circle, and opens the menu. */
-.zoom-pill { position: fixed; z-index: 30; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); height: 42px; padding: 0 12px;
+.zoom-pill { position: fixed; z-index: 30; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); height: 42px; padding: 0 12px;
   border: 1px solid rgba(0, 0, 0, .08); border-radius: 21px; background: rgba(255, 255, 255, .88); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   box-shadow: 0 2px 10px rgba(0, 0, 0, .08); color: #1c1c1f; font: 600 13px/1 "Erga Inter", ui-sans-serif, system-ui, sans-serif; font-variant-numeric: tabular-nums; cursor: pointer; }
+body.agent-right .zoom-pill { right: auto; left: max(16px, env(safe-area-inset-left)); }
 .zoom-pill[hidden], html.erga-full .zoom-pill { display: none; }
 @media (min-width: 641px) and (min-height: 481px) { .zoom-pill { display: none; } }
 @media (max-width: 640px), (max-height: 480px) { #btn-zoom { display: none !important; } }

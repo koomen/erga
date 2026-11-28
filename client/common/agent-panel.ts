@@ -116,6 +116,16 @@ export type BlockedEvent = { readonly t: "sync"; readonly asking: readonly strin
 
 export const IDLE_BLOCKED: BlockedState = { at: "idle" };
 
+export type AgentOpenTrigger = "fab" | "key" | "blocked" | "program";
+
+/**
+ * Whether opening the agent panel should focus its input or terminal right away. On touch devices (`coarse`),
+ * tapping the FAB opens the panel to read without popping the software keyboard.
+ */
+export function shouldAutoFocusAgent(trigger: AgentOpenTrigger, coarse: boolean): boolean {
+  return !(coarse && trigger == "fab");
+}
+
 /** Decides whether to auto-expand a collapsed panel when a connected or embedded agent is blocked on an approval card. */
 export function blockedStep(s: BlockedState, ev: BlockedEvent): { state: BlockedState; expand: boolean } {
   if (!ev.asking.length) return { state: IDLE_BLOCKED, expand: false };

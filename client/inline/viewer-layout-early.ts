@@ -38,13 +38,14 @@ export default function viewerLayoutEarly(): void {
       W = root.clientWidth || innerWidth;
     probe.remove();
     const narrow = W < 760;
-    // (On a phone the agent starts closed: open, it covers the page.)
-    const open = (typeof window != "undefined" && window.ergaAgent ? window.ergaAgent.open() : panelOpen(pageDoc())) && !narrow;
+    const hasAgent = typeof window != "undefined" && !!window.ergaAgent;
+    // (On a phone the agent starts closed: open, it covers the page. On resize after load, keep the user's open state.)
+    const open = hasAgent ? window.ergaAgent!.open() : panelOpen(pageDoc()) && !narrow;
     const w = narrow ? Math.max(0, Math.min(kept, W - 32)) : clamp(kept, 300, Math.max(300, Math.min(760, W - sl - sr - 360 - 32)));
     // The agent's box, 16px from the window's edge on its side; open (and not on a phone), the document beside it.
     const agentX = right ? W - sr - 16 - w : sl + 16;
-    const frameL = open && !right ? agentX + w + 16 : sl,
-      frameR = open && right ? W - agentX + 16 : sr;
+    const frameL = !narrow && open && !right ? agentX + w + 16 : sl,
+      frameR = !narrow && open && right ? W - agentX + 16 : sr;
     const fab = right ? agentX + w - 44 : agentX;
     const vars: Record<string, number> = {
       "--agent-x": agentX,
@@ -60,19 +61,21 @@ export default function viewerLayoutEarly(): void {
     body.classList.toggle("agent-right", right);
     body.classList.toggle("layout-narrow", narrow);
   } catch {}
-  try {
-    // (Within the zoom's limits, whatever the browser kept.)
-    const z = clampZoom(
-      Number(localStorage.getItem("erga:zoom:v1:" + document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content) || 1)
-    );
-    if (z != 1) {
-      document.documentElement.style.setProperty("--erga-zoom", String(z));
-      // (Editing, the page keeps its width, in the middle: client/common/zoom.ts, Keep.)
-      const editing = document.body.classList.contains("erga-editing");
-      document.documentElement.style.setProperty("--erga-lay-w", editing ? "1" : String(z));
-      if (editing) document.documentElement.style.setProperty("--erga-x", `${((1 - z) / 2) * 100}%`);
-      document.documentElement.style.setProperty("--erga-lay-h", String(z));
-      document.documentElement.classList.add("erga-zoomed");
-    }
-  } catch {}
+  if (typeof window == "undefined" || !window.ergaAgent)
+    try {
+      // (Within the zoom's limits, whatever the browser kept — first paint only, never clobber live zoom on resize.)
+      const z = clampZoom(
+        Number(localStorage.getItem("erga:zoom:v1:" + document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content) || 1)
+      );
+      if (z != 1) {
+        const narrow = (document.documentElement.clientWidth || innerWidth) < 760;
+        document.documentElement.style.setProperty("--erga-zoom", String(z));
+        // (Editing on wide screens keeps its 100% width; narrow phones reflow to fill screen width: client/common/zoom.ts.)
+        const keepWidth = document.body.classList.contains("erga-editing") && !narrow;
+        document.documentElement.style.setProperty("--erga-lay-w", keepWidth ? "1" : String(z));
+        if (keepWidth) document.documentElement.style.setProperty("--erga-x", `${((1 - z) / 2) * 100}%`);
+        document.documentElement.style.setProperty("--erga-lay-h", String(z));
+        document.documentElement.classList.add("erga-zoomed");
+      }
+    } catch {}
 }

@@ -2,7 +2,18 @@
 // the page is laid out again, and what a wheel with ctrl asks for.
 
 import { expect, test } from "bun:test";
-import { layOf, MAX_ZOOM, MIN_ZOOM, wheelZoom, zoomAim, zoomStep, type Point, type Zoom, type ZoomEvent } from "../client/common/zoom";
+import {
+  keepFor,
+  layOf,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  wheelZoom,
+  zoomAim,
+  zoomStep,
+  type Point,
+  type Zoom,
+  type ZoomEvent,
+} from "../client/common/zoom";
 
 const still: Zoom = { phase: "still", keep: "none", level: 1, x: 0, y: 0 };
 const W = 1000,
@@ -112,8 +123,19 @@ test("editing, the page keeps its width: only its height is laid out again, it m
   const pinched = after(more, ...pinch({ x: 100, y: 200 }, 1.05, 3), { type: "rest", w: W, h: H }).state;
   expect(drawnAt(pinched, { x: (100 + 250) / 1.5, y: 0 }).x).toBeCloseTo(100, 6);
   expect(pinched.y).toBe(0);
-  // Back to viewing: laid out again at the same level.
-  expect(layOf(zoomStep(more, { type: "keep", keep: "none", w: W, h: H }).state)).toEqual({ w: 1.5, h: 1.5 });
+  // Back to viewing: laid out again at the same level, and zoomAim anchors across none <-> width reflows.
+  const back = zoomStep(more, { type: "keep", keep: "none", w: W, h: H }).state;
+  expect(layOf(back)).toEqual({ w: 1.5, h: 1.5 });
+  expect(zoomAim(zoomed, edit.state, W, H)).toMatchObject({ w: W, top: true });
+  expect(zoomAim(more, back, W, H)).toMatchObject({ w: W / 1.5, top: true });
+});
+
+test("keepFor reflows editing on narrow phones so zoomed-out documents fill screen width, while keeping width on desktop and all on decks", () => {
+  expect(keepFor({ fits: true, editing: false, narrow: true })).toBe("all");
+  expect(keepFor({ fits: true, editing: true, narrow: false })).toBe("all");
+  expect(keepFor({ fits: false, editing: false, narrow: false })).toBe("none");
+  expect(keepFor({ fits: false, editing: true, narrow: false })).toBe("width");
+  expect(keepFor({ fits: false, editing: true, narrow: true })).toBe("none");
 });
 
 test("a wheel with ctrl: a mouse's notch is a step, a trackpad's pinch a small factor, and a huge delta is held", () => {

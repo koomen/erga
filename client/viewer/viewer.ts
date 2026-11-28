@@ -6,6 +6,7 @@ import { isMac } from "../common/app-keys";
 import { mountBars } from "../common/bars";
 import { newDocPicker } from "../common/new-doc";
 import { llmFetch, type LlmOp } from "../common/page-llm";
+import { watchViewport } from "../common/viewport";
 import { mountBand } from "./band";
 import { mountComment, type Commenter } from "./comment";
 import { mountEditBoot } from "./edit-boot";
@@ -81,6 +82,10 @@ const config: ViewerConfig = el?.dataset.config ? JSON.parse(el.dataset.config) 
 const docId = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content ?? "";
 
 newDocPicker(document);
+watchViewport();
+addEventListener("resize", () => {
+  if (!document.body.dataset.ergaLayout) window.ergaLayoutEarly?.();
+});
 mountViewerBars();
 mountSelect();
 mountNav();

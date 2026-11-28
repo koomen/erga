@@ -211,29 +211,19 @@ const TITLE_NOT_SAVED = {
     });
   new MutationObserver(syncGroup).observe(body, { attributes: true, attributeFilter: ["class"] });
   syncGroup();
-  // The title in the breadcrumbs takes the room left of the controls (on a phone, little), and ends in an ellipsis.
+  // The title in the breadcrumbs takes the room left of the controls (on a phone, quick.ts also compresses Documents ›).
+  let navRaf = 0;
   const navRoom = () => {
-    const title = $("doc-title"),
-      top = document.querySelector<HTMLElement>(".chrome-top");
-    if (!top || title.hidden) return;
-    title.style.setProperty("--room", `${Math.max(0, barEdge(top, $("people")) - title.getBoundingClientRect().left - 8)}px`);
-    tighten(top);
+    if (navRaf) return;
+    navRaf = requestAnimationFrame(() => {
+      navRaf = 0;
+      const title = $("doc-title"),
+        top = document.querySelector<HTMLElement>(".chrome-top");
+      if (!top || title.hidden) return;
+      title.style.setProperty("--room", `${Math.max(0, barEdge(top, $("people")) - title.getBoundingClientRect().left - 8)}px`);
+    });
   };
-  // On a phone at rest the others' stack takes room from the breadcrumbs: their middle, Documents, goes first (.tight),
-  // then the title ends in an ellipsis (client/styles/editor.css). Erga's logo stays whole. (Open, the quick actions
-  // hide the stack, and the breadcrumbs slide as before: client/common/quick.ts.)
   const phone = matchMedia("(max-width: 759.98px)");
-  let backWidth = 0;
-  function tighten(top: HTMLElement) {
-    const nav = $("nav-documents"),
-      back = $("nav-back");
-    if (body.classList.contains("quick-open")) return;
-    if (!phone.matches || back.hidden) return void nav.classList.remove("tight");
-    const tight = nav.classList.contains("tight");
-    if (!tight) backWidth = back.offsetWidth + (back.nextElementSibling as HTMLElement).offsetWidth;
-    const parts = [...nav.children].reduce((w, el) => w + (el as HTMLElement).offsetWidth, 0) + 16 + (tight ? backWidth : 0);
-    nav.classList.toggle("tight", parts > barEdge(top, $("people")) - nav.getBoundingClientRect().left - 8);
-  }
   phone.addEventListener("change", navRoom);
   new ResizeObserver(navRoom).observe(document.querySelector(".chrome-top")!);
   new ResizeObserver(navRoom).observe($("people"));
@@ -374,9 +364,10 @@ const TITLE_NOT_SAVED = {
     () => editing()
   );
   rememberOrigin(pagesOrigin);
+  const coarse = () => matchMedia("(pointer: coarse)").matches;
   // The page's editor starts, if it should (its edit key: client/shell/editor.ts).
   shell.editor.send({ type: "tick" });
-  if (editing()) {
+  if (editing() && !coarse()) {
     // The page has the focus, for its editor (nothing else in the tab has it yet).
     if (!document.activeElement || document.activeElement == document.body) page.focus();
   }
@@ -486,7 +477,7 @@ const TITLE_NOT_SAVED = {
     // The editor in the page starts or stops (on the way out the page stays as it was).
     shell.editor.send({ type: "editing", on });
     if (on) {
-      page.focus();
+      if (!coarse()) page.focus();
       return;
     }
     shell.chrome.closeCards();

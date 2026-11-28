@@ -542,6 +542,8 @@ export function syncDOMSelection(ed: EditorCore, force = false): void {
 
 export function focus(ed: EditorCore): void {
   if (ed.headless || ed.rendering || !ed.doc || !ed.win) return;
+  const sx = ed.win.scrollX,
+    sy = ed.win.scrollY;
   ed.win.focus();
   // The host keeps its caret while the frame has no focus; a key may have moved it since the model last heard
   // (selectionchange comes later): the model takes it first.
@@ -553,6 +555,8 @@ export function focus(ed: EditorCore): void {
     ed.host.focus({ preventScroll: true });
   }
   syncDOMSelection(ed, true);
+  // WebKit scrolls on setBaseAndExtent even after focus({ preventScroll: true }); restore the viewport position.
+  if (ed.win.scrollX != sx || ed.win.scrollY != sy) ed.win.scrollTo(sx, sy);
 }
 
 /**

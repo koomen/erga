@@ -3,7 +3,7 @@
 // its button, the round one, Esc in the panel and ⌘J open and close it. On a phone, that is kept nowhere. It grows
 // out of its circle and shrinks back into it (client/style.css, .agent).
 
-import { pageDoc, panelVisit, restorePanel, savePanel, type Drawn } from "../common/agent-panel";
+import { pageDoc, panelVisit, restorePanel, savePanel, shouldAutoFocusAgent, type Drawn } from "../common/agent-panel";
 
 declare global {
   interface Window {
@@ -73,7 +73,7 @@ export default function agentToggle(): void {
     show(false);
   });
   fab.addEventListener("blur", () => fab.classList.remove("by-pointer"));
-  fab.addEventListener("click", () => show(true));
+  fab.addEventListener("click", () => show(true, { focus: shouldAutoFocusAgent("fab", matchMedia("(pointer: coarse)").matches) }));
   document.getElementById("agent")!.addEventListener("keydown", (e) => {
     if (e.key == "Escape" && !e.defaultPrevented && body.classList.contains("agent-open")) {
       e.preventDefault();

@@ -40,6 +40,7 @@ import {
   type BlockedState,
   type PanelPhase,
 } from "../common/agent-panel";
+import { watchViewport } from "../common/viewport";
 import { mountTurn, type TurnFacts } from "./turn-summary";
 import { mountVoice, type VoiceControl } from "./voice";
 
@@ -54,6 +55,7 @@ interface AgentState {
 }
 
 const $ = (id: string) => document.getElementById(id)!;
+watchViewport();
 /** The document the page has open, if any: its thread is the panel's, and its document tools' own when the agent names none. */
 const DOC = pageDoc();
 /** A path of the agent's API, for this page's thread. */
@@ -448,7 +450,7 @@ $("agent-reset").addEventListener("click", () => {
     },
     () => showHint("Couldn't start a new conversation.")
   );
-  input.focus();
+  if (!matchMedia("(pointer: coarse)").matches) input.focus();
 });
 window.addEventListener("erga:agent-shown", (e) => {
   talk.follow(true);

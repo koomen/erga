@@ -563,9 +563,11 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
           }
           // The page takes the focus it has (the viewer gives the frame the focus as it goes into the editor), with the
           // caret in its text: it had the focus as it loaded again, or has it now, for the keys held meanwhile.
-          // (Not after full screen: the text is left, as after Escape, until a click on it.)
+          // (Not after full screen: the text is left, as after Escape, until a click on it. On touch devices, wait for
+          // a tap on the text instead of popping the software keyboard and jumping scroll.)
+          const coarse = matchMedia("(pointer: coarse)").matches;
           if (wasFull) page.leaveText();
-          else if (!m.comment && (focus || document.hasFocus())) {
+          else if (!m.comment && (focus || (!coarse && document.hasFocus()))) {
             page.focus();
             // A page that loads again is out of sight until it has its view (client/inline/reader.ts), and the browser
             // gives no focus to what is out of sight: the text takes it as the page shows. Without it, text that comes

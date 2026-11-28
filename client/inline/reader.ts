@@ -172,15 +172,22 @@ export default function reader(C: ReaderConfig): void {
     },
     { passive: false, capture: true }
   );
-  // Touch pinch-to-zoom and single-finger pan when zoomed.
+  // Touch pinch-to-zoom and single-finger pan when zoomed. Uses transform-invariant screenX/screenY so scaling or
+  // translating #frame never feeds back into the finger span or pan delta, and yields whenever the browser itself is pinched.
   let span = 0,
     finger: { x: number; y: number } | null = null;
-  const apart = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const apart = (t: TouchList) => Math.hypot(t[0].screenX - t[1].screenX, t[0].screenY - t[1].screenY);
+  const trackTouches = (t: TouchList) => {
+    span = t.length == 2 ? apart(t) : 0;
+    finger = t.length == 1 ? { x: t[0].screenX, y: t[0].screenY } : null;
+  };
+  addEventListener("touchstart", (e) => trackTouches(e.touches), { passive: true });
+  addEventListener("touchend", (e) => trackTouches(e.touches), { passive: true });
   addEventListener(
-    "touchstart",
-    (e) => {
-      span = e.touches.length == 2 ? apart(e.touches) : 0;
-      finger = e.touches.length == 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    "touchcancel",
+    () => {
+      span = 0;
+      finger = null;
     },
     { passive: true }
   );
@@ -188,7 +195,7 @@ export default function reader(C: ReaderConfig): void {
     "touchmove",
     (e) => {
       const z = zoomedSaid();
-      if (z?.off || zoomsSaid || e.defaultPrevented) return;
+      if (z?.off || zoomsSaid || e.defaultPrevented || pinched()) return;
       const t = e.touches;
       if (t.length == 2 && span) {
         e.preventDefault();
@@ -198,8 +205,8 @@ export default function reader(C: ReaderConfig): void {
         span = d;
       } else if (t.length == 1 && finger && z && z.keep != "none" && z.zoom > 1) {
         if (z.keep == "all") e.preventDefault();
-        tell({ type: "erga-pan", dx: (finger.x - t[0].clientX) * z.zoom, dy: z.keep == "all" ? (finger.y - t[0].clientY) * z.zoom : 0 });
-        finger = { x: t[0].clientX, y: t[0].clientY };
+        tell({ type: "erga-pan", dx: finger.x - t[0].screenX, dy: z.keep == "all" ? finger.y - t[0].screenY : 0 });
+        finger = { x: t[0].screenX, y: t[0].screenY };
       }
     },
     { passive: false }
@@ -307,7 +314,7 @@ export default function reader(C: ReaderConfig): void {
   still.setAttribute("data-erga", "");
   // (And the editor's own parts on the page never print.)
   still.textContent =
-    "html { overscroll-behavior: none; touch-action: pan-x pan-y; } @media print { erga-controls, erga-comments, erga-caret, erga-peers, erga-note, erga-drop-caret, erga-drop-image { display: none !important; } }";
+    "html { overscroll-behavior: none; touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; } html.erga-vv-pinched { touch-action: auto; } @media print { erga-controls, erga-comments, erga-caret, erga-peers, erga-note, erga-drop-caret, erga-drop-image { display: none !important; } }";
   (document.head || root).append(still);
   // The room for the bars at the top of a scrolling page (client/common/top-room.ts), measured again when the page's
   // styles may have changed (its head, its root's attributes), as it loads, the window's size, or the room the viewer asks for (its
@@ -935,6 +942,7 @@ export default function reader(C: ReaderConfig): void {
     // The viewer's word on the zoom (client/viewer/zoom.ts): kept for the editor, which hears it after too.
     else if (type == "erga-zoomed") {
       window.__ergaReader!.zoomed = e.data;
+      root.classList.toggle("erga-vv-pinched", e.data.pinched === true);
       if (!view.isConnected) root.append(view);
       if (typeof e.data.lay?.h == "number" && e.data.lay.h != lay) {
         lay = e.data.lay.h;

@@ -207,10 +207,23 @@ journey("a reader opens a document with several pages", () => {
     await clickOn(page, '#zoom-menu [data-level="0.75"]');
     await expect.poll(level).toBe("75%");
     await expect.poll(menu).toBe(false);
-    // A phone: no room in the bar; the level shows in the corner, and opens the same menu.
+    // A phone: no room in the bar; the level shows in the corner opposite the agent FAB, and opens the same menu.
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(pill).toBe("75%");
     expect(await level()).toBe(null);
+    // Outer viewer shell stays fixed with min-height: 0 (no iOS drag slack), iframe locks text-size-adjust, and
+    // #zoom-pill flips to bottom-left when body.agent-right is active so it never collides with #agent-fab.
+    expect(
+      await page.evaluate(() => {
+        const b = getComputedStyle(document.body);
+        const pillRight = document.getElementById("zoom-pill")!.getBoundingClientRect().left;
+        document.body.classList.add("agent-right");
+        const pillLeft = document.getElementById("zoom-pill")!.getBoundingClientRect().left;
+        document.body.classList.remove("agent-right");
+        return { pos: b.position, minH: b.minHeight, flipped: pillLeft < 40 && pillRight > 200 };
+      })
+    ).toEqual({ pos: "fixed", minH: "0px", flipped: true });
+    expect(await docFrame(page)!.evaluate(() => getComputedStyle(document.documentElement).webkitTextSizeAdjust)).toBe("100%");
     await clickOn(page, "#zoom-pill");
     await expect.poll(menu).toBe(true);
     await clickOn(page, '#zoom-menu [data-level="1"]');
@@ -225,14 +238,21 @@ journey("a reader opens a document with several pages", () => {
     const look = () =>
       page.evaluate(() => ({ scale: Math.round((window as any).ergaFrames.scale() * 100) / 100, window: visualViewport!.scale }));
     expect(await look()).toEqual({ scale: 1, window: 1 });
-    // Two fingers on the page, spread to 1.6 times as far apart.
-    await cdp.send("Input.synthesizePinchGesture", { x: 600, y: 450, scaleFactor: 1.6, relativeSpeed: 800, gestureSourceType: "touch" });
+    // Two fingers on the page, spread to 1.6 times as far apart, then pinched back out past 100% without oscillation.
+    await cdp.send("Input.synthesizePinchGesture", { x: 600, y: 450, scaleFactor: 1.6, relativeSpeed: 1600, gestureSourceType: "touch" });
     // (The synthetic pinch loses a part of its spread on the way.)
     await expect.poll(async () => (await look()).scale).toBeGreaterThan(1.3);
     expect((await look()).window).toBe(1);
     await expect.poll(() => docFrame(page)!.evaluate<number>("innerWidth")).toBeLessThan(900);
+    await cdp.send("Input.synthesizePinchGesture", { x: 600, y: 450, scaleFactor: 0.45, relativeSpeed: 1600, gestureSourceType: "touch" });
+    await expect.poll(async () => (await look()).scale).toBeLessThan(0.95);
     await page.keyboard.press("ControlOrMeta+0");
     await expect.poll(look).toEqual({ scale: 1, window: 1 });
+    // When the browser itself is zoomed (visualViewport.scale > 1), reader yields touch-action: auto so pinch zooms out the browser.
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.4 });
+    await expect.poll(() => docFrame(page)!.evaluate(() => getComputedStyle(document.documentElement).touchAction)).toBe("auto");
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+    await expect.poll(() => docFrame(page)!.evaluate(() => getComputedStyle(document.documentElement).touchAction)).toBe("pan-x pan-y");
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
     await cdp.detach();
   });

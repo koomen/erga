@@ -175,6 +175,12 @@ html.page-dark body .erga-bar .save-card, :host(.page-dark) .erga-bar .save-card
   body:not(.quick-open) .me-slot, :host(:not(.quick-open)) .me-slot { margin-left: 0; }
   .erga-bar-l { max-width: var(--nav-room, none); overflow: hidden; justify-content: flex-end; }
   .erga-bar-l > * { flex: none; }
+  /* At rest on a phone, when the breadcrumbs won't fit, drop Documents › first and ellipsize the title so `erga` stays whole. */
+  body:not(.quick-open) .erga-bar-l.tight, :host(:not(.quick-open)) .erga-bar-l.tight { justify-content: flex-start; }
+  body:not(.quick-open) .erga-bar-l.tight :is(.erga-crumb, .nav-back, .erga-crumb + .erga-sep, .nav-back + .erga-sep),
+  :host(:not(.quick-open)) .erga-bar-l.tight :is(.erga-crumb, .nav-back, .erga-crumb + .erga-sep, .nav-back + .erga-sep) { display: none; }
+  body:not(.quick-open) .erga-bar-l.tight :is(.erga-here, .nav-title),
+  :host(:not(.quick-open)) .erga-bar-l.tight :is(.erga-here, .nav-title) { flex: 0 1 auto; min-width: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .quick, .me-slot { transition: none; } }
 /* (The admin pages' own crumb is their <h1>: the crumbs' type, not a heading's.) */

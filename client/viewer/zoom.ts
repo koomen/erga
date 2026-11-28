@@ -32,6 +32,7 @@ import { isMac } from "../common/app-keys";
 import {
   catchZoomGestures,
   clampZoom,
+  keepFor,
   layOf,
   REST_MS,
   zoomAim,
@@ -132,6 +133,7 @@ export function mountZoom(): void {
     );
     root.classList.toggle("erga-zoomed", !plain);
     root.classList.toggle("erga-zooming", shown && zoom.phase == "pinching");
+    root.classList.toggle("erga-vv-pinched", windowZoomed());
     // (The page zooms itself: a test sees it here.)
     root.classList.toggle("erga-page-zooms", zoomsItself);
     for (const b of [button(), pill()])
@@ -199,11 +201,13 @@ export function mountZoom(): void {
     send({ type: "zoom", by, at: at && { x: at.x - p.left, y: at.y - p.top }, w: p.width, h: p.height });
   }
 
-  /** What of its layout the page keeps (zoom.ts, Keep): a deck all of it (erga/steps says so as its steps show), else editing its width. */
+  /** What of its layout the page keeps (zoom.ts, Keep): a deck all of it, editing its width on wide screens, else reflow. */
+  const phone = matchMedia("(max-width: 759.98px)");
   function keep() {
     const p = place();
-    send({ type: "keep", keep: fits ? "all" : editing() ? "width" : "none", w: p.width, h: p.height });
+    send({ type: "keep", keep: keepFor({ fits, editing: editing(), narrow: phone.matches }), w: p.width, h: p.height });
   }
+  phone.addEventListener("change", keep);
 
   /** A zoom key: whether this took it from the browser. */
   function key(dir: 1 | -1 | "reset"): boolean {
@@ -235,6 +239,30 @@ export function mountZoom(): void {
     (by, at) => zoomBy(by, document.elementFromPoint(at.clientX, at.clientY) == frame() ? { x: at.clientX, y: at.clientY } : null),
     (by) => !full() && !(windowZoomed() && (!by || "by" in by))
   );
+  // Touch pinch reaching the viewer (over #frame during an OOPIF resize, or over the bars) zooms the page too.
+  let touchSpan = 0;
+  const touchApart = (t: TouchList) => Math.hypot(t[0].screenX - t[1].screenX, t[0].screenY - t[1].screenY);
+  const onTouchEdge = (e: TouchEvent) => {
+    touchSpan = e.touches.length == 2 && !(e.target instanceof Element && e.target.closest("#agent")) ? touchApart(e.touches) : 0;
+  };
+  addEventListener("touchstart", onTouchEdge, { passive: true });
+  addEventListener("touchend", onTouchEdge, { passive: true });
+  addEventListener("touchcancel", () => (touchSpan = 0), { passive: true });
+  addEventListener(
+    "touchmove",
+    (e) => {
+      if (e.touches.length != 2 || !touchSpan || e.defaultPrevented || full() || windowZoomed()) return;
+      e.preventDefault();
+      const d = touchApart(e.touches);
+      if (d) {
+        const x = (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        zoomBy({ by: d / touchSpan }, document.elementFromPoint(x, y) == frame() ? { x, y } : null);
+      }
+      touchSpan = d;
+    },
+    { passive: false }
+  );
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e) || typeof e.data?.type != "string") return;
     const m = e.data as Record<string, unknown>,
@@ -264,7 +292,7 @@ export function mountZoom(): void {
         r = frame().getBoundingClientRect(),
         at = num(m.x) && num(m.y) ? { x: r.left + m.x * scale, y: r.top + m.y * scale } : null;
       if (z?.step === 1 || z?.step === -1) zoomBy({ step: z.step }, at);
-      else if (num(z?.by) && z.by > 0.5 && z.by < 2) zoomBy({ by: z.by }, at);
+      else if (num(z?.by) && z.by > 0.1 && z.by < 10) zoomBy({ by: z.by }, at);
     }
   });
   // The zoom's menu, under the level in the bar or over the one in the corner. − and + step and leave it open; a level
@@ -331,7 +359,14 @@ export function mountZoom(): void {
   // The page's place got another size (the window, the agent's panel): the page hears what of it shows. (Not while a
   // new layout waits for its frame: it draws then.)
   // (A load of the page again makes a new frame: viewer-frames.ts. It is watched as its page says hello.)
-  const resized = () => !due && draw(),
+  let sizeRaf = 0;
+  const resized = () => {
+      if (due || sizeRaf) return;
+      sizeRaf = requestAnimationFrame(() => {
+        sizeRaf = 0;
+        if (!due) draw();
+      });
+    },
     sizes = new ResizeObserver(resized);
   addEventListener("resize", resized);
   sizes.observe(frame());

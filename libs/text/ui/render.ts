@@ -127,9 +127,12 @@ function attach(ed: EditorCore, html: string, onBind?: () => void, onReady?: () 
   // Verified, never guessed: a unit whose DOM text doesn't match the source is locked now, not when someone tries to type into it.
   for (const u of ed.units) if (verify(ed, u)) showSpaces(ed, u, html);
   updateEmpty(ed);
-  // Start with the caret in the manuscript, like a document that opens ready to type.
+  // Start with the caret in the manuscript: when scrolled down, pick the first visible editable block so entering Edit
+  // never jumps back to the top of the page.
   const head = ed.state.selection.main.head;
-  const first = ed.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? ed.units[0];
+  const editable = (u: M.Unit) => u.runs.some((r) => r.editable && /\S/.test(r.text));
+  const from = ed.win && ed.win.scrollY > 0 ? firstShown(ed) : 0;
+  const first = ed.units.slice(from).find(editable) ?? ed.units.find(editable) ?? ed.units[0];
   if (first && !M.unitAt(ed.units, head)) {
     ed.state = ed.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
   }

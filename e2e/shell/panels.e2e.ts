@@ -412,10 +412,18 @@ journey("the panels and the bars over a page", () => {
     await page.reload();
     await ed.loaded();
     expect(await ed.eval<boolean>(`document.body.classList.contains("agent-open")`), "on a phone the agent starts closed").toBe(false);
-    // The zoom is kept for the document across a reload.
+    // The zoom is kept for the document across a reload; zoomed out on a phone in Edit mode, #frame stays full-width (keep: none).
     await soon(scale).toBeCloseTo(1.1, 2);
+    await ed.press("ControlOrMeta+Minus");
+    await ed.press("ControlOrMeta+Minus");
+    await soon(scale).toBeCloseTo(0.9, 2);
+    expect(
+      await ed.eval<number>(`Math.round(document.getElementById("frame").getBoundingClientRect().width)`),
+      "on a phone zoomed out in Edit mode, the page fills the screen width"
+    ).toBe(390);
     await ed.press("ControlOrMeta+Digit0");
     await soon(scale).toBe(1);
+    await soon(() => ed.frame<number>("innerWidth")).toBe(390);
     expect(await library()).toEqual(["own origin/erga/text/editor.js"]);
     await ed.clickEnd("h2");
     await ed.type(" today");

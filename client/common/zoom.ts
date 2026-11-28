@@ -95,6 +95,15 @@ export type Point = { x: number; y: number };
  */
 export type Keep = "none" | "width" | "all";
 
+/**
+ * What of its layout the page keeps: a deck keeps all of it; editing keeps its 100% width on wide windows so the
+ * readers' layout stays fixed, while on narrow phones (`narrow`) it reflows (`"none"`) so zoomed-out pages fill the
+ * screen width instead of floating in a narrow strip.
+ */
+export function keepFor(o: { fits: boolean; editing: boolean; narrow: boolean }): Keep {
+  return o.fits ? "all" : o.editing && !o.narrow ? "width" : "none";
+}
+
 /** The levels the page's frame is laid out for: its place's width (`w`) and height (`h`), divided by these. */
 export type Lay = { w: number; h: number };
 
@@ -195,7 +204,7 @@ export function zoomStep(s: Zoom, e: ZoomEvent): { state: Zoom; effects: ZoomEff
 export function zoomAim(s: Zoom, next: Zoom, w: number, h: number): Omit<ZoomAim, "type"> | null {
   const was = layOf(s),
     now = layOf(next);
-  if ((was.w == now.w && was.h == now.h) || s.keep != next.keep) return null;
+  if ((was.w == now.w && was.h == now.h) || s.keep == "all" || next.keep == "all") return null;
   const at = s.phase == "pinching" ? s.at : { x: w / 2, y: h / 2 };
   return { x: (at.x - s.x) / s.level, y: (at.y - s.y) / s.level, to: at.y / next.level, w: w / now.w, top: s.phase != "pinching" };
 }

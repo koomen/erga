@@ -19,7 +19,9 @@
   :root[data-theme="dark"] { --bg: #12161d; --ink: #e4e8ee; --muted: #9aa5b4; --accent: #7fb6e0; --code-bg: #1a202b; --code-line: #2a3342; color-scheme: dark; }
   :root[data-theme="light"] { color-scheme: light; }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; }
+  table { width: 100%; border-collapse: collapse; overflow-wrap: anywhere; }
   .page { max-width: 44rem; margin: 0 auto; padding: 56px 16px 96px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
   h1, h2, h3 { font-family: var(--display); line-height: 1.15; margin: 0; text-wrap: balance; }
   h1 { font-size: 2.3rem; font-weight: 700; letter-spacing: -.01em; }

@@ -310,6 +310,7 @@ export function layoutVars(layout: Layout, view: View, shown: Shown): Record<str
  */
 export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutHandle {
   const root = document.documentElement, body = document.body;
+  body.dataset.ergaLayout = "1";
   const storage = localStore();
   let layout = load(storage);
   const narrow = () => body.classList.contains("layout-narrow");
